@@ -6,7 +6,11 @@ package eventbus
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -16,6 +20,7 @@ import (
 // dagnats owns its own separate buckets and streams which we never touch.
 const (
 	inboxCountsBucket = "notify_inbox_counts"
+	throttleBucket    = "notify_throttle"
 	analyticsStream   = "NOTIFY_ANALYTICS"
 	analyticsSubject  = "notify.analytics.>"
 )
@@ -23,9 +28,10 @@ const (
 // Bus is notify's handle on the event bus. It holds the client connection
 // to the dagnats sidecar plus notify's own JetStream resources.
 type Bus struct {
-	nc *nats.Conn
-	js jetstream.JetStream
-	kv jetstream.KeyValue
+	nc       *nats.Conn
+	js       jetstream.JetStream
+	kv       jetstream.KeyValue
+	throttle jetstream.KeyValue
 }
 
 // Connect dials natsURL, waits for the connection to be established, and
@@ -53,6 +59,15 @@ func Connect(ctx context.Context, natsURL string) (*Bus, error) {
 		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", inboxCountsBucket, err)
 	}
 
+	throttle, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:  throttleBucket,
+		History: 1,
+	})
+	if err != nil {
+		nc.Close()
+		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", throttleBucket, err)
+	}
+
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:     analyticsStream,
 		Subjects: []string{analyticsSubject},
@@ -61,7 +76,7 @@ func Connect(ctx context.Context, natsURL string) (*Bus, error) {
 		return nil, fmt.Errorf("eventbus: ensure stream %q: %w", analyticsStream, err)
 	}
 
-	return &Bus{nc: nc, js: js, kv: kv}, nil
+	return &Bus{nc: nc, js: js, kv: kv, throttle: throttle}, nil
 }
 
 // Close drains and closes the underlying NATS connection.
@@ -149,4 +164,55 @@ func (b *Bus) SubscribeAllDelivery(handler func([]byte)) (unsubscribe func() err
 		return nil, fmt.Errorf("eventbus: SubscribeAllDelivery: %w", err)
 	}
 	return sub.Unsubscribe, nil
+}
+
+// sanitizeThrottleKey replaces any character not allowed in a NATS KV key
+// (alnum, '-', '_', '.', '=') with '_' so an arbitrary caller-supplied key
+// is always a valid bucket key.
+func sanitizeThrottleKey(key string) string {
+	var b strings.Builder
+	b.Grow(len(key))
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_', r == '.', r == '=':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+
+// ThrottleAllow reports whether an action under `key` is within `limit` per
+// `window`, incrementing the fixed-window counter. Best-effort (a small race
+// under high concurrency may admit a few extra — acceptable for rate-limiting).
+func (b *Bus) ThrottleAllow(key string, limit int, window time.Duration) (allowed bool, err error) {
+	bucketKey := sanitizeThrottleKey(key) + "." +
+		strconv.FormatInt(time.Now().UnixNano()/int64(window), 10)
+
+	ctx := context.Background()
+
+	var count int
+	entry, err := b.throttle.Get(ctx, bucketKey)
+	switch {
+	case err == nil:
+		count, err = strconv.Atoi(string(entry.Value()))
+		if err != nil {
+			return false, fmt.Errorf("eventbus: throttle parse count for %q: %w", bucketKey, err)
+		}
+	case errors.Is(err, jetstream.ErrKeyNotFound):
+		count = 0
+	default:
+		return false, fmt.Errorf("eventbus: throttle get %q: %w", bucketKey, err)
+	}
+
+	if count >= limit {
+		return false, nil
+	}
+
+	if _, err := b.throttle.Put(ctx, bucketKey, []byte(strconv.Itoa(count+1))); err != nil {
+		return false, fmt.Errorf("eventbus: throttle put %q: %w", bucketKey, err)
+	}
+	return true, nil
 }

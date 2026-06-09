@@ -23,6 +23,7 @@ import (
 	"github.com/danmestas/notify/internal/eventbus"
 	"github.com/danmestas/notify/internal/httpapi"
 	"github.com/danmestas/notify/internal/identity"
+	"github.com/danmestas/notify/internal/inbound"
 	"github.com/danmestas/notify/internal/inboxapi"
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/realtime"
@@ -140,8 +141,9 @@ func runServe(args []string) error {
 	trg := trigger.New(aud, st, eng)
 	inbox := inboxapi.New(st)
 	rt := realtime.New(bus)
+	inb := inbound.New(trg)
 
-	handler := httpapi.New(id, aud, trg, inbox, rt)
+	handler := httpapi.New(id, aud, trg, inbox, rt, inb)
 	srv := &http.Server{Addr: *addr, Handler: handler}
 
 	go func() {
