@@ -389,3 +389,73 @@ func TestHandleInApp_PublishesDeliveryOnSkipped(t *testing.T) {
 		t.Errorf("delivery Status = %q, want %q", m.Status, "skipped")
 	}
 }
+
+// TestHandleInApp_SelfSourcesWhenInputEmpty proves the self-source fallback:
+// when TaskPayload.Input is empty (e.g. the step DependsOn a delay whose output
+// is nil), the handler rebuilds the envelope from the store by run id and still
+// renders + persists a correct in_app message.
+func TestHandleInApp_SelfSourcesWhenInputEmpty(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	h := New(s)
+
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	steps := json.RawMessage(`[{"stepId":"S1","type":"in_app","controlValues":{"subject":"Hi {{subscriber.firstName}}","body":"You have {{payload.itemCount}} items"}}]`)
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome-flow",
+		Active:            true,
+		Steps:             steps,
+	})
+	if err != nil {
+		t.Fatalf("Workflows.Create: %v", err)
+	}
+
+	if _, err := s.Subscribers().Upsert(ctx, scope, domain.Subscriber{
+		SubscriberID: "user_123",
+		FirstName:    "Ada",
+	}); err != nil {
+		t.Fatalf("Subscribers.Upsert: %v", err)
+	}
+
+	if _, err := s.Notifications().Create(ctx, scope, domain.Notification{
+		ID:            "ntf_1",
+		WorkflowID:    wf.ID,
+		SubscriberID:  "user_123",
+		TransactionID: "txn_abc",
+		RunID:         "r9",
+		Payload:       json.RawMessage(`{"itemCount":3}`),
+	}); err != nil {
+		t.Fatalf("Notifications.Create: %v", err)
+	}
+
+	// Input is nil: forces the self-source path.
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "r9", StepID: "S1", Input: nil}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	msgs, err := s.Messages().List(ctx, scope, "user_123", "in_app")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	m := msgs[0]
+	if m.Subject != "Hi Ada" {
+		t.Errorf("Subject = %q, want %q", m.Subject, "Hi Ada")
+	}
+	if m.Content != "You have 3 items" {
+		t.Errorf("Content = %q, want %q", m.Content, "You have 3 items")
+	}
+	if m.Status != "sent" {
+		t.Errorf("Status = %q, want %q", m.Status, "sent")
+	}
+	if m.TransactionID != "txn_abc" {
+		t.Errorf("TransactionID = %q, want %q", m.TransactionID, "txn_abc")
+	}
+	if m.NotificationID != "ntf_1" {
+		t.Errorf("NotificationID = %q, want %q", m.NotificationID, "ntf_1")
+	}
+}

@@ -13,6 +13,7 @@ import (
 type WorkflowRepo interface {
 	Create(ctx context.Context, scope domain.Scope, wf domain.Workflow) (domain.Workflow, error)
 	GetByTriggerIdentifier(ctx context.Context, scope domain.Scope, triggerID string) (domain.Workflow, error)
+	GetByID(ctx context.Context, scope domain.Scope, id string) (domain.Workflow, error)
 }
 
 type workflowRepo struct {
@@ -50,6 +51,29 @@ func (repo *workflowRepo) GetByTriggerIdentifier(ctx context.Context, scope doma
 		`SELECT id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version
 		 FROM workflows WHERE org_id = ? AND environment_id = ? AND trigger_identifier = ?`,
 		scope.OrgID, scope.EnvID, triggerID,
+	).Scan(&wf.ID, &wf.OrgID, &wf.EnvID, &wf.Name, &wf.TriggerIdentifier, &wf.Active, &wf.Origin,
+		&steps, &schema, &wf.CompiledDAGVer)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Workflow{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Workflow{}, err
+	}
+	wf.Steps = steps
+	wf.PayloadSchema = schema
+	return wf, nil
+}
+
+func (repo *workflowRepo) GetByID(ctx context.Context, scope domain.Scope, id string) (domain.Workflow, error) {
+	var (
+		wf            domain.Workflow
+		steps, schema []byte
+	)
+	err := repo.r.QueryRowContext(
+		ctx,
+		`SELECT id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version
+		 FROM workflows WHERE org_id = ? AND environment_id = ? AND id = ?`,
+		scope.OrgID, scope.EnvID, id,
 	).Scan(&wf.ID, &wf.OrgID, &wf.EnvID, &wf.Name, &wf.TriggerIdentifier, &wf.Active, &wf.Origin,
 		&steps, &schema, &wf.CompiledDAGVer)
 	if errors.Is(err, sql.ErrNoRows) {

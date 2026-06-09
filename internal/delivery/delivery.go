@@ -68,7 +68,15 @@ func (h *Handler) WithEventBus(p EventPublisher) *Handler {
 // returns its JSON with a nil error — a failed message, not a crashed run.
 func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
 	var env runenv.InAppEnvelope
-	if err := json.Unmarshal(t.Input, &env); err != nil {
+	if len(t.Input) == 0 {
+		// Self-source: an empty input means an upstream step (e.g. a delay)
+		// produced no output, so rebuild the envelope from the store by run id.
+		rebuilt, err := h.rebuildEnvelope(ctx, t)
+		if err != nil {
+			return h.persistError(ctx, env, t, err)
+		}
+		env = rebuilt
+	} else if err := json.Unmarshal(t.Input, &env); err != nil {
 		// Envelope undecodable: scope/subscriber are unknown (empty); still
 		// record a failed message so the failure is observable.
 		return h.persistError(ctx, env, t, err)
