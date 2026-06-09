@@ -70,3 +70,5 @@ func (s *Store) Workflows() WorkflowRepo         { return &workflowRepo{w: s.wri
 func (s *Store) Notifications() NotificationRepo { return &notificationRepo{w: s.writer, r: s.reader} }
 func (s *Store) Messages() MessageRepo           { return &messageRepo{w: s.writer, r: s.reader} }
 func (s *Store) Integrations() IntegrationRepo   { return &integrationRepo{w: s.writer, r: s.reader} }
+
+func (s *Store) Preferences() PreferenceRepo { return &preferenceRepo{w: s.writer, r: s.reader} }

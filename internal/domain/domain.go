@@ -116,3 +116,13 @@ type Message struct {
 	ErrorText      string `db:"error_text"`
 	CreatedAt      string `db:"created_at"`
 }
+
+type Preference struct {
+	ID           string          `db:"id"`
+	OrgID        string          `db:"org_id"`
+	EnvID        string          `db:"environment_id"`
+	Type         string          `db:"type"` // "subscriberGlobal" | "workflow"
+	SubscriberID string          `db:"subscriber_id"`
+	WorkflowID   string          `db:"workflow_id"` // empty for subscriberGlobal
+	Channels     json.RawMessage `db:"channels"`    // JSON object {"in_app":true,"email":false,...}
+}

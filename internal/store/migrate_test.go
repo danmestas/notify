@@ -47,7 +47,7 @@ func TestStore_Migrate_IsIdempotent(t *testing.T) {
 
 	want := []string{
 		"api_keys", "environments", "integrations", "messages", "notifications",
-		"organizations", "subscribers", "workflows",
+		"organizations", "preferences", "subscribers", "workflows",
 	}
 	got := businessTables(t, s2)
 	if len(got) != len(want) {
