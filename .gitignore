@@ -1,6 +1,7 @@
 # binaries
 /bin/
 /dist/
+/.bin/
 *.test
 # coverage
 *.out

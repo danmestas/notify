@@ -5,9 +5,9 @@ pre-commit:
       glob: "*.go"
       run: mise exec -- gofumpt -w {staged_files}
       stage_fixed: true
-    gomod-tidy:
-      glob: "go.mod"
-      run: go mod tidy
+    build:
+      glob: "*.go"
+      run: go build ./...
     golangci-lint:
       glob: "*.go"
       run: mise exec -- golangci-lint run

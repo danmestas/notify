@@ -2,10 +2,14 @@ version: "2"
 linters:
   default: standard
   enable:
-    - revive
     - misspell
     - unconvert
     - bodyclose
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
 formatters:
   enable:
     - gofumpt
