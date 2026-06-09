@@ -1,0 +1,37 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      - name: gofumpt (format check)
+        run: |
+          out=$(gofumpt -l .)
+          if [ -n "$out" ]; then echo "::error::gofumpt needed:"; echo "$out"; exit 1; fi
+      - name: golangci-lint
+        run: golangci-lint run --timeout=5m
+      - name: build
+        run: go build ./...
+      - name: build dagnats sidecar
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@main
+          echo "DAGNATS_BIN=$RUNNER_TEMP/bin/dagnats" >> "$GITHUB_ENV"
+      - name: test (race + coverage)
+        run: go test -race -coverprofile=coverage.out ./...

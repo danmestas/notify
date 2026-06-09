@@ -59,9 +59,18 @@ func StartSidecar(t *testing.T) (natsURL, httpURL string) {
 }
 
 // dagnatsBinary returns the path to the prebuilt dagnats binary, failing
-// clearly if it is missing.
+// clearly if it is missing. The DAGNATS_BIN env var overrides the default
+// location (set by CI, which builds the binary at a path that is not under
+// ~/projects/notify); otherwise the local development path is used.
 func dagnatsBinary(t *testing.T) string {
 	t.Helper()
+
+	if bin := os.Getenv("DAGNATS_BIN"); bin != "" {
+		if _, err := os.Stat(bin); err != nil {
+			t.Fatalf("dagnats binary not found at DAGNATS_BIN=%s: %v", bin, err)
+		}
+		return bin
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
