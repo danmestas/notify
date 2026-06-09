@@ -52,8 +52,12 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 		return runenv.InAppEnvelope{}, fmt.Errorf("rebuild: step %q not found in workflow %q", t.StepID, notif.WorkflowID)
 	}
 	var controls struct {
-		Subject string `json:"subject"`
-		Body    string `json:"body"`
+		Subject  string `json:"subject"`
+		Body     string `json:"body"`
+		Throttle struct {
+			Limit     int `json:"limit"`
+			WindowSec int `json:"windowSec"`
+		} `json:"throttle"`
 	}
 	if len(found.ControlValues) > 0 {
 		if err := json.Unmarshal(found.ControlValues, &controls); err != nil {
@@ -98,10 +102,12 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 		Subscriber:     subscriberJSON,
 		Payload:        notif.Payload,
 		Step: runenv.Step{
-			StepID:          t.StepID,
-			Channel:         found.Type,
-			SubjectTemplate: controls.Subject,
-			BodyTemplate:    controls.Body,
+			StepID:            t.StepID,
+			Channel:           found.Type,
+			SubjectTemplate:   controls.Subject,
+			BodyTemplate:      controls.Body,
+			ThrottleLimit:     controls.Throttle.Limit,
+			ThrottleWindowSec: controls.Throttle.WindowSec,
 		},
 	}, nil
 }

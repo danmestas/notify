@@ -33,11 +33,19 @@ type EventPublisher interface {
 	PublishDelivery(environmentID string, data []byte) error
 }
 
+// Throttler gates a send by a fixed-window rate limit keyed per
+// (env, subscriber, workflow). eventbus.Bus satisfies this structurally. A nil
+// throttler disables throttling.
+type Throttler interface {
+	ThrottleAllow(key string, limit int, window time.Duration) (bool, error)
+}
+
 // Handler persists rendered messages through the store.
 type Handler struct {
-	store *store.Store
-	prefs PreferenceChecker
-	pub   EventPublisher
+	store    *store.Store
+	prefs    PreferenceChecker
+	pub      EventPublisher
+	throttle Throttler
 }
 
 // New constructs a Handler backed by s.
@@ -58,6 +66,15 @@ func (h *Handler) WithPreferences(c PreferenceChecker) *Handler {
 // delivery-status event; a nil publisher disables live publishing.
 func (h *Handler) WithEventBus(p EventPublisher) *Handler {
 	h.pub = p
+	return h
+}
+
+// WithThrottle attaches an optional per-(env,subscriber,workflow) rate limiter
+// and returns the handler for chaining. When set, a step that configures a
+// throttle limit records a "throttled" message instead of sending once the
+// limit is exceeded; a nil throttler disables throttling.
+func (h *Handler) WithThrottle(t Throttler) *Handler {
+	h.throttle = t
 	return h
 }
 
@@ -98,6 +115,17 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	data := map[string]any{"subscriber": subMap, "payload": payloadMap}
 	subject := template.Render(env.Step.SubjectTemplate, data)
 	content := template.Render(env.Step.BodyTemplate, data)
+
+	// Optional throttle gate. When the step configures a limit and a throttler
+	// is attached, a send over the per-(env,subscriber,workflow) limit records a
+	// "throttled" message instead of sending.
+	if env.Step.ThrottleLimit > 0 && h.throttle != nil {
+		key := env.Scope.EnvID + ":" + env.SubscriberID + ":" + env.WorkflowID
+		allowed, _ := h.throttle.ThrottleAllow(key, env.Step.ThrottleLimit, time.Duration(env.Step.ThrottleWindowSec)*time.Second)
+		if !allowed {
+			return h.persistThrottled(ctx, env, t, subject, content)
+		}
+	}
 
 	// Optional preference filtering. A nil checker always sends. On a checker
 	// error we fail open (proceed to send), mirroring the reference default-enabled
@@ -166,6 +194,39 @@ func (h *Handler) persistSkipped(ctx context.Context, env runenv.InAppEnvelope, 
 		Content:        content,
 		Subject:        subject,
 		Status:         "skipped",
+		Seen:           false,
+		Read:           false,
+		Archived:       false,
+		TransactionID:  env.TransactionID,
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+	}
+	saved, err := h.store.Messages().Create(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, msg)
+	if err != nil {
+		saved = msg
+	}
+	out, merr := json.Marshal(saved)
+	h.publishDelivery(env.Scope.EnvID, out)
+	return out, merr
+}
+
+// persistThrottled records a status:"throttled" in-app message (the send
+// exceeded the step's per-(env,subscriber,workflow) rate limit) and returns its
+// JSON with a nil error. No send occurs; mirrors the persistSkipped pattern.
+func (h *Handler) persistThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, subject, content string) (json.RawMessage, error) {
+	msg := domain.Message{
+		ID:             store.NewULID(),
+		OrgID:          env.Scope.OrgID,
+		EnvID:          env.Scope.EnvID,
+		WorkflowID:     env.WorkflowID,
+		NotificationID: env.NotificationID,
+		RunID:          t.RunID,
+		StepID:         env.Step.StepID,
+		SubscriberID:   env.SubscriberID,
+		Channel:        env.Step.Channel,
+		ProviderID:     env.Step.ProviderID,
+		Content:        content,
+		Subject:        subject,
+		Status:         "throttled",
 		Seen:           false,
 		Read:           false,
 		Archived:       false,

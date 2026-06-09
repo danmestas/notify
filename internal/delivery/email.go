@@ -27,6 +27,7 @@ type EmailHandler struct {
 	resolver EmailResolver
 	prefs    PreferenceChecker
 	pub      EventPublisher
+	throttle Throttler
 }
 
 // NewEmail constructs an EmailHandler backed by s and resolver r.
@@ -46,6 +47,15 @@ func (h *EmailHandler) WithPreferences(c PreferenceChecker) *EmailHandler {
 // as a delivery-status event best-effort; a nil publisher disables it.
 func (h *EmailHandler) WithEventBus(p EventPublisher) *EmailHandler {
 	h.pub = p
+	return h
+}
+
+// WithThrottle attaches an optional per-(env,subscriber,workflow) rate limiter
+// and returns the handler for chaining. When set, a step that configures a
+// throttle limit records a "throttled" message instead of sending once the
+// limit is exceeded; a nil throttler disables throttling.
+func (h *EmailHandler) WithThrottle(t Throttler) *EmailHandler {
+	h.throttle = t
 	return h
 }
 
@@ -97,6 +107,17 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 	to, _ := subMap["email"].(string)
 
 	scope := domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
+
+	// Optional throttle gate. When the step configures a limit and a throttler
+	// is attached, a send over the per-(env,subscriber,workflow) limit records a
+	// "throttled" message instead of sending.
+	if env.Step.ThrottleLimit > 0 && h.throttle != nil {
+		key := env.Scope.EnvID + ":" + env.SubscriberID + ":" + env.WorkflowID
+		allowed, _ := h.throttle.ThrottleAllow(key, env.Step.ThrottleLimit, time.Duration(env.Step.ThrottleWindowSec)*time.Second)
+		if !allowed {
+			return h.persistEmailThrottled(ctx, env, t, scope, subject, content)
+		}
+	}
 
 	// Optional preference filtering. A nil checker always sends. On a checker
 	// error we fail open (proceed to send), mirroring the reference default-enabled
@@ -172,6 +193,39 @@ func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InApp
 		Content:        content,
 		Subject:        subject,
 		Status:         "skipped",
+		Seen:           false,
+		Read:           false,
+		Archived:       false,
+		TransactionID:  env.TransactionID,
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+	}
+	saved, err := h.store.Messages().Create(ctx, scope, msg)
+	if err != nil {
+		saved = msg
+	}
+	out, merr := json.Marshal(saved)
+	h.publishDelivery(env.Scope.EnvID, out)
+	return out, merr
+}
+
+// persistEmailThrottled records a status:"throttled" email message (the send
+// exceeded the step's per-(env,subscriber,workflow) rate limit) and returns its
+// JSON with a nil error. No email is sent; mirrors the persistEmailSkipped pattern.
+func (h *EmailHandler) persistEmailThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	msg := domain.Message{
+		ID:             store.NewULID(),
+		OrgID:          env.Scope.OrgID,
+		EnvID:          env.Scope.EnvID,
+		WorkflowID:     env.WorkflowID,
+		NotificationID: env.NotificationID,
+		RunID:          t.RunID,
+		StepID:         env.Step.StepID,
+		SubscriberID:   env.SubscriberID,
+		Channel:        env.Step.Channel,
+		ProviderID:     "smtp",
+		Content:        content,
+		Subject:        subject,
+		Status:         "throttled",
 		Seen:           false,
 		Read:           false,
 		Archived:       false,

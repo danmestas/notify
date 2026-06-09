@@ -76,8 +76,12 @@ type wireSubscriber struct {
 // stepControls is the {subject, body} ControlValues shape notify reads from a
 // workflow step, regardless of channel.
 type stepControls struct {
-	Subject string `json:"subject"`
-	Body    string `json:"body"`
+	Subject  string `json:"subject"`
+	Body     string `json:"body"`
+	Throttle struct {
+		Limit     int `json:"limit"`
+		WindowSec int `json:"windowSec"`
+	} `json:"throttle"`
 }
 
 // Ingest processes one trigger end-to-end. On an unknown workflow it returns a
@@ -158,11 +162,13 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 		Subscriber:     subscriberJSON,
 		Payload:        req.Payload,
 		Step: runenv.Step{
-			StepID:          step.StepID,
-			Channel:         step.Type,
-			ProviderID:      "",
-			SubjectTemplate: controls.Subject,
-			BodyTemplate:    controls.Body,
+			StepID:            step.StepID,
+			Channel:           step.Type,
+			ProviderID:        "",
+			SubjectTemplate:   controls.Subject,
+			BodyTemplate:      controls.Body,
+			ThrottleLimit:     controls.Throttle.Limit,
+			ThrottleWindowSec: controls.Throttle.WindowSec,
 		},
 	}
 	envelopeJSON, err := json.Marshal(envelope)

@@ -124,9 +124,9 @@ func runServe(args []string) error {
 	defer func() { _ = bus.Close() }()
 
 	prefs := preferences.New(st)
-	eng.Handle("send.in_app", delivery.New(st).WithPreferences(prefs).WithEventBus(bus).HandleInApp)
+	eng.Handle("send.in_app", delivery.New(st).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).HandleInApp)
 	conn := connectivity.New(st, mk)
-	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).HandleEmail)
+	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).WithThrottle(bus).HandleEmail)
 	eng.StartWorkers(ctx)
 
 	whStop, err := webhooksout.New(bus, st).Start(ctx)
