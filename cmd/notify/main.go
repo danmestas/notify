@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
@@ -143,7 +144,14 @@ func runServe(args []string) error {
 	rt := realtime.New(bus)
 	inb := inbound.New(trg)
 
-	handler := httpapi.New(id, aud, trg, inbox, rt, inb)
+	an := analytics.New(st, bus)
+	anStop, err := an.Start(ctx)
+	if err != nil {
+		return fmt.Errorf("analytics.Start: %w", err)
+	}
+	defer func() { _ = anStop() }()
+
+	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an)
 	srv := &http.Server{Addr: *addr, Handler: handler}
 
 	go func() {

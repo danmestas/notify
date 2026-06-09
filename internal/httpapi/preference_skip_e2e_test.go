@@ -157,7 +157,7 @@ func newPrefHarness(t *testing.T) (srv *httptest.Server, scope domain.Scope, pre
 		t.Fatalf("authoring.Publish: %v", err)
 	}
 
-	srv = httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, nil))
+	srv = httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, nil, nil))
 	t.Cleanup(srv.Close)
 
 	authHeader = "ApiKey " + key

@@ -88,7 +88,7 @@ func TestInbound_FiresWorkflow(t *testing.T) {
 		t.Fatalf("authoring.Publish: %v", err)
 	}
 
-	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, inboundSvc))
+	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, inboundSvc, nil))
 	defer srv.Close()
 
 	authHeader := "ApiKey " + key
