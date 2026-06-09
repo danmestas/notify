@@ -212,3 +212,106 @@ func TestHandleInApp_SendsWhenEnabled(t *testing.T) {
 		t.Errorf("Status = %q, want %q", msgs[0].Status, "sent")
 	}
 }
+
+// stubPublisher records each PublishInbox call for assertions.
+type stubPublisher struct {
+	calls []publishCall
+	err   error
+}
+
+type publishCall struct {
+	envID, subID string
+	data         []byte
+}
+
+func (p *stubPublisher) PublishInbox(environmentID, subscriberID string, data []byte) error {
+	p.calls = append(p.calls, publishCall{envID: environmentID, subID: subscriberID, data: data})
+	return p.err
+}
+
+func TestHandleInApp_PublishesInboxOnSent(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	pub := &stubPublisher{}
+	h := New(s).WithEventBus(pub)
+
+	input, err := json.Marshal(inAppEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	if len(pub.calls) != 1 {
+		t.Fatalf("expected exactly one PublishInbox call, got %d", len(pub.calls))
+	}
+	c := pub.calls[0]
+	if c.envID != "env_1" {
+		t.Errorf("environmentID = %q, want %q", c.envID, "env_1")
+	}
+	if c.subID != "user_123" {
+		t.Errorf("subscriberID = %q, want %q", c.subID, "user_123")
+	}
+	var m domain.Message
+	if err := json.Unmarshal(c.data, &m); err != nil {
+		t.Fatalf("unmarshal published data: %v", err)
+	}
+	if m.Status != "sent" {
+		t.Errorf("published Status = %q, want %q", m.Status, "sent")
+	}
+	if m.Subject != "Hi Ada" {
+		t.Errorf("published Subject = %q, want %q", m.Subject, "Hi Ada")
+	}
+	if m.Content != "You have 3 items" {
+		t.Errorf("published Content = %q, want %q", m.Content, "You have 3 items")
+	}
+}
+
+func TestHandleInApp_NoPublishWhenSkipped(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	pub := &stubPublisher{}
+	h := New(s).WithPreferences(stubChecker{enabled: false}).WithEventBus(pub)
+
+	input, err := json.Marshal(inAppEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "in_app")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Status != "skipped" {
+		t.Fatalf("expected one skipped message, got %+v", msgs)
+	}
+	if len(pub.calls) != 0 {
+		t.Errorf("expected zero PublishInbox calls on skip, got %d", len(pub.calls))
+	}
+}
+
+func TestHandleInApp_NilPublisher_NoPanic(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	h := New(s)
+
+	input, err := json.Marshal(inAppEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "in_app")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Status != "sent" {
+		t.Fatalf("expected one sent message, got %+v", msgs)
+	}
+}

@@ -79,7 +79,7 @@ func TestInAppParity_EndToEnd(t *testing.T) {
 		t.Fatalf("authoring.Publish: %v", err)
 	}
 
-	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox))
+	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil))
 	defer srv.Close()
 
 	authHeader := "ApiKey " + key

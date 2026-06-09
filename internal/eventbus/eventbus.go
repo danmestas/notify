@@ -72,3 +72,37 @@ func (b *Bus) Close() error {
 	b.nc.Close()
 	return nil
 }
+
+// inboxSubject builds the core-NATS subject for a subscriber's live inbox
+// events: notify.inbox.<environmentID>.<subscriberID>.
+func inboxSubject(environmentID, subscriberID string) string {
+	return "notify.inbox." + environmentID + "." + subscriberID
+}
+
+// PublishInbox publishes a live inbox event for (environmentID, subscriberID)
+// over core NATS (ephemeral fan-out, not JetStream).
+func (b *Bus) PublishInbox(environmentID, subscriberID string, data []byte) error {
+	if environmentID == "" || subscriberID == "" {
+		return fmt.Errorf("eventbus: PublishInbox: environmentID and subscriberID must be non-empty")
+	}
+	if err := b.nc.Publish(inboxSubject(environmentID, subscriberID), data); err != nil {
+		return fmt.Errorf("eventbus: PublishInbox: %w", err)
+	}
+	return nil
+}
+
+// SubscribeInbox delivers each inbox event for (environmentID, subscriberID)
+// to handler until the returned unsubscribe func is called. Uses core NATS,
+// so the subscription is ephemeral (no replay).
+func (b *Bus) SubscribeInbox(environmentID, subscriberID string, handler func([]byte)) (unsubscribe func() error, err error) {
+	if environmentID == "" || subscriberID == "" {
+		return nil, fmt.Errorf("eventbus: SubscribeInbox: environmentID and subscriberID must be non-empty")
+	}
+	sub, err := b.nc.Subscribe(inboxSubject(environmentID, subscriberID), func(m *nats.Msg) {
+		handler(m.Data)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("eventbus: SubscribeInbox: %w", err)
+	}
+	return sub.Unsubscribe, nil
+}

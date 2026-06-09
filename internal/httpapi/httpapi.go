@@ -13,18 +13,22 @@ import (
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inboxapi"
+	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/trigger"
 )
 
 // New builds the notify HTTP handler. All routes are grouped behind
 // id.Middleware, so each handler resolves its Scope via identity.ScopeFrom.
-func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service) http.Handler {
+func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway) http.Handler {
 	r := chi.NewRouter()
 	r.Group(func(pr chi.Router) {
 		pr.Use(id.Middleware)
 		pr.Post("/v1/subscribers", postSubscriber(aud))
 		pr.Post("/v1/events/trigger", postTrigger(trg))
 		inbox.Routes(pr)
+		if rt != nil {
+			rt.Routes(pr)
+		}
 	})
 	return r
 }

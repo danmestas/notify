@@ -24,10 +24,18 @@ type PreferenceChecker interface {
 	ChannelEnabled(ctx context.Context, scope domain.Scope, subscriberID, workflowID, channel string) (bool, error)
 }
 
+// InboxPublisher publishes a live inbox event for a persisted message.
+// eventbus.Bus satisfies this structurally (delivery does not import eventbus).
+// A nil publisher means "no live publish".
+type InboxPublisher interface {
+	PublishInbox(environmentID, subscriberID string, data []byte) error
+}
+
 // Handler persists rendered messages through the store.
 type Handler struct {
 	store *store.Store
 	prefs PreferenceChecker
+	pub   InboxPublisher
 }
 
 // New constructs a Handler backed by s.
@@ -39,6 +47,14 @@ func New(s *store.Store) *Handler {
 // the handler for chaining. When set, a disabled channel skips the send.
 func (h *Handler) WithPreferences(c PreferenceChecker) *Handler {
 	h.prefs = c
+	return h
+}
+
+// WithEventBus attaches an optional live inbox publisher and returns the
+// handler for chaining. When set, a successfully sent in-app message is
+// published best-effort; a nil publisher disables live publishing.
+func (h *Handler) WithEventBus(p InboxPublisher) *Handler {
+	h.pub = p
 	return h
 }
 
@@ -107,7 +123,16 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	if err != nil {
 		return h.persistError(ctx, env, t, err)
 	}
-	return json.Marshal(saved)
+	out, err := json.Marshal(saved)
+	if err != nil {
+		return out, err
+	}
+	// Best-effort live inbox publish for the sent message. A publish failure
+	// must not fail the task — the message is already persisted.
+	if h.pub != nil {
+		_ = h.pub.PublishInbox(env.Scope.EnvID, env.SubscriberID, out)
+	}
+	return out, nil
 }
 
 // persistSkipped records a status:"skipped" in-app message (the channel is
