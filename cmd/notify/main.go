@@ -23,6 +23,7 @@ import (
 	"github.com/danmestas/notify/internal/httpapi"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inboxapi"
+	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/version"
@@ -112,9 +113,10 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = eng.Stop() }()
 
-	eng.Handle("send.in_app", delivery.New(st).HandleInApp)
+	prefs := preferences.New(st)
+	eng.Handle("send.in_app", delivery.New(st).WithPreferences(prefs).HandleInApp)
 	conn := connectivity.New(st, mk)
-	eng.Handle("send.email", delivery.NewEmail(st, conn).HandleEmail)
+	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).HandleEmail)
 	eng.StartWorkers(ctx)
 
 	id := identity.New(st, mk)

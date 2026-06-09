@@ -129,3 +129,86 @@ func TestHandleInApp_MalformedEnvelope(t *testing.T) {
 		t.Errorf("persisted Status = %q, want %q", msgs[0].Status, "error")
 	}
 }
+
+// stubChecker is a fixed-answer PreferenceChecker for the disabled/enabled cases.
+type stubChecker struct {
+	enabled bool
+	err     error
+}
+
+func (c stubChecker) ChannelEnabled(_ context.Context, _ domain.Scope, _, _, _ string) (bool, error) {
+	return c.enabled, c.err
+}
+
+func inAppEnvelope() runenv.InAppEnvelope {
+	return runenv.InAppEnvelope{
+		Scope:          runenv.Scope{OrgID: "org_1", EnvID: "env_1"},
+		TransactionID:  "txn_abc",
+		WorkflowID:     "wf_1",
+		NotificationID: "ntf_1",
+		SubscriberID:   "user_123",
+		Subscriber:     json.RawMessage(`{"subscriberId":"user_123","firstName":"Ada"}`),
+		Payload:        json.RawMessage(`{"itemCount":3}`),
+		Step: runenv.Step{
+			StepID:          "step_1",
+			Channel:         "in_app",
+			SubjectTemplate: "Hi {{subscriber.firstName}}",
+			BodyTemplate:    "You have {{payload.itemCount}} items",
+		},
+	}
+}
+
+func TestHandleInApp_SkipsWhenChannelDisabled(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	h := New(s).WithPreferences(stubChecker{enabled: false})
+
+	input, err := json.Marshal(inAppEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "in_app")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	if msgs[0].Status != "skipped" {
+		t.Errorf("Status = %q, want %q", msgs[0].Status, "skipped")
+	}
+	for _, m := range msgs {
+		if m.Status == "sent" {
+			t.Errorf("unexpected sent message persisted: %+v", m)
+		}
+	}
+}
+
+func TestHandleInApp_SendsWhenEnabled(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	h := New(s).WithPreferences(stubChecker{enabled: true})
+
+	input, err := json.Marshal(inAppEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "in_app")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	if msgs[0].Status != "sent" {
+		t.Errorf("Status = %q, want %q", msgs[0].Status, "sent")
+	}
+}

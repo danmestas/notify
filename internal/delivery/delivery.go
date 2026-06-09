@@ -17,14 +17,29 @@ import (
 	"github.com/danmestas/notify/internal/store"
 )
 
+// PreferenceChecker reports whether a channel is enabled for a subscriber/workflow.
+// preferences.Service satisfies this structurally (delivery does not import
+// preferences). A nil checker means "always send" (no preference filtering).
+type PreferenceChecker interface {
+	ChannelEnabled(ctx context.Context, scope domain.Scope, subscriberID, workflowID, channel string) (bool, error)
+}
+
 // Handler persists rendered messages through the store.
 type Handler struct {
 	store *store.Store
+	prefs PreferenceChecker
 }
 
 // New constructs a Handler backed by s.
 func New(s *store.Store) *Handler {
 	return &Handler{store: s}
+}
+
+// WithPreferences attaches an optional channel-preference checker and returns
+// the handler for chaining. When set, a disabled channel skips the send.
+func (h *Handler) WithPreferences(c PreferenceChecker) *Handler {
+	h.prefs = c
+	return h
 }
 
 // HandleInApp is registered via engine.Handle("send.in_app", h.HandleInApp).
@@ -57,6 +72,16 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	subject := template.Render(env.Step.SubjectTemplate, data)
 	content := template.Render(env.Step.BodyTemplate, data)
 
+	// Optional preference filtering. A nil checker always sends. On a checker
+	// error we fail open (proceed to send), mirroring the reference default-enabled
+	// behaviour rather than dropping the notification on a transient lookup fault.
+	if h.prefs != nil {
+		enabled, perr := h.prefs.ChannelEnabled(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, env.SubscriberID, env.WorkflowID, env.Step.Channel)
+		if perr == nil && !enabled {
+			return h.persistSkipped(ctx, env, t, subject, content)
+		}
+	}
+
 	msg := domain.Message{
 		ID:             store.NewULID(),
 		OrgID:          env.Scope.OrgID,
@@ -83,6 +108,36 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 		return h.persistError(ctx, env, t, err)
 	}
 	return json.Marshal(saved)
+}
+
+// persistSkipped records a status:"skipped" in-app message (the channel is
+// disabled by subscriber preference) and returns its JSON with a nil error.
+// No send occurs; this mirrors the existing skipped/failed-message pattern.
+func (h *Handler) persistSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, subject, content string) (json.RawMessage, error) {
+	msg := domain.Message{
+		ID:             store.NewULID(),
+		OrgID:          env.Scope.OrgID,
+		EnvID:          env.Scope.EnvID,
+		WorkflowID:     env.WorkflowID,
+		NotificationID: env.NotificationID,
+		RunID:          t.RunID,
+		StepID:         env.Step.StepID,
+		SubscriberID:   env.SubscriberID,
+		Channel:        env.Step.Channel,
+		ProviderID:     env.Step.ProviderID,
+		Content:        content,
+		Subject:        subject,
+		Status:         "skipped",
+		Seen:           false,
+		Read:           false,
+		Archived:       false,
+		TransactionID:  env.TransactionID,
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+	}
+	if saved, err := h.store.Messages().Create(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, msg); err == nil {
+		return json.Marshal(saved)
+	}
+	return json.Marshal(msg)
 }
 
 // persistError records a status:"error" message carrying cause and returns its

@@ -125,3 +125,39 @@ func TestHandleEmail_ResolverError(t *testing.T) {
 		t.Errorf("Status = %q, want %q", msgs[0].Status, "error")
 	}
 }
+
+func TestHandleEmail_SkipsWhenChannelDisabled(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	cap := providers.NewCapture()
+	h := NewEmail(s, stubResolver{provider: cap, from: "noreply@acme.io"}).
+		WithPreferences(stubChecker{enabled: false})
+
+	input, err := json.Marshal(emailEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleEmail(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleEmail: %v", err)
+	}
+
+	if sent := cap.Sent(); len(sent) != 0 {
+		t.Fatalf("expected zero captured emails, got %d", len(sent))
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_1", "email")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	if msgs[0].Status != "skipped" {
+		t.Errorf("Status = %q, want %q", msgs[0].Status, "skipped")
+	}
+	for _, m := range msgs {
+		if m.Status == "sent" {
+			t.Errorf("unexpected sent message persisted: %+v", m)
+		}
+	}
+}
