@@ -24,6 +24,14 @@ type Environment struct {
 	ParentID   string `db:"parent_id"`
 }
 
+type WebhookEndpoint struct {
+	ID     string `db:"id"`
+	OrgID  string `db:"org_id"`
+	EnvID  string `db:"environment_id"`
+	URL    string `db:"url"`
+	Active bool   `db:"active"`
+}
+
 type APIKey struct {
 	Hash   string `db:"hash"`
 	EnvID  string `db:"environment_id"`

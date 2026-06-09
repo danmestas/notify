@@ -213,10 +213,11 @@ func TestHandleInApp_SendsWhenEnabled(t *testing.T) {
 	}
 }
 
-// stubPublisher records each PublishInbox call for assertions.
+// stubPublisher records each PublishInbox and PublishDelivery call for assertions.
 type stubPublisher struct {
-	calls []publishCall
-	err   error
+	calls         []publishCall
+	deliveryCalls []deliveryCall
+	err           error
 }
 
 type publishCall struct {
@@ -224,8 +225,18 @@ type publishCall struct {
 	data         []byte
 }
 
+type deliveryCall struct {
+	envID string
+	data  []byte
+}
+
 func (p *stubPublisher) PublishInbox(environmentID, subscriberID string, data []byte) error {
 	p.calls = append(p.calls, publishCall{envID: environmentID, subID: subscriberID, data: data})
+	return p.err
+}
+
+func (p *stubPublisher) PublishDelivery(environmentID string, data []byte) error {
+	p.deliveryCalls = append(p.deliveryCalls, deliveryCall{envID: environmentID, data: data})
 	return p.err
 }
 
@@ -313,5 +324,68 @@ func TestHandleInApp_NilPublisher_NoPanic(t *testing.T) {
 	}
 	if len(msgs) != 1 || msgs[0].Status != "sent" {
 		t.Fatalf("expected one sent message, got %+v", msgs)
+	}
+}
+
+func TestHandleInApp_PublishesDeliveryOnSent(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	pub := &stubPublisher{}
+	h := New(s).WithEventBus(pub)
+
+	input, err := json.Marshal(inAppEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	if len(pub.deliveryCalls) != 1 {
+		t.Fatalf("expected exactly one PublishDelivery call, got %d", len(pub.deliveryCalls))
+	}
+	c := pub.deliveryCalls[0]
+	if c.envID != "env_1" {
+		t.Errorf("delivery environmentID = %q, want %q", c.envID, "env_1")
+	}
+	var m domain.Message
+	if err := json.Unmarshal(c.data, &m); err != nil {
+		t.Fatalf("unmarshal delivery data: %v", err)
+	}
+	if m.Status != "sent" {
+		t.Errorf("delivery Status = %q, want %q", m.Status, "sent")
+	}
+	if m.Channel != "in_app" {
+		t.Errorf("delivery Channel = %q, want %q", m.Channel, "in_app")
+	}
+}
+
+func TestHandleInApp_PublishesDeliveryOnSkipped(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	pub := &stubPublisher{}
+	h := New(s).WithPreferences(stubChecker{enabled: false}).WithEventBus(pub)
+
+	input, err := json.Marshal(inAppEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	// No inbox publish on skip, but a delivery-status event still fires.
+	if len(pub.calls) != 0 {
+		t.Errorf("expected zero PublishInbox calls on skip, got %d", len(pub.calls))
+	}
+	if len(pub.deliveryCalls) != 1 {
+		t.Fatalf("expected exactly one PublishDelivery call on skip, got %d", len(pub.deliveryCalls))
+	}
+	var m domain.Message
+	if err := json.Unmarshal(pub.deliveryCalls[0].data, &m); err != nil {
+		t.Fatalf("unmarshal delivery data: %v", err)
+	}
+	if m.Status != "skipped" {
+		t.Errorf("delivery Status = %q, want %q", m.Status, "skipped")
 	}
 }

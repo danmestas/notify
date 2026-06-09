@@ -106,3 +106,47 @@ func (b *Bus) SubscribeInbox(environmentID, subscriberID string, handler func([]
 	}
 	return sub.Unsubscribe, nil
 }
+
+// deliverySubject builds the core-NATS subject for an environment's
+// delivery-status events: notify.delivery.<environmentID>.
+func deliverySubject(environmentID string) string {
+	return "notify.delivery." + environmentID
+}
+
+// PublishDelivery publishes a delivery-status event for an environment.
+func (b *Bus) PublishDelivery(environmentID string, data []byte) error {
+	if environmentID == "" {
+		return fmt.Errorf("eventbus: PublishDelivery: environmentID must be non-empty")
+	}
+	if err := b.nc.Publish(deliverySubject(environmentID), data); err != nil {
+		return fmt.Errorf("eventbus: PublishDelivery: %w", err)
+	}
+	return nil
+}
+
+// SubscribeDelivery delivers each delivery-status event for the environment to
+// handler until the returned unsubscribe func is called (core NATS, ephemeral).
+func (b *Bus) SubscribeDelivery(environmentID string, handler func([]byte)) (unsubscribe func() error, err error) {
+	if environmentID == "" {
+		return nil, fmt.Errorf("eventbus: SubscribeDelivery: environmentID must be non-empty")
+	}
+	sub, err := b.nc.Subscribe(deliverySubject(environmentID), func(m *nats.Msg) {
+		handler(m.Data)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("eventbus: SubscribeDelivery: %w", err)
+	}
+	return sub.Unsubscribe, nil
+}
+
+// SubscribeAllDelivery delivers EVERY environment's delivery-status events to
+// handler (subject notify.delivery.>). Used by the outbound-webhook consumer.
+func (b *Bus) SubscribeAllDelivery(handler func([]byte)) (unsubscribe func() error, err error) {
+	sub, err := b.nc.Subscribe("notify.delivery.>", func(m *nats.Msg) {
+		handler(m.Data)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("eventbus: SubscribeAllDelivery: %w", err)
+	}
+	return sub.Unsubscribe, nil
+}

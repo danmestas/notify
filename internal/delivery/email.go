@@ -26,6 +26,7 @@ type EmailHandler struct {
 	store    *store.Store
 	resolver EmailResolver
 	prefs    PreferenceChecker
+	pub      EventPublisher
 }
 
 // NewEmail constructs an EmailHandler backed by s and resolver r.
@@ -38,6 +39,23 @@ func NewEmail(s *store.Store, r EmailResolver) *EmailHandler {
 func (h *EmailHandler) WithPreferences(c PreferenceChecker) *EmailHandler {
 	h.prefs = c
 	return h
+}
+
+// WithEventBus attaches an optional live event publisher and returns the
+// handler for chaining. When set, every terminal email message is published
+// as a delivery-status event best-effort; a nil publisher disables it.
+func (h *EmailHandler) WithEventBus(p EventPublisher) *EmailHandler {
+	h.pub = p
+	return h
+}
+
+// publishDelivery emits a best-effort delivery-status event carrying the
+// message JSON. A nil publisher or a publish failure is ignored — it must
+// never fail the task.
+func (h *EmailHandler) publishDelivery(envID string, data []byte) {
+	if h.pub != nil {
+		_ = h.pub.PublishDelivery(envID, data)
+	}
 }
 
 // HandleEmail is registered via engine.Handle("send.email", h.HandleEmail).
@@ -120,7 +138,12 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 	if err != nil {
 		return h.persistEmailError(ctx, env, t, err)
 	}
-	return json.Marshal(saved)
+	out, merr := json.Marshal(saved)
+	if merr != nil {
+		return out, merr
+	}
+	h.publishDelivery(env.Scope.EnvID, out)
+	return out, nil
 }
 
 // persistEmailSkipped records a status:"skipped" email message (the channel is
@@ -147,10 +170,13 @@ func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InApp
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
-	if saved, err := h.store.Messages().Create(ctx, scope, msg); err == nil {
-		return json.Marshal(saved)
+	saved, err := h.store.Messages().Create(ctx, scope, msg)
+	if err != nil {
+		saved = msg
 	}
-	return json.Marshal(msg)
+	out, merr := json.Marshal(saved)
+	h.publishDelivery(env.Scope.EnvID, out)
+	return out, merr
 }
 
 // persistEmailError records a status:"error" email message carrying cause and
@@ -173,8 +199,11 @@ func (h *EmailHandler) persistEmailError(ctx context.Context, env runenv.InAppEn
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
-	if saved, err := h.store.Messages().Create(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, msg); err == nil {
-		return json.Marshal(saved)
+	saved, err := h.store.Messages().Create(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, msg)
+	if err != nil {
+		saved = msg
 	}
-	return json.Marshal(msg)
+	out, merr := json.Marshal(saved)
+	h.publishDelivery(env.Scope.EnvID, out)
+	return out, merr
 }

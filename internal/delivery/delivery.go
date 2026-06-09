@@ -24,18 +24,20 @@ type PreferenceChecker interface {
 	ChannelEnabled(ctx context.Context, scope domain.Scope, subscriberID, workflowID, channel string) (bool, error)
 }
 
-// InboxPublisher publishes a live inbox event for a persisted message.
-// eventbus.Bus satisfies this structurally (delivery does not import eventbus).
-// A nil publisher means "no live publish".
-type InboxPublisher interface {
+// EventPublisher publishes live events for a persisted message: a per-subscriber
+// inbox event and an environment-wide delivery-status event. eventbus.Bus
+// satisfies this structurally (delivery does not import eventbus). A nil
+// publisher means "no live publish".
+type EventPublisher interface {
 	PublishInbox(environmentID, subscriberID string, data []byte) error
+	PublishDelivery(environmentID string, data []byte) error
 }
 
 // Handler persists rendered messages through the store.
 type Handler struct {
 	store *store.Store
 	prefs PreferenceChecker
-	pub   InboxPublisher
+	pub   EventPublisher
 }
 
 // New constructs a Handler backed by s.
@@ -50,10 +52,11 @@ func (h *Handler) WithPreferences(c PreferenceChecker) *Handler {
 	return h
 }
 
-// WithEventBus attaches an optional live inbox publisher and returns the
-// handler for chaining. When set, a successfully sent in-app message is
-// published best-effort; a nil publisher disables live publishing.
-func (h *Handler) WithEventBus(p InboxPublisher) *Handler {
+// WithEventBus attaches an optional live event publisher and returns the
+// handler for chaining. When set, a sent in-app message is published to the
+// inbox best-effort and every terminal message is published as a
+// delivery-status event; a nil publisher disables live publishing.
+func (h *Handler) WithEventBus(p EventPublisher) *Handler {
 	h.pub = p
 	return h
 }
@@ -127,10 +130,12 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	if err != nil {
 		return out, err
 	}
-	// Best-effort live inbox publish for the sent message. A publish failure
-	// must not fail the task — the message is already persisted.
+	// Best-effort live publishes for the sent message. A publish failure must
+	// not fail the task — the message is already persisted. The inbox event is
+	// per-subscriber; the delivery-status event drives outbound webhooks.
 	if h.pub != nil {
 		_ = h.pub.PublishInbox(env.Scope.EnvID, env.SubscriberID, out)
+		_ = h.pub.PublishDelivery(env.Scope.EnvID, out)
 	}
 	return out, nil
 }
@@ -159,10 +164,13 @@ func (h *Handler) persistSkipped(ctx context.Context, env runenv.InAppEnvelope, 
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
-	if saved, err := h.store.Messages().Create(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, msg); err == nil {
-		return json.Marshal(saved)
+	saved, err := h.store.Messages().Create(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, msg)
+	if err != nil {
+		saved = msg
 	}
-	return json.Marshal(msg)
+	out, merr := json.Marshal(saved)
+	h.publishDelivery(env.Scope.EnvID, out)
+	return out, merr
 }
 
 // persistError records a status:"error" message carrying cause and returns its
@@ -185,8 +193,20 @@ func (h *Handler) persistError(ctx context.Context, env runenv.InAppEnvelope, t 
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
-	if saved, err := h.store.Messages().Create(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, msg); err == nil {
-		return json.Marshal(saved)
+	saved, err := h.store.Messages().Create(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, msg)
+	if err != nil {
+		saved = msg
 	}
-	return json.Marshal(msg)
+	out, merr := json.Marshal(saved)
+	h.publishDelivery(env.Scope.EnvID, out)
+	return out, merr
+}
+
+// publishDelivery emits a best-effort delivery-status event carrying the
+// message JSON. A nil publisher or a publish failure is ignored — it must
+// never fail the task.
+func (h *Handler) publishDelivery(envID string, data []byte) {
+	if h.pub != nil {
+		_ = h.pub.PublishDelivery(envID, data)
+	}
 }

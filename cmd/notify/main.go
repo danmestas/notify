@@ -29,6 +29,7 @@ import (
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/version"
+	"github.com/danmestas/notify/internal/webhooksout"
 )
 
 func main() {
@@ -126,6 +127,12 @@ func runServe(args []string) error {
 	conn := connectivity.New(st, mk)
 	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).HandleEmail)
 	eng.StartWorkers(ctx)
+
+	whStop, err := webhooksout.New(bus, st).Start(ctx)
+	if err != nil {
+		return fmt.Errorf("webhooksout.Start: %w", err)
+	}
+	defer func() { _ = whStop() }()
 
 	id := identity.New(st, mk)
 	aud := audience.New(st)
