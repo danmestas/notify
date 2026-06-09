@@ -73,7 +73,7 @@ func Compile(wf domain.Workflow) (engine.WorkflowDef, error) {
 	}
 	for i, step := range steps {
 		var sd engine.StepDef
-		if step.Type == "delay" {
+		if step.Type == "delay" || step.Type == "digest" {
 			cfg, err := delayConfig(step.ControlValues)
 			if err != nil {
 				return engine.WorkflowDef{}, fmt.Errorf("authoring: step %q: %w", step.StepID, err)

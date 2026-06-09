@@ -108,6 +108,41 @@ func TestCompile_DelayThenInApp(t *testing.T) {
 	}
 }
 
+func TestCompile_DigestThenInApp(t *testing.T) {
+	wf := domain.Workflow{
+		EnvID:             "env_1",
+		TriggerIdentifier: "digested",
+		Steps: mustSteps(t, []domain.Step{
+			{StepID: "dg", Type: "digest", ControlValues: json.RawMessage(`{"amount":1,"unit":"seconds"}`)},
+			{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"subject":"Digest","body":"You have {{digest.count}} new items"}`)},
+		}),
+	}
+	def, err := authoring.Compile(wf)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(def.Steps) != 2 {
+		t.Fatalf("len(Steps) = %d, want 2", len(def.Steps))
+	}
+	d := def.Steps[0]
+	if d.ID != "dg" || d.Type != "sleep" || d.Task != "" {
+		t.Fatalf("digest step = %+v, want {ID:dg Type:sleep Task:\"\"}", d)
+	}
+	if string(d.Config) != `{"duration":1000000000}` {
+		t.Fatalf("sleep config = %s, want {\"duration\":1000000000}", d.Config)
+	}
+	if len(d.DependsOn) != 0 {
+		t.Fatalf("root sleep DependsOn = %v, want empty", d.DependsOn)
+	}
+	c := def.Steps[1]
+	if c.ID != "S1" || c.Task != "send.in_app" || c.Type != "normal" {
+		t.Fatalf("channel step = %+v, want {ID:S1 Task:send.in_app Type:normal}", c)
+	}
+	if len(c.DependsOn) != 1 || c.DependsOn[0] != "dg" {
+		t.Fatalf("channel DependsOn = %v, want [dg]", c.DependsOn)
+	}
+}
+
 func TestCompile_DelayUnits(t *testing.T) {
 	wf := domain.Workflow{
 		EnvID:             "env_1",

@@ -124,9 +124,9 @@ func runServe(args []string) error {
 	defer func() { _ = bus.Close() }()
 
 	prefs := preferences.New(st)
-	eng.Handle("send.in_app", delivery.New(st).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).HandleInApp)
+	eng.Handle("send.in_app", delivery.New(st).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandleInApp)
 	conn := connectivity.New(st, mk)
-	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).WithThrottle(bus).HandleEmail)
+	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).WithThrottle(bus).WithDigester(bus).HandleEmail)
 	eng.StartWorkers(ctx)
 
 	whStop, err := webhooksout.New(bus, st).Start(ctx)
@@ -138,7 +138,7 @@ func runServe(args []string) error {
 	id := identity.New(st, mk)
 	aud := audience.New(st)
 	_ = authoring.New(st, eng)
-	trg := trigger.New(aud, st, eng)
+	trg := trigger.New(aud, st, eng).WithDigester(bus)
 	inbox := inboxapi.New(st)
 	rt := realtime.New(bus)
 	inb := inbound.New(trg)

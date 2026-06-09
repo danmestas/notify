@@ -16,29 +16,29 @@ import (
 // TaskPayload.Input is empty — e.g. a channel step that DependsOn a delay/sleep
 // step, whose nil output leaves the downstream step's input empty. The
 // Input-present path never calls this.
-func (h *Handler) rebuildEnvelope(ctx context.Context, t engine.TaskPayload) (runenv.InAppEnvelope, error) {
+func (h *Handler) rebuildEnvelope(ctx context.Context, t engine.TaskPayload) (runenv.InAppEnvelope, string, error) {
 	return rebuildEnvelope(ctx, h.store, t)
 }
 
 // rebuildEnvelope is the shared self-source logic backing both Handler and
 // EmailHandler (each holds a *store.Store). It resolves the notification by run
 // id, loads the authored step config and subscriber, and rebuilds the envelope.
-func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) (runenv.InAppEnvelope, error) {
+func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) (runenv.InAppEnvelope, string, error) {
 	notif, err := s.Notifications().GetByRunID(ctx, t.RunID)
 	if err != nil {
-		return runenv.InAppEnvelope{}, fmt.Errorf("rebuild: notification by run %q: %w", t.RunID, err)
+		return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: notification by run %q: %w", t.RunID, err)
 	}
 	scope := domain.Scope{OrgID: notif.OrgID, EnvID: notif.EnvID}
 
 	wf, err := s.Workflows().GetByID(ctx, scope, notif.WorkflowID)
 	if err != nil {
-		return runenv.InAppEnvelope{}, fmt.Errorf("rebuild: workflow %q: %w", notif.WorkflowID, err)
+		return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: workflow %q: %w", notif.WorkflowID, err)
 	}
 
 	var steps []domain.Step
 	if len(wf.Steps) > 0 {
 		if err := json.Unmarshal(wf.Steps, &steps); err != nil {
-			return runenv.InAppEnvelope{}, fmt.Errorf("rebuild: unmarshal steps: %w", err)
+			return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: unmarshal steps: %w", err)
 		}
 	}
 	var found *domain.Step
@@ -49,7 +49,7 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 		}
 	}
 	if found == nil {
-		return runenv.InAppEnvelope{}, fmt.Errorf("rebuild: step %q not found in workflow %q", t.StepID, notif.WorkflowID)
+		return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: step %q not found in workflow %q", t.StepID, notif.WorkflowID)
 	}
 	var controls struct {
 		Subject  string `json:"subject"`
@@ -61,13 +61,13 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 	}
 	if len(found.ControlValues) > 0 {
 		if err := json.Unmarshal(found.ControlValues, &controls); err != nil {
-			return runenv.InAppEnvelope{}, fmt.Errorf("rebuild: unmarshal controlValues: %w", err)
+			return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: unmarshal controlValues: %w", err)
 		}
 	}
 
 	sub, err := s.Subscribers().GetByExternalID(ctx, scope, notif.SubscriberID)
 	if err != nil {
-		return runenv.InAppEnvelope{}, fmt.Errorf("rebuild: subscriber %q: %w", notif.SubscriberID, err)
+		return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: subscriber %q: %w", notif.SubscriberID, err)
 	}
 	// Same handlebars namespace shape the trigger marshals into the envelope.
 	subscriberJSON, err := json.Marshal(struct {
@@ -90,7 +90,7 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 		Data:         sub.Data,
 	})
 	if err != nil {
-		return runenv.InAppEnvelope{}, fmt.Errorf("rebuild: marshal subscriber: %w", err)
+		return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: marshal subscriber: %w", err)
 	}
 
 	return runenv.InAppEnvelope{
@@ -109,5 +109,5 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 			ThrottleLimit:     controls.Throttle.Limit,
 			ThrottleWindowSec: controls.Throttle.WindowSec,
 		},
-	}, nil
+	}, notif.DigestKey, nil
 }

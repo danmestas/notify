@@ -6,6 +6,7 @@ package eventbus
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -21,6 +22,7 @@ import (
 const (
 	inboxCountsBucket = "notify_inbox_counts"
 	throttleBucket    = "notify_throttle"
+	digestBucket      = "notify_digest"
 	analyticsStream   = "NOTIFY_ANALYTICS"
 	analyticsSubject  = "notify.analytics.>"
 )
@@ -32,6 +34,7 @@ type Bus struct {
 	js       jetstream.JetStream
 	kv       jetstream.KeyValue
 	throttle jetstream.KeyValue
+	digest   jetstream.KeyValue
 }
 
 // Connect dials natsURL, waits for the connection to be established, and
@@ -68,6 +71,15 @@ func Connect(ctx context.Context, natsURL string) (*Bus, error) {
 		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", throttleBucket, err)
 	}
 
+	digest, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:  digestBucket,
+		History: 1,
+	})
+	if err != nil {
+		nc.Close()
+		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", digestBucket, err)
+	}
+
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:     analyticsStream,
 		Subjects: []string{analyticsSubject},
@@ -76,7 +88,7 @@ func Connect(ctx context.Context, natsURL string) (*Bus, error) {
 		return nil, fmt.Errorf("eventbus: ensure stream %q: %w", analyticsStream, err)
 	}
 
-	return &Bus{nc: nc, js: js, kv: kv, throttle: throttle}, nil
+	return &Bus{nc: nc, js: js, kv: kv, throttle: throttle, digest: digest}, nil
 }
 
 // Close drains and closes the underlying NATS connection.
@@ -166,10 +178,10 @@ func (b *Bus) SubscribeAllDelivery(handler func([]byte)) (unsubscribe func() err
 	return sub.Unsubscribe, nil
 }
 
-// sanitizeThrottleKey replaces any character not allowed in a NATS KV key
+// sanitizeKey replaces any character not allowed in a NATS KV key
 // (alnum, '-', '_', '.', '=') with '_' so an arbitrary caller-supplied key
 // is always a valid bucket key.
-func sanitizeThrottleKey(key string) string {
+func sanitizeKey(key string) string {
 	var b strings.Builder
 	b.Grow(len(key))
 	for _, r := range key {
@@ -188,7 +200,7 @@ func sanitizeThrottleKey(key string) string {
 // `window`, incrementing the fixed-window counter. Best-effort (a small race
 // under high concurrency may admit a few extra — acceptable for rate-limiting).
 func (b *Bus) ThrottleAllow(key string, limit int, window time.Duration) (allowed bool, err error) {
-	bucketKey := sanitizeThrottleKey(key) + "." +
+	bucketKey := sanitizeKey(key) + "." +
 		strconv.FormatInt(time.Now().UnixNano()/int64(window), 10)
 
 	ctx := context.Background()
@@ -215,4 +227,83 @@ func (b *Bus) ThrottleAllow(key string, limit int, window time.Duration) (allowe
 		return false, fmt.Errorf("eventbus: throttle put %q: %w", bucketKey, err)
 	}
 	return true, nil
+}
+
+// digestListKey returns the KV key holding the accumulated event list for key.
+func digestListKey(key string) string { return sanitizeKey(key) + ".events" }
+
+// digestClaimKey returns the KV key used to atomically claim the digest window.
+func digestClaimKey(key string) string { return sanitizeKey(key) + ".claim" }
+
+// DigestAppend appends one event payload to the accumulator list at key.
+func (b *Bus) DigestAppend(key string, event json.RawMessage) error {
+	ctx := context.Background()
+	listKey := digestListKey(key)
+
+	var events []json.RawMessage
+	entry, err := b.digest.Get(ctx, listKey)
+	switch {
+	case err == nil:
+		if uerr := json.Unmarshal(entry.Value(), &events); uerr != nil {
+			return fmt.Errorf("eventbus: digest unmarshal %q: %w", listKey, uerr)
+		}
+	case errors.Is(err, jetstream.ErrKeyNotFound):
+		// No list yet; start a fresh one.
+	default:
+		return fmt.Errorf("eventbus: digest get %q: %w", listKey, err)
+	}
+
+	events = append(events, event)
+	data, err := json.Marshal(events)
+	if err != nil {
+		return fmt.Errorf("eventbus: digest marshal %q: %w", listKey, err)
+	}
+	if _, err := b.digest.Put(ctx, listKey, data); err != nil {
+		return fmt.Errorf("eventbus: digest put %q: %w", listKey, err)
+	}
+	return nil
+}
+
+// DigestClaim atomically claims the digest window for key: returns isOwner=true
+// for the FIRST caller (which should start the windowed run), false for
+// subsequent callers within the window. Uses KV Create (atomic) on a claim key.
+func (b *Bus) DigestClaim(key string) (isOwner bool, err error) {
+	ctx := context.Background()
+	claimKey := digestClaimKey(key)
+
+	if _, err := b.digest.Create(ctx, claimKey, []byte("1")); err != nil {
+		if errors.Is(err, jetstream.ErrKeyExists) {
+			return false, nil
+		}
+		return false, fmt.Errorf("eventbus: digest claim %q: %w", claimKey, err)
+	}
+	return true, nil
+}
+
+// DigestDrain returns all accumulated events for key and clears the list + claim.
+func (b *Bus) DigestDrain(key string) ([]json.RawMessage, error) {
+	ctx := context.Background()
+	listKey := digestListKey(key)
+	claimKey := digestClaimKey(key)
+
+	events := []json.RawMessage{}
+	entry, err := b.digest.Get(ctx, listKey)
+	switch {
+	case err == nil:
+		if uerr := json.Unmarshal(entry.Value(), &events); uerr != nil {
+			return nil, fmt.Errorf("eventbus: digest unmarshal %q: %w", listKey, uerr)
+		}
+	case errors.Is(err, jetstream.ErrKeyNotFound):
+		// Nothing accumulated.
+	default:
+		return nil, fmt.Errorf("eventbus: digest get %q: %w", listKey, err)
+	}
+
+	if err := b.digest.Delete(ctx, listKey); err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
+		return nil, fmt.Errorf("eventbus: digest delete %q: %w", listKey, err)
+	}
+	if err := b.digest.Delete(ctx, claimKey); err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
+		return nil, fmt.Errorf("eventbus: digest delete %q: %w", claimKey, err)
+	}
+	return events, nil
 }

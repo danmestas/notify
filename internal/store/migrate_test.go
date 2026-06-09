@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -89,4 +90,41 @@ func businessTables(t *testing.T, s *Store) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func TestMigrate_0005_AppliesDigestKey(t *testing.T) {
+	s := openTemp(t)
+
+	if n := migrationCount(t, s); n != 5 {
+		t.Fatalf("expected 5 recorded migrations, got %d", n)
+	}
+
+	var found bool
+	rows, err := s.reader.Query(`PRAGMA table_info(notifications)`)
+	if err != nil {
+		t.Fatalf("pragma table_info: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			ctype      string
+			notnull    int
+			dflt       sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &primaryKey); err != nil {
+			t.Fatalf("scan column: %v", err)
+		}
+		if name == "digest_key" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows err: %v", err)
+	}
+	if !found {
+		t.Fatalf("notifications table missing digest_key column")
+	}
 }

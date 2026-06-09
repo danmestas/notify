@@ -28,6 +28,7 @@ type EmailHandler struct {
 	prefs    PreferenceChecker
 	pub      EventPublisher
 	throttle Throttler
+	digester Digester
 }
 
 // NewEmail constructs an EmailHandler backed by s and resolver r.
@@ -59,6 +60,15 @@ func (h *EmailHandler) WithThrottle(t Throttler) *EmailHandler {
 	return h
 }
 
+// WithDigester attaches an optional digester and returns the handler for
+// chaining. When set, a self-sourced notification carrying a DigestKey drains
+// its merged events and exposes {{digest.count}} to the templates; a nil
+// digester or a non-digest notification renders exactly as before.
+func (h *EmailHandler) WithDigester(d Digester) *EmailHandler {
+	h.digester = d
+	return h
+}
+
 // publishDelivery emits a best-effort delivery-status event carrying the
 // message JSON. A nil publisher or a publish failure is ignored — it must
 // never fail the task.
@@ -76,14 +86,16 @@ func (h *EmailHandler) publishDelivery(envID string, data []byte) {
 // its JSON with a nil error — a failed message, not a crashed run.
 func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
 	var env runenv.InAppEnvelope
+	var digestKey string
 	if len(t.Input) == 0 {
 		// Self-source: an empty input means an upstream step (e.g. a delay)
 		// produced no output, so rebuild the envelope from the store by run id.
-		rebuilt, err := rebuildEnvelope(ctx, h.store, t)
+		rebuilt, dk, err := rebuildEnvelope(ctx, h.store, t)
 		if err != nil {
 			return h.persistEmailError(ctx, env, t, err)
 		}
 		env = rebuilt
+		digestKey = dk
 	} else if err := json.Unmarshal(t.Input, &env); err != nil {
 		return h.persistEmailError(ctx, env, t, err)
 	}
@@ -102,6 +114,13 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 	}
 
 	data := map[string]any{"subscriber": subMap, "payload": payloadMap}
+	// Digest aggregate: a self-sourced notification with a DigestKey drains the
+	// merged events so the body can render {{digest.count}}. Only the
+	// self-source path sets digestKey, so the Input-present path is unchanged.
+	if digestKey != "" && h.digester != nil {
+		events, _ := h.digester.DigestDrain(digestKey)
+		data["digest"] = map[string]any{"count": len(events)}
+	}
 	subject := template.Render(env.Step.SubjectTemplate, data)
 	content := template.Render(env.Step.BodyTemplate, data)
 	to, _ := subMap["email"].(string)

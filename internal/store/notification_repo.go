@@ -34,10 +34,10 @@ func (repo *notificationRepo) Create(ctx context.Context, scope domain.Scope, n 
 	_, err := repo.w.ExecContext(
 		ctx,
 		`INSERT INTO notifications
-		   (id, org_id, environment_id, workflow_id, subscriber_id, transaction_id, run_id, payload, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   (id, org_id, environment_id, workflow_id, subscriber_id, transaction_id, run_id, payload, created_at, digest_key)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.OrgID, n.EnvID, n.WorkflowID, n.SubscriberID, n.TransactionID, n.RunID,
-		[]byte(n.Payload), n.CreatedAt,
+		[]byte(n.Payload), n.CreatedAt, n.DigestKey,
 	)
 	if err != nil {
 		return domain.Notification{}, err
@@ -52,11 +52,11 @@ func (repo *notificationRepo) Get(ctx context.Context, scope domain.Scope, id st
 	)
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, org_id, environment_id, workflow_id, subscriber_id, transaction_id, run_id, payload, created_at
+		`SELECT id, org_id, environment_id, workflow_id, subscriber_id, transaction_id, run_id, payload, created_at, digest_key
 		 FROM notifications WHERE org_id = ? AND environment_id = ? AND id = ?`,
 		scope.OrgID, scope.EnvID, id,
 	).Scan(&n.ID, &n.OrgID, &n.EnvID, &n.WorkflowID, &n.SubscriberID, &n.TransactionID, &n.RunID,
-		&payload, &n.CreatedAt)
+		&payload, &n.CreatedAt, &n.DigestKey)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Notification{}, ErrNotFound
 	}
@@ -77,11 +77,11 @@ func (repo *notificationRepo) GetByRunID(ctx context.Context, runID string) (dom
 	)
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, org_id, environment_id, workflow_id, subscriber_id, transaction_id, run_id, payload, created_at
+		`SELECT id, org_id, environment_id, workflow_id, subscriber_id, transaction_id, run_id, payload, created_at, digest_key
 		 FROM notifications WHERE run_id = ? ORDER BY created_at DESC LIMIT 1`,
 		runID,
 	).Scan(&n.ID, &n.OrgID, &n.EnvID, &n.WorkflowID, &n.SubscriberID, &n.TransactionID, &n.RunID,
-		&payload, &n.CreatedAt)
+		&payload, &n.CreatedAt, &n.DigestKey)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Notification{}, ErrNotFound
 	}

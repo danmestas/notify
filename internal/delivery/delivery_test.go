@@ -459,3 +459,75 @@ func TestHandleInApp_SelfSourcesWhenInputEmpty(t *testing.T) {
 		t.Errorf("NotificationID = %q, want %q", m.NotificationID, "ntf_1")
 	}
 }
+
+// stubDigester returns a fixed event slice for any key, standing in for
+// eventbus.Bus.DigestDrain in the unit test.
+type stubDigester struct {
+	events []json.RawMessage
+}
+
+func (d stubDigester) DigestDrain(string) ([]json.RawMessage, error) {
+	return d.events, nil
+}
+
+// TestHandleInApp_DigestDrainsAndCounts proves the self-source digest path:
+// a notification carrying a DigestKey drains its merged events and exposes
+// {{digest.count}} so the body renders the aggregate count, persisting ONE
+// "sent" message.
+func TestHandleInApp_DigestDrainsAndCounts(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	h := New(s).WithDigester(stubDigester{events: []json.RawMessage{
+		json.RawMessage(`{}`), json.RawMessage(`{}`), json.RawMessage(`{}`),
+	}})
+
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	steps := json.RawMessage(`[{"stepId":"dg","type":"digest","controlValues":{"amount":1,"unit":"seconds"}},{"stepId":"S1","type":"in_app","controlValues":{"subject":"Digest","body":"You have {{digest.count}} new items"}}]`)
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "Digested",
+		TriggerIdentifier: "digested",
+		Active:            true,
+		Steps:             steps,
+	})
+	if err != nil {
+		t.Fatalf("Workflows.Create: %v", err)
+	}
+
+	if _, err := s.Subscribers().Upsert(ctx, scope, domain.Subscriber{
+		SubscriberID: "dg_user",
+	}); err != nil {
+		t.Fatalf("Subscribers.Upsert: %v", err)
+	}
+
+	if _, err := s.Notifications().Create(ctx, scope, domain.Notification{
+		ID:            "ntf_dg",
+		WorkflowID:    wf.ID,
+		SubscriberID:  "dg_user",
+		TransactionID: "txn_dg",
+		RunID:         "r_dg",
+		DigestKey:     "k",
+		Payload:       json.RawMessage(`{}`),
+	}); err != nil {
+		t.Fatalf("Notifications.Create: %v", err)
+	}
+
+	// Input nil -> self-source -> drain DigestKey "k" -> count 3.
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "r_dg", StepID: "S1", Input: nil}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	msgs, err := s.Messages().List(ctx, scope, "dg_user", "in_app")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	if msgs[0].Content != "You have 3 new items" {
+		t.Errorf("Content = %q, want %q", msgs[0].Content, "You have 3 new items")
+	}
+	if msgs[0].Status != "sent" {
+		t.Errorf("Status = %q, want sent", msgs[0].Status)
+	}
+}

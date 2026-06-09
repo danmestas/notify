@@ -40,12 +40,21 @@ type Throttler interface {
 	ThrottleAllow(key string, limit int, window time.Duration) (bool, error)
 }
 
+// Digester drains the events merged into a digest window so the channel handler
+// can render an aggregate (e.g. a count). eventbus.Bus satisfies this
+// structurally. A nil digester disables digest rendering: a notification with a
+// DigestKey then renders per the single event like any other.
+type Digester interface {
+	DigestDrain(key string) ([]json.RawMessage, error)
+}
+
 // Handler persists rendered messages through the store.
 type Handler struct {
 	store    *store.Store
 	prefs    PreferenceChecker
 	pub      EventPublisher
 	throttle Throttler
+	digester Digester
 }
 
 // New constructs a Handler backed by s.
@@ -78,6 +87,15 @@ func (h *Handler) WithThrottle(t Throttler) *Handler {
 	return h
 }
 
+// WithDigester attaches an optional digester and returns the handler for
+// chaining. When set, a self-sourced notification carrying a DigestKey drains
+// its merged events and exposes {{digest.count}} to the templates; a nil
+// digester or a non-digest notification renders exactly as before.
+func (h *Handler) WithDigester(d Digester) *Handler {
+	h.digester = d
+	return h
+}
+
 // HandleInApp is registered via engine.Handle("send.in_app", h.HandleInApp).
 // It unmarshals the run envelope, renders the subject/body templates against the
 // {subscriber, payload} context, and persists a "sent" in-app message. On any
@@ -85,14 +103,16 @@ func (h *Handler) WithThrottle(t Throttler) *Handler {
 // returns its JSON with a nil error — a failed message, not a crashed run.
 func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
 	var env runenv.InAppEnvelope
+	var digestKey string
 	if len(t.Input) == 0 {
 		// Self-source: an empty input means an upstream step (e.g. a delay)
 		// produced no output, so rebuild the envelope from the store by run id.
-		rebuilt, err := h.rebuildEnvelope(ctx, t)
+		rebuilt, dk, err := h.rebuildEnvelope(ctx, t)
 		if err != nil {
 			return h.persistError(ctx, env, t, err)
 		}
 		env = rebuilt
+		digestKey = dk
 	} else if err := json.Unmarshal(t.Input, &env); err != nil {
 		// Envelope undecodable: scope/subscriber are unknown (empty); still
 		// record a failed message so the failure is observable.
@@ -113,6 +133,13 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	}
 
 	data := map[string]any{"subscriber": subMap, "payload": payloadMap}
+	// Digest aggregate: a self-sourced notification with a DigestKey drains the
+	// merged events so the body can render {{digest.count}}. Only the
+	// self-source path sets digestKey, so the Input-present path is unchanged.
+	if digestKey != "" && h.digester != nil {
+		events, _ := h.digester.DigestDrain(digestKey)
+		data["digest"] = map[string]any{"count": len(events)}
+	}
 	subject := template.Render(env.Step.SubjectTemplate, data)
 	content := template.Render(env.Step.BodyTemplate, data)
 

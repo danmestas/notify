@@ -21,14 +21,32 @@ import (
 // Service orchestrates a trigger: audience upsert -> workflow lookup ->
 // envelope build -> engine StartRun -> notification persist.
 type Service struct {
-	aud *audience.Service
-	s   *store.Store
-	eng *engine.Engine
+	aud      *audience.Service
+	s        *store.Store
+	eng      *engine.Engine
+	digester Digester
+}
+
+// Digester batches rapid trigger events for the same (env, subscriber,
+// workflow) into one downstream run. eventbus.Bus satisfies this structurally.
+// A nil digester disables batching: a digest-first workflow then sends per
+// event instead of merging.
+type Digester interface {
+	DigestAppend(key string, event json.RawMessage) error
+	DigestClaim(key string) (bool, error)
 }
 
 // New builds a trigger Service over its collaborators.
 func New(aud *audience.Service, s *store.Store, eng *engine.Engine) *Service {
 	return &Service{aud: aud, s: s, eng: eng}
+}
+
+// WithDigester attaches an optional digester and returns the Service for
+// chaining. When set, a workflow whose first step is "digest" merges rapid
+// events into one run; a nil digester leaves trigger behaviour unchanged.
+func (svc *Service) WithDigester(d Digester) *Service {
+	svc.digester = d
+	return svc
 }
 
 // ToField is the trigger recipient (a single subscriber). It mirrors the
@@ -137,6 +155,27 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 	if transactionID == "" {
 		transactionID = store.NewULID()
 	}
+
+	// Digest coordination: when the workflow's first step is "digest" and a
+	// digester is attached, append this event to the (env, subscriber,
+	// workflow) window and claim ownership. Exactly one trigger wins the claim
+	// and starts the run; the rest merge silently (no new run) and are drained
+	// + rendered by the owning run after the Sleep window fires.
+	var digestKey string
+	if step.Type == "digest" && svc.digester != nil {
+		digestKey = scope.EnvID + ":" + req.To.SubscriberID + ":" + wf.ID
+		if err := svc.digester.DigestAppend(digestKey, req.Payload); err != nil {
+			return TriggerResponse{}, err
+		}
+		isOwner, _ := svc.digester.DigestClaim(digestKey)
+		if !isOwner {
+			return TriggerResponse{
+				Acknowledged:  true,
+				Status:        "processed",
+				TransactionID: transactionID,
+			}, nil
+		}
+	}
 	notificationID := store.NewULID()
 
 	subscriberJSON, err := json.Marshal(wireSubscriber{
@@ -196,6 +235,7 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 		TransactionID: transactionID,
 		RunID:         runID,
 		Payload:       req.Payload,
+		DigestKey:     digestKey,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
 	}); err != nil {
 		return TriggerResponse{}, err

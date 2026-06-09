@@ -101,6 +101,7 @@ type Notification struct {
 	RunID         string          `db:"run_id"`
 	Payload       json.RawMessage `db:"payload"`
 	CreatedAt     string          `db:"created_at"`
+	DigestKey     string          `db:"digest_key"`
 }
 
 type Message struct {
