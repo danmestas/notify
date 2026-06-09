@@ -135,3 +135,15 @@ type Preference struct {
 	WorkflowID   string          `db:"workflow_id"` // empty for subscriberGlobal
 	Channels     json.RawMessage `db:"channels"`    // JSON object {"in_app":true,"email":false,...}
 }
+
+type AnalyticsDelivery struct {
+	ID            string `db:"id"`
+	OrgID         string `db:"org_id"`
+	EnvID         string `db:"environment_id"`
+	Channel       string `db:"channel"`
+	Status        string `db:"status"`
+	SubscriberID  string `db:"subscriber_id"`
+	WorkflowID    string `db:"workflow_id"`
+	TransactionID string `db:"transaction_id"`
+	CreatedAt     string `db:"created_at"`
+}

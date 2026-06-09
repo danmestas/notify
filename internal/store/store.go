@@ -73,6 +73,8 @@ func (s *Store) Integrations() IntegrationRepo   { return &integrationRepo{w: s.
 
 func (s *Store) Preferences() PreferenceRepo { return &preferenceRepo{w: s.writer, r: s.reader} }
 
+func (s *Store) Analytics() AnalyticsRepo { return &analyticsRepo{w: s.writer, r: s.reader} }
+
 func (s *Store) WebhookEndpoints() WebhookEndpointRepo {
 	return &webhookEndpointRepo{w: s.writer, r: s.reader}
 }
