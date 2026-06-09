@@ -173,3 +173,76 @@ func TestIngest_UnknownWorkflow(t *testing.T) {
 		t.Error("Error is empty, want a message for unknown workflow")
 	}
 }
+
+// TestIngest_EmailWorkflow proves trigger generalizes beyond in_app: a workflow
+// whose single step is Type:"email" ingests, dispatches send.email via StartRun,
+// and persists a notification with a non-empty run_id.
+func TestIngest_EmailWorkflow(t *testing.T) {
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Stop() })
+
+	dbPath := filepath.Join(t.TempDir(), "trigger.db")
+	ctx := context.Background()
+	st, err := store.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+	const emailTrigger = "email-flow"
+
+	steps, err := json.Marshal([]domain.Step{{
+		StepID:        "S1",
+		Type:          "email",
+		ControlValues: json.RawMessage(`{"subject":"Hi {{subscriber.firstName}}","body":"You have {{payload.itemCount}} items"}`),
+	}})
+	if err != nil {
+		t.Fatalf("marshal steps: %v", err)
+	}
+	if _, err := st.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "EmailWelcome",
+		TriggerIdentifier: emailTrigger,
+		Active:            true,
+		Steps:             steps,
+	}); err != nil {
+		t.Fatalf("Workflows().Create: %v", err)
+	}
+
+	dagName := scope.EnvID + "-" + emailTrigger
+	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
+		Name:  dagName,
+		Steps: []engine.StepDef{{ID: "S1", Task: "send.email", Type: "normal"}},
+	}); err != nil {
+		t.Fatalf("RegisterWorkflow: %v", err)
+	}
+
+	svc := trigger.New(audience.New(st), st, eng)
+	resp, err := svc.Ingest(ctx, scope, trigger.TriggerRequest{
+		Name:          emailTrigger,
+		To:            trigger.ToField{SubscriberID: "user_123", FirstName: "Ada", Email: "ada@example.com"},
+		Payload:       json.RawMessage(`{"itemCount":3}`),
+		TransactionID: "tx-email-1",
+	})
+	if err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	if !resp.Acknowledged {
+		t.Errorf("Acknowledged = false, want true")
+	}
+	if resp.Status != "processed" {
+		t.Errorf("Status = %q, want %q", resp.Status, "processed")
+	}
+
+	runID, found := fetchNotification(t, dbPath, "tx-email-1")
+	if !found {
+		t.Fatal("no notifications row for tx-email-1")
+	}
+	if runID == "" {
+		t.Error("notification RunID is empty, want non-empty")
+	}
+}

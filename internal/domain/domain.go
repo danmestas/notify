@@ -47,6 +47,20 @@ type Subscriber struct {
 	Deleted      bool            `db:"deleted"`
 }
 
+type Integration struct {
+	ID             string          `db:"id"`
+	OrgID          string          `db:"org_id"`
+	EnvID          string          `db:"environment_id"`
+	ProviderID     string          `db:"provider_id"`
+	Channel        string          `db:"channel"`
+	EncCredentials []byte          `db:"enc_credentials"`
+	Configurations json.RawMessage `db:"configurations"`
+	Active         bool            `db:"active"`
+	Primary        bool            `db:"primary_provider"`
+	Priority       int             `db:"priority"`
+	Identifier     string          `db:"identifier"`
+}
+
 type Workflow struct {
 	ID                string          `db:"id"`
 	OrgID             string          `db:"org_id"`

@@ -17,6 +17,7 @@ import (
 
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
+	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/httpapi"
@@ -112,6 +113,8 @@ func runServe(args []string) error {
 	defer func() { _ = eng.Stop() }()
 
 	eng.Handle("send.in_app", delivery.New(st).HandleInApp)
+	conn := connectivity.New(st, mk)
+	eng.Handle("send.email", delivery.NewEmail(st, conn).HandleEmail)
 	eng.StartWorkers(ctx)
 
 	id := identity.New(st, mk)

@@ -69,3 +69,4 @@ func (s *Store) Subscribers() SubscriberRepo     { return &subscriberRepo{w: s.w
 func (s *Store) Workflows() WorkflowRepo         { return &workflowRepo{w: s.writer, r: s.reader} }
 func (s *Store) Notifications() NotificationRepo { return &notificationRepo{w: s.writer, r: s.reader} }
 func (s *Store) Messages() MessageRepo           { return &messageRepo{w: s.writer, r: s.reader} }
+func (s *Store) Integrations() IntegrationRepo   { return &integrationRepo{w: s.writer, r: s.reader} }

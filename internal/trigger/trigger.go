@@ -1,5 +1,5 @@
 // Package trigger implements POST /v1/events/trigger: it upserts the recipient,
-// resolves the named workflow's in_app step, builds the runenv.InAppEnvelope
+// resolves the named workflow's first step, builds the runenv.InAppEnvelope
 // (the StartRun input the delivery worker consumes), kicks off an engine run,
 // and records the notification. It is the producer side of the wire contracts
 // pinned in internal/runenv.
@@ -73,8 +73,9 @@ type wireSubscriber struct {
 	Data         json.RawMessage `json:"data,omitempty"`
 }
 
-// inAppControls is the in_app step's ControlValues shape notify reads.
-type inAppControls struct {
+// stepControls is the {subject, body} ControlValues shape notify reads from a
+// workflow step, regardless of channel.
+type stepControls struct {
 	Subject string `json:"subject"`
 	Body    string `json:"body"`
 }
@@ -113,29 +114,19 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 			return TriggerResponse{}, err
 		}
 	}
-	var (
-		stepID   string
-		controls inAppControls
-		found    bool
-	)
-	for _, st := range steps {
-		if st.Type == "in_app" {
-			stepID = st.StepID
-			if len(st.ControlValues) > 0 {
-				if err := json.Unmarshal(st.ControlValues, &controls); err != nil {
-					return TriggerResponse{}, err
-				}
-			}
-			found = true
-			break
-		}
-	}
-	if !found {
+	if len(steps) == 0 {
 		return TriggerResponse{
 			Acknowledged: false,
 			Status:       "error",
-			Error:        []string{"workflow has no in_app step"},
+			Error:        []string{"workflow has no steps"},
 		}, nil
+	}
+	step := steps[0]
+	var controls stepControls
+	if len(step.ControlValues) > 0 {
+		if err := json.Unmarshal(step.ControlValues, &controls); err != nil {
+			return TriggerResponse{}, err
+		}
 	}
 
 	transactionID := req.TransactionID
@@ -167,8 +158,8 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 		Subscriber:     subscriberJSON,
 		Payload:        req.Payload,
 		Step: runenv.Step{
-			StepID:          stepID,
-			Channel:         "in_app",
+			StepID:          step.StepID,
+			Channel:         step.Type,
 			ProviderID:      "",
 			SubjectTemplate: controls.Subject,
 			BodyTemplate:    controls.Body,
