@@ -1,0 +1,21 @@
+# git hooks via lefthook (offline-robust; replaces hk which fetched a remote pkl package at eval time)
+pre-commit:
+  commands:
+    gofumpt:
+      glob: "*.go"
+      run: mise exec -- gofumpt -w {staged_files}
+      stage_fixed: true
+    gomod-tidy:
+      glob: "go.mod"
+      run: go mod tidy
+    golangci-lint:
+      glob: "*.go"
+      run: mise exec -- golangci-lint run
+pre-push:
+  commands:
+    golangci-lint:
+      run: mise exec -- golangci-lint run
+    vet:
+      run: go vet ./...
+    test:
+      run: go test -race ./...

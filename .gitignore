@@ -1,0 +1,22 @@
+# binaries
+/bin/
+/dist/
+*.test
+# coverage
+*.out
+coverage.html
+
+# data files
+*.db
+*.db-wal
+*.db-shm
+*.duckdb
+/data/
+
+# env / secrets
+.env
+.env.local
+
+# mise local overrides
+mise.local.toml
+.mise.local.toml

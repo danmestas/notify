@@ -1,0 +1,6 @@
+[tools]
+actionlint = "latest"
+gofumpt = "latest"
+golangci-lint = "latest"
+hk = "latest"
+lefthook = "latest"
