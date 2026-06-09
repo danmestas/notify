@@ -147,3 +147,11 @@ type AnalyticsDelivery struct {
 	TransactionID string `db:"transaction_id"`
 	CreatedAt     string `db:"created_at"`
 }
+
+type Topic struct {
+	ID    string `db:"id"`
+	OrgID string `db:"org_id"`
+	EnvID string `db:"environment_id"`
+	Key   string `db:"key"`
+	Name  string `db:"name"`
+}

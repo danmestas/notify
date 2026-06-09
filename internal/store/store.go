@@ -78,3 +78,5 @@ func (s *Store) Analytics() AnalyticsRepo { return &analyticsRepo{w: s.writer, r
 func (s *Store) WebhookEndpoints() WebhookEndpointRepo {
 	return &webhookEndpointRepo{w: s.writer, r: s.reader}
 }
+
+func (s *Store) Topics() TopicRepo { return &topicRepo{w: s.writer, r: s.reader} }
