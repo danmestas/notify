@@ -25,37 +25,51 @@ func StartSidecar(t *testing.T) (natsURL, httpURL string) {
 
 	bin := dagnatsBinary(t)
 
-	natsPort := freePort(t)
-	httpPort := freePort(t)
-	httpAddr := fmt.Sprintf("127.0.0.1:%d", httpPort)
-	dataDir := t.TempDir()
+	// freePort has an inherent TOCTOU window: a port that is free when probed can
+	// be taken by another process before the sidecar binds it, surfacing as
+	// "bind: address already in use" and a sidecar that never reaches /ready.
+	// Retry the whole start with freshly allocated ports so a lost race is
+	// absorbed instead of flaking the test.
+	const attempts = 4
+	for attempt := 1; attempt <= attempts; attempt++ {
+		natsPort := freePort(t)
+		httpPort := freePort(t)
+		httpAddr := fmt.Sprintf("127.0.0.1:%d", httpPort)
+		dataDir := t.TempDir()
 
-	cmd := exec.Command(bin, "serve")
-	// Run in the data dir so no stray ./dagnats.yaml is picked up, and point
-	// XDG elsewhere for the same reason.
-	cmd.Dir = dataDir
-	cmd.Env = append(
-		os.Environ(),
-		"DAGNATS_DATA_DIR="+dataDir,
-		"DAGNATS_HTTP_ADDR="+httpAddr,
-		fmt.Sprintf("DAGNATS_NATS_PORT=%d", natsPort),
-		"XDG_CONFIG_HOME="+filepath.Join(dataDir, "xdg"),
-	)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+		cmd := exec.Command(bin, "serve")
+		// Run in the data dir so no stray ./dagnats.yaml is picked up, and point
+		// XDG elsewhere for the same reason.
+		cmd.Dir = dataDir
+		cmd.Env = append(
+			os.Environ(),
+			"DAGNATS_DATA_DIR="+dataDir,
+			"DAGNATS_HTTP_ADDR="+httpAddr,
+			fmt.Sprintf("DAGNATS_NATS_PORT=%d", natsPort),
+			"XDG_CONFIG_HOME="+filepath.Join(dataDir, "xdg"),
+		)
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
 
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start dagnats sidecar: %v", err)
-	}
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start dagnats sidecar: %v", err)
+		}
 
-	t.Cleanup(func() {
+		if waitReadyOK(httpAddr, 8*time.Second) {
+			t.Cleanup(func() {
+				_ = cmd.Process.Kill()
+				_, _ = cmd.Process.Wait()
+			})
+			return fmt.Sprintf("nats://127.0.0.1:%d", natsPort), "http://" + httpAddr
+		}
+
+		// Most likely a lost port-bind race; tear this attempt down and retry.
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
-	})
-
-	waitReady(t, httpAddr)
-
-	return fmt.Sprintf("nats://127.0.0.1:%d", natsPort), "http://" + httpAddr
+		t.Logf("dagnats sidecar not ready on attempt %d/%d (httpAddr=%s); retrying with fresh ports", attempt, attempts, httpAddr)
+	}
+	t.Fatalf("dagnats sidecar never became ready after %d attempts (GOOS=%s)", attempts, runtime.GOOS)
+	return "", ""
 }
 
 // dagnatsBinary returns the path to the prebuilt dagnats binary, failing
@@ -99,28 +113,28 @@ func freePort(t *testing.T) int {
 	return port
 }
 
-// waitReady polls the sidecar's /ready endpoint until it returns 200 or the
-// timeout elapses.
-func waitReady(t *testing.T, httpAddr string) {
-	t.Helper()
+// waitReadyOK polls the sidecar's /ready endpoint and reports whether it
+// returned 200 within timeout — non-fatal so callers can retry with fresh ports
+// after a lost bind race.
+func waitReadyOK(httpAddr string, timeout time.Duration) bool {
 	url := "http://" + httpAddr + "/ready"
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(timeout)
 	client := &http.Client{Timeout: time.Second}
 	for time.Now().Before(deadline) {
 		req, err := http.NewRequestWithContext(
 			context.Background(), http.MethodGet, url, nil,
 		)
 		if err != nil {
-			t.Fatalf("build ready request: %v", err)
+			return false
 		}
 		resp, err := client.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				return
+				return true
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("dagnats sidecar at %s never became ready within 20s (GOOS=%s)", url, runtime.GOOS)
+	return false
 }

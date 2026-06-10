@@ -53,25 +53,8 @@ func TestFullJourney_RealBinary(t *testing.T) {
 
 	apiKey := seedTenant(t, ctx, dbPath, keyRaw, natsURL, bridgeURL)
 
-	// Boot the real artifact.
-	addr := freeAddr(t)
-	bin := buildNotify(t)
-	serve := exec.Command(bin, "serve",
-		"--db", dbPath, "--nats-url", natsURL, "--bridge-url", bridgeURL, "--addr", addr)
-	serve.Env = append(os.Environ(), "NOTIFY_MASTER_KEY_HEX="+keyHex)
-	serve.Stdout = os.Stderr
-	serve.Stderr = os.Stderr
-	if err := serve.Start(); err != nil {
-		t.Fatalf("start serve binary: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = serve.Process.Kill()
-		_ = serve.Wait()
-	})
-
-	base := "http://" + addr
-	authHeader := "ApiKey " + apiKey
-	waitServeReady(t, base, authHeader)
+	// Boot the real artifact, retrying the port bind if it loses a race.
+	base, authHeader := startServe(t, dbPath, natsURL, bridgeURL, keyHex, apiKey)
 
 	// Subscriber with a Spanish locale (drives the {{t}} translation).
 	if st, body := doReq(t, http.MethodPost, base+"/v1/subscribers", authHeader,
@@ -228,20 +211,61 @@ func freeAddr(t *testing.T) string {
 	return l.Addr().String()
 }
 
-// waitServeReady polls an authenticated read endpoint until the binary serves
-// 200, proving the HTTP surface (and everything wired before ListenAndServe,
-// including the dagnats workers) is up.
-func waitServeReady(t *testing.T, base, authHeader string) {
+// startServe builds the notify binary and boots `notify serve` on a free port,
+// retrying with a fresh port if the bind loses a race (freeAddr's TOCTOU
+// window). It returns the base URL and auth header once the binary serves 200,
+// and registers process teardown.
+func startServe(t *testing.T, dbPath, natsURL, bridgeURL, keyHex, apiKey string) (base, authHeader string) {
 	t.Helper()
-	deadline := time.Now().Add(25 * time.Second)
-	for time.Now().Before(deadline) {
-		st, _ := doReq(t, http.MethodGet, base+"/v1/messages?subscriberId=probe&channel=in_app", authHeader, "")
-		if st == http.StatusOK {
-			return
+	bin := buildNotify(t)
+	authHeader = "ApiKey " + apiKey
+	const attempts = 4
+	for attempt := 1; attempt <= attempts; attempt++ {
+		addr := freeAddr(t)
+		serve := exec.Command(bin, "serve",
+			"--db", dbPath, "--nats-url", natsURL, "--bridge-url", bridgeURL, "--addr", addr)
+		serve.Env = append(os.Environ(), "NOTIFY_MASTER_KEY_HEX="+keyHex)
+		serve.Stdout = os.Stderr
+		serve.Stderr = os.Stderr
+		if err := serve.Start(); err != nil {
+			t.Fatalf("start serve binary: %v", err)
 		}
-		time.Sleep(200 * time.Millisecond)
+		base = "http://" + addr
+		if serveReadyOK(base, authHeader, 12*time.Second) {
+			t.Cleanup(func() {
+				_ = serve.Process.Kill()
+				_ = serve.Wait()
+			})
+			return base, authHeader
+		}
+		_ = serve.Process.Kill()
+		_ = serve.Wait()
+		t.Logf("serve binary not ready on attempt %d/%d (addr=%s); retrying with a fresh port", attempt, attempts, addr)
 	}
-	t.Fatal("serve binary did not become ready within 25s")
+	t.Fatalf("serve binary never became ready after %d attempts", attempts)
+	return "", ""
+}
+
+// serveReadyOK polls an authenticated read endpoint and reports whether the
+// binary served 200 within timeout (non-fatal so the caller can retry).
+func serveReadyOK(base, authHeader string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequest(http.MethodGet, base+"/v1/messages?subscriberId=probe&channel=in_app", nil)
+		if err != nil {
+			return false
+		}
+		req.Header.Set("Authorization", authHeader)
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return true
+			}
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return false
 }
 
 // doReq performs an HTTP request and returns the status and body. A connection
