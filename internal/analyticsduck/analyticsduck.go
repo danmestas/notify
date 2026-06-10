@@ -121,3 +121,11 @@ func (r *Repo) CountByChannelStatus(ctx context.Context, scope domain.Scope) (ma
 	}
 	return out, nil
 }
+
+// DeliveriesByDay returns ordered per-day delivery counts grouped by
+// (day, channel, status), scope-filtered. It delegates to the shared
+// store.QueryDeliveriesByDay so the DuckDB backend answers the over-time query
+// identically to the SQLite repo.
+func (r *Repo) DeliveriesByDay(ctx context.Context, scope domain.Scope) ([]domain.DeliveryDayCount, error) {
+	return store.QueryDeliveriesByDay(ctx, r.db, scope)
+}

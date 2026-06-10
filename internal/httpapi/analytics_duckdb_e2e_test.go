@@ -150,4 +150,27 @@ func TestAnalytics_DeliveriesByChannel_DuckDB(t *testing.T) {
 	if got["in_app"]["sent"] < 2 {
 		t.Errorf("in_app.sent = %d, want >= 2 (DuckDB backend)", got["in_app"]["sent"])
 	}
+
+	// The DuckDB-backed over-time series must include today's in_app/sent bucket.
+	tsStatus, tsBody := doGet(t, srv.URL+"/v1/analytics/timeseries", authHeader)
+	if tsStatus != http.StatusOK {
+		t.Fatalf("GET /v1/analytics/timeseries (DuckDB): status=%d body=%s", tsStatus, tsBody)
+	}
+	var series []domain.DeliveryDayCount
+	if err := json.Unmarshal([]byte(tsBody), &series); err != nil {
+		t.Fatalf("decode timeseries: %v (body=%s)", err, tsBody)
+	}
+	var tsInAppSent int
+	for _, b := range series {
+		if b.Channel == "in_app" && b.Status == "sent" {
+			tsInAppSent += b.Count
+			if len(b.Day) != 10 {
+				t.Errorf("timeseries day not YYYY-MM-DD: %q", b.Day)
+			}
+		}
+	}
+	if tsInAppSent < 2 {
+		t.Errorf("DuckDB timeseries in_app/sent total = %d, want >= 2 (body=%s)", tsInAppSent, tsBody)
+	}
+	t.Logf("DuckDB timeseries: %s", tsBody)
 }

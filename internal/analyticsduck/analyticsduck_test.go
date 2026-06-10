@@ -4,6 +4,8 @@ package analyticsduck
 
 import (
 	"context"
+	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -93,5 +95,79 @@ func TestRepo_MintsIDAndTimestamp(t *testing.T) {
 	}
 	if createdAt == "" {
 		t.Fatal("expected minted created_at, got empty")
+	}
+}
+
+// TestRepo_DeliveriesByDay mirrors store.TestAnalyticsRepo_DeliveriesByDay
+// against DuckDB: identical rows + isolation, identical ordered day-series —
+// proving the shared store.QueryDeliveriesByDay yields the same result on DuckDB.
+func TestRepo_DeliveriesByDay(t *testing.T) {
+	ctx := context.Background()
+	repo, err := Open(ctx, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = repo.Close() }()
+
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	rows := []domain.AnalyticsDelivery{
+		{Channel: "in_app", Status: "sent", CreatedAt: "2026-06-08T10:00:00Z"},
+		{Channel: "in_app", Status: "sent", CreatedAt: "2026-06-08T23:59:59Z"},
+		{Channel: "in_app", Status: "sent", CreatedAt: "2026-06-09T00:00:01Z"},
+		{Channel: "email", Status: "sent", CreatedAt: "2026-06-09T09:00:00Z"},
+	}
+	for i, r := range rows {
+		if err := repo.Insert(ctx, scope, r); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+	other := domain.Scope{OrgID: "o1", EnvID: "e2"}
+	if err := repo.Insert(ctx, other, domain.AnalyticsDelivery{Channel: "in_app", Status: "sent", CreatedAt: "2026-06-09T09:00:00Z"}); err != nil {
+		t.Fatalf("insert isolation row: %v", err)
+	}
+
+	got, err := repo.DeliveriesByDay(ctx, scope)
+	if err != nil {
+		t.Fatalf("DeliveriesByDay: %v", err)
+	}
+	want := []domain.DeliveryDayCount{
+		{Day: "2026-06-08", Channel: "in_app", Status: "sent", Count: 2},
+		{Day: "2026-06-09", Channel: "email", Status: "sent", Count: 1},
+		{Day: "2026-06-09", Channel: "in_app", Status: "sent", Count: 1},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DuckDB DeliveriesByDay mismatch:\n got=%v\nwant=%v", got, want)
+	}
+}
+
+// TestRepo_FilePersistence proves DuckDB access via a real on-disk database:
+// rows written through one handle survive close + reopen of the same file.
+func TestRepo_FilePersistence(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "analytics.duckdb")
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	repo, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("open 1: %v", err)
+	}
+	if err := repo.Insert(ctx, scope, domain.AnalyticsDelivery{Channel: "in_app", Status: "sent"}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatalf("close 1: %v", err)
+	}
+
+	reopened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("open 2 (reopen file): %v", err)
+	}
+	defer func() { _ = reopened.Close() }()
+	got, err := reopened.CountByChannelStatus(ctx, scope)
+	if err != nil {
+		t.Fatalf("count after reopen: %v", err)
+	}
+	if got["in_app"]["sent"] != 1 {
+		t.Fatalf("persistence: in_app.sent = %d after reopen, want 1 (full %v)", got["in_app"]["sent"], got)
 	}
 }

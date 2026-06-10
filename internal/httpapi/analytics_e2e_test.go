@@ -141,4 +141,27 @@ func TestAnalytics_DeliveriesByChannel(t *testing.T) {
 	if got["in_app"]["sent"] < 2 {
 		t.Errorf("in_app.sent = %d, want >= 2", got["in_app"]["sent"])
 	}
+
+	// The over-time series must include today's in_app/sent bucket (>= 2 sends).
+	tsStatus, tsBody := doGet(t, srv.URL+"/v1/analytics/timeseries", authHeader)
+	if tsStatus != http.StatusOK {
+		t.Fatalf("GET /v1/analytics/timeseries: status=%d body=%s", tsStatus, tsBody)
+	}
+	var series []domain.DeliveryDayCount
+	if err := json.Unmarshal([]byte(tsBody), &series); err != nil {
+		t.Fatalf("decode timeseries: %v (body=%s)", err, tsBody)
+	}
+	var tsInAppSent int
+	for _, b := range series {
+		if b.Channel == "in_app" && b.Status == "sent" {
+			tsInAppSent += b.Count
+			if len(b.Day) != 10 {
+				t.Errorf("timeseries day not YYYY-MM-DD: %q", b.Day)
+			}
+		}
+	}
+	if tsInAppSent < 2 {
+		t.Errorf("timeseries in_app/sent total = %d, want >= 2 (body=%s)", tsInAppSent, tsBody)
+	}
+	t.Logf("timeseries: %s", tsBody)
 }

@@ -16,6 +16,9 @@ type AnalyticsRepo interface {
 	Insert(ctx context.Context, scope domain.Scope, d domain.AnalyticsDelivery) error
 	// CountByChannelStatus returns counts grouped by channel then status, scope-filtered.
 	CountByChannelStatus(ctx context.Context, scope domain.Scope) (map[string]map[string]int, error)
+	// DeliveriesByDay returns ordered per-day delivery counts grouped by
+	// (day, channel, status), scope-filtered — the analytics over-time series.
+	DeliveriesByDay(ctx context.Context, scope domain.Scope) ([]domain.DeliveryDayCount, error)
 }
 
 type analyticsRepo struct {
@@ -74,6 +77,44 @@ func (repo *analyticsRepo) CountByChannelStatus(ctx context.Context, scope domai
 			out[channel] = byStatus
 		}
 		byStatus[status] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (repo *analyticsRepo) DeliveriesByDay(ctx context.Context, scope domain.Scope) ([]domain.DeliveryDayCount, error) {
+	return QueryDeliveriesByDay(ctx, repo.r, scope)
+}
+
+// QueryDeliveriesByDay runs the delivery over-time query against db and returns
+// ordered per-day (channel, status) counts. It is shared by the SQLite repo and
+// the DuckDB analytics backend so both answer the query from one source of
+// truth; substr(created_at, 1, 10) buckets the RFC3339Nano timestamp by UTC day
+// and is valid in both SQLite and DuckDB.
+func QueryDeliveriesByDay(ctx context.Context, db *sql.DB, scope domain.Scope) ([]domain.DeliveryDayCount, error) {
+	rows, err := db.QueryContext(
+		ctx,
+		`SELECT substr(created_at, 1, 10) AS day, channel, status, COUNT(*)
+		 FROM analytics_deliveries
+		 WHERE org_id = ? AND environment_id = ?
+		 GROUP BY day, channel, status
+		 ORDER BY day, channel, status`,
+		scope.OrgID, scope.EnvID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.DeliveryDayCount
+	for rows.Next() {
+		var c domain.DeliveryDayCount
+		if err := rows.Scan(&c.Day, &c.Channel, &c.Status, &c.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -68,5 +69,43 @@ func TestAnalyticsRepo_InsertAndCount(t *testing.T) {
 		if len(got[channel]) != len(statuses) {
 			t.Fatalf("status count mismatch for %s: got %v want %v", channel, got[channel], statuses)
 		}
+	}
+}
+
+func TestAnalyticsRepo_DeliveriesByDay(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Analytics()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	// Explicit CreatedAt so day-bucketing is deterministic (two UTC days).
+	rows := []domain.AnalyticsDelivery{
+		{Channel: "in_app", Status: "sent", CreatedAt: "2026-06-08T10:00:00Z"},
+		{Channel: "in_app", Status: "sent", CreatedAt: "2026-06-08T23:59:59Z"},
+		{Channel: "in_app", Status: "sent", CreatedAt: "2026-06-09T00:00:01Z"},
+		{Channel: "email", Status: "sent", CreatedAt: "2026-06-09T09:00:00Z"},
+	}
+	for i, r := range rows {
+		if err := repo.Insert(ctx, scope, r); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+	// A row under a different environment must not leak into scope's series.
+	other := domain.Scope{OrgID: "o1", EnvID: "e2"}
+	if err := repo.Insert(ctx, other, domain.AnalyticsDelivery{Channel: "in_app", Status: "sent", CreatedAt: "2026-06-09T09:00:00Z"}); err != nil {
+		t.Fatalf("insert isolation row: %v", err)
+	}
+
+	got, err := repo.DeliveriesByDay(ctx, scope)
+	if err != nil {
+		t.Fatalf("DeliveriesByDay: %v", err)
+	}
+	want := []domain.DeliveryDayCount{
+		{Day: "2026-06-08", Channel: "in_app", Status: "sent", Count: 2},
+		{Day: "2026-06-09", Channel: "email", Status: "sent", Count: 1},
+		{Day: "2026-06-09", Channel: "in_app", Status: "sent", Count: 1},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DeliveriesByDay mismatch:\n got=%v\nwant=%v", got, want)
 	}
 }

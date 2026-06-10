@@ -91,10 +91,16 @@ func (svc *Service) DeliveriesByChannel(ctx context.Context, scope domain.Scope)
 	return svc.repo.CountByChannelStatus(ctx, scope)
 }
 
+// DeliveriesOverTime returns the per-day delivery time-series for scope.
+func (svc *Service) DeliveriesOverTime(ctx context.Context, scope domain.Scope) ([]domain.DeliveryDayCount, error) {
+	return svc.repo.DeliveriesByDay(ctx, scope)
+}
+
 // Routes mounts the analytics query API. Callers MUST mount it inside the
 // identity.Middleware group so handlers resolve their Scope.
 func (svc *Service) Routes(r chi.Router) {
 	r.Get("/v1/analytics/deliveries", svc.getDeliveries)
+	r.Get("/v1/analytics/timeseries", svc.getTimeseries)
 }
 
 // getDeliveries returns the channel/status delivery counts for the request
@@ -109,4 +115,18 @@ func (svc *Service) getDeliveries(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(m)
+}
+
+// getTimeseries returns the per-day delivery time-series for the request Scope
+// as a JSON array.
+func (svc *Service) getTimeseries(w http.ResponseWriter, r *http.Request) {
+	scope := identity.ScopeFrom(r.Context())
+	series, err := svc.DeliveriesOverTime(r.Context(), scope)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(series)
 }

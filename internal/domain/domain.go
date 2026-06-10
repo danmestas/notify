@@ -148,6 +148,15 @@ type AnalyticsDelivery struct {
 	CreatedAt     string `db:"created_at"`
 }
 
+// DeliveryDayCount is one row of the delivery time-series: the per-day count of
+// deliveries for a (channel, status) pair within a scope.
+type DeliveryDayCount struct {
+	Day     string `json:"day"`
+	Channel string `json:"channel"`
+	Status  string `json:"status"`
+	Count   int    `json:"count"`
+}
+
 type Topic struct {
 	ID    string `db:"id"`
 	OrgID string `db:"org_id"`
