@@ -24,6 +24,14 @@ type Environment struct {
 	ParentID   string `db:"parent_id"`
 }
 
+type WebhookEndpoint struct {
+	ID     string `db:"id"`
+	OrgID  string `db:"org_id"`
+	EnvID  string `db:"environment_id"`
+	URL    string `db:"url"`
+	Active bool   `db:"active"`
+}
+
 type APIKey struct {
 	Hash   string `db:"hash"`
 	EnvID  string `db:"environment_id"`
@@ -93,6 +101,7 @@ type Notification struct {
 	RunID         string          `db:"run_id"`
 	Payload       json.RawMessage `db:"payload"`
 	CreatedAt     string          `db:"created_at"`
+	DigestKey     string          `db:"digest_key"`
 }
 
 type Message struct {
@@ -125,4 +134,24 @@ type Preference struct {
 	SubscriberID string          `db:"subscriber_id"`
 	WorkflowID   string          `db:"workflow_id"` // empty for subscriberGlobal
 	Channels     json.RawMessage `db:"channels"`    // JSON object {"in_app":true,"email":false,...}
+}
+
+type AnalyticsDelivery struct {
+	ID            string `db:"id"`
+	OrgID         string `db:"org_id"`
+	EnvID         string `db:"environment_id"`
+	Channel       string `db:"channel"`
+	Status        string `db:"status"`
+	SubscriberID  string `db:"subscriber_id"`
+	WorkflowID    string `db:"workflow_id"`
+	TransactionID string `db:"transaction_id"`
+	CreatedAt     string `db:"created_at"`
+}
+
+type Topic struct {
+	ID    string `db:"id"`
+	OrgID string `db:"org_id"`
+	EnvID string `db:"environment_id"`
+	Key   string `db:"key"`
+	Name  string `db:"name"`
 }

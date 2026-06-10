@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
@@ -57,8 +58,10 @@ func (s *Service) Create(ctx context.Context, scope domain.Scope, in WorkflowInp
 	return s.store.Workflows().Create(ctx, scope, wf)
 }
 
-// Compile turns a persisted workflow into an engine DAG: one StepDef per
-// channel step, chained sequentially via DependsOn to preserve order.
+// Compile turns a persisted workflow into an engine DAG: one StepDef per step,
+// chained sequentially via DependsOn to preserve order. A "delay" step compiles
+// to an engine Sleep step the engine times itself; channel steps become normal
+// "send.<type>" tasks.
 func Compile(wf domain.Workflow) (engine.WorkflowDef, error) {
 	var steps []domain.Step
 	if err := json.Unmarshal(wf.Steps, &steps); err != nil {
@@ -69,10 +72,15 @@ func Compile(wf domain.Workflow) (engine.WorkflowDef, error) {
 		Steps: make([]engine.StepDef, 0, len(steps)),
 	}
 	for i, step := range steps {
-		sd := engine.StepDef{
-			ID:   step.StepID,
-			Task: "send." + step.Type,
-			Type: "normal",
+		var sd engine.StepDef
+		if step.Type == "delay" || step.Type == "digest" {
+			cfg, err := delayConfig(step.ControlValues)
+			if err != nil {
+				return engine.WorkflowDef{}, fmt.Errorf("authoring: step %q: %w", step.StepID, err)
+			}
+			sd = engine.StepDef{ID: step.StepID, Type: "sleep", Config: cfg}
+		} else {
+			sd = engine.StepDef{ID: step.StepID, Task: "send." + step.Type, Type: "normal"}
 		}
 		if i > 0 {
 			sd.DependsOn = []string{steps[i-1].StepID}
@@ -80,6 +88,44 @@ func Compile(wf domain.Workflow) (engine.WorkflowDef, error) {
 		def.Steps = append(def.Steps, sd)
 	}
 	return def, nil
+}
+
+// delayConfig parses a delay step's controlValues ({"amount":<int>,"unit":...})
+// into a dag.SleepConfig JSON ({"duration":<int64 ns>}). Unit defaults to
+// seconds; amount must be positive.
+func delayConfig(controlValues json.RawMessage) (json.RawMessage, error) {
+	var cv struct {
+		Amount int64  `json:"amount"`
+		Unit   string `json:"unit"`
+	}
+	if len(controlValues) > 0 {
+		if err := json.Unmarshal(controlValues, &cv); err != nil {
+			return nil, fmt.Errorf("unmarshal delay controlValues: %w", err)
+		}
+	}
+	if cv.Amount <= 0 {
+		return nil, fmt.Errorf("delay amount must be positive, got %d", cv.Amount)
+	}
+	var unit time.Duration
+	switch cv.Unit {
+	case "", "seconds":
+		unit = time.Second
+	case "minutes":
+		unit = time.Minute
+	case "hours":
+		unit = time.Hour
+	case "days":
+		unit = 24 * time.Hour
+	default:
+		return nil, fmt.Errorf("unknown delay unit %q", cv.Unit)
+	}
+	cfg, err := json.Marshal(struct {
+		Duration time.Duration `json:"duration"`
+	}{Duration: time.Duration(cv.Amount) * unit})
+	if err != nil {
+		return nil, fmt.Errorf("marshal sleep config: %w", err)
+	}
+	return cfg, nil
 }
 
 // Publish loads the workflow by trigger identifier, compiles it, and registers

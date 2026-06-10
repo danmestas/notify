@@ -161,3 +161,40 @@ func TestHandleEmail_SkipsWhenChannelDisabled(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleEmail_PublishesDeliveryOnSent(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	cap := providers.NewCapture()
+	pub := &stubPublisher{}
+	h := NewEmail(s, stubResolver{provider: cap, from: "noreply@acme.io"}).WithEventBus(pub)
+
+	input, err := json.Marshal(emailEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleEmail(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleEmail: %v", err)
+	}
+
+	if len(pub.deliveryCalls) != 1 {
+		t.Fatalf("expected exactly one PublishDelivery call, got %d", len(pub.deliveryCalls))
+	}
+	c := pub.deliveryCalls[0]
+	if c.envID != "env_1" {
+		t.Errorf("delivery environmentID = %q, want %q", c.envID, "env_1")
+	}
+	var m domain.Message
+	if err := json.Unmarshal(c.data, &m); err != nil {
+		t.Fatalf("unmarshal delivery data: %v", err)
+	}
+	if m.Status != "sent" {
+		t.Errorf("delivery Status = %q, want %q", m.Status, "sent")
+	}
+	if m.Channel != "email" {
+		t.Errorf("delivery Channel = %q, want %q", m.Channel, "email")
+	}
+	if m.Subject != "Hi Ada" {
+		t.Errorf("delivery Subject = %q, want %q", m.Subject, "Hi Ada")
+	}
+}

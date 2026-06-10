@@ -26,6 +26,9 @@ type EmailHandler struct {
 	store    *store.Store
 	resolver EmailResolver
 	prefs    PreferenceChecker
+	pub      EventPublisher
+	throttle Throttler
+	digester Digester
 }
 
 // NewEmail constructs an EmailHandler backed by s and resolver r.
@@ -40,6 +43,41 @@ func (h *EmailHandler) WithPreferences(c PreferenceChecker) *EmailHandler {
 	return h
 }
 
+// WithEventBus attaches an optional live event publisher and returns the
+// handler for chaining. When set, every terminal email message is published
+// as a delivery-status event best-effort; a nil publisher disables it.
+func (h *EmailHandler) WithEventBus(p EventPublisher) *EmailHandler {
+	h.pub = p
+	return h
+}
+
+// WithThrottle attaches an optional per-(env,subscriber,workflow) rate limiter
+// and returns the handler for chaining. When set, a step that configures a
+// throttle limit records a "throttled" message instead of sending once the
+// limit is exceeded; a nil throttler disables throttling.
+func (h *EmailHandler) WithThrottle(t Throttler) *EmailHandler {
+	h.throttle = t
+	return h
+}
+
+// WithDigester attaches an optional digester and returns the handler for
+// chaining. When set, a self-sourced notification carrying a DigestKey drains
+// its merged events and exposes {{digest.count}} to the templates; a nil
+// digester or a non-digest notification renders exactly as before.
+func (h *EmailHandler) WithDigester(d Digester) *EmailHandler {
+	h.digester = d
+	return h
+}
+
+// publishDelivery emits a best-effort delivery-status event carrying the
+// message JSON. A nil publisher or a publish failure is ignored — it must
+// never fail the task.
+func (h *EmailHandler) publishDelivery(envID string, data []byte) {
+	if h.pub != nil {
+		_ = h.pub.PublishDelivery(envID, data)
+	}
+}
+
 // HandleEmail is registered via engine.Handle("send.email", h.HandleEmail).
 // It unmarshals the run envelope, renders the subject/body templates against the
 // {subscriber, payload} context, resolves the scope's email provider, sends the
@@ -48,7 +86,17 @@ func (h *EmailHandler) WithPreferences(c PreferenceChecker) *EmailHandler {
 // its JSON with a nil error — a failed message, not a crashed run.
 func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
 	var env runenv.InAppEnvelope
-	if err := json.Unmarshal(t.Input, &env); err != nil {
+	var digestKey string
+	if len(t.Input) == 0 {
+		// Self-source: an empty input means an upstream step (e.g. a delay)
+		// produced no output, so rebuild the envelope from the store by run id.
+		rebuilt, dk, err := rebuildEnvelope(ctx, h.store, t)
+		if err != nil {
+			return h.persistEmailError(ctx, env, t, err)
+		}
+		env = rebuilt
+		digestKey = dk
+	} else if err := json.Unmarshal(t.Input, &env); err != nil {
 		return h.persistEmailError(ctx, env, t, err)
 	}
 
@@ -66,11 +114,29 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 	}
 
 	data := map[string]any{"subscriber": subMap, "payload": payloadMap}
+	// Digest aggregate: a self-sourced notification with a DigestKey drains the
+	// merged events so the body can render {{digest.count}}. Only the
+	// self-source path sets digestKey, so the Input-present path is unchanged.
+	if digestKey != "" && h.digester != nil {
+		events, _ := h.digester.DigestDrain(digestKey)
+		data["digest"] = map[string]any{"count": len(events)}
+	}
 	subject := template.Render(env.Step.SubjectTemplate, data)
 	content := template.Render(env.Step.BodyTemplate, data)
 	to, _ := subMap["email"].(string)
 
 	scope := domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
+
+	// Optional throttle gate. When the step configures a limit and a throttler
+	// is attached, a send over the per-(env,subscriber,workflow) limit records a
+	// "throttled" message instead of sending.
+	if env.Step.ThrottleLimit > 0 && h.throttle != nil {
+		key := env.Scope.EnvID + ":" + env.SubscriberID + ":" + env.WorkflowID
+		allowed, _ := h.throttle.ThrottleAllow(key, env.Step.ThrottleLimit, time.Duration(env.Step.ThrottleWindowSec)*time.Second)
+		if !allowed {
+			return h.persistEmailThrottled(ctx, env, t, scope, subject, content)
+		}
+	}
 
 	// Optional preference filtering. A nil checker always sends. On a checker
 	// error we fail open (proceed to send), mirroring the reference default-enabled
@@ -120,7 +186,12 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 	if err != nil {
 		return h.persistEmailError(ctx, env, t, err)
 	}
-	return json.Marshal(saved)
+	out, merr := json.Marshal(saved)
+	if merr != nil {
+		return out, merr
+	}
+	h.publishDelivery(env.Scope.EnvID, out)
+	return out, nil
 }
 
 // persistEmailSkipped records a status:"skipped" email message (the channel is
@@ -147,10 +218,46 @@ func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InApp
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
-	if saved, err := h.store.Messages().Create(ctx, scope, msg); err == nil {
-		return json.Marshal(saved)
+	saved, err := h.store.Messages().Create(ctx, scope, msg)
+	if err != nil {
+		saved = msg
 	}
-	return json.Marshal(msg)
+	out, merr := json.Marshal(saved)
+	h.publishDelivery(env.Scope.EnvID, out)
+	return out, merr
+}
+
+// persistEmailThrottled records a status:"throttled" email message (the send
+// exceeded the step's per-(env,subscriber,workflow) rate limit) and returns its
+// JSON with a nil error. No email is sent; mirrors the persistEmailSkipped pattern.
+func (h *EmailHandler) persistEmailThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	msg := domain.Message{
+		ID:             store.NewULID(),
+		OrgID:          env.Scope.OrgID,
+		EnvID:          env.Scope.EnvID,
+		WorkflowID:     env.WorkflowID,
+		NotificationID: env.NotificationID,
+		RunID:          t.RunID,
+		StepID:         env.Step.StepID,
+		SubscriberID:   env.SubscriberID,
+		Channel:        env.Step.Channel,
+		ProviderID:     "smtp",
+		Content:        content,
+		Subject:        subject,
+		Status:         "throttled",
+		Seen:           false,
+		Read:           false,
+		Archived:       false,
+		TransactionID:  env.TransactionID,
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+	}
+	saved, err := h.store.Messages().Create(ctx, scope, msg)
+	if err != nil {
+		saved = msg
+	}
+	out, merr := json.Marshal(saved)
+	h.publishDelivery(env.Scope.EnvID, out)
+	return out, merr
 }
 
 // persistEmailError records a status:"error" email message carrying cause and
@@ -173,8 +280,11 @@ func (h *EmailHandler) persistEmailError(ctx context.Context, env runenv.InAppEn
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
-	if saved, err := h.store.Messages().Create(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, msg); err == nil {
-		return json.Marshal(saved)
+	saved, err := h.store.Messages().Create(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, msg)
+	if err != nil {
+		saved = msg
 	}
-	return json.Marshal(msg)
+	out, merr := json.Marshal(saved)
+	h.publishDelivery(env.Scope.EnvID, out)
+	return out, merr
 }

@@ -246,3 +246,122 @@ func TestIngest_EmailWorkflow(t *testing.T) {
 		t.Error("notification RunID is empty, want non-empty")
 	}
 }
+
+// TestIngest_TopicFanout proves a multicast trigger (To{TopicKey}) fans out to
+// every topic member: each subscriber gets its own engine run + notification
+// row (with a non-empty run_id), all sharing one transactionId.
+func TestIngest_TopicFanout(t *testing.T) {
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Stop() })
+
+	dbPath := filepath.Join(t.TempDir(), "trigger.db")
+	ctx := context.Background()
+	st, err := store.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	steps, err := json.Marshal([]domain.Step{{
+		StepID:        "S1",
+		Type:          "in_app",
+		ControlValues: json.RawMessage(`{"subject":"Hi {{subscriber.firstName}}","body":"You have {{payload.itemCount}} items"}`),
+	}})
+	if err != nil {
+		t.Fatalf("marshal steps: %v", err)
+	}
+	if _, err := st.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "Broadcast",
+		TriggerIdentifier: testTrigger,
+		Active:            true,
+		Steps:             steps,
+	}); err != nil {
+		t.Fatalf("Workflows().Create: %v", err)
+	}
+
+	dagName := scope.EnvID + "-" + testTrigger
+	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
+		Name:  dagName,
+		Steps: []engine.StepDef{{ID: "S1", Task: "send.in_app", Type: "normal"}},
+	}); err != nil {
+		t.Fatalf("RegisterWorkflow: %v", err)
+	}
+
+	aud := audience.New(st)
+	for _, s := range []audience.SubscriberInput{
+		{SubscriberID: "s1", FirstName: "Ada"},
+		{SubscriberID: "s2", FirstName: "Bob"},
+	} {
+		if _, err := aud.Upsert(ctx, scope, s); err != nil {
+			t.Fatalf("upsert %s: %v", s.SubscriberID, err)
+		}
+	}
+
+	if _, err := st.Topics().Create(ctx, scope, "t1", "Team"); err != nil {
+		t.Fatalf("Topics().Create: %v", err)
+	}
+	for _, id := range []string{"s1", "s2"} {
+		if err := st.Topics().AddSubscriber(ctx, scope, "t1", id); err != nil {
+			t.Fatalf("AddSubscriber %s: %v", id, err)
+		}
+	}
+
+	svc := trigger.New(aud, st, eng)
+	resp, err := svc.Ingest(ctx, scope, trigger.TriggerRequest{
+		Name:          testTrigger,
+		To:            trigger.ToField{TopicKey: "t1"},
+		Payload:       json.RawMessage(`{"itemCount":3}`),
+		TransactionID: "tx-topic-1",
+	})
+	if err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	if !resp.Acknowledged || resp.Status != "processed" {
+		t.Fatalf("resp = %+v, want acknowledged/processed", resp)
+	}
+	if resp.TransactionID != "tx-topic-1" {
+		t.Errorf("TransactionID = %q, want tx-topic-1", resp.TransactionID)
+	}
+
+	count, withRun := countNotifications(t, dbPath, "tx-topic-1")
+	if count != 2 {
+		t.Fatalf("notifications for tx-topic-1 = %d, want 2 (one per topic member)", count)
+	}
+	if withRun != 2 {
+		t.Fatalf("notifications with non-empty run_id = %d, want 2", withRun)
+	}
+}
+
+// countNotifications returns how many notification rows exist for a transaction
+// id and how many of those carry a non-empty run_id.
+func countNotifications(t *testing.T, dbPath, transactionID string) (total, withRun int) {
+	t.Helper()
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)", dbPath)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open verify db: %v", err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT run_id FROM notifications WHERE transaction_id = ?`, transactionID)
+	if err != nil {
+		t.Fatalf("query notifications: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var runID string
+		if err := rows.Scan(&runID); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		total++
+		if runID != "" {
+			withRun++
+		}
+	}
+	return total, withRun
+}

@@ -37,10 +37,11 @@ type WorkflowDef struct {
 // StepDef mirrors dagnats's dag.StepDef JSON. Type marshals as a string such as
 // "normal"; set it explicitly to be safe.
 type StepDef struct {
-	ID        string   `json:"id"`
-	Task      string   `json:"task"`
-	Type      string   `json:"type,omitempty"`
-	DependsOn []string `json:"depends_on,omitempty"`
+	ID        string          `json:"id"`
+	Task      string          `json:"task"`
+	Type      string          `json:"type,omitempty"`
+	Config    json.RawMessage `json:"config,omitempty"`
+	DependsOn []string        `json:"depends_on,omitempty"`
 }
 
 // TaskPayload mirrors dagnats's protocol.TaskPayload / bridge pollResponse JSON.

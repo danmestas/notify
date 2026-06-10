@@ -56,3 +56,14 @@ func (svc *Service) Upsert(ctx context.Context, scope domain.Scope, in Subscribe
 func (svc *Service) Get(ctx context.Context, scope domain.Scope, subscriberID string) (domain.Subscriber, error) {
 	return svc.store.Subscribers().GetByExternalID(ctx, scope, subscriberID)
 }
+
+// CreateTopic upserts a topic by (scope, key) and returns the persisted row.
+func (svc *Service) CreateTopic(ctx context.Context, scope domain.Scope, key, name string) (domain.Topic, error) {
+	return svc.store.Topics().Create(ctx, scope, key, name)
+}
+
+// AddTopicSubscriber records a subscriber's membership in the named topic
+// within scope. An unknown topic key surfaces store.ErrNotFound.
+func (svc *Service) AddTopicSubscriber(ctx context.Context, scope domain.Scope, topicKey, subscriberID string) error {
+	return svc.store.Topics().AddSubscriber(ctx, scope, topicKey, subscriberID)
+}

@@ -15,18 +15,23 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/eventbus"
 	"github.com/danmestas/notify/internal/httpapi"
 	"github.com/danmestas/notify/internal/identity"
+	"github.com/danmestas/notify/internal/inbound"
 	"github.com/danmestas/notify/internal/inboxapi"
 	"github.com/danmestas/notify/internal/preferences"
+	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/version"
+	"github.com/danmestas/notify/internal/webhooksout"
 )
 
 func main() {
@@ -113,19 +118,40 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = eng.Stop() }()
 
+	bus, err := eventbus.Connect(ctx, *natsURL)
+	if err != nil {
+		return fmt.Errorf("eventbus.Connect: %w", err)
+	}
+	defer func() { _ = bus.Close() }()
+
 	prefs := preferences.New(st)
-	eng.Handle("send.in_app", delivery.New(st).WithPreferences(prefs).HandleInApp)
+	eng.Handle("send.in_app", delivery.New(st).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandleInApp)
 	conn := connectivity.New(st, mk)
-	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).HandleEmail)
+	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).WithThrottle(bus).WithDigester(bus).HandleEmail)
 	eng.StartWorkers(ctx)
+
+	whStop, err := webhooksout.New(bus, st).Start(ctx)
+	if err != nil {
+		return fmt.Errorf("webhooksout.Start: %w", err)
+	}
+	defer func() { _ = whStop() }()
 
 	id := identity.New(st, mk)
 	aud := audience.New(st)
 	_ = authoring.New(st, eng)
-	trg := trigger.New(aud, st, eng)
+	trg := trigger.New(aud, st, eng).WithDigester(bus)
 	inbox := inboxapi.New(st)
+	rt := realtime.New(bus)
+	inb := inbound.New(trg)
 
-	handler := httpapi.New(id, aud, trg, inbox)
+	an := analytics.New(st, bus)
+	anStop, err := an.Start(ctx)
+	if err != nil {
+		return fmt.Errorf("analytics.Start: %w", err)
+	}
+	defer func() { _ = anStop() }()
+
+	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an)
 	srv := &http.Server{Addr: *addr, Handler: handler}
 
 	go func() {

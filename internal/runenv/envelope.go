@@ -17,11 +17,13 @@ type Scope struct {
 // travel here because dagnats StepDef config does NOT reach the worker \u2014 only
 // TaskPayload.Input does (verified against dag.ResolveInput).
 type Step struct {
-	StepID          string `json:"stepId"`
-	Channel         string `json:"channel"`
-	ProviderID      string `json:"providerId,omitempty"`
-	SubjectTemplate string `json:"subjectTemplate,omitempty"`
-	BodyTemplate    string `json:"bodyTemplate"`
+	StepID            string `json:"stepId"`
+	Channel           string `json:"channel"`
+	ProviderID        string `json:"providerId,omitempty"`
+	SubjectTemplate   string `json:"subjectTemplate,omitempty"`
+	BodyTemplate      string `json:"bodyTemplate"`
+	ThrottleLimit     int    `json:"throttleLimit,omitempty"`
+	ThrottleWindowSec int    `json:"throttleWindowSec,omitempty"`
 }
 
 // InAppEnvelope is the StartRun input for an in_app workflow run. Subscriber and
