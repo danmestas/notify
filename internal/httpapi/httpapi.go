@@ -52,6 +52,7 @@ type subscriberRequest struct {
 	FirstName    string `json:"firstName"`
 	LastName     string `json:"lastName"`
 	Phone        string `json:"phone"`
+	Locale       string `json:"locale"`
 }
 
 // postSubscriber upserts a subscriber within the request Scope and returns the
@@ -70,6 +71,7 @@ func postSubscriber(aud *audience.Service) http.HandlerFunc {
 			FirstName:    req.FirstName,
 			LastName:     req.LastName,
 			Phone:        req.Phone,
+			Locale:       req.Locale,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

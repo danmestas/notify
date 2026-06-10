@@ -102,6 +102,7 @@ type stepControls struct {
 		Limit     int `json:"limit"`
 		WindowSec int `json:"windowSec"`
 	} `json:"throttle"`
+	LayoutKey string `json:"layoutKey"`
 }
 
 // Ingest processes one trigger end-to-end. On an unknown workflow it returns a
@@ -264,6 +265,7 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 			BodyTemplate:      controls.Body,
 			ThrottleLimit:     controls.Throttle.Limit,
 			ThrottleWindowSec: controls.Throttle.WindowSec,
+			LayoutKey:         controls.LayoutKey,
 		},
 	}
 	envelopeJSON, err := json.Marshal(envelope)

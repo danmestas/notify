@@ -1,0 +1,97 @@
+//go:build duckdb
+
+package analyticsduck
+
+import (
+	"context"
+	"testing"
+
+	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/store"
+)
+
+// compile-time proof that the DuckDB backend is a drop-in store.AnalyticsRepo.
+var _ store.AnalyticsRepo = (*Repo)(nil)
+
+// TestRepo_InsertAndCount mirrors store.TestAnalyticsRepo_InsertAndCount against
+// the DuckDB backend: same rows, same cross-environment isolation row, same
+// expected aggregation — proving the two AnalyticsRepo implementations agree.
+func TestRepo_InsertAndCount(t *testing.T) {
+	ctx := context.Background()
+	repo, err := Open(ctx, "") // in-memory DuckDB
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = repo.Close() }()
+
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	rows := []domain.AnalyticsDelivery{
+		{Channel: "in_app", Status: "sent"},
+		{Channel: "in_app", Status: "sent"},
+		{Channel: "in_app", Status: "throttled"},
+		{Channel: "email", Status: "sent"},
+	}
+	for i, r := range rows {
+		if err := repo.Insert(ctx, scope, r); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+
+	// A row under a different environment must not leak into scope's counts.
+	other := domain.Scope{OrgID: "o1", EnvID: "e2"}
+	if err := repo.Insert(ctx, other, domain.AnalyticsDelivery{Channel: "in_app", Status: "sent"}); err != nil {
+		t.Fatalf("insert isolation row: %v", err)
+	}
+
+	got, err := repo.CountByChannelStatus(ctx, scope)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+
+	want := map[string]map[string]int{
+		"in_app": {"sent": 2, "throttled": 1},
+		"email":  {"sent": 1},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("channel count mismatch: got %v want %v", got, want)
+	}
+	for channel, statuses := range want {
+		for status, n := range statuses {
+			if got[channel][status] != n {
+				t.Fatalf("count[%s][%s]: got %d want %d (full %v)", channel, status, got[channel][status], n, got)
+			}
+		}
+		if len(got[channel]) != len(statuses) {
+			t.Fatalf("status count mismatch for %s: got %v want %v", channel, got[channel], statuses)
+		}
+	}
+}
+
+// TestRepo_MintsIDAndTimestamp verifies Insert fills id/created_at when empty
+// (so the projector can append bare observations) and persists them.
+func TestRepo_MintsIDAndTimestamp(t *testing.T) {
+	ctx := context.Background()
+	repo, err := Open(ctx, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = repo.Close() }()
+
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	if err := repo.Insert(ctx, scope, domain.AnalyticsDelivery{Channel: "sms", Status: "sent"}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	var id, createdAt string
+	if err := repo.db.QueryRowContext(
+		ctx,
+		`SELECT id, created_at FROM analytics_deliveries WHERE channel = ?`, "sms",
+	).Scan(&id, &createdAt); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if id == "" {
+		t.Fatal("expected minted id, got empty")
+	}
+	if createdAt == "" {
+		t.Fatal("expected minted created_at, got empty")
+	}
+}

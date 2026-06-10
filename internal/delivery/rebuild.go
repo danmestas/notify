@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/danmestas/notify/internal/delivery/template"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/runenv"
@@ -58,6 +59,7 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 			Limit     int `json:"limit"`
 			WindowSec int `json:"windowSec"`
 		} `json:"throttle"`
+		LayoutKey string `json:"layoutKey"`
 	}
 	if len(found.ControlValues) > 0 {
 		if err := json.Unmarshal(found.ControlValues, &controls); err != nil {
@@ -108,6 +110,47 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 			BodyTemplate:      controls.Body,
 			ThrottleLimit:     controls.Throttle.Limit,
 			ThrottleWindowSec: controls.Throttle.WindowSec,
+			LayoutKey:         controls.LayoutKey,
 		},
 	}, notif.DigestKey, nil
+}
+
+// storeTranslator builds the {{t}} translate func for a render. The locale is
+// read from subMap["locale"] (default "en" when absent/empty); the lookup map
+// is the store's translations for that locale within scope. A key with no
+// translation resolves to itself, so an unseeded key renders verbatim.
+func storeTranslator(ctx context.Context, s *store.Store, scope domain.Scope, subMap map[string]any) func(key string) string {
+	locale, _ := subMap["locale"].(string)
+	if locale == "" {
+		locale = "en"
+	}
+	m, _ := s.Translations().Map(ctx, scope, locale)
+	return func(key string) string {
+		if v, ok := m[key]; ok {
+			return v
+		}
+		return key
+	}
+}
+
+// wrapLayout injects the rendered body as {{content}} into the named layout's
+// content template and renders it, returning the wrapped body. When layoutKey is
+// empty or the layout is not found, content is returned unchanged (fail-open) so
+// a step without a configured layout renders exactly as before. The render
+// context is a shallow copy of data with "content" set, so the caller's map is
+// not mutated.
+func wrapLayout(ctx context.Context, s *store.Store, scope domain.Scope, layoutKey, content string, data map[string]any, translate func(key string) string) string {
+	if layoutKey == "" {
+		return content
+	}
+	layout, err := s.Layouts().Get(ctx, scope, layoutKey)
+	if err != nil {
+		return content
+	}
+	wrapData := make(map[string]any, len(data)+1)
+	for k, v := range data {
+		wrapData[k] = v
+	}
+	wrapData["content"] = content
+	return template.RenderI18n(layout.Content, wrapData, translate)
 }

@@ -15,7 +15,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
@@ -144,7 +143,11 @@ func runServe(args []string) error {
 	rt := realtime.New(bus)
 	inb := inbound.New(trg)
 
-	an := analytics.New(st, bus)
+	an, anClose, err := analyticsBackend(ctx, st, bus)
+	if err != nil {
+		return fmt.Errorf("analyticsBackend: %w", err)
+	}
+	defer func() { _ = anClose() }()
 	anStop, err := an.Start(ctx)
 	if err != nil {
 		return fmt.Errorf("analytics.Start: %w", err)

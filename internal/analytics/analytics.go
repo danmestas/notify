@@ -22,13 +22,20 @@ import (
 // Service is the analytics projector + query API. It reads delivery-status
 // events from bus and persists/aggregates them through store.
 type Service struct {
-	store *store.Store
-	bus   *eventbus.Bus
+	repo store.AnalyticsRepo
+	bus  *eventbus.Bus
 }
 
 // New builds an analytics Service bound to st and bus.
 func New(s *store.Store, bus *eventbus.Bus) *Service {
-	return &Service{store: s, bus: bus}
+	return &Service{repo: s.Analytics(), bus: bus}
+}
+
+// NewWithRepo builds a Service against an explicit AnalyticsRepo, letting the
+// caller substitute the analytics backend (e.g. a DuckDB OLAP store) for the
+// default SQLite one without changing the projector or the query API.
+func NewWithRepo(repo store.AnalyticsRepo, bus *eventbus.Bus) *Service {
+	return &Service{repo: repo, bus: bus}
 }
 
 // Start launches the projector: it subscribes to EVERY environment's
@@ -66,7 +73,7 @@ func (svc *Service) ingest(ctx context.Context, data []byte) {
 		return
 	}
 	scope := domain.Scope{OrgID: ev.OrgID, EnvID: ev.EnvID}
-	if err := svc.store.Analytics().Insert(ctx, scope, domain.AnalyticsDelivery{
+	if err := svc.repo.Insert(ctx, scope, domain.AnalyticsDelivery{
 		Channel:       ev.Channel,
 		Status:        ev.Status,
 		SubscriberID:  ev.SubscriberID,
@@ -81,7 +88,7 @@ func (svc *Service) ingest(ctx context.Context, data []byte) {
 // DeliveriesByChannel returns delivery counts grouped by channel then status
 // for scope.
 func (svc *Service) DeliveriesByChannel(ctx context.Context, scope domain.Scope) (map[string]map[string]int, error) {
-	return svc.store.Analytics().CountByChannelStatus(ctx, scope)
+	return svc.repo.CountByChannelStatus(ctx, scope)
 }
 
 // Routes mounts the analytics query API. Callers MUST mount it inside the

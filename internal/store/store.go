@@ -80,3 +80,11 @@ func (s *Store) WebhookEndpoints() WebhookEndpointRepo {
 }
 
 func (s *Store) Topics() TopicRepo { return &topicRepo{w: s.writer, r: s.reader} }
+
+func (s *Store) Translations() TranslationRepo {
+	return &translationRepo{w: s.writer, r: s.reader}
+}
+
+func (s *Store) Layouts() LayoutRepo {
+	return &layoutRepo{w: s.writer, r: s.reader}
+}

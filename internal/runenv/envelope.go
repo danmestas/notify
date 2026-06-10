@@ -24,6 +24,7 @@ type Step struct {
 	BodyTemplate      string `json:"bodyTemplate"`
 	ThrottleLimit     int    `json:"throttleLimit,omitempty"`
 	ThrottleWindowSec int    `json:"throttleWindowSec,omitempty"`
+	LayoutKey         string `json:"layoutKey,omitempty"`
 }
 
 // InAppEnvelope is the StartRun input for an in_app workflow run. Subscriber and

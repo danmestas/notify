@@ -13,17 +13,18 @@ func TestRender(t *testing.T) {
 		data map[string]any
 		want string
 	}{
+		// Path interpolation: the behavior delivery handlers rely on.
 		{
 			name: "simple map path",
-			tmpl: "{{subscriber.firstName}}",
+			tmpl: "Hi {{subscriber.firstName}}",
 			data: map[string]any{"subscriber": map[string]any{"firstName": "Ada"}},
-			want: "Ada",
+			want: "Hi Ada",
 		},
 		{
-			name: "spaces around path and number leaf",
-			tmpl: "{{ payload.itemCount }}",
+			name: "number leaf",
+			tmpl: "You have {{payload.itemCount}} items",
 			data: map[string]any{"payload": map[string]any{"itemCount": 3}},
-			want: "3",
+			want: "You have 3 items",
 		},
 		{
 			name: "missing path yields empty",
@@ -32,28 +33,16 @@ func TestRender(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "digest count",
+			tmpl: "You have {{digest.count}} new items",
+			data: map[string]any{"digest": map[string]any{"count": 3}},
+			want: "You have 3 new items",
+		},
+		{
 			name: "struct resolves via json tag",
 			tmpl: "{{subscriber.firstName}}",
 			data: map[string]any{"subscriber": subscriber{FirstName: "Ada"}},
 			want: "Ada",
-		},
-		{
-			name: "unterminated token copied verbatim",
-			tmpl: "{{payload.x",
-			data: map[string]any{"payload": map[string]any{"x": "v"}},
-			want: "{{payload.x",
-		},
-		{
-			name: "mixed literal and token",
-			tmpl: "Hi {{subscriber.firstName}}!",
-			data: map[string]any{"subscriber": map[string]any{"firstName": "Ada"}},
-			want: "Hi Ada!",
-		},
-		{
-			name: "non-leaf path points at a map yields empty",
-			tmpl: "{{subscriber}}",
-			data: map[string]any{"subscriber": map[string]any{"firstName": "Ada"}},
-			want: "",
 		},
 		{
 			name: "bool leaf",
@@ -67,6 +56,40 @@ func TestRender(t *testing.T) {
 			data: nil,
 			want: "plain text",
 		},
+
+		// Full Handlebars features now available.
+		{
+			name: "if truthy branch",
+			tmpl: "{{#if x}}A{{else}}B{{/if}}",
+			data: map[string]any{"x": true},
+			want: "A",
+		},
+		{
+			name: "if falsy branch",
+			tmpl: "{{#if x}}A{{else}}B{{/if}}",
+			data: map[string]any{"x": false},
+			want: "B",
+		},
+		{
+			name: "each over slice",
+			tmpl: "{{#each items}}{{this}},{{/each}}",
+			data: map[string]any{"items": []string{"a", "b", "c"}},
+			want: "a,b,c,",
+		},
+		{
+			name: "with block",
+			tmpl: "{{#with subscriber}}{{firstName}}{{/with}}",
+			data: map[string]any{"subscriber": map[string]any{"firstName": "Ada"}},
+			want: "Ada",
+		},
+
+		// Degrade behavior: a malformed template renders as its literal source.
+		{
+			name: "unterminated token degrades to source",
+			tmpl: "{{oops",
+			data: map[string]any{"oops": "v"},
+			want: "{{oops",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -74,5 +97,26 @@ func TestRender(t *testing.T) {
 				t.Errorf("Render(%q) = %q, want %q", tt.tmpl, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRenderI18n(t *testing.T) {
+	translate := func(key string) string {
+		if key == "greeting" {
+			return "Hola"
+		}
+		return key
+	}
+	data := map[string]any{"subscriber": map[string]any{"firstName": "Ada"}}
+
+	// {{t}} resolves through the helper; other paths render as usual.
+	if got := RenderI18n(`{{t "greeting"}} {{subscriber.firstName}}`, data, translate); got != "Hola Ada" {
+		t.Fatalf("RenderI18n with {{t}}: got %q want %q", got, "Hola Ada")
+	}
+
+	// A template without {{t}} renders identically to Render.
+	tmpl := "Hi {{subscriber.firstName}}"
+	if got, want := RenderI18n(tmpl, data, translate), Render(tmpl, data); got != want {
+		t.Fatalf("RenderI18n without {{t}}: got %q want %q (Render)", got, want)
 	}
 }

@@ -155,3 +155,21 @@ type Topic struct {
 	Key   string `db:"key"`
 	Name  string `db:"name"`
 }
+
+type Translation struct {
+	ID     string `db:"id"`
+	OrgID  string `db:"org_id"`
+	EnvID  string `db:"environment_id"`
+	Locale string `db:"locale"`
+	Key    string `db:"key"`
+	Value  string `db:"value"`
+}
+
+type Layout struct {
+	ID      string `db:"id"`
+	OrgID   string `db:"org_id"`
+	EnvID   string `db:"environment_id"`
+	Key     string `db:"key"`
+	Name    string `db:"name"`
+	Content string `db:"content"`
+}

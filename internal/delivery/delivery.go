@@ -140,8 +140,10 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 		events, _ := h.digester.DigestDrain(digestKey)
 		data["digest"] = map[string]any{"count": len(events)}
 	}
-	subject := template.Render(env.Step.SubjectTemplate, data)
-	content := template.Render(env.Step.BodyTemplate, data)
+	translate := storeTranslator(ctx, h.store, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, subMap)
+	subject := template.RenderI18n(env.Step.SubjectTemplate, data, translate)
+	content := template.RenderI18n(env.Step.BodyTemplate, data, translate)
+	content = wrapLayout(ctx, h.store, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, env.Step.LayoutKey, content, data, translate)
 
 	// Optional throttle gate. When the step configures a limit and a throttler
 	// is attached, a send over the per-(env,subscriber,workflow) limit records a
