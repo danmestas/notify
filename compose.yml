@@ -1,0 +1,65 @@
+name: notify
+
+# The notify deploy unit is a tightly-coupled pair plus persistent state:
+#   dagnats  -- workflow engine sidecar (embedded NATS + JetStream + HTTP
+#               bridge). Its embedded NATS binds to LOOPBACK in standalone mode
+#               (a security default; only leaf/cluster mode binds 0.0.0.0), so
+#               notify must reach it over localhost, not a service DNS name.
+#   notify   -- API/delivery server. It shares dagnats' network namespace
+#               (the "app + sidecar" model, like a k8s pod) so nats://127.0.0.1
+#               reaches the sidecar; it persists OLTP state in SQLite.
+#
+# Because notify shares dagnats' netns, the host port for notify's API is
+# published on the dagnats service (the namespace owner).
+#
+# SQLite is single-writer + file-backed: run exactly ONE notify per data volume.
+# Scaling out is a datastore change, not a compose change.
+
+services:
+  dagnats:
+    build:
+      context: .
+      target: dagnats
+    environment:
+      DAGNATS_HTTP_ADDR: 0.0.0.0:8080
+      DAGNATS_DATA_DIR: /data
+    ports:
+      - "3000:3000" # notify's API (notify shares this network namespace)
+    volumes:
+      - dagnats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+  notify:
+    build:
+      context: .
+      target: notify
+    # Share the sidecar's netns so the loopback-only NATS is reachable.
+    network_mode: "service:dagnats"
+    depends_on:
+      dagnats:
+        condition: service_healthy
+    environment:
+      NOTIFY_NATS_URL: nats://127.0.0.1:4222
+      NOTIFY_BRIDGE_URL: http://127.0.0.1:8080
+      NOTIFY_ADDR: 0.0.0.0:3000
+      NOTIFY_DB: /data/notify.db
+      # Set a real 32-byte hex secret in production; empty derives a fixed dev
+      # key (local only). bootstrap and serve MUST share this value.
+      NOTIFY_MASTER_KEY_HEX: ${NOTIFY_MASTER_KEY_HEX:-}
+    volumes:
+      - notify-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000/healthz"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+volumes:
+  dagnats-data:
+  notify-data:

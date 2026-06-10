@@ -1,0 +1,15 @@
+.git
+.github
+.bin
+docs
+*.md
+*.db
+*.db-wal
+*.db-shm
+*.duckdb
+coverage.out
+/notify
+Dockerfile
+compose.yml
+.dockerignore
+lefthook.yml

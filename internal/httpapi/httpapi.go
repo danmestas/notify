@@ -19,12 +19,16 @@ import (
 	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
+	"github.com/danmestas/notify/internal/version"
 )
 
 // New builds the notify HTTP handler. All routes are grouped behind
 // id.Middleware, so each handler resolves its Scope via identity.ScopeFrom.
 func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, inb *inbound.Service, an *analytics.Service) http.Handler {
 	r := chi.NewRouter()
+	// Liveness probe, mounted outside the auth group so container/orchestrator
+	// health checks need no API key.
+	r.Get("/healthz", healthz)
 	r.Group(func(pr chi.Router) {
 		pr.Use(id.Middleware)
 		pr.Post("/v1/subscribers", postSubscriber(aud))
@@ -43,6 +47,17 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 		}
 	})
 	return r
+}
+
+// healthz is the unauthenticated liveness endpoint for container and
+// orchestrator health checks: it reports 200 with the build version as JSON.
+func healthz(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
+		"version": version.Version,
+	})
 }
 
 // subscriberRequest is the POST /v1/subscribers body.

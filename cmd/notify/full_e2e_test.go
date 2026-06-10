@@ -56,6 +56,22 @@ func TestFullJourney_RealBinary(t *testing.T) {
 	// Boot the real artifact, retrying the port bind if it loses a race.
 	base, authHeader := startServe(t, dbPath, natsURL, bridgeURL, keyHex, apiKey)
 
+	// /healthz must answer 200 WITHOUT auth — the container/orchestrator probe
+	// target. A healthy response also means serve got past engine.New +
+	// eventbus.Connect, i.e. it reached the dagnats sidecar.
+	hzResp, err := http.Get(base + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	hzBody, _ := io.ReadAll(hzResp.Body)
+	_ = hzResp.Body.Close()
+	if hzResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /healthz status=%d body=%s", hzResp.StatusCode, hzBody)
+	}
+	if !bytes.Contains(hzBody, []byte(`"status":"ok"`)) {
+		t.Errorf("/healthz body = %s, want status ok", hzBody)
+	}
+
 	// Subscriber with a Spanish locale (drives the {{t}} translation).
 	if st, body := doReq(t, http.MethodPost, base+"/v1/subscribers", authHeader,
 		`{"subscriberId":"e2e_user","firstName":"Ada","locale":"es"}`); st != http.StatusCreated {
@@ -231,7 +247,7 @@ func startServe(t *testing.T, dbPath, natsURL, bridgeURL, keyHex, apiKey string)
 			t.Fatalf("start serve binary: %v", err)
 		}
 		base = "http://" + addr
-		if serveReadyOK(base, authHeader, 12*time.Second) {
+		if serveReadyOK(base, 12*time.Second) {
 			t.Cleanup(func() {
 				_ = serve.Process.Kill()
 				_ = serve.Wait()
@@ -246,17 +262,14 @@ func startServe(t *testing.T, dbPath, natsURL, bridgeURL, keyHex, apiKey string)
 	return "", ""
 }
 
-// serveReadyOK polls an authenticated read endpoint and reports whether the
-// binary served 200 within timeout (non-fatal so the caller can retry).
-func serveReadyOK(base, authHeader string, timeout time.Duration) bool {
+// serveReadyOK polls the unauthenticated /healthz liveness endpoint and reports
+// whether the binary served 200 within timeout (non-fatal so the caller can
+// retry). A healthy /healthz means runServe got past store.Open + engine.New +
+// eventbus.Connect — i.e. it connected to the dagnats sidecar.
+func serveReadyOK(base string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		req, err := http.NewRequest(http.MethodGet, base+"/v1/messages?subscriberId=probe&channel=in_app", nil)
-		if err != nil {
-			return false
-		}
-		req.Header.Set("Authorization", authHeader)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := http.Get(base + "/healthz")
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {

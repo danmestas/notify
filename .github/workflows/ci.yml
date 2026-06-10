@@ -41,3 +41,10 @@ jobs:
           golangci-lint run --build-tags duckdb ./internal/analyticsduck/... ./cmd/notify/...
           go test -tags duckdb ./internal/analyticsduck/...
           go test -tags duckdb -race -run TestAnalytics_DeliveriesByChannel_DuckDB ./internal/httpapi/
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: container stack smoke (compose up + health + bootstrap + auth API)
+        run: bash docker/smoke.sh
