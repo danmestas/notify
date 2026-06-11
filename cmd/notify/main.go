@@ -99,6 +99,7 @@ func runServe(args []string) error {
 	addr := fs.String("addr", envOr("NOTIFY_ADDR", "127.0.0.1:3000"), "HTTP listen address")
 	masterKeyHex := fs.String("master-key-hex", os.Getenv("NOTIFY_MASTER_KEY_HEX"), "32-byte AES master key as hex (empty derives a dev key)")
 	meshAllow := fs.String("mesh-allow", envOr("NOTIFY_MESH_ALLOW", mesh.DefaultAllowedSubjects), "allowlist pattern for mesh agent dispatch subjects")
+	meshNATSURL := fs.String("mesh-nats-url", envOr("NOTIFY_MESH_NATS_URL", ""), "NATS URL for mesh agent dispatch; empty reuses -nats-url (set when agents live on a different hub than the engine)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -134,7 +135,11 @@ func runServe(args []string) error {
 	conn := connectivity.New(st, mk)
 	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).WithThrottle(bus).WithDigester(bus).HandleEmail)
 
-	meshClient, err := mesh.Dial(*natsURL, mesh.WithAllowedSubjects(*meshAllow))
+	meshHub := *meshNATSURL
+	if meshHub == "" {
+		meshHub = *natsURL
+	}
+	meshClient, err := mesh.Dial(meshHub, mesh.WithAllowedSubjects(*meshAllow))
 	if err != nil {
 		return fmt.Errorf("mesh.Dial: %w", err)
 	}
