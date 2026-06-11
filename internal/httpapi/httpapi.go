@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	agentsapi "github.com/danmestas/notify/internal/agents/api"
 	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/identity"
@@ -24,7 +25,7 @@ import (
 
 // New builds the notify HTTP handler. All routes are grouped behind
 // id.Middleware, so each handler resolves its Scope via identity.ScopeFrom.
-func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, inb *inbound.Service, an *analytics.Service) http.Handler {
+func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, inb *inbound.Service, an *analytics.Service, ag *agentsapi.Service) http.Handler {
 	r := chi.NewRouter()
 	// Liveness probe, mounted outside the auth group so container/orchestrator
 	// health checks need no API key.
@@ -44,6 +45,9 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 		}
 		if an != nil {
 			an.Routes(pr)
+		}
+		if ag != nil {
+			ag.Routes(pr)
 		}
 	})
 	return r

@@ -1,0 +1,124 @@
+// Package domain holds the agent-communication core types: the Agent platform
+// object, its channel links, the durable conversation transcript, and the
+// Runtime port a turn executes through. It imports nothing internal so every
+// agents/* sibling (store, api, runtime, ingress) can depend on it freely.
+package domain
+
+import (
+	"context"
+	"encoding/json"
+)
+
+// Allowed values of Agent.Runtime. The runtime selects how a turn is executed:
+// mesh publishes an A2A envelope over NATS, bridge POSTs to an HTTP endpoint,
+// managed compiles onto the engine's agent_loop.
+const (
+	RuntimeMesh    = "mesh"
+	RuntimeBridge  = "bridge"
+	RuntimeManaged = "managed"
+)
+
+// ValidRuntime reports whether r is one of the allowed runtime values.
+func ValidRuntime(r string) bool {
+	switch r {
+	case RuntimeMesh, RuntimeBridge, RuntimeManaged:
+		return true
+	}
+	return false
+}
+
+// Agent is a conversational endpoint registered with the platform, uniquely
+// identified by (environment_id, identifier). Exactly one of MeshSubject,
+// BridgeURL, or Managed is meaningful, selected by Runtime.
+type Agent struct {
+	ID             string          `db:"id"`
+	OrgID          string          `db:"org_id"`
+	EnvID          string          `db:"environment_id"`
+	Identifier     string          `db:"identifier"`
+	Name           string          `db:"name"`
+	Description    string          `db:"description"`
+	Runtime        string          `db:"runtime"` // mesh|bridge|managed
+	Active         bool            `db:"active"`
+	MeshSubject    string          `db:"mesh_subject"` // runtime=mesh: prompt subject
+	BridgeURL      string          `db:"bridge_url"`   // runtime=bridge
+	Managed        json.RawMessage `db:"managed"`      // runtime=managed: {integration_id, system_prompt, tools[], mcp_servers[], skills[]}
+	WelcomeMessage string          `db:"welcome_message"`
+	CreatedAt      string          `db:"created_at"`
+	UpdatedAt      string          `db:"updated_at"`
+}
+
+// AgentLink connects an agent to a channel integration, keyed by
+// (agent_id, integration_id) within a scope.
+type AgentLink struct {
+	ID            string          `db:"id"`
+	OrgID         string          `db:"org_id"`
+	EnvID         string          `db:"environment_id"`
+	AgentID       string          `db:"agent_id"`
+	IntegrationID string          `db:"integration_id"`
+	ConnectedAt   string          `db:"connected_at"`
+	Config        json.RawMessage `db:"config"`
+}
+
+// Conversation is one thread between an agent and a platform-side party,
+// keyed by (agent_id, integration_id, platform_thread_id).
+type Conversation struct {
+	ID               string `db:"id"`
+	OrgID            string `db:"org_id"`
+	EnvID            string `db:"environment_id"`
+	AgentID          string `db:"agent_id"`
+	IntegrationID    string `db:"integration_id"`
+	PlatformThreadID string `db:"platform_thread_id"` // slack thread_ts | tg chat id | inbox conv id
+	SubscriberID     string `db:"subscriber_id"`      // the human, when resolvable
+	Status           string `db:"status"`
+	CreatedAt        string `db:"created_at"`
+	LastActivityAt   string `db:"last_activity_at"`
+}
+
+// Activity is one append-only entry in a conversation's turn log. Content is
+// the JSON body {parts:[{text}], action?, attachments?}; RunID joins an
+// agent-role activity back to its dagnats turn run.
+type Activity struct {
+	ID             string          `db:"id"`
+	OrgID          string          `db:"org_id"`
+	EnvID          string          `db:"environment_id"`
+	ConversationID string          `db:"conversation_id"`
+	Role           string          `db:"role"` // user|agent|system|action
+	Content        json.RawMessage `db:"content"`
+	RunID          string          `db:"run_id"` // dagnats turn run, when role=agent
+	CreatedAt      string          `db:"created_at"`
+}
+
+// Part is one content fragment of a reply: text now, attachments later.
+type Part struct {
+	Text string `json:"text"`
+}
+
+// SuggestedAction is an optional button a capable channel renders alongside a
+// reply; clicking it feeds Value back as the next user message.
+type SuggestedAction struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+// Turn is one inbound message plus the bounded context a runtime needs to
+// answer it. History carries the last N activities oldest-first, so runtimes
+// stay stateless per turn and need no session affinity with the platform.
+type Turn struct {
+	Agent        Agent
+	Conversation Conversation
+	History      []Activity // last N=20, oldest first
+	Message      Activity   // the inbound user activity
+}
+
+// Reply is a runtime's answer to a Turn.
+type Reply struct {
+	Parts   []Part
+	Actions []SuggestedAction
+}
+
+// Runtime executes one conversation turn. Implementations (mesh, bridge,
+// managed) hide their entire wire protocol behind Dispatch; nothing above the
+// runtime packages sees NATS subjects, HTTP signatures, or model calls.
+type Runtime interface {
+	Dispatch(ctx context.Context, t Turn) (Reply, error)
+}

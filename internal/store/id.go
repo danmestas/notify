@@ -19,7 +19,9 @@ func newULID() string {
 	b[3] = byte(ms >> 16)
 	b[4] = byte(ms >> 8)
 	b[5] = byte(ms)
-	rand.Read(b[6:])
+	// crypto/rand.Read never returns an error (it panics on a broken source);
+	// the blank assignment keeps errcheck satisfied.
+	_, _ = rand.Read(b[6:])
 	return encodeULID(b)
 }
 

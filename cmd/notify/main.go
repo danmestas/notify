@@ -15,6 +15,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	agentsapi "github.com/danmestas/notify/internal/agents/api"
+	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
@@ -142,6 +144,7 @@ func runServe(args []string) error {
 	inbox := inboxapi.New(st)
 	rt := realtime.New(bus)
 	inb := inbound.New(trg)
+	ag := agentsapi.New(agentstore.New(st))
 
 	an, anClose, err := analyticsBackend(ctx, st, bus)
 	if err != nil {
@@ -154,7 +157,7 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = anStop() }()
 
-	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an)
+	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag)
 	srv := &http.Server{Addr: *addr, Handler: handler}
 
 	go func() {

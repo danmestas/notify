@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.21 // indirect
 	github.com/duckdb/duckdb-go-bindings/linux-amd64 v0.1.21 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/marcboeker/go-duckdb/mapping v0.0.21 // indirect

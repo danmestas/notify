@@ -11,8 +11,8 @@ import (
 func TestMigrate_0007_AppliesTopics(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 9 {
-		t.Fatalf("expected 9 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 10 {
+		t.Fatalf("expected 10 recorded migrations, got %d", n)
 	}
 
 	for _, table := range []string{"topics", "topic_subscribers"} {
