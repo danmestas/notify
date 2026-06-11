@@ -66,6 +66,11 @@ func (s *Store) Organizations() OrganizationRepo { return &orgRepo{w: s.writer, 
 func (s *Store) Environments() EnvironmentRepo   { return &envRepo{w: s.writer, r: s.reader} }
 func (s *Store) ApiKeys() ApiKeyRepo             { return &apiKeyRepo{w: s.writer, r: s.reader} }
 func (s *Store) Subscribers() SubscriberRepo     { return &subscriberRepo{w: s.writer, r: s.reader} }
+
+func (s *Store) SubscriberChannels() SubscriberChannelRepo {
+	return &subscriberChannelRepo{w: s.writer, r: s.reader}
+}
+
 func (s *Store) Workflows() WorkflowRepo         { return &workflowRepo{w: s.writer, r: s.reader} }
 func (s *Store) Notifications() NotificationRepo { return &notificationRepo{w: s.writer, r: s.reader} }
 func (s *Store) Messages() MessageRepo           { return &messageRepo{w: s.writer, r: s.reader} }

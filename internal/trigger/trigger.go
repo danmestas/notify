@@ -103,6 +103,10 @@ type stepControls struct {
 		WindowSec int `json:"windowSec"`
 	} `json:"throttle"`
 	LayoutKey string `json:"layoutKey"`
+	// Push extras (ntfy): forwarded verbatim into runenv.Step.
+	Priority int      `json:"priority"`
+	Tags     []string `json:"tags"`
+	Markdown bool     `json:"markdown"`
 }
 
 // Ingest processes one trigger end-to-end. On an unknown workflow it returns a
@@ -266,6 +270,9 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 			ThrottleLimit:     controls.Throttle.Limit,
 			ThrottleWindowSec: controls.Throttle.WindowSec,
 			LayoutKey:         controls.LayoutKey,
+			Priority:          controls.Priority,
+			Tags:              controls.Tags,
+			Markdown:          controls.Markdown,
 		},
 	}
 	envelopeJSON, err := json.Marshal(envelope)

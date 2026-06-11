@@ -57,6 +57,19 @@ func (svc *Service) Get(ctx context.Context, scope domain.Scope, subscriberID st
 	return svc.store.Subscribers().GetByExternalID(ctx, scope, subscriberID)
 }
 
+// SetCredentials records per-provider channel addressing for the subscriber
+// (e.g. the ntfy push topic), upserting the subscriber_channels row keyed by
+// (environment, subscriber, provider). mirrors the reference
+// PUT /subscribers/:id/credentials.
+func (svc *Service) SetCredentials(ctx context.Context, scope domain.Scope, subscriberID, providerID, channelType string, credentials json.RawMessage) (domain.SubscriberChannel, error) {
+	return svc.store.SubscriberChannels().Upsert(ctx, scope, domain.SubscriberChannel{
+		SubscriberID: subscriberID,
+		ProviderID:   providerID,
+		Type:         channelType,
+		Credentials:  credentials,
+	})
+}
+
 // CreateTopic upserts a topic by (scope, key) and returns the persisted row.
 func (svc *Service) CreateTopic(ctx context.Context, scope domain.Scope, key, name string) (domain.Topic, error) {
 	return svc.store.Topics().Create(ctx, scope, key, name)

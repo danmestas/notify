@@ -15,6 +15,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/providers"
+	"github.com/danmestas/notify/internal/providers/ntfy"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -26,6 +27,15 @@ type SMTPConfig struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	From     string `json:"from"`
+}
+
+// NtfyConfig is the credential payload for an ntfy push integration: the
+// server base URL and access token, JSON-encoded and AES-256-GCM-sealed into
+// Integration.EncCredentials. The per-subscriber topic lives in
+// subscriber_channels, not here.
+type NtfyConfig struct {
+	BaseURL string `json:"base_url"`
+	Token   string `json:"token"`
 }
 
 // Service stores integrations and resolves active providers per Scope.
@@ -97,6 +107,48 @@ func (svc *Service) ResolveEmail(ctx context.Context, scope domain.Scope) (provi
 		Username: cfg.Username,
 		Password: cfg.Password,
 	}, cfg.From, nil
+}
+
+// CreateNtfy stores an ntfy push integration for the Scope: it AES-GCM-encrypts
+// the JSON-encoded cfg into EncCredentials, with ProviderID="ntfy" and
+// Channel="push". When primary is set the integration becomes the preferred
+// provider for the channel.
+func (svc *Service) CreateNtfy(ctx context.Context, scope domain.Scope, identifier string, cfg NtfyConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal ntfy config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt ntfy config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "ntfy",
+		Channel:        "push",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
+// ResolvePush returns the active push provider and its provider id for the
+// Scope. It loads the active push integration, decrypts its credentials into
+// an NtfyConfig, and builds a *ntfy.Client from them.
+func (svc *Service) ResolvePush(ctx context.Context, scope domain.Scope) (providers.PushProvider, string, error) {
+	in, err := svc.store.Integrations().GetActiveByChannel(ctx, scope, "push")
+	if err != nil {
+		return nil, "", err
+	}
+	plaintext, err := svc.decrypt(in.EncCredentials)
+	if err != nil {
+		return nil, "", fmt.Errorf("connectivity: decrypt ntfy config: %w", err)
+	}
+	var cfg NtfyConfig
+	if err := json.Unmarshal(plaintext, &cfg); err != nil {
+		return nil, "", fmt.Errorf("connectivity: unmarshal ntfy config: %w", err)
+	}
+	return &ntfy.Client{BaseURL: cfg.BaseURL, Token: cfg.Token}, in.ProviderID, nil
 }
 
 // encrypt seals plaintext with AES-256-GCM, prepending the random 12-byte nonce

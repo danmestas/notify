@@ -25,6 +25,10 @@ type Step struct {
 	ThrottleLimit     int    `json:"throttleLimit,omitempty"`
 	ThrottleWindowSec int    `json:"throttleWindowSec,omitempty"`
 	LayoutKey         string `json:"layoutKey,omitempty"`
+	// Push extras (ntfy): authored alongside subject/body in controlValues.
+	Priority int      `json:"priority,omitempty"` // 1 (min) .. 5 (max); 0 = provider default
+	Tags     []string `json:"tags,omitempty"`
+	Markdown bool     `json:"markdown,omitempty"`
 }
 
 // InAppEnvelope is the StartRun input for an in_app workflow run. Subscriber and

@@ -55,6 +55,20 @@ type Subscriber struct {
 	Deleted      bool            `db:"deleted"`
 }
 
+// SubscriberChannel is a per-subscriber channel address for one provider
+// (push topic, chat webhook). Credentials is a JSON document, e.g.
+// {"topic":"agent-alerts"} for ntfy; server-side secrets live encrypted in
+// Integration.EncCredentials, never here.
+type SubscriberChannel struct {
+	ID           string          `db:"id"`
+	OrgID        string          `db:"org_id"`
+	EnvID        string          `db:"environment_id"`
+	SubscriberID string          `db:"subscriber_id"`
+	ProviderID   string          `db:"provider_id"`
+	Type         string          `db:"type"` // channel: "push" | "chat"
+	Credentials  json.RawMessage `db:"credentials"`
+}
+
 type Integration struct {
 	ID             string          `db:"id"`
 	OrgID          string          `db:"org_id"`

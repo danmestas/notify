@@ -15,6 +15,7 @@ import (
 	"github.com/danmestas/notify/internal/agents/ingress"
 	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/audience"
+	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inbound"
 	"github.com/danmestas/notify/internal/inboxapi"
@@ -26,7 +27,7 @@ import (
 
 // New builds the notify HTTP handler. All routes are grouped behind
 // id.Middleware, so each handler resolves its Scope via identity.ScopeFrom.
-func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, inb *inbound.Service, an *analytics.Service, ag *agentsapi.Service, ing *ingress.Service) http.Handler {
+func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, inb *inbound.Service, an *analytics.Service, ag *agentsapi.Service, ing *ingress.Service, conn *connectivity.Service) http.Handler {
 	r := chi.NewRouter()
 	// Liveness probe, mounted outside the auth group so container/orchestrator
 	// health checks need no API key.
@@ -34,9 +35,13 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 	r.Group(func(pr chi.Router) {
 		pr.Use(id.Middleware)
 		pr.Post("/v1/subscribers", postSubscriber(aud))
+		pr.Put("/v1/subscribers/{subscriberId}/credentials", putSubscriberCredentials(aud))
 		pr.Post("/v1/events/trigger", postTrigger(trg))
 		pr.Post("/v1/topics", postTopic(aud))
 		pr.Post("/v1/topics/{key}/subscribers", postTopicSubscriber(aud))
+		if conn != nil {
+			pr.Post("/v1/integrations/push", postPushIntegration(conn))
+		}
 		inbox.Routes(pr)
 		if inb != nil {
 			inb.Routes(pr)
@@ -101,6 +106,80 @@ func postSubscriber(aud *audience.Service) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusCreated, sub)
+	}
+}
+
+// subscriberCredentialsRequest is the PUT /v1/subscribers/{subscriberId}/credentials
+// body: per-provider channel addressing, e.g.
+// {"providerId":"ntfy","channel":"push","credentials":{"topic":"agent-alerts"}}.
+type subscriberCredentialsRequest struct {
+	ProviderID  string          `json:"providerId"`
+	Channel     string          `json:"channel"`
+	Credentials json.RawMessage `json:"credentials"`
+}
+
+// putSubscriberCredentials upserts the subscriber's channel credentials for a
+// provider within the request Scope and returns 204.
+func putSubscriberCredentials(aud *audience.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req subscriberCredentialsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.ProviderID == "" {
+			http.Error(w, "providerId is required", http.StatusBadRequest)
+			return
+		}
+		subscriberID := chi.URLParam(r, "subscriberId")
+		scope := identity.ScopeFrom(r.Context())
+		if _, err := aud.SetCredentials(r.Context(), scope, subscriberID, req.ProviderID, req.Channel, req.Credentials); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// pushIntegrationRequest is the POST /v1/integrations/push body: the ntfy
+// server credentials sealed into the integration row.
+type pushIntegrationRequest struct {
+	Identifier string `json:"identifier"`
+	BaseURL    string `json:"baseUrl"`
+	Token      string `json:"token"`
+	Primary    bool   `json:"primary"`
+}
+
+// postPushIntegration creates an ntfy push integration within the request
+// Scope and returns a slim DTO (no credential bytes) with 201.
+func postPushIntegration(conn *connectivity.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req pushIntegrationRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.BaseURL == "" {
+			http.Error(w, "baseUrl is required", http.StatusBadRequest)
+			return
+		}
+		scope := identity.ScopeFrom(r.Context())
+		in, err := conn.CreateNtfy(r.Context(), scope, req.Identifier, connectivity.NtfyConfig{
+			BaseURL: req.BaseURL,
+			Token:   req.Token,
+		}, req.Primary)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"id":         in.ID,
+			"providerId": in.ProviderID,
+			"channel":    in.Channel,
+			"identifier": in.Identifier,
+			"active":     in.Active,
+			"primary":    in.Primary,
+		})
 	}
 }
 

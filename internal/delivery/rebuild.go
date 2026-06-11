@@ -60,6 +60,10 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 			WindowSec int `json:"windowSec"`
 		} `json:"throttle"`
 		LayoutKey string `json:"layoutKey"`
+		// Push extras (ntfy): forwarded verbatim into runenv.Step.
+		Priority int      `json:"priority"`
+		Tags     []string `json:"tags"`
+		Markdown bool     `json:"markdown"`
 	}
 	if len(found.ControlValues) > 0 {
 		if err := json.Unmarshal(found.ControlValues, &controls); err != nil {
@@ -111,6 +115,9 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 			ThrottleLimit:     controls.Throttle.Limit,
 			ThrottleWindowSec: controls.Throttle.WindowSec,
 			LayoutKey:         controls.LayoutKey,
+			Priority:          controls.Priority,
+			Tags:              controls.Tags,
+			Markdown:          controls.Markdown,
 		},
 	}, notif.DigestKey, nil
 }

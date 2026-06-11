@@ -134,6 +134,7 @@ func runServe(args []string) error {
 	eng.Handle("send.in_app", delivery.New(st).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandleInApp)
 	conn := connectivity.New(st, mk)
 	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).WithThrottle(bus).WithDigester(bus).HandleEmail)
+	eng.Handle("send.push", delivery.NewPush(st, conn).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandlePush)
 
 	meshHub := *meshNATSURL
 	if meshHub == "" {
@@ -176,7 +177,7 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = anStop() }()
 
-	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag, ing)
+	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag, ing, conn)
 	srv := &http.Server{Addr: *addr, Handler: handler}
 
 	go func() {
