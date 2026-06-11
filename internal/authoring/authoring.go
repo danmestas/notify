@@ -128,6 +128,11 @@ func delayConfig(controlValues json.RawMessage) (json.RawMessage, error) {
 	return cfg, nil
 }
 
+// List returns all workflows for the Scope, ordered by insertion.
+func (s *Service) List(ctx context.Context, scope domain.Scope) ([]domain.Workflow, error) {
+	return s.store.Workflows().List(ctx, scope)
+}
+
 // Publish loads the workflow by trigger identifier, compiles it, and registers
 // the DAG with the engine.
 func (s *Service) Publish(ctx context.Context, scope domain.Scope, triggerIdentifier string) error {

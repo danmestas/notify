@@ -159,7 +159,7 @@ func runServe(args []string) error {
 
 	id := identity.New(st, mk)
 	aud := audience.New(st)
-	_ = authoring.New(st, eng)
+	au := authoring.New(st, eng)
 	trg := trigger.New(aud, st, eng).WithDigester(bus)
 	inbox := inboxapi.New(st)
 	rt := realtime.New(bus)
@@ -177,7 +177,7 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = anStop() }()
 
-	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag, ing, conn)
+	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag, ing, conn, au)
 	srv := &http.Server{Addr: *addr, Handler: handler}
 
 	go func() {

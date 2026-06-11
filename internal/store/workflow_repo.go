@@ -14,6 +14,7 @@ type WorkflowRepo interface {
 	Create(ctx context.Context, scope domain.Scope, wf domain.Workflow) (domain.Workflow, error)
 	GetByTriggerIdentifier(ctx context.Context, scope domain.Scope, triggerID string) (domain.Workflow, error)
 	GetByID(ctx context.Context, scope domain.Scope, id string) (domain.Workflow, error)
+	List(ctx context.Context, scope domain.Scope) ([]domain.Workflow, error)
 }
 
 type workflowRepo struct {
@@ -85,4 +86,32 @@ func (repo *workflowRepo) GetByID(ctx context.Context, scope domain.Scope, id st
 	wf.Steps = steps
 	wf.PayloadSchema = schema
 	return wf, nil
+}
+
+func (repo *workflowRepo) List(ctx context.Context, scope domain.Scope) ([]domain.Workflow, error) {
+	rows, err := repo.r.QueryContext(
+		ctx,
+		`SELECT id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version
+		 FROM workflows WHERE org_id = ? AND environment_id = ? ORDER BY rowid`,
+		scope.OrgID, scope.EnvID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var wfs []domain.Workflow
+	for rows.Next() {
+		var (
+			wf            domain.Workflow
+			steps, schema []byte
+		)
+		if err := rows.Scan(&wf.ID, &wf.OrgID, &wf.EnvID, &wf.Name, &wf.TriggerIdentifier, &wf.Active, &wf.Origin,
+			&steps, &schema, &wf.CompiledDAGVer); err != nil {
+			return nil, err
+		}
+		wf.Steps = steps
+		wf.PayloadSchema = schema
+		wfs = append(wfs, wf)
+	}
+	return wfs, rows.Err()
 }
