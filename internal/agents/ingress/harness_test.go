@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -94,11 +95,10 @@ func newHarness(t *testing.T) *harness {
 	}
 	t.Cleanup(meshClient.Close)
 
-	// MaxAttempts=0: fail straight to the DLQ. In-engine retry attempts are
-	// blocked on an upstream dagnats gap (the HTTP bridge never emits
-	// step.started, so the attempt counter is pinned and retry #2's timer is
-	// deduplicated; github.com/danmestas/dagnats/issues/381) — see the
-	// matching note in ingress.New.
+	// MaxAttempts=0 in the harness: fail straight to DLQ so the suite stays
+	// fast. Production uses MaxAttempts=3 (see ingress.New); individual tests
+	// that need to exercise the retry ladder override via WithRetry explicitly
+	// (danmestas/dagnats#384 unlocked MaxAttempts>0 — see ingress.New comment).
 	retry := &engine.RetryPolicy{
 		MaxAttempts:  0,
 		Strategy:     "fixed",
@@ -149,6 +149,63 @@ func newHarness(t *testing.T) *harness {
 	}
 }
 
+// newRetryHarness returns a harness identical to newHarness except the retry
+// policy uses MaxAttempts=3 with a short InitialDelay (50ms), exercising the
+// full retry ladder in bounded wall time. Used by TestTurnRetryLadder_E2E.
+func newRetryHarness(t *testing.T) *harness {
+	t.Helper()
+	h := newHarness(t)
+	// Stop the base harness engine so it does not compete for task dispatch
+	// during the retry ladder test. The retry harness brings up its own engine
+	// and ingress with MaxAttempts=3 on the same sidecar and stores.
+	if err := h.eng.Stop(); err != nil {
+		t.Fatalf("newRetryHarness stop base engine: %v", err)
+	}
+
+	// MaxAttempts=2: 1 initial + 2 retries = 3 total dispatches. Each round
+	// trip is ~7s (5s bridge poll + 2s mesh timeout); 3 rounds ≈ 21s, safely
+	// under the 45s window in TestTurnRetryLadder_E2E.
+	ladderRetry := &engine.RetryPolicy{
+		MaxAttempts:  2,
+		Strategy:     "fixed",
+		InitialDelay: 50 * time.Millisecond,
+		MaxDelay:     50 * time.Millisecond,
+	}
+
+	meshClient, err := mesh.Dial(h.natsURL, mesh.WithTimeout(2*time.Second))
+	if err != nil {
+		t.Fatalf("newRetryHarness mesh.Dial: %v", err)
+	}
+	t.Cleanup(meshClient.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	eng2, err := engine.New(h.natsURL, h.bridgeURL)
+	if err != nil {
+		t.Fatalf("newRetryHarness engine.New: %v", err)
+	}
+	t.Cleanup(func() { _ = eng2.Stop() })
+
+	ing2 := ingress.New(h.agents, h.store, eng2, h.bus).
+		WithRuntime(agentdomain.RuntimeMesh, meshClient).
+		WithRetry(ladderRetry)
+	eng2.Handle(ingress.TaskMesh, ing2.HandleTurn)
+	eng2.StartWorkers(ctx)
+
+	r := chi.NewRouter()
+	ing2.Routes(r)
+	realtime.New(h.bus).Routes(r)
+	srv2 := httptest.NewServer(scopeInjector(testScope, r))
+	t.Cleanup(srv2.Close)
+
+	h2 := *h // shallow copy; override the wired fields
+	h2.eng = eng2
+	h2.mesh = meshClient
+	h2.retry = ladderRetry
+	h2.srv = srv2
+	return &h2
+}
+
 // scopeInjector mimics identity.Middleware by attaching a fixed Scope, so the
 // e2e exercises the real handlers without provisioning API keys.
 func scopeInjector(scope domain.Scope, next http.Handler) http.Handler {
@@ -186,6 +243,26 @@ func (h *harness) startStub(t *testing.T) *nats.Subscription {
 		t.Fatalf("stub flush: %v", err)
 	}
 	return sub
+}
+
+// startNeverReplyStub subscribes on subject, acks every dispatch, and counts
+// it — but never publishes an answer. The mesh client times out, the engine
+// sees a retriable failure, and the step is retried per the RetryPolicy. This
+// is the harness side of the retry-ladder proof in TestTurnRetryLadder_E2E.
+func (h *harness) startNeverReplyStub(t *testing.T, subject string) *atomic.Int64 {
+	t.Helper()
+	var n atomic.Int64
+	_, err := h.nc.Subscribe(subject, func(m *nats.Msg) {
+		_ = m.Respond([]byte(`{}`)) // ack so the bridge sees a clean poll; never answers
+		n.Add(1)
+	})
+	if err != nil {
+		t.Fatalf("never-reply stub subscribe: %v", err)
+	}
+	if err := h.nc.Flush(); err != nil {
+		t.Fatalf("never-reply stub flush: %v", err)
+	}
+	return &n
 }
 
 type composeResponse struct {

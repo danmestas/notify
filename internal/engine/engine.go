@@ -70,11 +70,14 @@ type StepDef struct {
 }
 
 // TaskPayload mirrors dagnats's protocol.TaskPayload / bridge pollResponse JSON.
+// Attempt is the 1-based dispatch count; always ≥1 since danmestas/dagnats#384
+// fixed first-dispatch propagation (previously omitted, unmarshaling to 0).
 type TaskPayload struct {
-	TaskID string          `json:"task_id"`
-	RunID  string          `json:"run_id"`
-	StepID string          `json:"step_id"`
-	Input  json.RawMessage `json:"input,omitempty"`
+	TaskID  string          `json:"task_id"`
+	RunID   string          `json:"run_id"`
+	StepID  string          `json:"step_id"`
+	Attempt int             `json:"attempt"`
+	Input   json.RawMessage `json:"input,omitempty"`
 }
 
 // RunSnapshot mirrors the run fields of dagnats's api.runs.get reply

@@ -84,13 +84,12 @@ func TestInboxTurnLoop_E2E(t *testing.T) {
 	}
 }
 
-// TestTurnRetryDLQReplay_E2E is proof (c): with the stub agent dead, a
-// composed turn fails (retriable on the wire) and lands in the DLQ
-// (transcript intact); after the stub returns, `dagnats dlq replay`
-// re-executes the turn and the reply finally reaches the inbox — the
-// conversation resumes, nothing dropped. Intermediate in-engine retry
-// attempts are exercised the moment dagnats fixes bridge-worker attempt
-// propagation (see ingress.New); the DLQ landing and replay are real here.
+// TestTurnRetryDLQReplay_E2E is proof (c): with the stub agent dead (no
+// subscriber), a composed turn fails and lands in the DLQ (transcript
+// intact); after the stub returns, `dagnats dlq replay` re-executes the turn
+// and the reply finally reaches the inbox — the conversation resumes, nothing
+// dropped. The harness uses MaxAttempts=0 (fail-fast) so the DLQ appears
+// without delay; see TestTurnRetryLadder_E2E for the retry-ladder proof.
 func TestTurnRetryDLQReplay_E2E(t *testing.T) {
 	h := newHarness(t)
 	stub := h.startStub(t)
@@ -100,7 +99,7 @@ func TestTurnRetryDLQReplay_E2E(t *testing.T) {
 	first := h.compose(t, "", "warm up")
 	waitFrame(t, frames, 20*time.Second, "ECHO::warm up")
 
-	// Kill the stub: the next turn must retry and dead-letter, not drop.
+	// Kill the stub: the next turn must dead-letter, not drop.
 	if err := stub.Unsubscribe(); err != nil {
 		t.Fatalf("stub unsubscribe: %v", err)
 	}
@@ -122,6 +121,67 @@ func TestTurnRetryDLQReplay_E2E(t *testing.T) {
 	var found bool
 	for _, m := range msgs {
 		if strings.Contains(m.Content, "while you were out") && m.RunID == out.RunID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no replayed reply row joining run %s: %+v", out.RunID, msgs)
+	}
+}
+
+// TestTurnRetryLadder_E2E proves the retry ladder unlocked by
+// danmestas/dagnats#384: with MaxAttempts=2 and a never-reply stub, the
+// engine dispatches the turn MaxAttempts+1 times (initial + 2 retries = 3
+// total) before dead-lettering. DLQ replay on a live stub resumes the
+// conversation. Wall-clock budget: each round trip ≈ 7s (5s bridge poll +
+// 2s mesh timeout); 3 rounds ≈ 21s, well under the 60s suite budget.
+func TestTurnRetryLadder_E2E(t *testing.T) {
+	h := newRetryHarness(t)
+	stub := h.startStub(t)
+	frames := h.openSSE(t)
+
+	// Warm-up turn on the live stub proves the pipeline.
+	first := h.compose(t, "", "ladder warm up")
+	waitFrame(t, frames, 60*time.Second, "ECHO::ladder warm up") // fresh-engine first poll can be slow on loaded CI
+
+	// Replace the stub with a never-reply variant to force repeated retries.
+	if err := stub.Unsubscribe(); err != nil {
+		t.Fatalf("stub unsubscribe: %v", err)
+	}
+	if err := h.nc.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	dispatches := h.startNeverReplyStub(t, stubSubject)
+
+	out := h.compose(t, first.ConversationID, "ladder payload")
+
+	// The engine dispatches MaxAttempts+1 times total (initial + 2 retries).
+	// Each round trip ≈ 7s (5s bridge poll + 2s mesh timeout + backoff);
+	// 3 rounds ≈ 21s, so a 45s window covers all overhead.
+	wantDispatches := int64(h.retry.MaxAttempts + 1)
+	deadline := time.Now().Add(45 * time.Second)
+	for dispatches.Load() < wantDispatches {
+		if time.Now().After(deadline) {
+			t.Fatalf("retry ladder stalled: got %d dispatches, want %d within 45s",
+				dispatches.Load(), wantDispatches)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Logf("retry ladder complete: %d dispatches observed", dispatches.Load())
+
+	letters := h.waitDLQ(t, out.RunID, 30*time.Second)
+	if len(letters) == 0 {
+		t.Fatal("no DLQ entry after retry ladder")
+	}
+
+	// Replay on a live stub confirms the conversation resumes normally.
+	h.startStub(t)
+	h.dlqReplay(t, out.RunID)
+	waitFrame(t, frames, 30*time.Second, "ECHO::", "ladder payload")
+	msgs := h.waitMessages(t, 2, 10*time.Second)
+	var found bool
+	for _, m := range msgs {
+		if strings.Contains(m.Content, "ladder payload") && m.RunID == out.RunID {
 			found = true
 		}
 	}

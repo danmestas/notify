@@ -61,17 +61,16 @@ func New(agents *agentstore.Store, core *corestore.Store, eng *engine.Engine, bu
 		core:   core,
 		eng:    eng,
 		bus:    bus,
-		// MaxAttempts=0: a transient turn failure dead-letters immediately
-		// (replayable, transcript intact) instead of retrying in-engine.
-		// Tracking: raise to 3 once dagnats propagates attempt numbers for
-		// HTTP-bridge workers (github.com/danmestas/dagnats/issues/381) —
-		// today the bridge never emits step.started, the attempt counter
-		// stays pinned at 1, and the second retry timer is deduplicated by
-		// its Nats-Msg-Id, leaving the run stuck "running" with nothing in
-		// the DLQ. Fail-fast-to-DLQ is strictly better than a stuck turn
-		// until that lands.
+		// MaxAttempts=3: the engine retries transient turn failures with
+		// backoff before dead-lettering, giving mesh agents up to 4 total
+		// dispatch attempts (dagnats retry semantics: ≤ MaxAttempts
+		// retries after the first attempt). The fix landed in
+		// danmestas/dagnats#384: the bridge pollResponse now always carries
+		// Attempt≥1, so the retry counter advances correctly and the
+		// dedup-by-Nats-Msg-Id stall that made MaxAttempts>0 unsafe is
+		// gone.
 		retry: &engine.RetryPolicy{
-			MaxAttempts:  0,
+			MaxAttempts:  3,
 			Strategy:     "fixed",
 			InitialDelay: 2 * time.Second,
 			MaxDelay:     2 * time.Second,
