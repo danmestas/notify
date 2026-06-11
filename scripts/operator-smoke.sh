@@ -52,6 +52,15 @@ _post() {
     -d "$body"
 }
 
+_put() {
+  local url="$1" body="$2"
+  curl -s -o /tmp/notify-smoke-resp.json -w "%{http_code}" \
+    -X PUT "$url" \
+    -H "Authorization: $AUTH" \
+    -H "Content-Type: application/json" \
+    -d "$body"
+}
+
 _get() {
   local url="$1"
   curl -s -o /tmp/notify-smoke-resp.json -w "%{http_code}" \
@@ -207,7 +216,7 @@ if [ -n "${NTFY_BASE:-}" ] && [ -n "${NTFY_TOPIC:-}" ]; then
   CODE=$(_post "$BASE/v1/subscribers" "$PUSH_SUB_BODY")
 
   CRED_BODY="{\"providerId\":\"ntfy\",\"channel\":\"push\",\"credentials\":{\"topic\":\"$NTFY_TOPIC\"}}"
-  CODE=$(_post "$BASE/v1/subscribers/$PUSH_SUB_ID/credentials" "$CRED_BODY")
+  CODE=$(_put "$BASE/v1/subscribers/$PUSH_SUB_ID/credentials" "$CRED_BODY")
   if [ "$CODE" = "204" ]; then
     _pass "PUT /v1/subscribers/{id}/credentials → 204"
   else
