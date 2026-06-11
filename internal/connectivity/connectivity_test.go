@@ -8,6 +8,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/providers"
+	"github.com/danmestas/notify/internal/providers/cloudflareemail"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -102,5 +103,101 @@ func TestCreateSMTP_EncryptsCredentials(t *testing.T) {
 	}
 	if bytes.Contains(in.EncCredentials, []byte(cfg.Password)) {
 		t.Fatal("EncCredentials contains plaintext password bytes")
+	}
+}
+
+func TestCreateCloudflareEmail_ThenResolveEmail(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	cfg := CloudflareEmailConfig{
+		AccountID: "cf-acct-001",
+		APIToken:  "cf-token-secret",
+		From:      "notify@example.com",
+	}
+	in, err := svc.CreateCloudflareEmail(ctx, scope, "primary-cf", cfg, true)
+	if err != nil {
+		t.Fatalf("CreateCloudflareEmail: %v", err)
+	}
+	if in.ProviderID != "cloudflare-email" {
+		t.Errorf("ProviderID = %q, want cloudflare-email", in.ProviderID)
+	}
+	if in.Channel != "email" {
+		t.Errorf("Channel = %q, want email", in.Channel)
+	}
+
+	prov, from, err := svc.ResolveEmail(ctx, scope)
+	if err != nil {
+		t.Fatalf("ResolveEmail: %v", err)
+	}
+	if from != cfg.From {
+		t.Errorf("From = %q, want %q", from, cfg.From)
+	}
+	cfClient, ok := prov.(*cloudflareemail.Client)
+	if !ok {
+		t.Fatalf("provider type = %T, want *cloudflareemail.Client", prov)
+	}
+	if cfClient.AccountID != cfg.AccountID {
+		t.Errorf("AccountID = %q, want %q", cfClient.AccountID, cfg.AccountID)
+	}
+	if cfClient.APIToken != cfg.APIToken {
+		t.Errorf("APIToken = %q, want %q", cfClient.APIToken, cfg.APIToken)
+	}
+	if cfClient.From != cfg.From {
+		t.Errorf("From = %q, want %q", cfClient.From, cfg.From)
+	}
+}
+
+func TestResolveEmail_UnknownProviderFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	// Insert an email integration with an unrecognised ProviderID directly via
+	// the store (no Create* helper exists for it, by design).
+	enc, err := svc.encrypt([]byte(`{"some":"opaque-config"}`))
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if _, err := svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "bogus",
+		Channel:        "email",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        true,
+		Identifier:     "bogus-email",
+	}); err != nil {
+		t.Fatalf("Integrations().Create: %v", err)
+	}
+
+	_, _, err = svc.ResolveEmail(ctx, scope)
+	if err == nil {
+		t.Fatal("ResolveEmail with unknown ProviderID: expected error, got nil")
+	}
+	if want := `connectivity: unknown email provider "bogus"`; err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestCreateCloudflareEmail_EncryptsCredentials(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	cfg := CloudflareEmailConfig{
+		AccountID: "cf-acct-001",
+		APIToken:  "plaintext-token-leak-check",
+		From:      "notify@example.com",
+	}
+	in, err := svc.CreateCloudflareEmail(ctx, scope, "primary-cf", cfg, true)
+	if err != nil {
+		t.Fatalf("CreateCloudflareEmail: %v", err)
+	}
+	if len(in.EncCredentials) == 0 {
+		t.Fatal("EncCredentials is empty")
+	}
+	if bytes.Contains(in.EncCredentials, []byte(cfg.APIToken)) {
+		t.Fatal("EncCredentials contains plaintext API token bytes")
 	}
 }

@@ -16,6 +16,12 @@
 #   RESEND_FROM   — sender address (e.g. notify@example.com)
 #   TO_EMAIL      — recipient subscriber email
 #
+# Optional env — Cloudflare Email leg (skipped when absent):
+#   CF_EMAIL_ACCOUNT_ID — Cloudflare account ID
+#   CF_EMAIL_TOKEN      — Cloudflare Email API token (never echoed)
+#   CF_EMAIL_FROM       — sender address (e.g. notify@example.com)
+#   TO_EMAIL            — recipient subscriber email (shared with SMTP leg)
+#
 # Optional env — push/ntfy leg (skipped when absent):
 #   NTFY_BASE     — ntfy server base URL (e.g. https://ntfy.sh)
 #   NTFY_TOKEN    — ntfy access token (may be empty for public server)
@@ -196,6 +202,68 @@ if [ -n "${RESEND_HOST:-}" ] && [ -n "${RESEND_KEY:-}" ] && [ -n "${RESEND_FROM:
   fi
 else
   echo "(skipping email leg — RESEND_HOST / RESEND_KEY / RESEND_FROM not set)"
+fi
+
+# ── cloudflare-email leg (conditional) ───────────────────────────────────────
+if [ -n "${CF_EMAIL_ACCOUNT_ID:-}" ] && [ -n "${CF_EMAIL_TOKEN:-}" ] && [ -n "${CF_EMAIL_FROM:-}" ]; then
+  echo
+  echo "── cloudflare-email integration + workflow"
+  CF_EMAIL_IDENT="smoke-cf-email-$(date +%s)"
+  # jq -n --arg builds the body safely: credentials may contain special chars.
+  # CF_EMAIL_TOKEN is passed via --arg and never interpolated into a bare string.
+  CF_INT_BODY=$(jq -n \
+    --arg identifier "$CF_EMAIL_IDENT" \
+    --arg accountId "$CF_EMAIL_ACCOUNT_ID" \
+    --arg apiToken "$CF_EMAIL_TOKEN" \
+    --arg from "$CF_EMAIL_FROM" \
+    '{identifier: $identifier, provider: "cloudflare-email", accountId: $accountId, apiToken: $apiToken, from: $from, primary: true}')
+  CODE=$(_post "$BASE/v1/integrations/email" "$CF_INT_BODY")
+  if [ "$CODE" = "201" ]; then
+    RESP_BODY=$(_body)
+    _pass "POST /v1/integrations/email (cloudflare-email) → 201"
+    # Verify the API token is never echoed.
+    if echo "$RESP_BODY" | grep -qF "$CF_EMAIL_TOKEN"; then
+      _fail "cf-token-not-echoed" "response contains the Cloudflare Email API token"
+    else
+      _pass "cf-token-not-echoed in response"
+    fi
+    # Verify providerId is cloudflare-email.
+    GOT_PROVIDER=$(echo "$RESP_BODY" | jq -r '.providerId' 2>/dev/null || echo "")
+    if [ "$GOT_PROVIDER" = "cloudflare-email" ]; then
+      _pass "providerId=cloudflare-email"
+    else
+      _fail "providerId" "got=$GOT_PROVIDER want=cloudflare-email"
+    fi
+  else
+    _fail "POST /v1/integrations/email (cloudflare-email)" "status=$CODE body=$(_body)"
+  fi
+
+  if [ -n "${TO_EMAIL:-}" ]; then
+    CF_SUB_BODY=$(jq -n \
+      --arg subscriberId "smoke-cf-email-$(date +%s)" \
+      --arg email "$TO_EMAIL" \
+      '{subscriberId: $subscriberId, firstName: "CFEmailSmoke", email: $email}')
+    CODE=$(_post "$BASE/v1/subscribers" "$CF_SUB_BODY")
+    CF_SUB_ID=$(jq -r '.subscriberId' /tmp/notify-smoke-resp.json 2>/dev/null || echo "smoke-cf-sub")
+
+    CF_WF_ID="smoke-cf-email-wf-$(date +%s)"
+    CF_WF_BODY="{\"name\":\"Smoke CF Email\",\"triggerIdentifier\":\"$CF_WF_ID\",\"steps\":[{\"stepId\":\"CE1\",\"type\":\"email\",\"controlValues\":{\"subject\":\"CF Email smoke OK\",\"body\":\"This is a Cloudflare Email smoke test.\"}}]}"
+    CODE=$(_post "$BASE/v1/workflows" "$CF_WF_BODY")
+    if [ "$CODE" = "201" ]; then
+      _pass "POST /v1/workflows (cloudflare-email) → 201"
+      CF_TRIG_BODY="{\"name\":\"$CF_WF_ID\",\"to\":{\"subscriberId\":\"$CF_SUB_ID\"},\"payload\":{},\"transactionId\":\"smoke-cf-email-tx-$(date +%s)\"}"
+      CODE=$(_post "$BASE/v1/events/trigger" "$CF_TRIG_BODY")
+      if [ "$CODE" = "201" ]; then
+        _pass "POST /v1/events/trigger (cloudflare-email) → 201"
+      else
+        _fail "POST /v1/events/trigger (cloudflare-email)" "status=$CODE body=$(_body)"
+      fi
+    else
+      _fail "POST /v1/workflows (cloudflare-email)" "status=$CODE body=$(_body)"
+    fi
+  fi
+else
+  echo "(skipping cloudflare-email leg — CF_EMAIL_ACCOUNT_ID / CF_EMAIL_TOKEN / CF_EMAIL_FROM not set)"
 fi
 
 # ── push leg (conditional) ────────────────────────────────────────────────────

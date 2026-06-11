@@ -270,21 +270,30 @@ func postTopicSubscriber(aud *audience.Service) http.HandlerFunc {
 	}
 }
 
-// emailIntegrationRequest is the POST /v1/integrations/email body: SMTP
-// credentials sealed into the integration row. Password is never echoed in the
-// response DTO.
+// emailIntegrationRequest is the POST /v1/integrations/email body.
+// The optional "provider" field selects the backend (default: "smtp").
+// For provider="smtp": host, port, username, password are used.
+// For provider="cloudflare-email": accountId, apiToken are used.
+// Password and apiToken are never echoed in the response DTO.
 type emailIntegrationRequest struct {
 	Identifier string `json:"identifier"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Username   string `json:"username"`
-	Password   string `json:"password"`
+	Provider   string `json:"provider"` // "smtp" (default) or "cloudflare-email"
 	From       string `json:"from"`
 	Primary    bool   `json:"primary"`
+	// SMTP fields.
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	// Cloudflare Email fields.
+	AccountID string `json:"accountId"`
+	APIToken  string `json:"apiToken"`
 }
 
-// postEmailIntegration creates an SMTP email integration within the request
-// Scope and returns a slim DTO (no credential bytes) with 201.
+// postEmailIntegration creates an email integration within the request Scope
+// and returns a slim DTO (no credential bytes) with 201.
+// The "provider" field selects between smtp (default) and cloudflare-email;
+// the existing SMTP body is accepted unchanged when provider is absent.
 func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req emailIntegrationRequest
@@ -292,34 +301,65 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if req.Host == "" {
-			http.Error(w, "host is required", http.StatusBadRequest)
-			return
-		}
 		if req.From == "" {
 			http.Error(w, "from is required", http.StatusBadRequest)
 			return
 		}
+
 		scope := identity.ScopeFrom(r.Context())
-		port := req.Port
-		if port == 0 {
-			port = 587
+
+		var (
+			in  domain.Integration
+			err error
+		)
+
+		switch req.Provider {
+		case "cloudflare-email":
+			if req.AccountID == "" {
+				http.Error(w, "accountId is required for cloudflare-email", http.StatusBadRequest)
+				return
+			}
+			if req.APIToken == "" {
+				http.Error(w, "apiToken is required for cloudflare-email", http.StatusBadRequest)
+				return
+			}
+			in, err = conn.CreateCloudflareEmail(r.Context(), scope, req.Identifier, connectivity.CloudflareEmailConfig{
+				AccountID: req.AccountID,
+				APIToken:  req.APIToken,
+				From:      req.From,
+			}, req.Primary)
+		case "smtp", "": // empty provider defaults to smtp for backward compatibility.
+			if req.Host == "" {
+				http.Error(w, "host is required", http.StatusBadRequest)
+				return
+			}
+			port := req.Port
+			if port == 0 {
+				port = 587
+			}
+			addr := req.Host + ":" + itoa(port)
+			in, err = conn.CreateSMTP(r.Context(), scope, req.Identifier, connectivity.SMTPConfig{
+				Addr:     addr,
+				Host:     req.Host,
+				Username: req.Username,
+				Password: req.Password,
+				From:     req.From,
+			}, req.Primary)
+		default:
+			// Fail closed on unknown providers rather than silently storing
+			// them as SMTP rows with empty credentials.
+			http.Error(w, "unknown provider "+req.Provider+"; allowed: smtp, cloudflare-email", http.StatusBadRequest)
+			return
 		}
-		addr := req.Host + ":" + itoa(port)
-		in, err := conn.CreateSMTP(r.Context(), scope, req.Identifier, connectivity.SMTPConfig{
-			Addr:     addr,
-			Host:     req.Host,
-			Username: req.Username,
-			Password: req.Password,
-			From:     req.From,
-		}, req.Primary)
+
 		if err != nil {
 			// Never surface the underlying error: wrapped marshal/encrypt/store
 			// detail could carry credential-bearing config fields.
 			http.Error(w, "failed to create email integration", http.StatusInternalServerError)
 			return
 		}
-		// password is never echoed; return only non-sensitive fields.
+		// Sensitive fields (password, apiToken) are never echoed; return only
+		// non-sensitive fields.
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"id":         in.ID,
 			"providerId": in.ProviderID,

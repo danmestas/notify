@@ -249,6 +249,108 @@ func TestPostEmailIntegration_ErrorPathRedacted(t *testing.T) {
 	}
 }
 
+// TestPostCloudflareEmailIntegration_ProviderField proves POST
+// /v1/integrations/email with provider="cloudflare-email" creates the
+// integration with the correct providerId and does NOT echo the apiToken.
+func TestPostCloudflareEmailIntegration_ProviderField(t *testing.T) {
+	srv, authHeader, _ := startOperatorServer(t)
+
+	body := `{"identifier":"cf-test","provider":"cloudflare-email","accountId":"acct-001","apiToken":"cf-secret-token","from":"notify@example.com","primary":true}`
+	status, respBody := doPost(t, srv.URL+"/v1/integrations/email", authHeader, body)
+	if status != http.StatusCreated {
+		t.Fatalf("POST /v1/integrations/email (cloudflare-email): status=%d body=%s", status, respBody)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(respBody), &got); err != nil {
+		t.Fatalf("decode response: %v (body=%s)", err, respBody)
+	}
+	if got["id"] == nil || got["id"] == "" {
+		t.Errorf("response missing id; body: %s", respBody)
+	}
+	if got["providerId"] != "cloudflare-email" {
+		t.Errorf("providerId = %v, want cloudflare-email", got["providerId"])
+	}
+	if got["channel"] != "email" {
+		t.Errorf("channel = %v, want email", got["channel"])
+	}
+	// apiToken must never appear in the response.
+	if strings.Contains(respBody, "cf-secret-token") {
+		t.Errorf("response echoes the apiToken — must not: %s", respBody)
+	}
+	if strings.Contains(respBody, "encCredentials") || strings.Contains(respBody, "enc_credentials") {
+		t.Errorf("response leaks encrypted credential bytes: %s", respBody)
+	}
+}
+
+// TestPostCloudflareEmailIntegration_ErrorPathRedacted proves the 500 error
+// body for a cloudflare-email duplicate identifier does NOT leak the apiToken
+// or accountId.
+func TestPostCloudflareEmailIntegration_ErrorPathRedacted(t *testing.T) {
+	srv, authHeader, _ := startOperatorServer(t)
+
+	body := `{"identifier":"dup-cf","provider":"cloudflare-email","accountId":"secret-account-id","apiToken":"cf-secret-token","from":"notify@example.com","primary":true}`
+	if status, b := doPost(t, srv.URL+"/v1/integrations/email", authHeader, body); status != http.StatusCreated {
+		t.Fatalf("first create: status=%d body=%s", status, b)
+	}
+
+	status, respBody := doPost(t, srv.URL+"/v1/integrations/email", authHeader, body)
+	if status != http.StatusInternalServerError {
+		t.Fatalf("duplicate create: status=%d, want 500; body=%s", status, respBody)
+	}
+	if strings.Contains(respBody, "cf-secret-token") {
+		t.Errorf("error body leaks the apiToken: %s", respBody)
+	}
+	if strings.Contains(respBody, "secret-account-id") {
+		t.Errorf("error body leaks the accountId: %s", respBody)
+	}
+	if want := "failed to create email integration"; !strings.Contains(respBody, want) {
+		t.Errorf("error body = %q, want it to contain %q", respBody, want)
+	}
+}
+
+// TestPostEmailIntegration_SMTPDefaultProvider proves that omitting the
+// "provider" field (or setting it to "smtp") produces providerId="smtp" and
+// the existing SMTP body works unchanged.
+func TestPostEmailIntegration_SMTPDefaultProvider(t *testing.T) {
+	srv, authHeader, _ := startOperatorServer(t)
+
+	// No provider field — should default to smtp.
+	body := `{"identifier":"smtp-default","host":"smtp.example.com","port":587,"username":"user@example.com","password":"secret","from":"noreply@example.com","primary":false}`
+	status, respBody := doPost(t, srv.URL+"/v1/integrations/email", authHeader, body)
+	if status != http.StatusCreated {
+		t.Fatalf("POST /v1/integrations/email (smtp default): status=%d body=%s", status, respBody)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(respBody), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got["providerId"] != "smtp" {
+		t.Errorf("providerId = %v, want smtp (default)", got["providerId"])
+	}
+	if strings.Contains(respBody, "secret") {
+		t.Errorf("response echoes the password — must not: %s", respBody)
+	}
+}
+
+// TestPostEmailIntegration_UnknownProviderRejected proves an unrecognised
+// "provider" value fails closed with 400 and an error body enumerating the
+// allowed providers — it must not be stored as a malformed SMTP row.
+func TestPostEmailIntegration_UnknownProviderRejected(t *testing.T) {
+	srv, authHeader, _ := startOperatorServer(t)
+
+	body := `{"identifier":"sg-test","provider":"sendgrid","host":"smtp.sendgrid.net","from":"noreply@example.com","primary":false}`
+	status, respBody := doPost(t, srv.URL+"/v1/integrations/email", authHeader, body)
+	if status != http.StatusBadRequest {
+		t.Fatalf("POST /v1/integrations/email (provider=sendgrid): status=%d, want 400; body=%s", status, respBody)
+	}
+	for _, want := range []string{"unknown provider", "smtp", "cloudflare-email"} {
+		if !strings.Contains(respBody, want) {
+			t.Errorf("400 body missing %q; body: %s", want, respBody)
+		}
+	}
+}
+
 // TestOperatorAPI_SelfSufficiency is the pure-HTTP self-sufficiency proof:
 // create an in_app workflow entirely via HTTP, trigger via HTTP, and assert the
 // message row reaches "sent" status — no in-process service calls after
