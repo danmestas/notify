@@ -7,6 +7,7 @@ package domain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 )
 
 // Allowed values of Agent.Runtime. The runtime selects how a turn is executed:
@@ -121,4 +122,22 @@ type Reply struct {
 // runtime packages sees NATS subjects, HTTP signatures, or model calls.
 type Runtime interface {
 	Dispatch(ctx context.Context, t Turn) (Reply, error)
+}
+
+// PermanentError marks a Dispatch failure that retrying cannot fix: a
+// disallowed subject, a protocol rejection, an explicit task failure. The
+// turn worker treats unmarked Dispatch errors as transient (engine retries)
+// and permanent ones as non-retriable (straight to the DLQ).
+type PermanentError struct{ Err error }
+
+func (e *PermanentError) Error() string { return e.Err.Error() }
+func (e *PermanentError) Unwrap() error { return e.Err }
+
+// NewPermanentError wraps err as a permanent Dispatch failure.
+func NewPermanentError(err error) error { return &PermanentError{Err: err} }
+
+// IsPermanent reports whether err is (or wraps) a PermanentError.
+func IsPermanent(err error) bool {
+	var pe *PermanentError
+	return errors.As(err, &pe)
 }

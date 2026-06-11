@@ -72,6 +72,14 @@ func StartSidecar(t *testing.T) (natsURL, httpURL string) {
 	return "", ""
 }
 
+// Binary returns the path to the prebuilt dagnats binary so tests can drive
+// the dagnats CLI (e.g. `dlq list` / `dlq replay`) against a sidecar started
+// by StartSidecar. Same resolution rules as the sidecar spawn.
+func Binary(t *testing.T) string {
+	t.Helper()
+	return dagnatsBinary(t)
+}
+
 // dagnatsBinary returns the path to the prebuilt dagnats binary, failing
 // clearly if it is missing. The DAGNATS_BIN env var overrides the default
 // location (set by CI, which builds the binary at a path that is not under

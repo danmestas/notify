@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,6 +33,29 @@ const (
 type WorkflowDef struct {
 	Name  string    `json:"name"`
 	Steps []StepDef `json:"steps"`
+	// IdempotencyKey is a dot-path evaluated against the run input; a StartRun
+	// whose key value was already seen returns the existing run id instead of
+	// starting a duplicate run.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	// Singleton constrains runs to one at a time per key (dagnats admission).
+	Singleton *SingletonConfig `json:"singleton,omitempty"`
+}
+
+// SingletonConfig mirrors dagnats's dag.SingletonConfig: at most one active
+// run per key. Key is a dot-path evaluated against the run input; empty keys
+// the lock by workflow name alone.
+type SingletonConfig struct {
+	Mode string `json:"mode"` // "skip" drops the duplicate; "cancel" cancels the active run
+	Key  string `json:"key,omitempty"`
+}
+
+// RetryPolicy mirrors dagnats's dag.RetryPolicy. Durations marshal as
+// nanoseconds (Go time.Duration JSON), matching the dagnats wire.
+type RetryPolicy struct {
+	MaxAttempts  int           `json:"max_attempts"`
+	Strategy     string        `json:"strategy"` // "fixed" | "linear" | "exponential"
+	InitialDelay time.Duration `json:"initial_delay"`
+	MaxDelay     time.Duration `json:"max_delay"`
 }
 
 // StepDef mirrors dagnats's dag.StepDef JSON. Type marshals as a string such as
@@ -42,6 +66,7 @@ type StepDef struct {
 	Type      string          `json:"type,omitempty"`
 	Config    json.RawMessage `json:"config,omitempty"`
 	DependsOn []string        `json:"depends_on,omitempty"`
+	Retry     *RetryPolicy    `json:"retry,omitempty"`
 }
 
 // TaskPayload mirrors dagnats's protocol.TaskPayload / bridge pollResponse JSON.
@@ -77,6 +102,28 @@ func (r RunSnapshot) Succeeded() bool {
 
 // HandlerFunc executes a single task and returns its output or an error.
 type HandlerFunc func(ctx context.Context, t TaskPayload) (json.RawMessage, error)
+
+// RetryableError marks a handler failure as transient: the engine retries the
+// step per its RetryPolicy before dead-lettering. Unmarked errors stay
+// permanent (non-retriable), preserving the prior behaviour of every handler.
+type RetryableError struct{ Err error }
+
+func (e *RetryableError) Error() string { return e.Err.Error() }
+func (e *RetryableError) Unwrap() error { return e.Err }
+
+// NewRetryableError wraps err so the engine reports the failure as retriable.
+func NewRetryableError(err error) error { return &RetryableError{Err: err} }
+
+// NonRetryableError marks a handler failure as permanent. Plain errors are
+// already treated as permanent; the explicit wrapper documents a deliberate
+// classification at the call site.
+type NonRetryableError struct{ Err error }
+
+func (e *NonRetryableError) Error() string { return e.Err.Error() }
+func (e *NonRetryableError) Unwrap() error { return e.Err }
+
+// NewNonRetryableError wraps err so the failure is explicitly non-retriable.
+func NewNonRetryableError(err error) error { return &NonRetryableError{Err: err} }
 
 // Engine talks to a dagnats sidecar over NATS (control) and HTTP (worker
 // bridge). The zero value is not usable; construct with New.
@@ -297,10 +344,15 @@ func (e *Engine) runTask(ctx context.Context, fn HandlerFunc, t TaskPayload) {
 	out, err := fn(ctx, t)
 	var req resolveRequest
 	if err != nil {
+		failureType := "non_retriable"
+		var re *RetryableError
+		if errors.As(err, &re) {
+			failureType = "retriable"
+		}
 		req = resolveRequest{
 			Action:      "fail",
 			Error:       err.Error(),
-			FailureType: "non_retriable",
+			FailureType: failureType,
 		}
 	} else {
 		req = resolveRequest{Action: "complete", Output: out}

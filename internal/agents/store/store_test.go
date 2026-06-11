@@ -358,3 +358,39 @@ func TestConversationRepo_UpsertScopeMismatch(t *testing.T) {
 		t.Fatalf("cross-env upsert mutated e1's conversation: %+v (want %+v)", got, conv)
 	}
 }
+
+// TestConversationRepo_GetByThread proves the read-side counterpart of
+// Upsert: the dedup key resolves the row without creating one, scoped, with
+// ErrNotFound for absent threads.
+func TestConversationRepo_GetByThread(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	created, err := s.Conversations().Upsert(ctx, scope, agentdomain.Conversation{
+		AgentID:          "ag1",
+		IntegrationID:    "",
+		PlatformThreadID: "thread-1",
+		SubscriberID:     "sub1",
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	got, err := s.Conversations().GetByThread(ctx, scope, "ag1", "", "thread-1")
+	if err != nil {
+		t.Fatalf("GetByThread: %v", err)
+	}
+	if got.ID != created.ID {
+		t.Errorf("id = %q, want %q", got.ID, created.ID)
+	}
+
+	if _, err := s.Conversations().GetByThread(ctx, scope, "ag1", "", "missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing thread err = %v, want ErrNotFound", err)
+	}
+	// Scope isolation: another tenant must not see the row.
+	other := domain.Scope{OrgID: "o2", EnvID: "e2"}
+	if _, err := s.Conversations().GetByThread(ctx, other, "ag1", "", "thread-1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("cross-tenant err = %v, want ErrNotFound", err)
+	}
+}

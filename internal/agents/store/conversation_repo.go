@@ -16,6 +16,9 @@ import (
 type ConversationRepo interface {
 	Upsert(ctx context.Context, scope domain.Scope, c agentdomain.Conversation) (agentdomain.Conversation, error)
 	Get(ctx context.Context, scope domain.Scope, id string) (agentdomain.Conversation, error)
+	// GetByThread reads a conversation by its dedup key without creating one
+	// (the read-side counterpart of Upsert). ErrNotFound when absent.
+	GetByThread(ctx context.Context, scope domain.Scope, agentID, integrationID, platformThreadID string) (agentdomain.Conversation, error)
 }
 
 type conversationRepo struct {
@@ -77,6 +80,26 @@ func (repo *conversationRepo) Get(ctx context.Context, scope domain.Scope, id st
 		   subscriber_id, status, created_at, last_activity_at
 		 FROM conversations WHERE org_id = ? AND environment_id = ? AND id = ?`,
 		scope.OrgID, scope.EnvID, id,
+	).Scan(&out.ID, &out.OrgID, &out.EnvID, &out.AgentID, &out.IntegrationID, &out.PlatformThreadID,
+		&out.SubscriberID, &out.Status, &out.CreatedAt, &out.LastActivityAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return agentdomain.Conversation{}, ErrNotFound
+	}
+	if err != nil {
+		return agentdomain.Conversation{}, err
+	}
+	return out, nil
+}
+
+func (repo *conversationRepo) GetByThread(ctx context.Context, scope domain.Scope, agentID, integrationID, platformThreadID string) (agentdomain.Conversation, error) {
+	var out agentdomain.Conversation
+	err := repo.r.QueryRowContext(
+		ctx,
+		`SELECT id, org_id, environment_id, agent_id, integration_id, platform_thread_id,
+		   subscriber_id, status, created_at, last_activity_at
+		 FROM conversations
+		 WHERE org_id = ? AND environment_id = ? AND agent_id = ? AND integration_id = ? AND platform_thread_id = ?`,
+		scope.OrgID, scope.EnvID, agentID, integrationID, platformThreadID,
 	).Scan(&out.ID, &out.OrgID, &out.EnvID, &out.AgentID, &out.IntegrationID, &out.PlatformThreadID,
 		&out.SubscriberID, &out.Status, &out.CreatedAt, &out.LastActivityAt)
 	if errors.Is(err, sql.ErrNoRows) {

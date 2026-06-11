@@ -16,6 +16,9 @@ import (
 	"syscall"
 
 	agentsapi "github.com/danmestas/notify/internal/agents/api"
+	agentdomain "github.com/danmestas/notify/internal/agents/domain"
+	"github.com/danmestas/notify/internal/agents/ingress"
+	"github.com/danmestas/notify/internal/agents/runtime/mesh"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
@@ -95,6 +98,7 @@ func runServe(args []string) error {
 	dbPath := fs.String("db", envOr("NOTIFY_DB", "notify.db"), "SQLite database path")
 	addr := fs.String("addr", envOr("NOTIFY_ADDR", "127.0.0.1:3000"), "HTTP listen address")
 	masterKeyHex := fs.String("master-key-hex", os.Getenv("NOTIFY_MASTER_KEY_HEX"), "32-byte AES master key as hex (empty derives a dev key)")
+	meshAllow := fs.String("mesh-allow", envOr("NOTIFY_MESH_ALLOW", mesh.DefaultAllowedSubjects), "allowlist pattern for mesh agent dispatch subjects")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -129,6 +133,16 @@ func runServe(args []string) error {
 	eng.Handle("send.in_app", delivery.New(st).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandleInApp)
 	conn := connectivity.New(st, mk)
 	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).WithThrottle(bus).WithDigester(bus).HandleEmail)
+
+	meshClient, err := mesh.Dial(*natsURL, mesh.WithAllowedSubjects(*meshAllow))
+	if err != nil {
+		return fmt.Errorf("mesh.Dial: %w", err)
+	}
+	defer meshClient.Close()
+	ags := agentstore.New(st)
+	ing := ingress.New(ags, st, eng, bus).WithRuntime(agentdomain.RuntimeMesh, meshClient)
+	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
+
 	eng.StartWorkers(ctx)
 
 	whStop, err := webhooksout.New(bus, st).Start(ctx)
@@ -144,7 +158,7 @@ func runServe(args []string) error {
 	inbox := inboxapi.New(st)
 	rt := realtime.New(bus)
 	inb := inbound.New(trg)
-	ag := agentsapi.New(agentstore.New(st))
+	ag := agentsapi.New(ags)
 
 	an, anClose, err := analyticsBackend(ctx, st, bus)
 	if err != nil {
@@ -157,7 +171,7 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = anStop() }()
 
-	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag)
+	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag, ing)
 	srv := &http.Server{Addr: *addr, Handler: handler}
 
 	go func() {

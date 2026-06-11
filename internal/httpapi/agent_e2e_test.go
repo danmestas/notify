@@ -48,7 +48,7 @@ func startAgentServer(t *testing.T) (*httptest.Server, string) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, nil, nil, ag))
+	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, nil, nil, ag, nil))
 	t.Cleanup(srv.Close)
 	return srv, "ApiKey " + key
 }
