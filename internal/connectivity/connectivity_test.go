@@ -3,6 +3,7 @@ package connectivity
 import (
 	"bytes"
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -200,4 +201,178 @@ func TestCreateCloudflareEmail_EncryptsCredentials(t *testing.T) {
 	if bytes.Contains(in.EncCredentials, []byte(cfg.APIToken)) {
 		t.Fatal("EncCredentials contains plaintext API token bytes")
 	}
+}
+
+// --- Wave 2: Update + ErrPrimaryConflict tests ---
+
+func TestUpdate_SMTPCredentialMerge_SentinelKeepsStored(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	orig := SMTPConfig{
+		Addr:     "smtp.example.com:587",
+		Host:     "smtp.example.com",
+		Username: "user@example.com",
+		Password: "original-secret",
+		From:     "orig@example.com",
+	}
+	row, err := svc.CreateSMTP(ctx, scope, "smtp-1", orig, false)
+	if err != nil {
+		t.Fatalf("CreateSMTP: %v", err)
+	}
+
+	// Update with a new From but leave password as sentinel (unchanged).
+	_, err = svc.Update(ctx, scope, row.ID, UpdateInput{
+		Identifier: "smtp-1",
+		Primary:    false,
+		Credentials: map[string]string{
+			"from":     "new@example.com",
+			"password": CredentialMaskSentinel, // must keep stored value
+		},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// ResolveEmail must still work (password preserved).
+	prov, from, err := svc.ResolveEmail(ctx, scope)
+	if err != nil {
+		t.Fatalf("ResolveEmail after Update: %v", err)
+	}
+	if from != "new@example.com" {
+		t.Errorf("From = %q, want new@example.com", from)
+	}
+	smtp, ok := prov.(*providers.SMTP)
+	if !ok {
+		t.Fatalf("provider type = %T", prov)
+	}
+	if smtp.Password != orig.Password {
+		t.Errorf("Password = %q, want original %q (sentinel must preserve stored value)", smtp.Password, orig.Password)
+	}
+}
+
+func TestUpdate_CredentialsNeverLeakedInReturnValue(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	row, err := svc.CreateSMTP(ctx, scope, "smtp-2", SMTPConfig{
+		Addr: "smtp.example.com:587", Host: "smtp.example.com",
+		Password: "very-secret-do-not-leak", From: "noreply@example.com",
+	}, false)
+	if err != nil {
+		t.Fatalf("CreateSMTP: %v", err)
+	}
+
+	updated, err := svc.Update(ctx, scope, row.ID, UpdateInput{
+		Identifier:  "smtp-2",
+		Credentials: map[string]string{"password": CredentialMaskSentinel},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(updated.EncCredentials) != 0 {
+		t.Error("Update returned EncCredentials — must be nil for safety")
+	}
+}
+
+func TestUpdate_ErrPrimaryConflict_WhenAnotherPrimaryExists(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	// Create a primary row.
+	_, err := svc.CreateSMTP(ctx, scope, "smtp-primary", SMTPConfig{
+		Addr: "smtp.example.com:587", Host: "smtp.example.com",
+		From: "primary@example.com",
+	}, true)
+	if err != nil {
+		t.Fatalf("CreateSMTP primary: %v", err)
+	}
+
+	// Create a non-primary row.
+	row2, err := svc.CreateSMTP(ctx, scope, "smtp-secondary", SMTPConfig{
+		Addr: "smtp2.example.com:587", Host: "smtp2.example.com",
+		From: "secondary@example.com",
+	}, false)
+	if err != nil {
+		t.Fatalf("CreateSMTP secondary: %v", err)
+	}
+
+	// Attempt to promote secondary to primary — must return ErrPrimaryConflict.
+	_, err = svc.Update(ctx, scope, row2.ID, UpdateInput{
+		Identifier:  "smtp-secondary",
+		Primary:     true,
+		Credentials: map[string]string{},
+	})
+	if err == nil {
+		t.Fatal("expected ErrPrimaryConflict, got nil")
+	}
+	var pc ErrPrimaryConflict
+	if !isErrPrimaryConflict(err, &pc) {
+		t.Fatalf("expected ErrPrimaryConflict, got %T: %v", err, err)
+	}
+	if pc.ExistingID == "" {
+		t.Error("ErrPrimaryConflict.ExistingID must be populated")
+	}
+}
+
+func TestUpdate_NoPrimaryConflict_WhenAlreadyPrimary(t *testing.T) {
+	// Updating a row that is already primary with primary=true must NOT return
+	// ErrPrimaryConflict — it's a no-op on primary_provider.
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	row, err := svc.CreateSMTP(ctx, scope, "smtp-p", SMTPConfig{
+		Addr: "smtp.example.com:587", Host: "smtp.example.com",
+		From: "p@example.com",
+	}, true)
+	if err != nil {
+		t.Fatalf("CreateSMTP: %v", err)
+	}
+
+	_, err = svc.Update(ctx, scope, row.ID, UpdateInput{
+		Identifier:  "smtp-p",
+		Primary:     true,
+		Credentials: map[string]string{},
+	})
+	if err != nil {
+		t.Errorf("Update already-primary with primary=true: want nil, got %v", err)
+	}
+}
+
+func TestUpdate_ScopeIsolation_WrongEnvReturnsNotFound(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	e1 := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	e2 := domain.Scope{OrgID: "o1", EnvID: "e2"}
+
+	row, err := svc.CreateSMTP(ctx, e1, "smtp-e1", SMTPConfig{
+		Addr: "smtp.example.com:587", Host: "smtp.example.com",
+		From: "e1@example.com",
+	}, false)
+	if err != nil {
+		t.Fatalf("CreateSMTP: %v", err)
+	}
+
+	_, err = svc.Update(ctx, e2, row.ID, UpdateInput{
+		Identifier:  "hack",
+		Credentials: map[string]string{},
+	})
+	if err == nil {
+		t.Fatal("expected error for cross-environment update, got nil")
+	}
+}
+
+// isErrPrimaryConflict is a helper because errors.As does not work on value
+// receivers; the ErrPrimaryConflict type is a value, not a pointer.
+func isErrPrimaryConflict(err error, out *ErrPrimaryConflict) bool {
+	var pc ErrPrimaryConflict
+	if errors.As(err, &pc) {
+		*out = pc
+		return true
+	}
+	return false
 }

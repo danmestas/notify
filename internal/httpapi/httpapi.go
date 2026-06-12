@@ -53,8 +53,16 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 		pr.Post("/v1/topics", postTopic(aud))
 		pr.Post("/v1/topics/{key}/subscribers", postTopicSubscriber(aud))
 		if conn != nil {
+			// Legacy channel-specific create endpoints (API back-compat).
 			pr.Post("/v1/integrations/push", postPushIntegration(conn))
 			pr.Post("/v1/integrations/email", postEmailIntegration(conn))
+			// CRUD + unified create (Wave 2).
+			pr.Get("/v1/integrations", getIntegrations(conn))
+			pr.Post("/v1/integrations", postIntegration(conn))
+			pr.Get("/v1/integrations/{id}", getIntegration(conn))
+			pr.Put("/v1/integrations/{id}", putIntegration(conn))
+			pr.Delete("/v1/integrations/{id}", deleteIntegration(conn))
+			pr.Patch("/v1/integrations/{id}/active", patchIntegrationActive(conn))
 		}
 		if au != nil {
 			pr.Post("/v1/workflows", postWorkflow(au))
@@ -799,6 +807,292 @@ func getNotification(st *store.Store) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, n)
+	}
+}
+
+// maskCredentials replaces secret credential values with CredentialMaskSentinel
+// so they are never surfaced in API responses. Non-secret fields (addr, from,
+// base_url, host, username, account_id) are returned unchanged.
+// The function operates on the raw JSON credential map; if decryption fails or
+// the integration has no stored credentials an empty map is returned.
+// integrationSecretFields enumerates, per provider, the credential fields that
+// MUST be masked in API responses. Every provider accepted by the create switch
+// must have an entry here — TestMaskCredentials_EveryProviderHasSecretFields
+// enforces that, and maskCredentials fails CLOSED for any provider missing here.
+var integrationSecretFields = map[string]map[string]bool{
+	"smtp":             {"password": true},
+	"cloudflare-email": {"api_token": true},
+	"ntfy":             {"token": true},
+}
+
+// maskCredentials replaces secret credential fields with the mask sentinel.
+// It fails CLOSED: for a provider with no secret-field map (unknown/future),
+// EVERY field is masked rather than leaked — a new provider added to the create
+// switch without a corresponding integrationSecretFields entry can never leak
+// its secret on a read, only over-mask its non-secret fields.
+func maskCredentials(providerID string, rawCreds map[string]any) map[string]any {
+	fields, known := integrationSecretFields[providerID]
+	out := make(map[string]any, len(rawCreds))
+	for k, v := range rawCreds {
+		if !known || fields[k] {
+			out[k] = connectivity.CredentialMaskSentinel
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// integrationDTO is the JSON shape returned by list/get endpoints.
+// enc_credentials is never included; credentialsMasked carries decrypted
+// non-secret fields with secret fields replaced by CredentialMaskSentinel.
+type integrationDTO struct {
+	ID                string         `json:"id"`
+	ProviderID        string         `json:"providerId"`
+	Channel           string         `json:"channel"`
+	Identifier        string         `json:"identifier"`
+	Active            bool           `json:"active"`
+	Primary           bool           `json:"primary"`
+	Priority          int            `json:"priority"`
+	CredentialsMasked map[string]any `json:"credentialsMasked"`
+}
+
+// toIntegrationDTO converts a domain.Integration (which may carry
+// enc_credentials) into a safe DTO. If the service can decrypt, masked
+// credentials are included; otherwise an empty map is used (fail safe).
+func toIntegrationDTO(svc *connectivity.Service, in domain.Integration) integrationDTO {
+	masked := map[string]any{}
+	if len(in.EncCredentials) > 0 {
+		if raw, err := svc.DecryptCredentials(in.EncCredentials); err == nil {
+			var fields map[string]any
+			if json.Unmarshal(raw, &fields) == nil {
+				masked = maskCredentials(in.ProviderID, fields)
+			}
+		}
+	}
+	return integrationDTO{
+		ID:                in.ID,
+		ProviderID:        in.ProviderID,
+		Channel:           in.Channel,
+		Identifier:        in.Identifier,
+		Active:            in.Active,
+		Primary:           in.Primary,
+		Priority:          in.Priority,
+		CredentialsMasked: masked,
+	}
+}
+
+// toIntegrationDTONoCredentials builds a DTO from a list-shape Integration
+// that deliberately has no enc_credentials (List omits the column).
+func toIntegrationDTONoCredentials(in domain.Integration) integrationDTO {
+	return integrationDTO{
+		ID:                in.ID,
+		ProviderID:        in.ProviderID,
+		Channel:           in.Channel,
+		Identifier:        in.Identifier,
+		Active:            in.Active,
+		Primary:           in.Primary,
+		Priority:          in.Priority,
+		CredentialsMasked: map[string]any{},
+	}
+}
+
+// getIntegrations handles GET /v1/integrations.
+// Returns all integrations for the scope with credential fields absent
+// (List does not select enc_credentials).
+func getIntegrations(conn *connectivity.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scope := identity.ScopeFrom(r.Context())
+		list, err := conn.Store().Integrations().List(r.Context(), scope)
+		if err != nil {
+			http.Error(w, "failed to list integrations", http.StatusInternalServerError)
+			return
+		}
+		dtos := make([]integrationDTO, 0, len(list))
+		for _, in := range list {
+			dtos = append(dtos, toIntegrationDTONoCredentials(in))
+		}
+		writeJSON(w, http.StatusOK, dtos)
+	}
+}
+
+// getIntegration handles GET /v1/integrations/{id}.
+// Returns the integration with masked credentials (secrets replaced by ••••••).
+func getIntegration(conn *connectivity.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		scope := identity.ScopeFrom(r.Context())
+		in, err := conn.Store().Integrations().GetByID(r.Context(), scope, id)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "integration not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to get integration", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, toIntegrationDTO(conn, in))
+	}
+}
+
+// unifiedCreateRequest is the body for POST /v1/integrations (unified create).
+type unifiedCreateRequest struct {
+	ProviderID  string            `json:"providerId"`
+	Identifier  string            `json:"identifier"`
+	Primary     bool              `json:"primary"`
+	Credentials map[string]string `json:"credentials"`
+}
+
+// postIntegration handles POST /v1/integrations (unified create).
+// Dispatches to the appropriate connectivity.Create* method based on providerId.
+func postIntegration(conn *connectivity.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req unifiedCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		scope := identity.ScopeFrom(r.Context())
+
+		var (
+			in  domain.Integration
+			err error
+		)
+		switch req.ProviderID {
+		case "smtp":
+			in, err = conn.CreateSMTP(r.Context(), scope, req.Identifier, connectivity.SMTPConfig{
+				Addr:     req.Credentials["addr"],
+				Host:     req.Credentials["host"],
+				Username: req.Credentials["username"],
+				Password: req.Credentials["password"],
+				From:     req.Credentials["from"],
+			}, req.Primary)
+		case "cloudflare-email":
+			in, err = conn.CreateCloudflareEmail(r.Context(), scope, req.Identifier, connectivity.CloudflareEmailConfig{
+				AccountID: req.Credentials["account_id"],
+				APIToken:  req.Credentials["api_token"],
+				From:      req.Credentials["from"],
+			}, req.Primary)
+		case "ntfy":
+			in, err = conn.CreateNtfy(r.Context(), scope, req.Identifier, connectivity.NtfyConfig{
+				BaseURL: req.Credentials["base_url"],
+				Token:   req.Credentials["token"],
+			}, req.Primary)
+		default:
+			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, ntfy", http.StatusBadRequest)
+			return
+		}
+		if err != nil {
+			// Never echo request detail into the error body.
+			http.Error(w, "failed to create integration", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"id":         in.ID,
+			"providerId": in.ProviderID,
+			"channel":    in.Channel,
+			"identifier": in.Identifier,
+			"active":     in.Active,
+			"primary":    in.Primary,
+		})
+	}
+}
+
+// updateIntegrationRequest is the body for PUT /v1/integrations/{id}.
+type updateIntegrationRequest struct {
+	Identifier  string            `json:"identifier"`
+	Primary     bool              `json:"primary"`
+	Priority    int               `json:"priority"`
+	Credentials map[string]string `json:"credentials"`
+}
+
+// putIntegration handles PUT /v1/integrations/{id}.
+// Delegates to connectivity.Service.Update which handles credential merging.
+func putIntegration(conn *connectivity.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		var req updateIntegrationRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		scope := identity.ScopeFrom(r.Context())
+		in, err := conn.Update(r.Context(), scope, id, connectivity.UpdateInput{
+			Identifier:  req.Identifier,
+			Primary:     req.Primary,
+			Priority:    req.Priority,
+			Credentials: req.Credentials,
+		})
+		if err != nil {
+			var pc connectivity.ErrPrimaryConflict
+			if errors.As(err, &pc) {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"code":              "primary_conflict",
+					"existingPrimaryId": pc.ExistingID,
+				})
+				return
+			}
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "integration not found", http.StatusNotFound)
+				return
+			}
+			// Never echo request detail into the error body.
+			http.Error(w, "failed to update integration", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id":         in.ID,
+			"providerId": in.ProviderID,
+			"channel":    in.Channel,
+			"identifier": in.Identifier,
+			"active":     in.Active,
+			"primary":    in.Primary,
+		})
+	}
+}
+
+// deleteIntegration handles DELETE /v1/integrations/{id}.
+func deleteIntegration(conn *connectivity.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		scope := identity.ScopeFrom(r.Context())
+		if err := conn.Store().Integrations().Delete(r.Context(), scope, id); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "integration not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to delete integration", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// patchActiveRequest is the body for PATCH /v1/integrations/{id}/active.
+type patchActiveRequest struct {
+	Active bool `json:"active"`
+}
+
+// patchIntegrationActive handles PATCH /v1/integrations/{id}/active.
+// Only flips the active flag; does not require a credential round-trip.
+func patchIntegrationActive(conn *connectivity.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		var req patchActiveRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		scope := identity.ScopeFrom(r.Context())
+		if err := conn.Store().Integrations().SetActive(r.Context(), scope, id, req.Active); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "integration not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to update integration", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

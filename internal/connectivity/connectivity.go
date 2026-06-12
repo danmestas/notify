@@ -20,6 +20,34 @@ import (
 	"github.com/danmestas/notify/internal/store"
 )
 
+// ErrPrimaryConflict is returned by Update when the caller promotes an
+// integration to primary and another row for the same channel already holds
+// primary_provider=1. The HTTP handler converts this to 409 Conflict.
+type ErrPrimaryConflict struct {
+	ExistingID string // ID of the row that is already primary
+}
+
+func (e ErrPrimaryConflict) Error() string {
+	return "connectivity: primary conflict: existing primary id " + e.ExistingID
+}
+
+// UpdateInput carries the fields that callers may change on an existing
+// integration. Credential fields that are the sentinel value "••••••"
+// (CredentialMaskSentinel) are treated as "leave unchanged"; only fields
+// with a different, non-empty value are re-encrypted and stored.
+type UpdateInput struct {
+	Identifier  string
+	Name        string // display label; stored in configurations JSON
+	Primary     bool
+	Priority    int
+	Credentials map[string]string // keyed by config JSON field name
+}
+
+// CredentialMaskSentinel is the placeholder value the edit form sends when the
+// operator has not changed a secret field. The server treats this as "keep the
+// stored encrypted value unchanged."
+const CredentialMaskSentinel = "••••••"
+
 // SMTPConfig is the credential payload for an SMTP email integration. It is
 // JSON-encoded and AES-256-GCM-sealed into Integration.EncCredentials.
 type SMTPConfig struct {
@@ -203,6 +231,107 @@ func (svc *Service) ResolvePush(ctx context.Context, scope domain.Scope) (provid
 		return nil, "", fmt.Errorf("connectivity: unmarshal ntfy config: %w", err)
 	}
 	return &ntfy.Client{BaseURL: cfg.BaseURL, Token: cfg.Token}, in.ProviderID, nil
+}
+
+// Store returns the underlying store.Store so callers (e.g. httpapi) can
+// invoke repo methods (List, Delete, SetActive) that do not require credential
+// handling in the connectivity layer.
+func (svc *Service) Store() *store.Store { return svc.store }
+
+// DecryptCredentials exposes the AES-GCM decryption for httpapi so it can
+// build masked credential maps for GET responses without re-implementing the
+// cipher. The caller must not log or return the plaintext directly.
+func (svc *Service) DecryptCredentials(enc []byte) ([]byte, error) {
+	return svc.decrypt(enc)
+}
+
+// Update applies mutable changes to an existing integration. Credential fields
+// in inp.Credentials that equal CredentialMaskSentinel (or are empty) are kept
+// as-is from the stored encrypted blob; only fields with new values are
+// re-encrypted. If inp.Primary is true and another row for the same channel
+// already holds primary_provider=1, Update returns ErrPrimaryConflict before
+// touching the store. The caller may retry with force=true by first clearing
+// the conflict row's primary flag externally, or by passing a different
+// primary value.
+func (svc *Service) Update(ctx context.Context, scope domain.Scope, id string, inp UpdateInput) (domain.Integration, error) {
+	// Load the existing row so we can merge credentials.
+	existing, err := svc.store.Integrations().GetByID(ctx, scope, id)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: update: load existing: %w", err)
+	}
+
+	// Primary-conflict check: if we are promoting this row to primary, verify
+	// no other row in the same channel already holds primary_provider=1.
+	if inp.Primary && !existing.Primary {
+		all, err := svc.store.Integrations().List(ctx, scope)
+		if err != nil {
+			return domain.Integration{}, fmt.Errorf("connectivity: update: list for primary check: %w", err)
+		}
+		for _, row := range all {
+			if row.Channel == existing.Channel && row.Primary && row.ID != id {
+				return domain.Integration{}, ErrPrimaryConflict{ExistingID: row.ID}
+			}
+		}
+	}
+
+	// Credential merge: decrypt the stored blob, overlay new non-sentinel fields,
+	// re-encrypt.
+	newEnc := existing.EncCredentials
+	if len(inp.Credentials) > 0 {
+		plaintext, err := svc.decrypt(existing.EncCredentials)
+		if err != nil {
+			return domain.Integration{}, fmt.Errorf("connectivity: update: decrypt existing: %w", err)
+		}
+
+		// Unmarshal into a raw map so we can overlay any provider's fields
+		// without knowing the concrete struct type.
+		var fields map[string]any
+		if err := json.Unmarshal(plaintext, &fields); err != nil {
+			return domain.Integration{}, fmt.Errorf("connectivity: update: unmarshal existing credentials: %w", err)
+		}
+
+		changed := false
+		for k, v := range inp.Credentials {
+			if v == CredentialMaskSentinel || v == "" {
+				// Caller left this field unchanged; keep the stored value.
+				continue
+			}
+			fields[k] = v
+			changed = true
+		}
+
+		if changed {
+			merged, err := json.Marshal(fields)
+			if err != nil {
+				return domain.Integration{}, fmt.Errorf("connectivity: update: marshal merged credentials: %w", err)
+			}
+			enc, err := svc.encrypt(merged)
+			if err != nil {
+				return domain.Integration{}, fmt.Errorf("connectivity: update: encrypt merged credentials: %w", err)
+			}
+			newEnc = enc
+		}
+	}
+
+	updated := domain.Integration{
+		ID:             id,
+		OrgID:          scope.OrgID,
+		EnvID:          scope.EnvID,
+		ProviderID:     existing.ProviderID,
+		Channel:        existing.Channel,
+		EncCredentials: newEnc,
+		Configurations: existing.Configurations,
+		Active:         existing.Active,
+		Primary:        inp.Primary,
+		Priority:       inp.Priority,
+		Identifier:     inp.Identifier,
+	}
+	if err := svc.store.Integrations().Update(ctx, scope, updated); err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: update: store: %w", err)
+	}
+	// Return without enc_credentials so callers get a safe DTO.
+	updated.EncCredentials = nil
+	return updated, nil
 }
 
 // encrypt seals plaintext with AES-256-GCM, prepending the random 12-byte nonce
