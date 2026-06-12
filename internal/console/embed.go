@@ -64,4 +64,11 @@ var assetsFS embed.FS
 //go:embed templates/partials/integrations_grid.html
 //go:embed templates/partials/integration_detail.html
 //go:embed templates/partials/integration_provider_form.html
+//go:embed templates/subscribers.html
+//go:embed templates/subscriber_detail.html
+//go:embed templates/topics.html
+//go:embed templates/topic_detail.html
+//go:embed templates/partials/subscribers_tbody.html
+//go:embed templates/partials/topics_tbody.html
+//go:embed templates/partials/subscriber_autocomplete.html
 var templatesFS embed.FS

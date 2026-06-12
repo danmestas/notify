@@ -1,0 +1,162 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section"
+         data-signals="{{$page.Signals}}">
+  {{template "page-header" $page.Header}}
+
+  <div class="console-action-row">
+    <a class="btn btn-outline" href="/console/topics">← Back to topics</a>
+    {{if not $page.ReadOnly}}
+    {{if $page.ConfirmDelete}}
+    {{/* Two-step inline confirm (chassis idiom): the first click navigated
+         here with ?confirmDelete=true; this server-rendered state offers
+         Cancel + a real POST form. No native confirm() dialogs. */}}
+    <span class="console-confirm-label">Delete topic {{$page.Topic.Key}}? This will remove all memberships.</span>
+    <a class="btn btn-outline" href="/console/topics/{{$page.Topic.Key}}?tab={{$page.ActiveTab}}">Cancel</a>
+    <form method="POST" action="/console/topics/{{$page.Topic.Key}}/delete" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <button type="submit" class="btn btn-danger">Confirm delete</button>
+    </form>
+    {{else}}
+    <a class="btn btn-danger"
+       href="/console/topics/{{$page.Topic.Key}}?tab={{$page.ActiveTab}}&confirmDelete=true">Delete topic</a>
+    {{end}}
+    {{end}}
+  </div>
+
+  {{/* Tab bar */}}
+  <nav class="console-tab-bar" aria-label="Topic tabs">
+    <a href="/console/topics/{{$page.Topic.Key}}?tab=overview"
+       class="console-tab{{if eq $page.ActiveTab "overview"}} is-active{{end}}">
+      Overview
+    </a>
+    <a href="/console/topics/{{$page.Topic.Key}}?tab=subscribers"
+       class="console-tab{{if eq $page.ActiveTab "subscribers"}} is-active{{end}}">
+      Subscribers
+      {{if $page.MemberCount}}
+      <span class="chip chip-default">{{$page.MemberCount}}</span>
+      {{end}}
+    </a>
+  </nav>
+
+  {{/* Overview tab */}}
+  {{if eq $page.ActiveTab "overview"}}
+  <div class="console-detail-grid">
+    <section class="console-card" aria-labelledby="topic-info-heading">
+      <h2 id="topic-info-heading" class="console-card-title">Topic details</h2>
+      <dl class="wf-meta-list">
+        <div class="wf-meta-row">
+          <dt>Key</dt>
+          <dd><code>{{$page.Topic.Key}}</code></dd>
+        </div>
+        <div class="wf-meta-row">
+          <dt>Name</dt>
+          <dd>{{if $page.Topic.Name}}{{$page.Topic.Name}}{{else}}<span class="console-muted">—</span>{{end}}</dd>
+        </div>
+        <div class="wf-meta-row">
+          <dt>Internal ID</dt>
+          <dd><code>{{$page.Topic.ID}}</code></dd>
+        </div>
+      </dl>
+
+      {{if not $page.ReadOnly}}
+      <div class="console-card-actions">
+        <h3 class="console-card-title" style="margin-top:var(--space-4)">Rename topic</h3>
+        <form method="POST" action="/console/topics/{{$page.Topic.Key}}" class="topic-edit-form">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <div class="form-row">
+            <label class="form-label" for="topic-name">Name</label>
+            <input class="console-input" type="text" id="topic-name" name="name"
+                   value="{{$page.Topic.Name}}" placeholder="Topic name" required>
+          </div>
+          <button type="submit" class="btn btn-primary">Save name</button>
+        </form>
+      </div>
+      {{end}}
+    </section>
+  </div>
+  {{end}}
+
+  {{/* Subscribers tab */}}
+  {{if eq $page.ActiveTab "subscribers"}}
+  <div class="console-detail-grid">
+    <section class="console-card" aria-labelledby="topic-members-heading">
+      <h2 id="topic-members-heading" class="console-card-title">Members</h2>
+
+      {{if not $page.ReadOnly}}
+      {{/* Add subscriber form */}}
+      <div class="topic-add-member" style="margin-bottom:var(--space-4)">
+        <form method="POST" action="/console/topics/{{$page.Topic.Key}}/subscribers"
+              class="console-filter-bar">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <input class="console-input" type="text" name="subscriberId"
+                 id="topic-add-subscriber-input"
+                 list="subscriber-autocomplete-list"
+                 placeholder="Subscriber ID…"
+                 autocomplete="off"
+                 data-on:focus="@get('/console/api/fragments/subscriber-autocomplete')"
+                 required>
+          <div id="subscriber-autocomplete"></div>
+          <button type="submit" class="btn btn-primary">Add member</button>
+        </form>
+      </div>
+      {{end}}
+
+      {{if $page.Members}}
+      <div class="console-table-wrap">
+        <table class="console-table" aria-label="Topic members">
+          <thead>
+            <tr>
+              <th scope="col">Subscriber</th>
+              <th scope="col">Email</th>
+              <th scope="col"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range $page.Members}}
+            <tr class="console-table-row">
+              <td>
+                <div class="subscriber-avatar-cell">
+                  <span class="subscriber-avatar" aria-hidden="true">{{.Initials}}</span>
+                  <div class="subscriber-name-stack">
+                    <a class="subscriber-display-name" href="/console/subscribers/{{.ID}}">{{.DisplayName}}</a>
+                    <code class="subscriber-id-code">{{.SubscriberID}}</code>
+                  </div>
+                </div>
+              </td>
+              <td>{{if .Email}}<span>{{.Email}}</span>{{else}}<span class="console-muted">—</span>{{end}}</td>
+              <td>
+                {{if not $page.ReadOnly}}
+                {{if eq $page.ConfirmRemove .SubscriberID}}
+                {{/* Two-step inline confirm for member removal. */}}
+                <div class="subscriber-row-actions">
+                  <a class="btn btn-outline"
+                     href="/console/topics/{{$page.Topic.Key}}?tab=subscribers">Cancel</a>
+                  <form method="POST"
+                        action="/console/topics/{{$page.Topic.Key}}/subscribers/{{.SubscriberID}}/remove"
+                        style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                    <button type="submit" class="btn btn-danger">Confirm remove</button>
+                  </form>
+                </div>
+                {{else}}
+                <a class="btn-icon" title="Remove from topic"
+                   href="/console/topics/{{$page.Topic.Key}}?tab=subscribers&confirmRemove={{.SubscriberID | urlquery}}">✕</a>
+                {{end}}
+                {{end}}
+              </td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}
+      <div class="console-empty-state" data-component="empty-state">
+        <h2 class="console-empty-state-title">No members yet</h2>
+        <p class="console-empty-state-description">Add subscribers to this topic to enable broadcast delivery.</p>
+      </div>
+      {{end}}
+    </section>
+  </div>
+  {{end}}
+</section>
+{{end}}

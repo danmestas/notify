@@ -137,8 +137,9 @@ func (svc *Service) ListTopics(ctx context.Context, scope domain.Scope) ([]store
 	return svc.store.Topics().List(ctx, scope)
 }
 
-// GetTopic returns the topic identified by key within scope.
-func (svc *Service) GetTopic(ctx context.Context, scope domain.Scope, key string) (domain.Topic, error) {
+// GetTopic returns the topic identified by key within scope, annotated with
+// its current member count (single-topic reads agree with ListTopics).
+func (svc *Service) GetTopic(ctx context.Context, scope domain.Scope, key string) (store.TopicWithCount, error) {
 	return svc.store.Topics().GetByKey(ctx, scope, key)
 }
 
@@ -151,4 +152,10 @@ func (svc *Service) DeleteTopic(ctx context.Context, scope domain.Scope, key str
 // RemoveTopicSubscriber removes a single subscriber's membership from a topic.
 func (svc *Service) RemoveTopicSubscriber(ctx context.Context, scope domain.Scope, topicKey, subscriberID string) error {
 	return svc.store.Topics().RemoveSubscriber(ctx, scope, topicKey, subscriberID)
+}
+
+// ListTopicSubscriberIDs returns the external subscriber IDs (caller-owned
+// subscriber_id values) that are members of the named topic within scope.
+func (svc *Service) ListTopicSubscriberIDs(ctx context.Context, scope domain.Scope, topicKey string) ([]string, error) {
+	return svc.store.Topics().ListSubscriberIDs(ctx, scope, topicKey)
 }

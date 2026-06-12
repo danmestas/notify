@@ -49,6 +49,14 @@ type fragmentEnvelope struct {
 	IntegrationChannel string `json:"integrationChannel,omitempty"`
 	// IntegrationDetailId is the ID of the open detail drawer ("" = closed).
 	IntegrationDetailId string `json:"integrationDetailId,omitempty"`
+	// Subscriber list filter signals (W2-C3).
+	SubscribersEmail string `json:"subscribersEmail,omitempty"`
+	SubscribersPhone string `json:"subscribersPhone,omitempty"`
+	SubscribersName  string `json:"subscribersName,omitempty"`
+	SubscribersId    string `json:"subscribersId,omitempty"`
+	// Topic list filter signals (W2-C4).
+	TopicsName string `json:"topicsName,omitempty"`
+	TopicsKey  string `json:"topicsKey,omitempty"`
 }
 
 // mergeFragmentParams merges the request's URL query with the Datastar
@@ -121,6 +129,20 @@ func envelopeToQuery(env fragmentEnvelope, key string) (string, string) {
 		return "channel", env.IntegrationChannel
 	case "integrationDetailId":
 		return "id", env.IntegrationDetailId
+	// Subscriber list filter signals (W2-C3).
+	case "subscribersEmail":
+		return "subscribersEmail", env.SubscribersEmail
+	case "subscribersPhone":
+		return "subscribersPhone", env.SubscribersPhone
+	case "subscribersName":
+		return "subscribersName", env.SubscribersName
+	case "subscribersId":
+		return "subscribersId", env.SubscribersId
+	// Topic list filter signals (W2-C4).
+	case "topicsName":
+		return "topicsName", env.TopicsName
+	case "topicsKey":
+		return "topicsKey", env.TopicsKey
 	}
 	return "", ""
 }

@@ -31,14 +31,18 @@ type templateSet struct {
 // section's `{{define "content"}}`. Adding a page is: add a file, add an
 // entry here, add the nav entry (if any) to navGroups.
 var pageContentFiles = map[string]string{
-	"dashboard":       "templates/dashboard.html",
-	"analytics":       "templates/analytics.html",
-	"activity":        "templates/activity.html",
-	"not-found":       "templates/not_found.html",
-	"error":           "templates/error.html",
-	"workflows":       "templates/workflows.html",
-	"workflow-detail": "templates/workflow_detail.html",
-	"integrations":    "templates/integrations.html",
+	"dashboard":         "templates/dashboard.html",
+	"analytics":         "templates/analytics.html",
+	"activity":          "templates/activity.html",
+	"not-found":         "templates/not_found.html",
+	"error":             "templates/error.html",
+	"workflows":         "templates/workflows.html",
+	"workflow-detail":   "templates/workflow_detail.html",
+	"integrations":      "templates/integrations.html",
+	"subscribers":       "templates/subscribers.html",
+	"subscriber-detail": "templates/subscriber_detail.html",
+	"topics":            "templates/topics.html",
+	"topic-detail":      "templates/topic_detail.html",
 }
 
 // loadTemplates builds the base tree and the per-page clones. Template
@@ -174,6 +178,8 @@ var navGroups = []navGroup{
 	{Entries: []navEntry{{Label: "Activity", Href: "/console/activity", Section: "activity"}}},
 	{Entries: []navEntry{{Label: "Analytics", Href: "/console/analytics", Section: "analytics"}}},
 	{Entries: []navEntry{{Label: "Integrations", Href: "/console/integrations", Section: "integrations"}}},
+	{Entries: []navEntry{{Label: "Subscribers", Href: "/console/subscribers", Section: "subscribers"}}},
+	{Entries: []navEntry{{Label: "Topics", Href: "/console/topics", Section: "topics"}}},
 }
 
 // pageData is what the layout template binds for every full page.

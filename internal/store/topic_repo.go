@@ -13,7 +13,9 @@ import (
 // topic and its membership are invisible outside their owning org+env.
 type TopicRepo interface {
 	Create(ctx context.Context, scope domain.Scope, key, name string) (domain.Topic, error)
-	GetByKey(ctx context.Context, scope domain.Scope, key string) (domain.Topic, error)
+	// GetByKey returns the topic annotated with its current member count so a
+	// single-topic read agrees with List (which also counts members).
+	GetByKey(ctx context.Context, scope domain.Scope, key string) (TopicWithCount, error)
 	AddSubscriber(ctx context.Context, scope domain.Scope, topicKey, subscriberID string) error
 	ListSubscriberIDs(ctx context.Context, scope domain.Scope, topicKey string) ([]string, error)
 	// List returns all topics in scope ordered by key ASC, each annotated with
@@ -52,24 +54,32 @@ func (repo *topicRepo) Create(ctx context.Context, scope domain.Scope, key, name
 	if err != nil {
 		return domain.Topic{}, err
 	}
-	return repo.GetByKey(ctx, scope, key)
+	tc, err := repo.GetByKey(ctx, scope, key)
+	return tc.Topic, err
 }
 
-func (repo *topicRepo) GetByKey(ctx context.Context, scope domain.Scope, key string) (domain.Topic, error) {
-	var t domain.Topic
+// GetByKey returns the topic identified by key within scope, annotated with
+// its current member count (same LEFT JOIN count as List, so a single-topic
+// read never contradicts the list).
+func (repo *topicRepo) GetByKey(ctx context.Context, scope domain.Scope, key string) (TopicWithCount, error) {
+	var tc TopicWithCount
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, org_id, environment_id, key, name
-		 FROM topics WHERE org_id = ? AND environment_id = ? AND key = ?`,
+		`SELECT t.id, t.org_id, t.environment_id, t.key, t.name,
+		        COUNT(ts.subscriber_id) AS member_count
+		 FROM topics t
+		 LEFT JOIN topic_subscribers ts ON ts.topic_id = t.id AND ts.environment_id = t.environment_id
+		 WHERE t.org_id = ? AND t.environment_id = ? AND t.key = ?
+		 GROUP BY t.id`,
 		scope.OrgID, scope.EnvID, key,
-	).Scan(&t.ID, &t.OrgID, &t.EnvID, &t.Key, &t.Name)
+	).Scan(&tc.ID, &tc.OrgID, &tc.EnvID, &tc.Key, &tc.Name, &tc.MemberCount)
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Topic{}, ErrNotFound
+		return TopicWithCount{}, ErrNotFound
 	}
 	if err != nil {
-		return domain.Topic{}, err
+		return TopicWithCount{}, err
 	}
-	return t, nil
+	return tc, nil
 }
 
 // AddSubscriber resolves the topic by key (ErrNotFound if missing) then records

@@ -48,6 +48,8 @@ services:
       NOTIFY_BRIDGE_URL: http://127.0.0.1:8080
       NOTIFY_ADDR: 0.0.0.0:3000
       NOTIFY_DB: /data/notify.db
+      # Browser-facing dagnats console base for activity run deep-links.
+      NOTIFY_DAGNATS_CONSOLE_URL: "http://localhost:8081"
       # Set a real 32-byte hex secret in production; empty derives a fixed dev
       # key (local only). bootstrap and serve MUST share this value.
       NOTIFY_MASTER_KEY_HEX: ${NOTIFY_MASTER_KEY_HEX:-}

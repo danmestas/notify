@@ -308,3 +308,128 @@ func TestTopic_CrossEnvIsolation(t *testing.T) {
 		t.Errorf("scopeA get = %d, want 200", status)
 	}
 }
+
+// TestTopic_AddSubscriber_EmptyID_400 pins the non-empty guard on
+// POST /v1/topics/{key}/subscribers: a body that decodes to an empty or
+// whitespace subscriberId (e.g. the wrong plural field name) must be a 400
+// and must never insert a phantom membership row.
+func TestTopic_AddSubscriber_EmptyID_400(t *testing.T) {
+	ctx := context.Background()
+	srv, authHeader, scope, _, st := startConsoleServer(t)
+	aud := audience.New(st)
+
+	if _, err := aud.CreateTopic(ctx, scope, "guard", "Guard"); err != nil {
+		t.Fatalf("create topic: %v", err)
+	}
+
+	for _, body := range []string{
+		`{"subscriberIds":["s1"]}`, // wrong plural field → decodes to ""
+		`{"subscriberId":""}`,
+		`{"subscriberId":"   "}`,
+		`{}`,
+	} {
+		status, resp := doPost(t, srv.URL+"/v1/topics/guard/subscribers", authHeader, body)
+		if status != http.StatusBadRequest {
+			t.Errorf("body %s: status = %d, want 400 (resp: %s)", body, status, resp)
+		}
+	}
+
+	// No phantom membership row, and memberCount stays 0.
+	status, body := doGet(t, srv.URL+"/v1/topics/guard", authHeader)
+	if status != http.StatusOK {
+		t.Fatalf("get topic: status = %d", status)
+	}
+	var got struct {
+		MemberCount int `json:"memberCount"`
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, body)
+	}
+	if got.MemberCount != 0 {
+		t.Errorf("memberCount = %d after rejected adds, want 0", got.MemberCount)
+	}
+}
+
+// TestTopic_AddSubscriber_UnknownSubscriber_422 pins the existence guard:
+// memberships can never reference a subscriber that does not exist in scope.
+func TestTopic_AddSubscriber_UnknownSubscriber_422(t *testing.T) {
+	ctx := context.Background()
+	srv, authHeader, scope, _, st := startConsoleServer(t)
+	aud := audience.New(st)
+
+	if _, err := aud.CreateTopic(ctx, scope, "exists-guard", "Exists Guard"); err != nil {
+		t.Fatalf("create topic: %v", err)
+	}
+
+	status, resp := doPost(t, srv.URL+"/v1/topics/exists-guard/subscribers",
+		authHeader, `{"subscriberId":"no-such-subscriber"}`)
+	if status != http.StatusUnprocessableEntity {
+		t.Errorf("unknown subscriber: status = %d, want 422 (resp: %s)", status, resp)
+	}
+
+	ids, err := st.Topics().ListSubscriberIDs(ctx, scope, "exists-guard")
+	if err != nil {
+		t.Fatalf("list member ids: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Errorf("phantom membership rows created: %v", ids)
+	}
+}
+
+// TestTopic_GetByKey_MemberCountMatchesList pins defect 5: the single-topic
+// GET must carry the same memberCount that GET /v1/topics computes.
+func TestTopic_GetByKey_MemberCountMatchesList(t *testing.T) {
+	srv, authHeader, _, _, _ := startConsoleServer(t)
+
+	// Build everything over the public API: subscriber, topic, membership.
+	if status, body := doPost(t, srv.URL+"/v1/subscribers", authHeader,
+		`{"subscriberId":"mc-sub-1"}`); status != http.StatusCreated {
+		t.Fatalf("create subscriber: status=%d body=%s", status, body)
+	}
+	if status, body := doPost(t, srv.URL+"/v1/topics", authHeader,
+		`{"key":"mc-topic","name":"MC"}`); status != http.StatusCreated {
+		t.Fatalf("create topic: status=%d body=%s", status, body)
+	}
+	if status, body := doPost(t, srv.URL+"/v1/topics/mc-topic/subscribers", authHeader,
+		`{"subscriberId":"mc-sub-1"}`); status != http.StatusNoContent {
+		t.Fatalf("add member: status=%d body=%s", status, body)
+	}
+
+	// Single GET.
+	status, body := doGet(t, srv.URL+"/v1/topics/mc-topic", authHeader)
+	if status != http.StatusOK {
+		t.Fatalf("get topic: status=%d body=%s", status, body)
+	}
+	var single struct {
+		MemberCount int `json:"memberCount"`
+	}
+	if err := json.Unmarshal([]byte(body), &single); err != nil {
+		t.Fatalf("decode single: %v (body=%s)", err, body)
+	}
+
+	// List.
+	status, body = doGet(t, srv.URL+"/v1/topics", authHeader)
+	if status != http.StatusOK {
+		t.Fatalf("list topics: status=%d body=%s", status, body)
+	}
+	var list struct {
+		Data []struct {
+			Key         string `json:"key"`
+			MemberCount int    `json:"memberCount"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("decode list: %v (body=%s)", err, body)
+	}
+	if len(list.Data) != 1 {
+		t.Fatalf("expected 1 topic in list, got %d", len(list.Data))
+	}
+
+	if single.MemberCount != 1 {
+		t.Errorf("single-get memberCount = %d, want 1", single.MemberCount)
+	}
+	if single.MemberCount != list.Data[0].MemberCount {
+		t.Errorf("single-get memberCount %d != list memberCount %d",
+			single.MemberCount, list.Data[0].MemberCount)
+	}
+}

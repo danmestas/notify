@@ -23,6 +23,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/danmestas/notify/internal/analytics"
+	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/domain"
@@ -72,6 +73,7 @@ func newTestConsole(t *testing.T) *testConsole {
 		Messages:      st.Messages(),
 		Integrations:  st.Integrations(),
 		Connectivity:  conn,
+		Audience:      audience.New(st),
 		MasterKey:     masterKey,
 	}
 	c := New(deps)

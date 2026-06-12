@@ -1,0 +1,14 @@
+{{/*
+  subscriber-autocomplete — datalist-style fragment for topic member add input.
+  Binds []subscriberRow. The outer element carries the stable id so the
+  default outer-mode patch lines up.
+*/}}
+{{define "subscriber-autocomplete"}}
+<div id="subscriber-autocomplete">
+  <datalist id="subscriber-autocomplete-list">
+    {{range .}}
+    <option value="{{.SubscriberID}}">{{.DisplayName}} ({{.SubscriberID}})</option>
+    {{end}}
+  </datalist>
+</div>
+{{end}}

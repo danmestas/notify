@@ -1198,3 +1198,180 @@ code, .console-mono { font-family: var(--font-mono); font-size: 0.92em; }
 /* ===== tile-tone-default (missing from base) ======================= */
 
 .tile-tone-default .page-header-tile-count { color: var(--text-primary); }
+
+/* ===== console detail pages (W2-C3/C4: subscribers + topics) ======= */
+
+/* Tab bar */
+.console-tab-bar {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: var(--space-5);
+}
+.console-tab {
+  padding: var(--space-2) var(--space-4);
+  color: var(--text-secondary);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: color 0.15s, border-color 0.15s;
+}
+.console-tab:hover { color: var(--text-primary); }
+.console-tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Action row (back link + danger button) */
+.console-action-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+/* Detail grid — single column, max-width card */
+.console-detail-grid {
+  display: grid;
+  gap: var(--space-4);
+  max-width: 760px;
+}
+
+/* Card component */
+.console-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+}
+.console-card-title {
+  margin: 0 0 var(--space-4);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.console-card-actions { margin-top: var(--space-5); }
+
+/* Meta list (key-value pairs) */
+.wf-meta-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+.wf-meta-row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: var(--space-3);
+  align-items: start;
+  font-size: 0.875rem;
+}
+.wf-meta-row dt {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.wf-meta-row dd { margin: 0; color: var(--text-primary); }
+
+/* Form rows in edit panels */
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+}
+.form-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.subscriber-edit-form,
+.topic-edit-form { max-width: 480px; }
+
+/* Subscriber avatar cell in tables */
+.subscriber-avatar-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.subscriber-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+.subscriber-name-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.subscriber-display-name {
+  font-weight: 500;
+  color: var(--text-primary);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.subscriber-display-name:hover { text-decoration: underline; }
+.subscriber-id-code {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+/* Subscriber run link in activity tab */
+.subscriber-run-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+.subscriber-run-link:hover { text-decoration: underline; }
+
+/* Muted text helper */
+.console-muted { color: var(--text-secondary); }
+
+/* ===== create slide-over (subscribers/new, topics/new) ============= */
+
+.console-slideover {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(420px, 100vw);
+  background: var(--surface-2);
+  border-left: 1px solid var(--border-subtle);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+  padding: var(--space-5);
+  overflow-y: auto;
+  z-index: 50;
+}
+.console-slideover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+}
+.console-slideover-header .console-card-title { margin: 0; }
+.console-slideover-close { text-decoration: none; }
+.console-slideover-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+/* Inline two-step confirm label (delete/remove flows) */
+.console-confirm-label {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}

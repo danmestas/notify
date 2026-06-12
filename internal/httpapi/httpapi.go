@@ -295,7 +295,10 @@ type topicSubscriberRequest struct {
 }
 
 // postTopicSubscriber adds a subscriber to the named topic within the request
-// Scope. An unknown topic key surfaces store.ErrNotFound as 404.
+// Scope. An unknown topic key surfaces store.ErrNotFound as 404. The
+// subscriberId must be non-empty and reference an existing subscriber in
+// scope — memberships can never point at nothing (empty → 400, unknown →
+// 422).
 func postTopicSubscriber(aud *audience.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req topicSubscriberRequest
@@ -303,9 +306,22 @@ func postTopicSubscriber(aud *audience.Service) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		subID := strings.TrimSpace(req.SubscriberID)
+		if subID == "" {
+			http.Error(w, "subscriberId is required", http.StatusBadRequest)
+			return
+		}
 		key := chi.URLParam(r, "key")
 		scope := identity.ScopeFrom(r.Context())
-		if err := aud.AddTopicSubscriber(r.Context(), scope, key, req.SubscriberID); err != nil {
+		if _, err := aud.Get(r.Context(), scope, subID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "subscriber not found", http.StatusUnprocessableEntity)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := aud.AddTopicSubscriber(r.Context(), scope, key, subID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, err.Error(), http.StatusNotFound)
 				return
@@ -1365,7 +1381,7 @@ func getTopic(aud *audience.Service) http.HandlerFunc {
 			http.Error(w, "failed to get topic", http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusOK, topicDTO{ID: t.ID, Key: t.Key, Name: t.Name})
+		writeJSON(w, http.StatusOK, topicDTO{ID: t.ID, Key: t.Key, Name: t.Name, MemberCount: t.MemberCount})
 	}
 }
 

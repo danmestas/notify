@@ -1,0 +1,76 @@
+{{/*
+  topics-tbody — PatchElements fragment target for the topics list.
+  Binds topicsListView.
+*/}}
+{{define "topics-tbody"}}
+<div id="topics-tbody">
+  {{if and (eq (len .Rows) 0) (not .HasFilters)}}
+  {{/* Empty state — no topics yet */}}
+  <div class="console-empty-state" data-component="empty-state">
+    <span class="console-empty-state-icon" aria-hidden="true">📢</span>
+    <h2 class="console-empty-state-title">No topics yet</h2>
+    <p class="console-empty-state-description">Create a topic to group subscribers for broadcast delivery.</p>
+    {{if not .ReadOnly}}
+    <a class="btn btn-outline console-action" href="/console/topics/new">Create topic</a>
+    {{end}}
+  </div>
+  {{else if and (eq (len .Rows) 0) .HasFilters}}
+  <div class="console-empty-state" data-component="no-results">
+    <h2 class="console-empty-state-title">No topics match your filters.</h2>
+    <a class="btn btn-outline console-action" href="/console/topics">Reset filters</a>
+  </div>
+  {{else}}
+  <div class="console-table-wrap">
+    <table class="console-table" aria-label="Topics">
+      <thead>
+        <tr>
+          <th scope="col">Key</th>
+          <th scope="col">Name</th>
+          <th scope="col">Members</th>
+          <th scope="col"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Rows}}
+        <tr class="console-table-row topic-table-row"
+            data-component="topic-row">
+          <td class="topic-col-key">
+            <a href="/console/topics/{{.Key}}"><code class="topic-key-code">{{.Key}}</code></a>
+          </td>
+          <td class="topic-col-name">{{.Name}}</td>
+          <td class="topic-col-members">
+            <span class="chip chip-default">{{.MemberCount}}</span>
+          </td>
+          <td class="topic-col-actions">
+            <div class="subscriber-row-actions">
+              <a class="btn-icon" href="/console/topics/{{.Key}}" title="View topic">↗</a>
+              {{if not $.ReadOnly}}
+              {{if eq $.ConfirmDelete .Key}}
+              {{/* Two-step inline confirm (chassis idiom): first click swapped
+                   this row into confirm state via the fragment; Cancel
+                   re-fetches the plain list, the POST form really deletes. */}}
+              <button type="button" class="btn btn-outline"
+                      data-on:click="@get('/console/api/fragments/topics-list')">
+                Cancel
+              </button>
+              <form method="POST" action="/console/topics/{{.Key}}/delete" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <button type="submit" class="btn btn-danger">Confirm delete</button>
+              </form>
+              {{else}}
+              <button type="button" class="btn-icon" title="Delete topic"
+                      data-on:click="@get('/console/api/fragments/topics-list?confirmDelete={{.Key | urlquery}}')">
+                ✕
+              </button>
+              {{end}}
+              {{end}}
+            </div>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+</div>
+{{end}}

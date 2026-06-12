@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/danmestas/notify/internal/analytics"
+	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/identity"
@@ -72,6 +73,10 @@ type Deps struct {
 	// allowed only when no integration mutation routes are mounted; in
 	// practice New panics when Integrations is non-nil and Connectivity is nil.
 	Connectivity *connectivity.Service
+	// Audience is the audience service for subscriber and topic management
+	// (W2-C3, W2-C4, W2-C5). Nil is allowed only when no subscriber/topic
+	// routes are mounted; in practice New panics when Audience is nil.
+	Audience *audience.Service
 	// ReadOnly disables every mutation button via the actionButton
 	// template helper and renders the read-only banner. The chassis has
 	// no mutations beyond login/logout (which stay enabled — an operator
@@ -112,6 +117,9 @@ func New(deps Deps) *Console {
 	}
 	if deps.Integrations != nil && deps.Connectivity == nil {
 		panic("console.New: Connectivity must be set when Integrations is provided")
+	}
+	if deps.Audience == nil {
+		panic("console.New: deps.Audience is nil")
 	}
 	if len(deps.MasterKey) != 32 {
 		panic(fmt.Sprintf("console.New: MasterKey must be 32 bytes for AES-256-GCM, got %d", len(deps.MasterKey)))
@@ -212,6 +220,25 @@ func (c *Console) Routes() http.Handler {
 		pr.Get("/console/api/fragments/integrations-grid", c.serveFragmentIntegrationsGrid)
 		pr.Get("/console/api/fragments/integration-detail", c.serveFragmentIntegrationDetail)
 		pr.Get("/console/api/fragments/integration-provider-form", c.serveFragmentIntegrationProviderForm)
+		// W2-C3: subscriber management
+		pr.Get("/console/subscribers", c.serveSubscribersPage)
+		pr.Get("/console/subscribers/new", c.serveSubscriberNew)
+		pr.Get("/console/subscribers/{subscriberId}", c.serveSubscriberDetail)
+		pr.Post("/console/subscribers", c.handleSubscriberCreate)
+		pr.Post("/console/subscribers/{subscriberId}", c.handleSubscriberUpdate)
+		pr.Post("/console/subscribers/{subscriberId}/delete", c.handleSubscriberDelete)
+		pr.Get("/console/api/fragments/subscribers-list", c.serveFragmentSubscribersList)
+		// W2-C4: topic management
+		pr.Get("/console/topics", c.serveTopicsPage)
+		pr.Get("/console/topics/new", c.serveTopicNew)
+		pr.Get("/console/topics/{key}", c.serveTopicDetail)
+		pr.Post("/console/topics", c.handleTopicCreate)
+		pr.Post("/console/topics/{key}", c.handleTopicUpdate)
+		pr.Post("/console/topics/{key}/delete", c.handleTopicDelete)
+		pr.Post("/console/topics/{key}/subscribers", c.handleTopicAddSubscriber)
+		pr.Post("/console/topics/{key}/subscribers/{subscriberId}/remove", c.handleTopicRemoveSubscriber)
+		pr.Get("/console/api/fragments/topics-list", c.serveFragmentTopicsList)
+		pr.Get("/console/api/fragments/subscriber-autocomplete", c.serveFragmentSubscriberAutocomplete)
 	})
 
 	// Unmatched /console/* paths go through the full session gate, same
