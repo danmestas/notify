@@ -29,8 +29,38 @@ import (
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/webhooksout"
 )
+
+// stubTrigger is a TriggerIngester stub for unit tests. It does not
+// require a live NATS engine — it just records the last request and returns
+// a configurable response.
+type stubTrigger struct {
+	resp trigger.TriggerResponse
+	err  error
+	last trigger.TriggerRequest
+}
+
+func (s *stubTrigger) Ingest(_ context.Context, _ domain.Scope, req trigger.TriggerRequest) (trigger.TriggerResponse, error) {
+	s.last = req
+	return s.resp, s.err
+}
+
+// newStubTrigger returns a stub that acknowledges every ingest with a fixed
+// transaction id.
+func newStubTrigger(txid string) *stubTrigger {
+	if txid == "" {
+		txid = "txn-test-stub"
+	}
+	return &stubTrigger{
+		resp: trigger.TriggerResponse{
+			Acknowledged:  true,
+			Status:        "processed",
+			TransactionID: txid,
+		},
+	}
+}
 
 // testConsole bundles everything a console test needs: the constructed
 // Console (white-box access), its mounted handler, the bootstrap API key,
@@ -76,6 +106,7 @@ func newTestConsole(t *testing.T) *testConsole {
 		Connectivity:  conn,
 		Audience:      audience.New(st),
 		Webhooks:      webhooksout.NewManagement(st),
+		Trigger:       newStubTrigger(""),
 		MasterKey:     masterKey,
 	}
 	c := New(deps)
@@ -232,6 +263,34 @@ func (tc *testConsole) seedIntegration(t *testing.T, in domain.Integration) doma
 	created, err := tc.st.Integrations().Create(context.Background(), tc.scope, in)
 	if err != nil {
 		t.Fatalf("seed integration: %v", err)
+	}
+	return created
+}
+
+// seedWorkflowAndReturn creates one workflow and returns the domain.Workflow.
+func (tc *testConsole) seedWorkflowAndReturn(t *testing.T, name, trigger string) domain.Workflow {
+	t.Helper()
+	wf, err := tc.deps.Authoring.Create(context.Background(), tc.scope, authoring.WorkflowInput{
+		Name:              name,
+		TriggerIdentifier: trigger,
+		Steps: []domain.Step{{
+			StepID:        "s1",
+			Type:          "in_app",
+			ControlValues: json.RawMessage(`{"body":"hi"}`),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("seedWorkflowAndReturn: %v", err)
+	}
+	return wf
+}
+
+// seedNotificationInScope creates a notification row under an explicit scope.
+func (tc *testConsole) seedNotificationInScope(t *testing.T, scope domain.Scope, n domain.Notification) domain.Notification {
+	t.Helper()
+	created, err := tc.st.Notifications().Create(context.Background(), scope, n)
+	if err != nil {
+		t.Fatalf("seed notification in scope: %v", err)
 	}
 	return created
 }

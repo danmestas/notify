@@ -195,6 +195,7 @@ func runServe(args []string) error {
 		Connectivity:      conn,
 		Audience:          aud,
 		Webhooks:          webhooksout.NewManagement(st),
+		Trigger:           trg,
 		MasterKey:         mk,
 		DagnatsConsoleURL: os.Getenv("NOTIFY_DAGNATS_CONSOLE_URL"),
 		ReadOnly:          os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -815,6 +816,371 @@ func TestConsoleWorkflowTemplates_NoNativeConfirm(t *testing.T) {
 		if strings.Contains(rr.Body.String(), "confirm(") || strings.Contains(rr.Body.String(), "alert(") {
 			t.Errorf("%s: contains native confirm()/alert() call", path)
 		}
+	}
+}
+
+// ─── Wave 2-A5: workflow test/trigger page ───────────────────────────────────
+
+func TestWorkflowTestPage_Renders(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/my-wf/test", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/workflows/my-wf/test: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	// Must have a form with CSRF token.
+	if !strings.Contains(body, "csrf_token") {
+		t.Errorf("test page missing csrf_token field")
+	}
+	// Must have subscriber id input.
+	if !strings.Contains(body, "subscriber_id") {
+		t.Errorf("test page missing subscriber_id input")
+	}
+	// Must have payload textarea.
+	if !strings.Contains(body, "payload") {
+		t.Errorf("test page missing payload textarea")
+	}
+	// Must have send button.
+	if !strings.Contains(body, "Send test trigger") {
+		t.Errorf("test page missing submit button")
+	}
+	// Tab nav must be present.
+	if !strings.Contains(body, "console-tab-bar") {
+		t.Errorf("test page missing tab bar")
+	}
+}
+
+func TestWorkflowTestPage_SingleStep_NoBanner(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "Single", "single-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/single-wf/test", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "wf-multistep-banner") {
+		t.Errorf("single-step workflow should NOT show the #17 multi-step banner")
+	}
+}
+
+func TestWorkflowTestPage_MultiStep_ShowsBanner(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "Multi", "multi-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)},
+		{StepID: "email-1", Type: "email", ControlValues: json.RawMessage(`{"body":"bye"}`)},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/multi-wf/test", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "wf-multistep-banner") {
+		t.Errorf("multi-step workflow should show the #17 multi-step banner")
+	}
+}
+
+func TestWorkflowTestPage_InactiveWorkflow_ShowsBlockedMessage(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedInactiveWorkflow(t, "Paused", "paused-wf")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/paused-wf/test", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "wf-inactive-banner") {
+		t.Errorf("inactive workflow test page should show inactive warning banner")
+	}
+}
+
+func TestWorkflowTestPage_RequiresAuth(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	rr := tc.get(t, "/console/workflows/my-wf/test", nil)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("GET /console/workflows/my-wf/test without session: status = %d, want 303", rr.Code)
+	}
+	if got := rr.Header().Get("Location"); got != "/console/login" {
+		t.Errorf("Location = %q, want /console/login", got)
+	}
+}
+
+func TestWorkflowTest_POST_Success_Redirects_With_TxID(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, csrf := tc.login(t)
+
+	// The stub trigger returns "txn-test-stub" for any request.
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/test", url.Values{
+		"csrf_token":    {csrf},
+		"subscriber_id": {"user-123"},
+		"payload":       {`{"foo":"bar"}`},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("POST test trigger: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "txid=") {
+		t.Errorf("redirect Location = %q, want ?txid=... present", loc)
+	}
+	if !strings.Contains(loc, "/console/workflows/my-wf/test") {
+		t.Errorf("redirect Location = %q, want /console/workflows/my-wf/test prefix", loc)
+	}
+}
+
+func TestWorkflowTest_POST_InvalidJSON_InlineError(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/test", url.Values{
+		"csrf_token":    {csrf},
+		"subscriber_id": {"user-123"},
+		"payload":       {`not-valid-json`},
+	}, cookie)
+	// Must redirect (303) to test page with ?error=, not 500.
+	if rr.Code == http.StatusInternalServerError {
+		t.Fatalf("invalid JSON payload returned 500")
+	}
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("invalid JSON: status = %d, want 303", rr.Code)
+	}
+	if !strings.Contains(rr.Header().Get("Location"), "error=") {
+		t.Errorf("invalid JSON redirect missing error param")
+	}
+}
+
+func TestWorkflowTest_POST_InactiveWorkflow_Blocked(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedInactiveWorkflow(t, "Paused", "paused-wf")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/paused-wf/test", url.Values{
+		"csrf_token":    {csrf},
+		"subscriber_id": {"user-123"},
+		"payload":       {`{}`},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("inactive workflow test: status = %d, want 303", rr.Code)
+	}
+	if !strings.Contains(rr.Header().Get("Location"), "error=") {
+		t.Errorf("inactive workflow test redirect missing error param")
+	}
+}
+
+func TestWorkflowTest_POST_ReadOnly_Blocked(t *testing.T) {
+	tc := newTestConsoleReadOnly(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/test", url.Values{
+		"csrf_token":    {csrf},
+		"subscriber_id": {"user-123"},
+		"payload":       {`{}`},
+	}, cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("ReadOnly test: status = %d, want 403", rr.Code)
+	}
+}
+
+func TestWorkflowTest_POST_RequiresAuth(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/test", url.Values{
+		"subscriber_id": {"user-123"},
+		"payload":       {`{}`},
+	}, nil)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("POST /console/api/workflows/my-wf/test without session: status = %d, want 303", rr.Code)
+	}
+}
+
+func TestWorkflowTestPage_NoNativeConfirm(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	tc.seedInactiveWorkflow(t, "Paused", "paused-wf")
+	tc.seedWorkflowWithSteps(t, "Multi", "multi-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+		{StepID: "email-1", Type: "email", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, _ := tc.login(t)
+
+	pages := []string{
+		"/console/workflows/my-wf/test",
+		"/console/workflows/paused-wf/test",
+		"/console/workflows/multi-wf/test",
+	}
+	for _, path := range pages {
+		rr := tc.get(t, path, cookie)
+		if strings.Contains(rr.Body.String(), "confirm(") || strings.Contains(rr.Body.String(), "alert(") {
+			t.Errorf("%s: contains native confirm()/alert()", path)
+		}
+	}
+}
+
+// ─── Wave 2-A6: workflow activity tab ────────────────────────────────────────
+
+func TestWorkflowActivityPage_Renders(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/my-wf/activity", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/workflows/my-wf/activity: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	// Tab nav present.
+	if !strings.Contains(body, "console-tab-bar") {
+		t.Errorf("activity tab page missing tab bar")
+	}
+	// Table element present.
+	if !strings.Contains(body, "wf-activity-table") {
+		t.Errorf("activity tab page missing wf-activity-table")
+	}
+}
+
+func TestWorkflowActivityPage_EmptyState(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/my-wf/activity", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "No runs yet for this workflow") {
+		t.Errorf("empty activity tab missing empty-state title")
+	}
+}
+
+func TestWorkflowActivityPage_ShowsRows(t *testing.T) {
+	tc := newTestConsole(t)
+	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
+	tc.seedNotification(t, domain.Notification{
+		ID:            "notif-1",
+		OrgID:         tc.scope.OrgID,
+		EnvID:         tc.scope.EnvID,
+		WorkflowID:    wf.ID,
+		SubscriberID:  "user-abc",
+		TransactionID: "tx-abc",
+		RunID:         "run-abc",
+		CreatedAt:     "2025-01-01T00:00:00Z",
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/my-wf/activity", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "user-abc") {
+		t.Errorf("activity tab missing subscriber id 'user-abc'")
+	}
+	if !strings.Contains(body, "tx-abc") {
+		t.Errorf("activity tab missing transaction id 'tx-abc'")
+	}
+}
+
+func TestWorkflowActivityPage_ScopeIsolation(t *testing.T) {
+	tc := newTestConsole(t)
+	altScope := tc.altScope(t)
+
+	// Seed a workflow in the main scope.
+	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
+	// Seed a notification under the alt scope for a different workflow id.
+	tc.seedNotificationInScope(t, altScope, domain.Notification{
+		ID:            "notif-alt",
+		OrgID:         altScope.OrgID,
+		EnvID:         altScope.EnvID,
+		WorkflowID:    wf.ID, // same ID string but wrong scope
+		SubscriberID:  "alt-sub",
+		TransactionID: "tx-alt",
+		CreatedAt:     "2025-01-01T00:00:00Z",
+	})
+
+	cookie, _ := tc.login(t)
+	rr := tc.get(t, "/console/workflows/my-wf/activity", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "alt-sub") {
+		t.Errorf("activity tab leaked alt-scope subscriber into main-scope view")
+	}
+}
+
+func TestFragmentWorkflowActivity_ReturnsSSE(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/workflow-activity/my-wf", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("fragment: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "event: datastar-patch-elements") {
+		t.Errorf("workflow activity fragment missing SSE event framing")
+	}
+	if !strings.Contains(body, "wf-activity-tbody") {
+		t.Errorf("workflow activity fragment missing #wf-activity-tbody id")
+	}
+}
+
+func TestFragmentWorkflowActivity_CursorPagination(t *testing.T) {
+	tc := newTestConsole(t)
+	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
+	// Seed more rows than the default limit to trigger pagination.
+	for i := range 25 {
+		tc.seedNotification(t, domain.Notification{
+			ID:            "notif-" + strconv.Itoa(i),
+			OrgID:         tc.scope.OrgID,
+			EnvID:         tc.scope.EnvID,
+			WorkflowID:    wf.ID,
+			SubscriberID:  "user-" + strconv.Itoa(i),
+			TransactionID: "tx-" + strconv.Itoa(i),
+			CreatedAt:     "2025-01-01T00:00:00Z",
+		})
+	}
+	cookie, _ := tc.login(t)
+
+	// Request first page with limit=5.
+	rr := tc.getWithQuery(t, "/console/api/fragments/workflow-activity/my-wf", "limit=5", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("fragment limit=5: status = %d, want 200", rr.Code)
+	}
+	// Should have a "Load more" button indicating there is a next page.
+	if !strings.Contains(rr.Body.String(), "Load more") {
+		t.Errorf("first page with limit=5 against 25 rows should show 'Load more'")
+	}
+}
+
+func TestWorkflowActivityPage_RequiresAuth(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	rr := tc.get(t, "/console/workflows/my-wf/activity", nil)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("GET without session: status = %d, want 303", rr.Code)
+	}
+}
+
+func TestWorkflowActivityPage_NoNativeConfirm(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/my-wf/activity", cookie)
+	body := rr.Body.String()
+	if strings.Contains(body, "confirm(") || strings.Contains(body, "alert(") {
+		t.Errorf("/console/workflows/my-wf/activity: contains native confirm()/alert()")
 	}
 }
 

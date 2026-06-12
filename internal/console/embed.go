@@ -51,6 +51,8 @@ var assetsFS embed.FS
 //go:embed templates/error.html
 //go:embed templates/workflows.html
 //go:embed templates/workflow_detail.html
+//go:embed templates/workflow_test.html
+//go:embed templates/workflow_activity.html
 //go:embed templates/partials/page_header.html
 //go:embed templates/partials/empty_state.html
 //go:embed templates/partials/toast.html
@@ -61,6 +63,7 @@ var assetsFS embed.FS
 //go:embed templates/partials/analytics_charts.html
 //go:embed templates/partials/activity_tbody.html
 //go:embed templates/partials/activity_detail_panel.html
+//go:embed templates/partials/workflow_activity_tbody.html
 //go:embed templates/integrations.html
 //go:embed templates/partials/integrations_grid.html
 //go:embed templates/partials/integration_detail.html

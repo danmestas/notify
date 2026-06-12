@@ -1,0 +1,63 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section" data-signals="{{$page.Signals}}">
+  {{template "page-header" $page.Header}}
+
+  <div class="console-action-row">
+    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}">← Editor</a>
+    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}/test">Test</a>
+  </div>
+
+  {{/* Tab bar */}}
+  <nav class="console-tab-bar" aria-label="Workflow tabs">
+    <a href="/console/workflows/{{$page.TriggerIdentifier}}"
+       class="console-tab">
+      Editor
+    </a>
+    <a href="/console/workflows/{{$page.TriggerIdentifier}}/test"
+       class="console-tab">
+      Test
+    </a>
+    <a href="/console/workflows/{{$page.TriggerIdentifier}}/activity"
+       class="console-tab is-active">
+      Activity
+    </a>
+  </nav>
+
+  {{/* Filter bar */}}
+  <div class="activity-filter-bar" id="wf-activity-filter-bar">
+    <select class="console-select" id="wf-act-status"
+            data-signals="{wfActStatus: ''}"
+            data-bind-wfActStatus
+            data-on:change="@get('/console/api/fragments/workflow-activity/{{$page.TriggerIdentifier}}?status=' + $wfActStatus + '&range=' + $wfActRange)">
+      <option value="">All statuses</option>
+      <option value="pending">Pending</option>
+      <option value="sent">Sent</option>
+      <option value="delivered">Delivered</option>
+      <option value="failed">Failed</option>
+    </select>
+    <select class="console-select" id="wf-act-range"
+            data-bind-wfActRange
+            data-on:change="@get('/console/api/fragments/workflow-activity/{{$page.TriggerIdentifier}}?status=' + $wfActStatus + '&range=' + $wfActRange)">
+      <option value="">All time</option>
+      <option value="1h">Last 1 hour</option>
+      <option value="24h">Last 24 hours</option>
+      <option value="7d">Last 7 days</option>
+    </select>
+  </div>
+
+  <table class="activity-table wf-activity-table" id="wf-activity-table">
+    <thead>
+      <tr>
+        <th class="activity-col-status">Status</th>
+        <th class="activity-col-subscriber">Subscriber</th>
+        <th class="activity-col-transaction">Transaction ID</th>
+        <th class="activity-col-channel">Channel</th>
+        <th class="activity-col-created">Created</th>
+        {{if $page.Fragment.Rows}}<th class="activity-col-run">Run</th>{{end}}
+      </tr>
+    </thead>
+    {{template "workflow-activity-tbody" $page.Fragment}}
+  </table>
+
+</section>
+{{end}}

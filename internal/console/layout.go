@@ -38,6 +38,8 @@ var pageContentFiles = map[string]string{
 	"error":             "templates/error.html",
 	"workflows":         "templates/workflows.html",
 	"workflow-detail":   "templates/workflow_detail.html",
+	"workflow-test":     "templates/workflow_test.html",
+	"workflow-activity": "templates/workflow_activity.html",
 	"integrations":      "templates/integrations.html",
 	"subscribers":       "templates/subscribers.html",
 	"subscriber-detail": "templates/subscriber_detail.html",

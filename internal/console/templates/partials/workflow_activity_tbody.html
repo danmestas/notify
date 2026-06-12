@@ -1,0 +1,86 @@
+{{/*
+  workflow-activity-tbody — the paginated notification rows fragment for a
+  single workflow's activity tab. Binds a wfActivityListView.
+  The outer <tbody> carries the stable id #wf-activity-tbody so the
+  fragment endpoint patches it in place.
+*/}}
+{{define "workflow-activity-tbody"}}
+<tbody id="wf-activity-tbody">
+  {{if .Rows}}
+  {{range .Rows}}
+  <tr class="activity-row wf-activity-row" data-id="{{.ID}}">
+    <td class="activity-col-status">
+      <span class="activity-status-chip activity-status-chip--{{.Status}} tile-tone-{{.StatusTone}}"
+            title="{{.Status}}">{{.Status}}</span>
+    </td>
+    <td class="activity-col-subscriber">
+      <code class="activity-monospace">{{.SubscriberID}}</code>
+    </td>
+    <td class="activity-col-transaction">
+      <code class="activity-monospace activity-truncate" title="{{.TransactionID}}">{{.TransactionIDShort}}</code>
+    </td>
+    <td class="activity-col-channel">
+      {{if .Channel}}
+      <span class="activity-channel-badge activity-channel-badge--{{.Channel}}">{{.Channel}}</span>
+      {{else}}
+      <span class="activity-channel-badge activity-channel-badge--unknown">—</span>
+      {{end}}
+    </td>
+    <td class="activity-col-created">
+      <time datetime="{{.CreatedAt}}" title="{{.CreatedAt}}">{{.RelativeTime}}</time>
+    </td>
+    <td class="activity-col-run">
+      {{if .RunURL}}
+      <a class="console-link activity-run-link" href="{{.RunURL}}"
+         target="_blank" rel="noopener" title="View run {{.RunID}} in dagnats">run ↗</a>
+      {{else if .RunID}}
+      <code class="activity-monospace activity-truncate" title="{{.RunID}}">{{.RunID}}</code>
+      {{else}}
+      <span class="console-muted">—</span>
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+  {{/* Pagination footer */}}
+  <tr class="activity-pagination-row" id="wf-activity-pagination">
+    <td colspan="6" class="activity-pagination-cell">
+      <div class="activity-pagination">
+        {{if .TotalCount}}
+        <span class="activity-pagination-count">{{.TotalCount}} total</span>
+        {{end}}
+        {{if .Cursor}}
+        <button type="button" class="btn btn-outline activity-load-more"
+                data-on:click="@get('/console/api/fragments/workflow-activity/{{.Slug}}?cursor={{.Cursor}}&limit={{.Limit}}&status={{.FilterStatus}}&range={{.FilterRange}}')">
+          Load more
+        </button>
+        {{end}}
+      </div>
+    </td>
+  </tr>
+  {{else}}
+  <tr class="activity-empty-row">
+    <td colspan="6">
+      {{if .HasFilters}}
+      <div class="console-empty-state" data-component="empty-state">
+        <h2 class="console-empty-state-title">No runs match your filters</h2>
+        <p class="console-empty-state-description">
+          Try adjusting or
+          <a class="console-link" href="/console/workflows/{{.Slug}}/activity">resetting</a>
+          the filter bar.
+        </p>
+      </div>
+      {{else}}
+      <div class="console-empty-state" data-component="empty-state">
+        <span class="console-empty-state-icon" aria-hidden="true">&#9654;</span>
+        <h2 class="console-empty-state-title">No runs yet for this workflow</h2>
+        <p class="console-empty-state-description">
+          Use the <a class="console-link" href="/console/workflows/{{.Slug}}/test">Test</a>
+          tab to fire your first trigger.
+        </p>
+      </div>
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+</tbody>
+{{end}}

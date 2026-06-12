@@ -1,6 +1,7 @@
 package console
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"fmt"
@@ -16,9 +17,19 @@ import (
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/identity"
+
+	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/webhooksout"
 )
+
+// TriggerIngester is the subset of trigger.Service the console uses. The
+// production wiring passes *trigger.Service directly; tests may supply a
+// lightweight stub without a live engine.
+type TriggerIngester interface {
+	Ingest(ctx context.Context, scope domain.Scope, req trigger.TriggerRequest) (trigger.TriggerResponse, error)
+}
 
 // devMode reflects NOTIFY_DEV=1 at process start. When true the asset
 // handlers send no-cache headers so CSS/JS edits show up on reload without
@@ -81,6 +92,11 @@ type Deps struct {
 	// Webhooks is the webhook management service for CRUD (W2-D2).
 	// Nil is allowed only when no webhook routes are mounted.
 	Webhooks *webhooksout.ManagementService
+	// Trigger is the trigger service used by the workflow test/trigger page
+	// (W2-A5). The console calls Ingest in-process — no loopback HTTP.
+	// Nil disables test-trigger POSTs (returns "service unavailable").
+	// The production wiring passes *trigger.Service; tests may pass a stub.
+	Trigger TriggerIngester
 	// ReadOnly disables every mutation button via the actionButton
 	// template helper and renders the read-only banner. The chassis has
 	// no mutations beyond login/logout (which stay enabled — an operator
@@ -168,6 +184,10 @@ func New(deps Deps) *Console {
 //	GET  /console/workflows                               workflows list page
 //	GET  /console/api/fragments/workflows-list            workflows list fragment (PatchElements SSE)
 //	GET  /console/workflows/{slug}                        workflow detail page (read-only)
+//	GET  /console/workflows/{slug}/test                   workflow test/trigger page (W2-A5)
+//	POST /console/api/workflows/{slug}/test               fire a test trigger (W2-A5)
+//	GET  /console/workflows/{slug}/activity               workflow activity tab (W2-A6)
+//	GET  /console/api/fragments/workflow-activity/{slug}  activity tbody fragment (W2-A6)
 //	GET  /console/analytics                               analytics page
 //	GET  /console/api/fragments/analytics-kpis            analytics KPI fragment (PatchElements SSE)
 //	GET  /console/api/fragments/analytics-charts          analytics charts fragment (PatchElements SSE)
@@ -224,6 +244,12 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/api/workflows/{slug}/steps/{stepId}/delete", c.handleWorkflowStepDelete)
 		pr.Post("/console/api/workflows/{slug}/steps/{stepId}/save", c.handleWorkflowStepSave)
 		pr.Get("/console/api/fragments/workflow-step-editor/{slug}/{stepId}", c.serveFragmentWorkflowStepEditor)
+		// W2-A5: workflow test/trigger page
+		pr.Get("/console/workflows/{slug}/test", c.serveWorkflowTestPage)
+		pr.Post("/console/api/workflows/{slug}/test", c.handleWorkflowTest)
+		// W2-A6: workflow activity tab
+		pr.Get("/console/workflows/{slug}/activity", c.serveWorkflowActivityPage)
+		pr.Get("/console/api/fragments/workflow-activity/{slug}", c.serveFragmentWorkflowActivity)
 		pr.Get("/console/analytics", c.servePageAnalytics)
 		pr.Get("/console/api/fragments/analytics-kpis", c.serveFragmentAnalyticsKPIs)
 		pr.Get("/console/api/fragments/analytics-charts", c.serveFragmentAnalyticsCharts)

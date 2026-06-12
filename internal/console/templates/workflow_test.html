@@ -1,0 +1,102 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section" data-signals="{{$page.Signals}}">
+  {{template "page-header" $page.Header}}
+
+  <div class="console-action-row">
+    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}">← Editor</a>
+    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}/activity">Activity</a>
+  </div>
+
+  {{/* Tab bar — consistent with subscriber / topic detail tab pattern */}}
+  <nav class="console-tab-bar" aria-label="Workflow tabs">
+    <a href="/console/workflows/{{$page.TriggerIdentifier}}"
+       class="console-tab">
+      Editor
+    </a>
+    <a href="/console/workflows/{{$page.TriggerIdentifier}}/test"
+       class="console-tab is-active">
+      Test
+    </a>
+    <a href="/console/workflows/{{$page.TriggerIdentifier}}/activity"
+       class="console-tab">
+      Activity
+    </a>
+  </nav>
+
+  <div class="console-card" style="max-width:680px">
+
+    {{/* Inactive workflow warning */}}
+    {{if $page.InactiveBlocked}}
+    <div class="console-banner console-banner--warning" role="alert" id="wf-inactive-banner">
+      <strong>Workflow is inactive.</strong>
+      Triggering is blocked until the workflow is activated. Go to the
+      <a class="console-link" href="/console/workflows/{{$page.TriggerIdentifier}}">Editor</a>
+      to activate it.
+    </div>
+    {{end}}
+
+    {{/* Multi-step issue #17 banner (shown even when inactive so the operator is aware) */}}
+    {{if gt $page.StepCount 1}}
+    <div class="console-banner console-banner--info" role="note" id="wf-multistep-banner">
+      <strong>Known issue #17:</strong>
+      Multi-step test delivery is affected by a known engine issue (#17): steps after
+      the first receive the prior step&#39;s output as input. Single-step workflows
+      are unaffected.
+    </div>
+    {{end}}
+
+    {{/* Success: transaction ID surfaced after a successful test fire */}}
+    {{if $page.TransactionID}}
+    <div class="console-banner console-banner--success" role="status" id="wf-test-success">
+      <strong>Trigger fired.</strong>
+      Transaction ID: <code>{{$page.TransactionID}}</code>
+      {{if $page.RunURL}}
+      &mdash; <a class="console-link" href="{{$page.RunURL}}" target="_blank" rel="noopener">View run in dagnats</a>
+      {{end}}
+      &mdash; <a class="console-link" href="/console/workflows/{{$page.TriggerIdentifier}}/activity?txid={{$page.TransactionID}}">View in Activity tab</a>
+    </div>
+    {{end}}
+
+    {{/* Inline form error */}}
+    {{if $page.FormError}}
+    <p class="console-form-error" role="alert" id="wf-test-error">{{$page.FormError}}</p>
+    {{end}}
+
+    {{if not $page.ReadOnly}}
+    <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/test"
+          {{if $page.InactiveBlocked}}aria-disabled="true"{{end}}>
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+
+      <div class="form-row">
+        <label class="form-label" for="wf-test-subscriber">Subscriber ID</label>
+        <input class="console-input" type="text" id="wf-test-subscriber"
+               name="subscriber_id" required
+               placeholder="e.g. user-123"
+               autocomplete="off"
+               {{if $page.InactiveBlocked}}disabled{{end}}>
+        <p class="console-form-hint">The subscriber will be upserted if they do not already exist.</p>
+      </div>
+
+      <div class="form-row">
+        <label class="form-label" for="wf-test-payload">Payload (JSON)</label>
+        <textarea class="console-input wf-test-payload-textarea"
+                  id="wf-test-payload"
+                  name="payload"
+                  rows="8"
+                  placeholder="{}"
+                  spellcheck="false"
+                  {{if $page.InactiveBlocked}}disabled{{end}}>{{$page.PayloadExample}}</textarea>
+      </div>
+
+      <button type="submit" class="btn btn-primary"
+              {{if $page.InactiveBlocked}}disabled aria-disabled="true"{{end}}>
+        Send test trigger
+      </button>
+    </form>
+    {{else}}
+    <p class="console-lede">Console is in read-only mode. Test triggers are disabled.</p>
+    {{end}}
+  </div>
+
+</section>
+{{end}}
