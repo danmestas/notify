@@ -128,6 +128,12 @@ func delayConfig(controlValues json.RawMessage) (json.RawMessage, error) {
 	return cfg, nil
 }
 
+// GetBySlug loads a single workflow by its trigger identifier (slug) within
+// the Scope. Returns store.ErrNotFound when no matching row exists.
+func (s *Service) GetBySlug(ctx context.Context, scope domain.Scope, slug string) (domain.Workflow, error) {
+	return s.store.Workflows().GetByTriggerIdentifier(ctx, scope, slug)
+}
+
 // List returns all workflows for the Scope, ordered by insertion.
 func (s *Service) List(ctx context.Context, scope domain.Scope) ([]domain.Workflow, error) {
 	return s.store.Workflows().List(ctx, scope)

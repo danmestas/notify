@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -30,7 +31,9 @@ import (
 
 // New builds the notify HTTP handler. All routes are grouped behind
 // id.Middleware, so each handler resolves its Scope via identity.ScopeFrom.
-func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, inb *inbound.Service, an *analytics.Service, ag *agentsapi.Service, ing *ingress.Service, conn *connectivity.Service, auth ...*authoring.Service) http.Handler {
+// st may be nil; when non-nil it enables the console read surface routes
+// (GET /v1/notifications, GET /v1/notifications/{id}).
+func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, inb *inbound.Service, an *analytics.Service, ag *agentsapi.Service, ing *ingress.Service, conn *connectivity.Service, st *store.Store, auth ...*authoring.Service) http.Handler {
 	if len(auth) > 1 {
 		panic("httpapi.New: at most one *authoring.Service")
 	}
@@ -56,6 +59,11 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 		if au != nil {
 			pr.Post("/v1/workflows", postWorkflow(au))
 			pr.Get("/v1/workflows", getWorkflows(au))
+			pr.Get("/v1/workflows/{slug}", getWorkflow(au))
+		}
+		if st != nil {
+			pr.Get("/v1/notifications", getNotifications(st))
+			pr.Get("/v1/notifications/{id}", getNotification(st))
 		}
 		inbox.Routes(pr)
 		if inb != nil {
@@ -475,6 +483,138 @@ func getWorkflows(au *authoring.Service) http.HandlerFunc {
 			})
 		}
 		writeJSON(w, http.StatusOK, dtos)
+	}
+}
+
+// workflowDetailDTO is the full representation returned by GET /v1/workflows/{slug}.
+// Steps and PayloadSchema are forwarded as-is (raw JSON) so the console can
+// render step controls without a round-trip parse on the server.
+type workflowDetailDTO struct {
+	ID                string          `json:"id"`
+	Name              string          `json:"name"`
+	TriggerIdentifier string          `json:"triggerIdentifier"`
+	Active            bool            `json:"active"`
+	Origin            string          `json:"origin"`
+	Steps             json.RawMessage `json:"steps"`
+	PayloadSchema     json.RawMessage `json:"payloadSchema,omitempty"`
+}
+
+// getWorkflow returns the full workflow definition for a single slug within
+// the request Scope. The {slug} path parameter is the trigger identifier.
+// Returns 404 when the workflow does not exist in this scope.
+func getWorkflow(au *authoring.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slug := chi.URLParam(r, "slug")
+		scope := identity.ScopeFrom(r.Context())
+		wf, err := au.GetBySlug(r.Context(), scope, slug)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "workflow not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, workflowDetailDTO{
+			ID:                wf.ID,
+			Name:              wf.Name,
+			TriggerIdentifier: wf.TriggerIdentifier,
+			Active:            wf.Active,
+			Origin:            wf.Origin,
+			Steps:             wf.Steps,
+			PayloadSchema:     wf.PayloadSchema,
+		})
+	}
+}
+
+// getNotifications handles GET /v1/notifications.
+//
+// Query parameters:
+//   - workflowId    – filter to a specific workflow (optional)
+//   - subscriberId  – filter to a specific subscriber (optional)
+//   - transactionId – filter to a specific transaction (optional)
+//   - since         – RFC3339 lower-bound on created_at (optional)
+//   - limit         – page size, 1–200, default 50 (optional)
+//   - cursor        – opaque keyset cursor from a prior response (optional)
+//
+// Response body:
+//
+//	{"items":[...], "next":"<cursor>", "totalCount":<n>}
+//
+// "next" is absent (omitempty) on the last page.
+func getNotifications(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		scope := identity.ScopeFrom(r.Context())
+
+		limit := 0
+		if s := q.Get("limit"); s != "" {
+			for _, c := range s {
+				if c < '0' || c > '9' {
+					http.Error(w, "limit must be a positive integer", http.StatusBadRequest)
+					return
+				}
+			}
+			n := 0
+			for _, c := range s {
+				n = n*10 + int(c-'0')
+			}
+			limit = n
+		}
+
+		f := store.NotificationFilter{
+			WorkflowID:    q.Get("workflowId"),
+			SubscriberID:  q.Get("subscriberId"),
+			TransactionID: q.Get("transactionId"),
+		}
+		if sinceStr := q.Get("since"); sinceStr != "" {
+			t, err := time.Parse(time.RFC3339, sinceStr)
+			if err != nil {
+				http.Error(w, "since must be RFC3339 (e.g. 2006-01-02T15:04:05Z)", http.StatusBadRequest)
+				return
+			}
+			f.Since = t
+		}
+
+		page, err := st.Notifications().List(r.Context(), scope, f, q.Get("cursor"), limit)
+		if err != nil {
+			if strings.Contains(err.Error(), "invalid cursor") {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		type response struct {
+			Items      []domain.Notification `json:"items"`
+			Next       string                `json:"next,omitempty"`
+			TotalCount int                   `json:"totalCount"`
+		}
+		writeJSON(w, http.StatusOK, response{
+			Items:      page.Items,
+			Next:       page.Cursor,
+			TotalCount: page.TotalCount,
+		})
+	}
+}
+
+// getNotification handles GET /v1/notifications/{id}.
+// Returns 404 when the notification does not exist in this scope.
+func getNotification(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		scope := identity.ScopeFrom(r.Context())
+		n, err := st.Notifications().Get(r.Context(), scope, id)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "notification not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, n)
 	}
 }
 

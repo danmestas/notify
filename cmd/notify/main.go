@@ -177,7 +177,7 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = anStop() }()
 
-	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag, ing, conn, au)
+	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag, ing, conn, st, au)
 	srv := &http.Server{Addr: *addr, Handler: handler}
 
 	go func() {
