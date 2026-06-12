@@ -1,0 +1,84 @@
+{{/*
+  activity-detail-panel — the per-notification detail drawer. Binds an
+  activityDetailView. The outer <aside> carries the stable id
+  #activity-detail-panel that the fragment endpoint patches.
+
+  When Empty=true the panel shows placeholder copy. When a notification is
+  selected it shows the overview card, payload, messages, and the dagnats
+  run deep-link (when DagnatsConsoleURL is configured).
+*/}}
+{{define "activity-detail-panel"}}
+<aside id="activity-detail-panel" class="activity-detail-panel">
+  {{if .Empty}}
+  <div class="activity-detail-placeholder">
+    <p class="console-empty-state-description">Select a run to see details.</p>
+  </div>
+  {{else}}
+  <div class="activity-detail-content">
+    {{$n := .Notification}}
+    <header class="activity-detail-header">
+      <h2 class="activity-detail-title">Run detail</h2>
+      {{if .RunURL}}
+      <a href="{{.RunURL}}" class="btn btn-outline activity-detail-run-link"
+         target="_blank" rel="noopener noreferrer">
+        View in engine console ↗
+      </a>
+      {{else if $n.RunID}}
+      <code class="activity-monospace activity-detail-run-id" title="run id">{{$n.RunID}}</code>
+      {{end}}
+    </header>
+
+    <dl class="activity-detail-fields">
+      <dt>Notification ID</dt>
+      <dd><code class="activity-monospace">{{$n.ID}}</code></dd>
+
+      <dt>Transaction ID</dt>
+      <dd><code class="activity-monospace">{{$n.TransactionID}}</code></dd>
+
+      <dt>Workflow</dt>
+      <dd><code class="activity-monospace">{{$n.WorkflowID}}</code></dd>
+
+      <dt>Subscriber</dt>
+      <dd><code class="activity-monospace">{{$n.SubscriberID}}</code></dd>
+
+      <dt>Created</dt>
+      <dd><time datetime="{{$n.CreatedAt}}">{{$n.CreatedAt}}</time></dd>
+    </dl>
+
+    {{if $n.Payload}}
+    <section class="activity-detail-section">
+      <h3 class="activity-detail-section-title">Payload</h3>
+      <pre class="activity-detail-payload"><code>{{$n.Payload}}</code></pre>
+    </section>
+    {{end}}
+
+    {{if .Messages}}
+    <section class="activity-detail-section">
+      <h3 class="activity-detail-section-title">Messages ({{len .Messages}})</h3>
+      <ul class="activity-detail-messages" role="list">
+        {{range .Messages}}
+        <li class="activity-detail-message">
+          <div class="activity-detail-message-header">
+            <span class="activity-channel-badge activity-channel-badge--{{.Channel}}">{{.Channel}}</span>
+            <span class="activity-status-chip activity-status-chip--{{.Status}}">{{.Status}}</span>
+          </div>
+          {{if .Content}}
+          <p class="activity-detail-message-content">{{.Content}}</p>
+          {{end}}
+          {{if .ErrorText}}
+          <p class="activity-detail-message-error">{{.ErrorText}}</p>
+          {{end}}
+        </li>
+        {{end}}
+      </ul>
+    </section>
+    {{else}}
+    <section class="activity-detail-section">
+      <h3 class="activity-detail-section-title">Messages</h3>
+      <p class="console-empty-state-description">No messages found for this run.</p>
+    </section>
+    {{end}}
+  </div>
+  {{end}}
+</aside>
+{{end}}

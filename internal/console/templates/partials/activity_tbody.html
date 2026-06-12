@@ -1,0 +1,80 @@
+{{/*
+  activity-tbody — the paginated notification rows fragment. Binds an
+  activityListView. The outer <tbody> carries the stable id
+  #activity-tbody that the fragment endpoint patches.
+
+  Clicking a row sets $selectedNotificationId and triggers the detail
+  panel fragment endpoint. The cursor-based "Load more" button appends
+  the next page.
+*/}}
+{{define "activity-tbody"}}
+<tbody id="activity-tbody">
+  {{if .Rows}}
+  {{range .Rows}}
+  <tr class="activity-row" data-id="{{.ID}}"
+      data-on:click="$selectedNotificationId = '{{.ID}}'; @get('/console/api/fragments/activity-detail?notification_id={{.ID}}')">
+    <td class="activity-col-status">
+      <span class="activity-status-chip activity-status-chip--{{.Status}} tile-tone-{{.StatusTone}}"
+            title="{{.Status}}">{{.Status}}</span>
+    </td>
+    <td class="activity-col-workflow">
+      <span class="activity-workflow-name" title="{{.WorkflowID}}">{{.WorkflowName}}</span>
+    </td>
+    <td class="activity-col-subscriber">
+      <code class="activity-monospace">{{.SubscriberID}}</code>
+    </td>
+    <td class="activity-col-transaction">
+      <code class="activity-monospace activity-truncate" title="{{.TransactionID}}">{{.TransactionIDShort}}</code>
+    </td>
+    <td class="activity-col-channel">
+      {{if .Channel}}
+      <span class="activity-channel-badge activity-channel-badge--{{.Channel}}">{{.Channel}}</span>
+      {{else}}
+      <span class="activity-channel-badge activity-channel-badge--unknown">—</span>
+      {{end}}
+    </td>
+    <td class="activity-col-created">
+      <time datetime="{{.CreatedAt}}" title="{{.CreatedAt}}">{{.RelativeTime}}</time>
+    </td>
+  </tr>
+  {{end}}
+  {{/* Pagination footer */}}
+  <tr class="activity-pagination-row" id="activity-pagination">
+    <td colspan="6" class="activity-pagination-cell">
+      <div class="activity-pagination">
+        {{if .TotalCount}}
+        <span class="activity-pagination-count">{{.TotalCount}} total</span>
+        {{end}}
+        {{if .Cursor}}
+        <button type="button" class="btn btn-outline activity-load-more"
+                data-on:click="@get('/console/api/fragments/activity-list?cursor={{.Cursor}}&limit={{.Limit}}')">
+          Load more
+        </button>
+        {{end}}
+      </div>
+    </td>
+  </tr>
+  {{else}}
+  <tr class="activity-empty-row">
+    <td colspan="6">
+      {{if .HasFilters}}
+      <div class="console-empty-state" data-component="empty-state">
+        <h2 class="console-empty-state-title">No runs match your filters</h2>
+        <p class="console-empty-state-description">
+          Try adjusting or
+          <a class="console-link" href="/console/activity">resetting</a>
+          the filter bar.
+        </p>
+      </div>
+      {{else}}
+      <div class="console-empty-state" data-component="empty-state">
+        <span class="console-empty-state-icon" data-kind="activity" aria-hidden="true">&#9654;</span>
+        <h2 class="console-empty-state-title">No workflow runs yet</h2>
+        <p class="console-empty-state-description">Trigger a workflow to see activity here.</p>
+      </div>
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+</tbody>
+{{end}}

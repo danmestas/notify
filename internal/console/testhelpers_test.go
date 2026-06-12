@@ -62,11 +62,13 @@ func newTestConsole(t *testing.T) *testConsole {
 	}
 
 	deps := Deps{
-		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Identity:  id,
-		Authoring: authoring.New(st, nil),
-		Analytics: analytics.New(st, nil),
-		MasterKey: masterKey,
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Identity:      id,
+		Authoring:     authoring.New(st, nil),
+		Analytics:     analytics.New(st, nil),
+		Notifications: st.Notifications(),
+		Messages:      st.Messages(),
+		MasterKey:     masterKey,
 	}
 	c := New(deps)
 	return &testConsole{
@@ -186,4 +188,26 @@ func (tc *testConsole) altScope(t *testing.T) domain.Scope {
 		t.Fatalf("alt scope collided with the test scope: %+v", scope)
 	}
 	return scope
+}
+
+// seedNotification creates a notification row directly via the store for
+// activity-feed tests. Returns the persisted notification.
+func (tc *testConsole) seedNotification(t *testing.T, n domain.Notification) domain.Notification {
+	t.Helper()
+	created, err := tc.st.Notifications().Create(context.Background(), tc.scope, n)
+	if err != nil {
+		t.Fatalf("seed notification: %v", err)
+	}
+	return created
+}
+
+// seedMessage creates a message row directly via the store for activity
+// detail-panel tests.
+func (tc *testConsole) seedMessage(t *testing.T, m domain.Message) domain.Message {
+	t.Helper()
+	created, err := tc.st.Messages().Create(context.Background(), tc.scope, m)
+	if err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
+	return created
 }

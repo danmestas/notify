@@ -1,0 +1,99 @@
+{{define "content"}}{{$page := .Page}}{{$data := .}}
+<section class="console-section">
+  {{template "page-header" $page.Header}}
+
+  {{/* Filter bar — each pill maps to a Datastar signal that triggers the list
+       fragment. Signals are marshaled server-side (activityFilters.signalsJSON)
+       so a filter value containing a double-quote cannot break out of this
+       attribute and inject arbitrary signal keys. Do NOT reintroduce inlined
+       per-field string literals here. */}}
+  <div class="activity-filter-bar"
+       data-signals="{{$page.Signals}}">
+
+    <div class="activity-filter-pills">
+      {{/* Time range */}}
+      <label class="activity-filter-pill">
+        <span class="activity-filter-pill-label">Range</span>
+        <select name="range"
+                data-bind="activityRange"
+                data-on:change="@get('/console/api/fragments/activity-list')">
+          <option value="">All time</option>
+          <option value="1h">Last 1 hour</option>
+          <option value="6h">Last 6 hours</option>
+          <option value="24h">Last 24 hours</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+        </select>
+      </label>
+
+      {{/* Channel */}}
+      <label class="activity-filter-pill">
+        <span class="activity-filter-pill-label">Channel</span>
+        <select name="channel"
+                data-bind="activityChannel"
+                data-on:change="@get('/console/api/fragments/activity-list')">
+          <option value="">All channels</option>
+          <option value="in_app">In-app</option>
+          <option value="email">Email</option>
+          <option value="push">Push</option>
+          <option value="sms">SMS</option>
+          <option value="chat">Chat</option>
+        </select>
+      </label>
+
+      {{/* Status */}}
+      <label class="activity-filter-pill">
+        <span class="activity-filter-pill-label">Status</span>
+        <select name="status"
+                data-bind="activityStatus"
+                data-on:change="@get('/console/api/fragments/activity-list')">
+          <option value="">All statuses</option>
+          <option value="sent">Sent</option>
+          <option value="failed">Failed</option>
+          <option value="pending">Pending</option>
+          <option value="merged">Merged</option>
+        </select>
+      </label>
+
+      {{/* Subscriber ID free-text */}}
+      <label class="activity-filter-pill">
+        <span class="activity-filter-pill-label">Subscriber</span>
+        <input type="text" name="subscriber_id"
+               placeholder="subscriber id"
+               data-bind="activitySubscriber"
+               data-on:input__debounce.300ms="@get('/console/api/fragments/activity-list')">
+      </label>
+
+      {{/* Transaction ID free-text */}}
+      <label class="activity-filter-pill">
+        <span class="activity-filter-pill-label">Transaction</span>
+        <input type="text" name="transaction_id"
+               placeholder="transaction id"
+               data-bind="activityTransaction"
+               data-on:input__debounce.300ms="@get('/console/api/fragments/activity-list')">
+      </label>
+    </div>{{/* .activity-filter-pills */}}
+
+    {{/* Activity table */}}
+    <div class="activity-layout">
+      <div class="activity-table-wrap">
+        <table class="activity-table" aria-label="Workflow runs">
+          <thead>
+            <tr>
+              <th scope="col">Status</th>
+              <th scope="col">Workflow</th>
+              <th scope="col">Subscriber</th>
+              <th scope="col">Transaction ID</th>
+              <th scope="col">Channel</th>
+              <th scope="col">Created</th>
+            </tr>
+          </thead>
+          {{template "activity-tbody" $page.Fragment}}
+        </table>
+      </div>
+      {{template "activity-detail-panel" (activityEmptyDetail)}}
+    </div>{{/* .activity-layout */}}
+
+  </div>{{/* .activity-filter-bar */}}
+</section>
+{{end}}

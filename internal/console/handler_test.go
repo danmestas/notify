@@ -68,7 +68,7 @@ func TestRouteTable_EverythingBehindAuthExceptLoginAndAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chi.Walk: %v", err)
 	}
-	if visited < 13 {
+	if visited < 16 {
 		t.Errorf("walked %d routes; expected at least 10 — did the route table shrink?", visited)
 	}
 }

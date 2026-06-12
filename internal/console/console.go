@@ -14,6 +14,7 @@ import (
 	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/identity"
+	"github.com/danmestas/notify/internal/store"
 )
 
 // devMode reflects NOTIFY_DEV=1 at process start. When true the asset
@@ -53,6 +54,14 @@ type Deps struct {
 	// degrade to plain text instead of dead links. Plumbed here for the
 	// activity feed slice (W1-6).
 	DagnatsConsoleURL string
+	// Notifications provides the NotificationRepo for the activity feed
+	// (W1-6). Nil is allowed only when no activity routes are mounted;
+	// in practice New panics when Notifications is nil (activity page
+	// requires it).
+	Notifications store.NotificationRepo
+	// Messages provides the MessageRepo for the activity detail panel
+	// (W1-6); used for the transactionId-workaround message lookup.
+	Messages store.MessageRepo
 	// ReadOnly disables every mutation button via the actionButton
 	// template helper and renders the read-only banner. The chassis has
 	// no mutations beyond login/logout (which stay enabled — an operator
@@ -84,6 +93,12 @@ func New(deps Deps) *Console {
 	}
 	if deps.Analytics == nil {
 		panic("console.New: deps.Analytics is nil")
+	}
+	if deps.Notifications == nil {
+		panic("console.New: deps.Notifications is nil")
+	}
+	if deps.Messages == nil {
+		panic("console.New: deps.Messages is nil")
 	}
 	if len(deps.MasterKey) != 32 {
 		panic(fmt.Sprintf("console.New: MasterKey must be 32 bytes for AES-256-GCM, got %d", len(deps.MasterKey)))
@@ -132,6 +147,16 @@ func New(deps Deps) *Console {
 //	GET  /console/api/fragments/analytics-kpis            analytics KPI fragment (PatchElements SSE)
 //	GET  /console/api/fragments/analytics-charts          analytics charts fragment (PatchElements SSE)
 //	*                                                     layout-wrapped 404
+//	GET  /console/login                                 login page (no session)
+//	POST /console/login                                 authenticate (no session, no CSRF)
+//	GET  /console/assets/*                              embedded assets (no session)
+//	GET  /console/ , /console                           dashboard
+//	POST /console/logout                                clear session (CSRF)
+//	GET  /console/api/fragments/dashboard-kpis          KPI fragment (PatchElements SSE)
+//	GET  /console/activity                              activity feed page (W1-6)
+//	GET  /console/api/fragments/activity-list           paginated feed fragment (PatchElements SSE)
+//	GET  /console/api/fragments/activity-detail         per-notification detail panel (PatchElements SSE)
+//	*                                                   layout-wrapped 404
 func (c *Console) Routes() http.Handler {
 	if c == nil {
 		panic("Console.Routes: c is nil")
@@ -160,6 +185,10 @@ func (c *Console) Routes() http.Handler {
 		pr.Get("/console/analytics", c.servePageAnalytics)
 		pr.Get("/console/api/fragments/analytics-kpis", c.serveFragmentAnalyticsKPIs)
 		pr.Get("/console/api/fragments/analytics-charts", c.serveFragmentAnalyticsCharts)
+		// W1-6: activity feed
+		pr.Get("/console/activity", c.serveActivityPage)
+		pr.Get("/console/api/fragments/activity-list", c.serveFragmentActivityList)
+		pr.Get("/console/api/fragments/activity-detail", c.serveFragmentActivityDetail)
 	})
 
 	// Unmatched /console/* paths go through the full session gate, same

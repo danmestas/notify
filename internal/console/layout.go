@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 
 	"github.com/danmestas/notify/internal/domain"
 )
@@ -32,6 +33,7 @@ type templateSet struct {
 var pageContentFiles = map[string]string{
 	"dashboard":       "templates/dashboard.html",
 	"analytics":       "templates/analytics.html",
+	"activity":        "templates/activity.html",
 	"not-found":       "templates/not_found.html",
 	"error":           "templates/error.html",
 	"workflows":       "templates/workflows.html",
@@ -86,22 +88,14 @@ func staticFuncMap() template.FuncMap {
 		"actionArgs": func(label, href string, readOnly bool) actionButton {
 			return actionButton{Label: label, Href: href, ReadOnly: readOnly}
 		},
-		// jsEscape emits a complete, JS-escaped, single-quoted string
-		// literal for use inside Datastar attribute expressions
-		// (data-on:click, data-on-*). html/template treats those
-		// attributes as plain HTML attrs — not a JS context — so it would
-		// otherwise only HTML-escape the value, leaving a single quote in
-		// the payload free to break the JS literal. Pre-escaping here and
-		// returning template.JS gives both correct JS-string escaping and
-		// HTML-attr safety. Callers drop the surrounding quotes — this
-		// helper emits them: writeText({{.X | jsEscape}}).
 		"jsEscape": jsEscapeStringLiteral,
-		// json marshals a value to a JSON literal for embedding in an
-		// attribute (e.g. Datastar's data-store). Returning template.JS
-		// keeps html/template from double-escaping the JSON while still
-		// applying attribute-context escaping, so a value that later
-		// becomes URL-reflected cannot corrupt the surrounding JSON.
-		"json": jsonLiteral,
+		"json":     jsonLiteral,
+		// activityEmptyDetail returns an empty activityDetailView for the
+		// initial panel render (no notification selected). The type is
+		// defined in activity.go (same package).
+		"activityEmptyDetail": func() activityDetailView {
+			return activityDetailView{Empty: true}
+		},
 	}
 }
 
@@ -146,7 +140,10 @@ func (c *Console) runURL(runID string) string {
 	if c.deps.DagnatsConsoleURL == "" || runID == "" {
 		return ""
 	}
-	return c.deps.DagnatsConsoleURL + "/console/runs/" + runID
+	// PathEscape the id even though dagnats run ids are opaque ULIDs today:
+	// the field is DB-stored and GetByRunID is unscoped, so a future writer
+	// must not be able to inject a traversal/escape sequence into the URL.
+	return c.deps.DagnatsConsoleURL + "/console/runs/" + url.PathEscape(runID)
 }
 
 // navEntry is one link in the primary nav.
@@ -169,10 +166,8 @@ type navGroup struct {
 // order.
 var navGroups = []navGroup{
 	{Entries: []navEntry{{Label: "Dashboard", Href: "/console/", Section: "dashboard"}}},
-	{Label: "Workflows", Entries: []navEntry{
-		{Label: "Workflows", Href: "/console/workflows", Section: "workflows"},
-	}},
-	{Label: "Activity"}, // entries land with W1-6
+	{Entries: []navEntry{{Label: "Workflows", Href: "/console/workflows", Section: "workflows"}}},
+	{Entries: []navEntry{{Label: "Activity", Href: "/console/activity", Section: "activity"}}},
 	{Entries: []navEntry{{Label: "Analytics", Href: "/console/analytics", Section: "analytics"}}},
 }
 

@@ -36,6 +36,15 @@ type fragmentEnvelope struct {
 	// AnalyticsChannels is a comma-separated list of toggled-on channel
 	// names for the analytics charts. Empty means all channels.
 	AnalyticsChannels string `json:"analyticsChannels,omitempty"`
+	// Activity feed filter signals (W1-6).
+	ActivityRange       string `json:"activityRange,omitempty"`
+	ActivityWorkflow    string `json:"activityWorkflow,omitempty"`
+	ActivityChannel     string `json:"activityChannel,omitempty"`
+	ActivitySubscriber  string `json:"activitySubscriber,omitempty"`
+	ActivityTransaction string `json:"activityTransaction,omitempty"`
+	ActivityStatus      string `json:"activityStatus,omitempty"`
+	// SelectedNotificationId drives the detail panel open/close.
+	SelectedNotificationId string `json:"selectedNotificationId,omitempty"`
 }
 
 // mergeFragmentParams merges the request's URL query with the Datastar
@@ -88,6 +97,21 @@ func envelopeToQuery(env fragmentEnvelope, key string) (string, string) {
 		return "range", env.AnalyticsRange
 	case "analyticsChannels":
 		return "channels", env.AnalyticsChannels
+	// Activity feed filter signals.
+	case "activityRange":
+		return "range", env.ActivityRange
+	case "activityWorkflow":
+		return "workflow_id", env.ActivityWorkflow
+	case "activityChannel":
+		return "channel", env.ActivityChannel
+	case "activitySubscriber":
+		return "subscriber_id", env.ActivitySubscriber
+	case "activityTransaction":
+		return "transaction_id", env.ActivityTransaction
+	case "activityStatus":
+		return "status", env.ActivityStatus
+	case "selectedNotificationId":
+		return "notification_id", env.SelectedNotificationId
 	}
 	return "", ""
 }

@@ -58,11 +58,11 @@ func decodeCursor(token string) (createdAt, id string, err error) {
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return "", "", errors.New("store: invalid cursor")
+		return "", "", ErrInvalidCursor
 	}
 	var c notificationCursor
 	if err := json.Unmarshal(raw, &c); err != nil {
-		return "", "", errors.New("store: invalid cursor")
+		return "", "", ErrInvalidCursor
 	}
 	return c.CreatedAt, c.ID, nil
 }
