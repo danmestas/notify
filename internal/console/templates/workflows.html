@@ -1,0 +1,57 @@
+{{define "content"}}{{$page := .Page}}
+{{/*
+  data-store seeds the Datastar signals. FilterQ/FilterStatus are piped
+  through the json func so each value is JSON-marshaled into the attribute:
+  even if a future change URL-reflects these (currently always empty on the
+  full-page load), a quote or angle bracket in the value cannot break out of
+  the data-store JSON. Do NOT inline these as bare "{{...}}" string literals.
+*/}}
+<section class="console-section"
+         data-store='{"wfFilter":{{$page.FilterQ | json}},"wfStatus":{{$page.FilterStatus | json}}}'>
+  {{template "page-header" $page.Header}}
+
+  <div class="console-filter-bar">
+    <input id="wf-search"
+           type="search"
+           class="console-input"
+           placeholder="Search by name or identifier"
+           value="{{$page.FilterQ}}"
+           data-bind-wfFilter
+           data-on-input__debounce.300ms="@get('/console/api/fragments/workflows-list')"
+           aria-label="Search workflows">
+    <select id="wf-status"
+            class="console-select"
+            data-bind-wfStatus
+            data-on-change="@get('/console/api/fragments/workflows-list')"
+            aria-label="Filter by status">
+      <option value="" {{if eq $page.FilterStatus ""}}selected{{end}}>All statuses</option>
+      <option value="active" {{if eq $page.FilterStatus "active"}}selected{{end}}>Active</option>
+      <option value="inactive" {{if eq $page.FilterStatus "inactive"}}selected{{end}}>Inactive</option>
+    </select>
+    {{if $page.HasFilters}}
+    <a href="/console/workflows" class="btn btn-outline console-filter-reset"
+       data-on:click="$wfFilter='';$wfStatus='';@get('/console/api/fragments/workflows-list')">
+      Reset
+    </a>
+    {{end}}
+    {{template "action-button" (actionArgs "Create workflow" "/console/workflows/new" $page.ReadOnly)}}
+  </div>
+
+  {{if $page.Empty}}
+  {{template "empty-state" $page.Empty}}
+  {{else}}
+  <div class="console-table-wrap">
+    <table class="console-table" aria-label="Workflows">
+      <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">Status</th>
+          <th scope="col">Steps</th>
+        </tr>
+      </thead>
+      {{template "workflows-tbody" $page}}
+    </table>
+  </div>
+  {{end}}
+</section>
+{{end}}

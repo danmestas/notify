@@ -26,6 +26,10 @@ type fragmentEnvelope struct {
 	// KPIChannel filters the dashboard KPI cards + sparkline to one
 	// delivery channel ("" = all channels).
 	KPIChannel string `json:"kpiChannel,omitempty"`
+	// WFFilter is the workflows-list name/trigger search input.
+	WFFilter string `json:"wfFilter,omitempty"`
+	// WFStatus is the workflows-list status select: ""|"active"|"inactive".
+	WFStatus string `json:"wfStatus,omitempty"`
 }
 
 // mergeFragmentParams merges the request's URL query with the Datastar
@@ -70,6 +74,10 @@ func envelopeToQuery(env fragmentEnvelope, key string) (string, string) {
 	switch key {
 	case "kpiChannel":
 		return "channel", env.KPIChannel
+	case "wfFilter":
+		return "q", env.WFFilter
+	case "wfStatus":
+		return "status", env.WFStatus
 	}
 	return "", ""
 }

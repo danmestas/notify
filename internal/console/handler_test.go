@@ -8,11 +8,16 @@ package console
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 )
+
+// paramRE matches chi path parameters like {slug} or {id} so the walker
+// can substitute a routable placeholder without changing the auth check.
+var paramRE = regexp.MustCompile(`\{[^}]+\}`)
 
 // authExempt enumerates the only routes allowed to answer without a
 // session. Everything else must 303 to /console/login.
@@ -34,13 +39,14 @@ func TestRouteTable_EverythingBehindAuthExceptLoginAndAssets(t *testing.T) {
 	visited := 0
 	err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		visited++
-		// chi reports patterns; the chassis has no path params yet, so
-		// every pattern is requestable verbatim.
+		// Substitute a non-empty placeholder for every path param so the
+		// route is routable. The auth check does not depend on the specific
+		// value — it fires before any param is read.
+		requestRoute := route
 		if strings.Contains(route, "{") {
-			t.Errorf("route %s %s carries a path param; extend this walker", method, route)
-			return nil
+			requestRoute = paramRE.ReplaceAllString(route, "x")
 		}
-		req := httptest.NewRequest(method, route, nil)
+		req := httptest.NewRequest(method, requestRoute, nil)
 		rr := httptest.NewRecorder()
 		tc.h.ServeHTTP(rr, req)
 
@@ -62,8 +68,8 @@ func TestRouteTable_EverythingBehindAuthExceptLoginAndAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chi.Walk: %v", err)
 	}
-	if visited < 7 {
-		t.Errorf("walked %d routes; expected at least 7 — did the route table shrink?", visited)
+	if visited < 10 {
+		t.Errorf("walked %d routes; expected at least 10 — did the route table shrink?", visited)
 	}
 }
 

@@ -153,7 +153,13 @@ func (tc *testConsole) seedDeliveries(t *testing.T, rows []domain.AnalyticsDeliv
 // called).
 func (tc *testConsole) seedWorkflow(t *testing.T, name, trigger string) {
 	t.Helper()
-	_, err := tc.deps.Authoring.Create(context.Background(), tc.scope, authoring.WorkflowInput{
+	tc.seedWorkflowInScope(t, tc.scope, name, trigger)
+}
+
+// seedWorkflowInScope creates a workflow under an explicit scope.
+func (tc *testConsole) seedWorkflowInScope(t *testing.T, scope domain.Scope, name, trigger string) {
+	t.Helper()
+	_, err := tc.deps.Authoring.Create(context.Background(), scope, authoring.WorkflowInput{
 		Name:              name,
 		TriggerIdentifier: trigger,
 		Steps: []domain.Step{{
@@ -163,6 +169,21 @@ func (tc *testConsole) seedWorkflow(t *testing.T, name, trigger string) {
 		}},
 	})
 	if err != nil {
-		t.Fatalf("seed workflow: %v", err)
+		t.Fatalf("seed workflow in scope %+v: %v", scope, err)
 	}
+}
+
+// altScope bootstraps a second tenant (distinct org + env) on the same
+// store and returns its Scope. Used by scope-isolation tests: a workflow
+// seeded under altScope must never surface for the logged-in tc.scope.
+func (tc *testConsole) altScope(t *testing.T) domain.Scope {
+	t.Helper()
+	_, scope, err := tc.deps.Identity.Bootstrap(context.Background(), "OtherCorp", "prod")
+	if err != nil {
+		t.Fatalf("alt scope bootstrap: %v", err)
+	}
+	if scope.OrgID == tc.scope.OrgID && scope.EnvID == tc.scope.EnvID {
+		t.Fatalf("alt scope collided with the test scope: %+v", scope)
+	}
+	return scope
 }

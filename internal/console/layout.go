@@ -2,6 +2,7 @@ package console
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -29,9 +30,11 @@ type templateSet struct {
 // section's `{{define "content"}}`. Adding a page is: add a file, add an
 // entry here, add the nav entry (if any) to navGroups.
 var pageContentFiles = map[string]string{
-	"dashboard": "templates/dashboard.html",
-	"not-found": "templates/not_found.html",
-	"error":     "templates/error.html",
+	"dashboard":       "templates/dashboard.html",
+	"not-found":       "templates/not_found.html",
+	"error":           "templates/error.html",
+	"workflows":       "templates/workflows.html",
+	"workflow-detail": "templates/workflow_detail.html",
 }
 
 // loadTemplates builds the base tree and the per-page clones. Template
@@ -82,7 +85,41 @@ func staticFuncMap() template.FuncMap {
 		"actionArgs": func(label, href string, readOnly bool) actionButton {
 			return actionButton{Label: label, Href: href, ReadOnly: readOnly}
 		},
+		// jsEscape emits a complete, JS-escaped, single-quoted string
+		// literal for use inside Datastar attribute expressions
+		// (data-on:click, data-on-*). html/template treats those
+		// attributes as plain HTML attrs — not a JS context — so it would
+		// otherwise only HTML-escape the value, leaving a single quote in
+		// the payload free to break the JS literal. Pre-escaping here and
+		// returning template.JS gives both correct JS-string escaping and
+		// HTML-attr safety. Callers drop the surrounding quotes — this
+		// helper emits them: writeText({{.X | jsEscape}}).
+		"jsEscape": jsEscapeStringLiteral,
+		// json marshals a value to a JSON literal for embedding in an
+		// attribute (e.g. Datastar's data-store). Returning template.JS
+		// keeps html/template from double-escaping the JSON while still
+		// applying attribute-context escaping, so a value that later
+		// becomes URL-reflected cannot corrupt the surrounding JSON.
+		"json": jsonLiteral,
 	}
+}
+
+// jsEscapeStringLiteral returns a single-quoted, JS-escaped string literal
+// for s, safe to embed inside a double- or single-quoted HTML attribute
+// holding a Datastar expression. See the staticFuncMap "jsEscape" comment.
+func jsEscapeStringLiteral(s string) template.JS {
+	return template.JS("'" + template.JSEscapeString(s) + "'")
+}
+
+// jsonLiteral marshals v to a JSON literal as template.JS. On marshal
+// failure it returns a JS null literal rather than erroring the render —
+// a cosmetic attribute must never 500 the page.
+func jsonLiteral(v any) template.JS {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return template.JS("null")
+	}
+	return template.JS(b)
 }
 
 // funcMap returns the Console-bound template helpers.
@@ -131,7 +168,9 @@ type navGroup struct {
 // order.
 var navGroups = []navGroup{
 	{Entries: []navEntry{{Label: "Dashboard", Href: "/console/", Section: "dashboard"}}},
-	{Label: "Workflows"}, // entries land with W1-4 / W1-5
+	{Label: "Workflows", Entries: []navEntry{
+		{Label: "Workflows", Href: "/console/workflows", Section: "workflows"},
+	}},
 	{Label: "Activity"},  // entries land with W1-6
 	{Label: "Analytics"}, // entries land with W1-7
 }

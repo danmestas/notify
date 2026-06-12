@@ -1,0 +1,97 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section">
+  {{template "page-header" $page.Header}}
+
+  <div class="console-action-row">
+    {{/* Edit affordance stubbed disabled in Wave 1; unlocks in Wave 2. */}}
+    <span class="btn btn-primary console-action"
+          aria-disabled="true"
+          title="Editing workflows is available in Wave 2."
+          data-component="wave2-stub">
+      Edit workflow
+    </span>
+  </div>
+
+  <div class="console-detail-grid">
+
+    <section class="console-card" aria-labelledby="wf-steps-heading">
+      <h2 id="wf-steps-heading" class="console-card-title">Steps</h2>
+      {{if $page.Steps}}
+      <ol class="wf-step-list" role="list">
+        {{range $i, $step := $page.Steps}}
+        <li class="wf-step-item" data-step-index="{{$i}}">
+          <header class="wf-step-header">
+            <span class="chip chip-step wf-step-type-chip">{{$step.Type}}</span>
+            <span class="wf-step-id">
+              <code>{{$step.StepID}}</code>
+            </span>
+            {{if $step.Name}}
+            <span class="wf-step-name">{{$step.Name}}</span>
+            {{end}}
+          </header>
+          {{if $step.ControlValuesJSON}}
+          <details class="wf-step-controls">
+            <summary class="wf-step-controls-summary">Control values</summary>
+            <pre class="wf-code-block"><code>{{$step.ControlValuesJSON}}</code></pre>
+          </details>
+          {{end}}
+        </li>
+        {{end}}
+      </ol>
+      {{else}}
+      <p class="console-lede">No steps defined.</p>
+      {{end}}
+    </section>
+
+    <section class="console-card" aria-labelledby="wf-meta-heading">
+      <h2 id="wf-meta-heading" class="console-card-title">Definition</h2>
+      <dl class="wf-meta-list">
+        <div class="wf-meta-row">
+          <dt>ID</dt>
+          <dd><code>{{$page.ID}}</code></dd>
+        </div>
+        <div class="wf-meta-row">
+          <dt>Trigger identifier</dt>
+          <dd>
+            <code id="wf-detail-ti">{{$page.TriggerIdentifier}}</code>
+            <button type="button"
+                    class="btn-icon wf-copy-btn"
+                    title="Copy trigger identifier"
+                    aria-label="Copy {{$page.TriggerIdentifier}}"
+                    data-on:click="navigator.clipboard.writeText({{$page.TriggerIdentifier | jsEscape}})">
+              ⧉
+            </button>
+          </dd>
+        </div>
+        <div class="wf-meta-row">
+          <dt>Status</dt>
+          <dd>
+            {{if $page.Active}}
+            <span class="chip chip-success">active</span>
+            {{else}}
+            <span class="chip chip-warning">inactive</span>
+            {{end}}
+          </dd>
+        </div>
+      </dl>
+
+      {{if $page.PayloadSchemaJSON}}
+      <div class="wf-payload-schema">
+        <h3 class="wf-payload-schema-title">Payload schema</h3>
+        <pre class="wf-code-block"><code>{{$page.PayloadSchemaJSON}}</code></pre>
+      </div>
+      {{end}}
+    </section>
+
+  </div>
+
+  {{/* Activity and Settings tabs are Wave 2. */}}
+  <nav class="console-tab-bar" aria-label="Workflow tabs">
+    <span class="console-tab is-active" aria-current="page">Definition</span>
+    <span class="console-tab console-tab-stub"
+          aria-disabled="true"
+          title="Activity tab is available in Wave 2.">Activity</span>
+  </nav>
+
+</section>
+{{end}}

@@ -48,11 +48,15 @@ func TestDashboard_RendersSeededKPIsAndNav(t *testing.T) {
 	if !strings.Contains(body, "dashboard-sparkline") {
 		t.Errorf("dashboard missing the sparkline SVG")
 	}
-	// Nav: Dashboard link active; no dead links to unbuilt pages.
+	// Nav: Dashboard link active; Workflows link live (W1-4 wired);
+	// Activity and Analytics still have no entries (no dead links).
 	if !strings.Contains(body, `href="/console/"`) {
 		t.Errorf("nav missing the Dashboard link")
 	}
-	for _, dead := range []string{`href="/console/workflows"`, `href="/console/activity"`, `href="/console/analytics"`} {
+	if !strings.Contains(body, `href="/console/workflows"`) {
+		t.Errorf("nav missing the Workflows link (should be live after W1-4)")
+	}
+	for _, dead := range []string{`href="/console/activity"`, `href="/console/analytics"`} {
 		if strings.Contains(body, dead) {
 			t.Errorf("nav carries a placeholder link %s before its page exists", dead)
 		}

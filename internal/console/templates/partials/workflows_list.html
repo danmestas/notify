@@ -1,0 +1,55 @@
+{{/*
+  workflows-tbody — the PatchElements fragment target for the workflows
+  list. Only the tbody and its content are replaced; the table skeleton
+  and filter bar stay in place. The outer element carries the stable id
+  the fragment endpoint (/console/api/fragments/workflows-list) patches.
+*/}}
+{{define "workflows-tbody"}}
+<tbody id="workflows-tbody">
+  {{if .Empty}}
+  <tr><td colspan="3">{{template "empty-state" .Empty}}</td></tr>
+  {{else}}
+  {{range .Rows}}
+  {{template "workflow-row" .}}
+  {{end}}
+  {{end}}
+</tbody>
+{{end}}
+
+{{/*
+  workflow-row — one <tr> in the workflows table. Binds a workflowRow.
+*/}}
+{{define "workflow-row"}}
+<tr class="console-table-row" data-component="workflow-row">
+  <td class="wf-col-name">
+    <a class="wf-name-link" href="{{.Href}}">{{.Name}}</a>
+    <span class="wf-trigger-id">
+      <code class="wf-trigger-id-text">{{.TriggerIdentifier}}</code>
+      <button type="button"
+              class="btn-icon wf-copy-btn"
+              title="Copy trigger identifier"
+              aria-label="Copy {{.TriggerIdentifier}}"
+              data-on:click="navigator.clipboard.writeText({{.TriggerIdentifier | jsEscape}})">
+        ⧉
+      </button>
+    </span>
+  </td>
+  <td class="wf-col-status">
+    {{if .Active}}
+    <span class="chip chip-success" aria-label="active">active</span>
+    {{else}}
+    <span class="chip chip-warning" aria-label="inactive">inactive</span>
+    {{end}}
+  </td>
+  <td class="wf-col-steps">
+    <span class="chip-strip" role="list" aria-label="steps">
+      {{range .Steps}}
+      <span class="chip chip-step" role="listitem">{{.Type}}</span>
+      {{end}}
+      {{if eq (len .Steps) 0}}
+      <span class="chip chip-default">—</span>
+      {{end}}
+    </span>
+  </td>
+</tr>
+{{end}}

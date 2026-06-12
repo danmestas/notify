@@ -47,8 +47,11 @@ var assetsFS embed.FS
 //go:embed templates/dashboard.html
 //go:embed templates/not_found.html
 //go:embed templates/error.html
+//go:embed templates/workflows.html
+//go:embed templates/workflow_detail.html
 //go:embed templates/partials/page_header.html
 //go:embed templates/partials/empty_state.html
 //go:embed templates/partials/toast.html
 //go:embed templates/partials/dashboard_kpis.html
+//go:embed templates/partials/workflows_list.html
 var templatesFS embed.FS

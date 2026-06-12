@@ -119,13 +119,16 @@ func New(deps Deps) *Console {
 //
 // Route inventory (the conventions every later slice extends):
 //
-//	GET  /console/login                          login page  (no session)
-//	POST /console/login                          authenticate (no session, no CSRF — it presents the credential)
-//	GET  /console/assets/*                       embedded assets (no session)
-//	GET  /console/ , /console                    dashboard
-//	POST /console/logout                         clear session (CSRF)
-//	GET  /console/api/fragments/dashboard-kpis   KPI fragment (PatchElements SSE)
-//	*                                            layout-wrapped 404
+//	GET  /console/login                                   login page  (no session)
+//	POST /console/login                                   authenticate (no session, no CSRF — it presents the credential)
+//	GET  /console/assets/*                                embedded assets (no session)
+//	GET  /console/ , /console                             dashboard
+//	POST /console/logout                                  clear session (CSRF)
+//	GET  /console/api/fragments/dashboard-kpis            KPI fragment (PatchElements SSE)
+//	GET  /console/workflows                               workflows list page
+//	GET  /console/api/fragments/workflows-list            workflows list fragment (PatchElements SSE)
+//	GET  /console/workflows/{slug}                        workflow detail page (read-only)
+//	*                                                     layout-wrapped 404
 func (c *Console) Routes() http.Handler {
 	if c == nil {
 		panic("Console.Routes: c is nil")
@@ -148,6 +151,9 @@ func (c *Console) Routes() http.Handler {
 		pr.Get("/console/", c.serveDashboard)
 		pr.Post("/console/logout", c.serveLogout)
 		pr.Get("/console/api/fragments/dashboard-kpis", c.serveFragmentDashboardKPIs)
+		pr.Get("/console/workflows", c.serveWorkflowsList)
+		pr.Get("/console/api/fragments/workflows-list", c.serveFragmentWorkflowsList)
+		pr.Get("/console/workflows/{slug}", c.serveWorkflowDetail)
 	})
 
 	// Unmatched /console/* paths go through the full session gate, same
