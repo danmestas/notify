@@ -42,11 +42,11 @@ func TestWriterPool_SerialisesWrites(t *testing.T) {
 		t.Fatalf("expected no write errors (no SQLITE_BUSY), got %d: %v", len(errs), errs[0])
 	}
 
-	list, err := repo.List(ctx, scope)
+	page, err := repo.List(ctx, scope, "", 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(list) != n {
-		t.Fatalf("expected %d committed subscribers, got %d", n, len(list))
+	if page.TotalCount != n {
+		t.Fatalf("expected %d committed subscribers, got %d", n, page.TotalCount)
 	}
 }

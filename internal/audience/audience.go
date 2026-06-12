@@ -80,3 +80,75 @@ func (svc *Service) CreateTopic(ctx context.Context, scope domain.Scope, key, na
 func (svc *Service) AddTopicSubscriber(ctx context.Context, scope domain.Scope, topicKey, subscriberID string) error {
 	return svc.store.Topics().AddSubscriber(ctx, scope, topicKey, subscriberID)
 }
+
+// ListSubscribers returns a cursor-paginated page of non-deleted subscribers
+// within scope. after="" starts from the first page. Calls through to
+// store.SubscriberRepo.List.
+func (svc *Service) ListSubscribers(ctx context.Context, scope domain.Scope, after string, limit int) (store.SubscriberPage, error) {
+	return svc.store.Subscribers().List(ctx, scope, after, limit)
+}
+
+// GetSubscriberByID returns the subscriber identified by its internal ULID id
+// within scope.
+func (svc *Service) GetSubscriberByID(ctx context.Context, scope domain.Scope, id string) (domain.Subscriber, error) {
+	return svc.store.Subscribers().GetByID(ctx, scope, id)
+}
+
+// PatchSubscriber updates mutable profile fields on the subscriber identified by
+// its internal ULID id within scope. Only non-empty fields in in are applied.
+func (svc *Service) PatchSubscriber(ctx context.Context, scope domain.Scope, id string, in SubscriberInput) (domain.Subscriber, error) {
+	existing, err := svc.store.Subscribers().GetByID(ctx, scope, id)
+	if err != nil {
+		return domain.Subscriber{}, err
+	}
+	// Merge: non-empty incoming fields overwrite the stored value.
+	if in.Email != "" {
+		existing.Email = in.Email
+	}
+	if in.FirstName != "" {
+		existing.FirstName = in.FirstName
+	}
+	if in.LastName != "" {
+		existing.LastName = in.LastName
+	}
+	if in.Phone != "" {
+		existing.Phone = in.Phone
+	}
+	if in.Locale != "" {
+		existing.Locale = in.Locale
+	}
+	if in.Timezone != "" {
+		existing.Timezone = in.Timezone
+	}
+	if len(in.Data) > 0 {
+		existing.Data = in.Data
+	}
+	return svc.store.Subscribers().Upsert(ctx, scope, existing)
+}
+
+// DeleteSubscriber soft-deletes the subscriber identified by its internal ULID
+// id within scope.
+func (svc *Service) DeleteSubscriber(ctx context.Context, scope domain.Scope, id string) error {
+	return svc.store.Subscribers().SoftDelete(ctx, scope, id)
+}
+
+// ListTopics returns all topics in scope annotated with their member counts.
+func (svc *Service) ListTopics(ctx context.Context, scope domain.Scope) ([]store.TopicWithCount, error) {
+	return svc.store.Topics().List(ctx, scope)
+}
+
+// GetTopic returns the topic identified by key within scope.
+func (svc *Service) GetTopic(ctx context.Context, scope domain.Scope, key string) (domain.Topic, error) {
+	return svc.store.Topics().GetByKey(ctx, scope, key)
+}
+
+// DeleteTopic removes a topic and all its memberships permanently. Returns
+// store.ErrNotFound when the topic does not exist.
+func (svc *Service) DeleteTopic(ctx context.Context, scope domain.Scope, key string) error {
+	return svc.store.Topics().Delete(ctx, scope, key)
+}
+
+// RemoveTopicSubscriber removes a single subscriber's membership from a topic.
+func (svc *Service) RemoveTopicSubscriber(ctx context.Context, scope domain.Scope, topicKey, subscriberID string) error {
+	return svc.store.Topics().RemoveSubscriber(ctx, scope, topicKey, subscriberID)
+}

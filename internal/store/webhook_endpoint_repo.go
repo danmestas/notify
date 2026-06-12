@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/danmestas/notify/internal/domain"
 )
@@ -14,6 +15,20 @@ type WebhookEndpointRepo interface {
 	Create(ctx context.Context, scope domain.Scope, e domain.WebhookEndpoint) (domain.WebhookEndpoint, error)
 	// ListActiveByEnv returns the active endpoints for the scope, ordered by id.
 	ListActiveByEnv(ctx context.Context, scope domain.Scope) ([]domain.WebhookEndpoint, error)
+	// List returns all endpoints (active and inactive) ordered by id ASC.
+	List(ctx context.Context, scope domain.Scope) ([]domain.WebhookEndpoint, error)
+	// GetByID returns a single endpoint by its internal ULID id.
+	// Returns ErrNotFound when no row matches.
+	GetByID(ctx context.Context, scope domain.Scope, id string) (domain.WebhookEndpoint, error)
+	// UpdateURL replaces the URL of an existing endpoint and returns the updated row.
+	// Returns ErrNotFound when no row matches.
+	UpdateURL(ctx context.Context, scope domain.Scope, id, url string) (domain.WebhookEndpoint, error)
+	// SetActive enables or disables an endpoint and returns the updated row.
+	// Returns ErrNotFound when no row matches.
+	SetActive(ctx context.Context, scope domain.Scope, id string, active bool) (domain.WebhookEndpoint, error)
+	// Delete permanently removes an endpoint.
+	// Returns ErrNotFound when no row matches.
+	Delete(ctx context.Context, scope domain.Scope, id string) error
 }
 
 type webhookEndpointRepo struct {
@@ -65,4 +80,116 @@ func (repo *webhookEndpointRepo) ListActiveByEnv(ctx context.Context, scope doma
 		return nil, err
 	}
 	return out, nil
+}
+
+// List returns all endpoints (active and inactive) for the scope, ordered by id ASC.
+func (repo *webhookEndpointRepo) List(ctx context.Context, scope domain.Scope) ([]domain.WebhookEndpoint, error) {
+	rows, err := repo.r.QueryContext(
+		ctx,
+		`SELECT id, org_id, environment_id, url, active
+		 FROM webhook_endpoints
+		 WHERE org_id = ? AND environment_id = ?
+		 ORDER BY id ASC`,
+		scope.OrgID, scope.EnvID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.WebhookEndpoint
+	for rows.Next() {
+		var e domain.WebhookEndpoint
+		if err := rows.Scan(&e.ID, &e.OrgID, &e.EnvID, &e.URL, &e.Active); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetByID returns a single endpoint by its internal ULID id.
+func (repo *webhookEndpointRepo) GetByID(ctx context.Context, scope domain.Scope, id string) (domain.WebhookEndpoint, error) {
+	var e domain.WebhookEndpoint
+	err := repo.r.QueryRowContext(
+		ctx,
+		`SELECT id, org_id, environment_id, url, active
+		 FROM webhook_endpoints
+		 WHERE org_id = ? AND environment_id = ? AND id = ?`,
+		scope.OrgID, scope.EnvID, id,
+	).Scan(&e.ID, &e.OrgID, &e.EnvID, &e.URL, &e.Active)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.WebhookEndpoint{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.WebhookEndpoint{}, err
+	}
+	return e, nil
+}
+
+// UpdateURL replaces the URL of an existing endpoint and returns the updated row.
+func (repo *webhookEndpointRepo) UpdateURL(ctx context.Context, scope domain.Scope, id, url string) (domain.WebhookEndpoint, error) {
+	res, err := repo.w.ExecContext(
+		ctx,
+		`UPDATE webhook_endpoints SET url = ?
+		 WHERE org_id = ? AND environment_id = ? AND id = ?`,
+		url, scope.OrgID, scope.EnvID, id,
+	)
+	if err != nil {
+		return domain.WebhookEndpoint{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return domain.WebhookEndpoint{}, err
+	}
+	if n == 0 {
+		return domain.WebhookEndpoint{}, ErrNotFound
+	}
+	return repo.GetByID(ctx, scope, id)
+}
+
+// SetActive enables or disables an endpoint and returns the updated row.
+func (repo *webhookEndpointRepo) SetActive(ctx context.Context, scope domain.Scope, id string, active bool) (domain.WebhookEndpoint, error) {
+	res, err := repo.w.ExecContext(
+		ctx,
+		`UPDATE webhook_endpoints SET active = ?
+		 WHERE org_id = ? AND environment_id = ? AND id = ?`,
+		active, scope.OrgID, scope.EnvID, id,
+	)
+	if err != nil {
+		return domain.WebhookEndpoint{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return domain.WebhookEndpoint{}, err
+	}
+	if n == 0 {
+		return domain.WebhookEndpoint{}, ErrNotFound
+	}
+	return repo.GetByID(ctx, scope, id)
+}
+
+// Delete permanently removes an endpoint. Returns ErrNotFound when no row
+// matches the scope and id.
+func (repo *webhookEndpointRepo) Delete(ctx context.Context, scope domain.Scope, id string) error {
+	res, err := repo.w.ExecContext(
+		ctx,
+		`DELETE FROM webhook_endpoints
+		 WHERE org_id = ? AND environment_id = ? AND id = ?`,
+		scope.OrgID, scope.EnvID, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

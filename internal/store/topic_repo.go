@@ -16,6 +16,21 @@ type TopicRepo interface {
 	GetByKey(ctx context.Context, scope domain.Scope, key string) (domain.Topic, error)
 	AddSubscriber(ctx context.Context, scope domain.Scope, topicKey, subscriberID string) error
 	ListSubscriberIDs(ctx context.Context, scope domain.Scope, topicKey string) ([]string, error)
+	// List returns all topics in scope ordered by key ASC, each annotated with
+	// its current member count (count of topic_subscribers rows).
+	List(ctx context.Context, scope domain.Scope) ([]TopicWithCount, error)
+	// Delete removes a topic and all its memberships permanently.
+	// Returns ErrNotFound when no matching topic exists.
+	Delete(ctx context.Context, scope domain.Scope, key string) error
+	// RemoveSubscriber removes a single subscriber's membership from a topic.
+	// Returns ErrNotFound when the topic does not exist.
+	RemoveSubscriber(ctx context.Context, scope domain.Scope, topicKey, subscriberID string) error
+}
+
+// TopicWithCount is a domain.Topic annotated with its current member count.
+type TopicWithCount struct {
+	domain.Topic
+	MemberCount int
 }
 
 type topicRepo struct {
@@ -98,4 +113,73 @@ func (repo *topicRepo) ListSubscriberIDs(ctx context.Context, scope domain.Scope
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// List returns all topics in scope ordered by key ASC, each annotated with
+// its current member count from topic_subscribers.
+func (repo *topicRepo) List(ctx context.Context, scope domain.Scope) ([]TopicWithCount, error) {
+	rows, err := repo.r.QueryContext(
+		ctx,
+		`SELECT t.id, t.org_id, t.environment_id, t.key, t.name,
+		        COUNT(ts.subscriber_id) AS member_count
+		 FROM topics t
+		 LEFT JOIN topic_subscribers ts ON ts.topic_id = t.id AND ts.environment_id = t.environment_id
+		 WHERE t.org_id = ? AND t.environment_id = ?
+		 GROUP BY t.id
+		 ORDER BY t.key ASC`,
+		scope.OrgID, scope.EnvID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []TopicWithCount
+	for rows.Next() {
+		var tc TopicWithCount
+		if err := rows.Scan(&tc.ID, &tc.OrgID, &tc.EnvID, &tc.Key, &tc.Name, &tc.MemberCount); err != nil {
+			return nil, err
+		}
+		out = append(out, tc)
+	}
+	return out, rows.Err()
+}
+
+// Delete removes a topic and all its memberships permanently. Returns
+// ErrNotFound when no matching topic exists in scope.
+func (repo *topicRepo) Delete(ctx context.Context, scope domain.Scope, key string) error {
+	t, err := repo.GetByKey(ctx, scope, key)
+	if err != nil {
+		return err // propagates ErrNotFound
+	}
+	// Remove memberships first (SQLite doesn't enforce FK constraints by default).
+	if _, err := repo.w.ExecContext(
+		ctx,
+		`DELETE FROM topic_subscribers WHERE topic_id = ? AND environment_id = ?`,
+		t.ID, scope.EnvID,
+	); err != nil {
+		return err
+	}
+	_, err = repo.w.ExecContext(
+		ctx,
+		`DELETE FROM topics WHERE org_id = ? AND environment_id = ? AND key = ?`,
+		scope.OrgID, scope.EnvID, key,
+	)
+	return err
+}
+
+// RemoveSubscriber removes a single subscriber's membership from a topic.
+// Returns ErrNotFound when the topic does not exist in scope.
+func (repo *topicRepo) RemoveSubscriber(ctx context.Context, scope domain.Scope, topicKey, subscriberID string) error {
+	t, err := repo.GetByKey(ctx, scope, topicKey)
+	if err != nil {
+		return err // propagates ErrNotFound
+	}
+	_, err = repo.w.ExecContext(
+		ctx,
+		`DELETE FROM topic_subscribers
+		 WHERE topic_id = ? AND subscriber_id = ? AND environment_id = ?`,
+		t.ID, subscriberID, scope.EnvID,
+	)
+	return err
 }

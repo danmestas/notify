@@ -27,12 +27,15 @@ import (
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/version"
+	"github.com/danmestas/notify/internal/webhooksout"
 )
 
 // New builds the notify HTTP handler. All routes are grouped behind
 // id.Middleware, so each handler resolves its Scope via identity.ScopeFrom.
 // st may be nil; when non-nil it enables the console read surface routes
 // (GET /v1/notifications, GET /v1/notifications/{id}).
+// wh may be nil; when non-nil it enables webhook-endpoint management routes
+// (GET/POST /v1/webhooks/endpoints, GET/PUT/DELETE /v1/webhooks/endpoints/{id}).
 func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, inb *inbound.Service, an *analytics.Service, ag *agentsapi.Service, ing *ingress.Service, conn *connectivity.Service, st *store.Store, auth ...*authoring.Service) http.Handler {
 	if len(auth) > 1 {
 		panic("httpapi.New: at most one *authoring.Service")
@@ -40,6 +43,11 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 	var au *authoring.Service
 	if len(auth) > 0 {
 		au = auth[0]
+	}
+	// Wire a webhook management service when a store is present.
+	var wh *webhooksout.ManagementService
+	if st != nil {
+		wh = webhooksout.NewManagement(st)
 	}
 	r := chi.NewRouter()
 	// Liveness probe, mounted outside the auth group so container/orchestrator
@@ -52,6 +60,17 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 		pr.Post("/v1/events/trigger", postTrigger(trg))
 		pr.Post("/v1/topics", postTopic(aud))
 		pr.Post("/v1/topics/{key}/subscribers", postTopicSubscriber(aud))
+		// Wave-2 subscriber management (#34).
+		pr.Get("/v1/subscribers", getSubscribers(aud))
+		pr.Get("/v1/subscribers/{id}", getSubscriber(aud))
+		pr.Patch("/v1/subscribers/{id}", patchSubscriber(aud))
+		pr.Delete("/v1/subscribers/{id}", deleteSubscriber(aud))
+		// Wave-2 topic management (#35).
+		pr.Get("/v1/topics", getTopics(aud))
+		pr.Get("/v1/topics/{key}", getTopic(aud))
+		pr.Put("/v1/topics/{key}", putTopic(aud))
+		pr.Delete("/v1/topics/{key}", deleteTopic(aud))
+		pr.Delete("/v1/topics/{key}/subscribers/{subscriberId}", deleteTopicSubscriber(aud))
 		if conn != nil {
 			// Legacy channel-specific create endpoints (API back-compat).
 			pr.Post("/v1/integrations/push", postPushIntegration(conn))
@@ -76,6 +95,14 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 		if st != nil {
 			pr.Get("/v1/notifications", getNotifications(st))
 			pr.Get("/v1/notifications/{id}", getNotification(st))
+		}
+		// Wave-2 webhook endpoint management (#36).
+		if wh != nil {
+			pr.Get("/v1/webhooks/endpoints", getWebhookEndpoints(wh))
+			pr.Post("/v1/webhooks/endpoints", postWebhookEndpoint(wh))
+			pr.Get("/v1/webhooks/endpoints/{id}", getWebhookEndpoint(wh))
+			pr.Put("/v1/webhooks/endpoints/{id}", putWebhookEndpoint(wh))
+			pr.Delete("/v1/webhooks/endpoints/{id}", deleteWebhookEndpoint(wh))
 		}
 		inbox.Routes(pr)
 		if inb != nil {
@@ -1122,4 +1149,423 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// ---------------------------------------------------------------------------
+// #34 — Subscriber management routes
+// ---------------------------------------------------------------------------
+
+// subscriberDTO is the JSON shape returned by subscriber list/get endpoints.
+// Internal scope ids (org_id, environment_id) are excluded; data JSON is
+// forwarded as-is.
+type subscriberDTO struct {
+	ID           string          `json:"id"`
+	SubscriberID string          `json:"subscriberId"`
+	Email        string          `json:"email"`
+	Phone        string          `json:"phone"`
+	FirstName    string          `json:"firstName"`
+	LastName     string          `json:"lastName"`
+	Locale       string          `json:"locale"`
+	Timezone     string          `json:"timezone"`
+	Data         json.RawMessage `json:"data,omitempty"`
+}
+
+func toSubscriberDTO(s domain.Subscriber) subscriberDTO {
+	return subscriberDTO{
+		ID:           s.ID,
+		SubscriberID: s.SubscriberID,
+		Email:        s.Email,
+		Phone:        s.Phone,
+		FirstName:    s.FirstName,
+		LastName:     s.LastName,
+		Locale:       s.Locale,
+		Timezone:     s.Timezone,
+		Data:         s.Data,
+	}
+}
+
+// getSubscribers handles GET /v1/subscribers.
+// Query params: ?after=<cursor> ?limit=<n>
+// Response: {"data":[…],"next":"<cursor>","totalCount":<n>}
+func getSubscribers(aud *audience.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		scope := identity.ScopeFrom(r.Context())
+
+		limit := 0
+		if lStr := q.Get("limit"); lStr != "" {
+			for _, ch := range lStr {
+				if ch < '0' || ch > '9' {
+					http.Error(w, "limit must be a positive integer", http.StatusBadRequest)
+					return
+				}
+			}
+			for _, ch := range lStr {
+				limit = limit*10 + int(ch-'0')
+			}
+		}
+
+		page, err := aud.ListSubscribers(r.Context(), scope, q.Get("after"), limit)
+		if err != nil {
+			if strings.Contains(err.Error(), "invalid cursor") {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			http.Error(w, "failed to list subscribers", http.StatusInternalServerError)
+			return
+		}
+
+		dtos := make([]subscriberDTO, 0, len(page.Items))
+		for _, s := range page.Items {
+			dtos = append(dtos, toSubscriberDTO(s))
+		}
+
+		type response struct {
+			Data       []subscriberDTO `json:"data"`
+			Next       string          `json:"next,omitempty"`
+			TotalCount int             `json:"totalCount"`
+		}
+		writeJSON(w, http.StatusOK, response{
+			Data:       dtos,
+			Next:       page.NextCursor,
+			TotalCount: page.TotalCount,
+		})
+	}
+}
+
+// getSubscriber handles GET /v1/subscribers/{id} where {id} is the internal
+// ULID id.
+func getSubscriber(aud *audience.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		scope := identity.ScopeFrom(r.Context())
+		sub, err := aud.GetSubscriberByID(r.Context(), scope, id)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "subscriber not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to get subscriber", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, toSubscriberDTO(sub))
+	}
+}
+
+// patchSubscriberRequest is the body for PATCH /v1/subscribers/{id}.
+type patchSubscriberRequest struct {
+	Email     string          `json:"email"`
+	FirstName string          `json:"firstName"`
+	LastName  string          `json:"lastName"`
+	Phone     string          `json:"phone"`
+	Locale    string          `json:"locale"`
+	Timezone  string          `json:"timezone"`
+	Data      json.RawMessage `json:"data"`
+}
+
+// patchSubscriber handles PATCH /v1/subscribers/{id}.
+// Only fields present and non-empty in the body are applied.
+func patchSubscriber(aud *audience.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		var req patchSubscriberRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		scope := identity.ScopeFrom(r.Context())
+		sub, err := aud.PatchSubscriber(r.Context(), scope, id, audience.SubscriberInput{
+			Email:     req.Email,
+			FirstName: req.FirstName,
+			LastName:  req.LastName,
+			Phone:     req.Phone,
+			Locale:    req.Locale,
+			Timezone:  req.Timezone,
+			Data:      req.Data,
+		})
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "subscriber not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to update subscriber", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, toSubscriberDTO(sub))
+	}
+}
+
+// deleteSubscriber handles DELETE /v1/subscribers/{id}.
+// Soft-deletes the subscriber; returns 204 on success, 404 when not found.
+func deleteSubscriber(aud *audience.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		scope := identity.ScopeFrom(r.Context())
+		if err := aud.DeleteSubscriber(r.Context(), scope, id); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "subscriber not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to delete subscriber", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// #35 — Topic management routes
+// ---------------------------------------------------------------------------
+
+// topicDTO is the JSON shape returned by topic list/get endpoints.
+type topicDTO struct {
+	ID          string `json:"id"`
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	MemberCount int    `json:"memberCount"`
+}
+
+// getTopics handles GET /v1/topics.
+// Response: {"data":[…]}
+func getTopics(aud *audience.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scope := identity.ScopeFrom(r.Context())
+		list, err := aud.ListTopics(r.Context(), scope)
+		if err != nil {
+			http.Error(w, "failed to list topics", http.StatusInternalServerError)
+			return
+		}
+		dtos := make([]topicDTO, 0, len(list))
+		for _, tc := range list {
+			dtos = append(dtos, topicDTO{
+				ID:          tc.ID,
+				Key:         tc.Key,
+				Name:        tc.Name,
+				MemberCount: tc.MemberCount,
+			})
+		}
+		type response struct {
+			Data []topicDTO `json:"data"`
+		}
+		writeJSON(w, http.StatusOK, response{Data: dtos})
+	}
+}
+
+// getTopic handles GET /v1/topics/{key}.
+func getTopic(aud *audience.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := chi.URLParam(r, "key")
+		scope := identity.ScopeFrom(r.Context())
+		t, err := aud.GetTopic(r.Context(), scope, key)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "topic not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to get topic", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, topicDTO{ID: t.ID, Key: t.Key, Name: t.Name})
+	}
+}
+
+// topicUpdateRequest is the body for PUT /v1/topics/{key}.
+type topicUpdateRequest struct {
+	Name string `json:"name"`
+}
+
+// putTopic handles PUT /v1/topics/{key}.
+// Re-uses CreateTopic which upserts: a missing key is created, an existing key
+// has its name updated. The key is immutable (taken from the path).
+func putTopic(aud *audience.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := chi.URLParam(r, "key")
+		var req topicUpdateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Name == "" {
+			http.Error(w, "name is required", http.StatusBadRequest)
+			return
+		}
+		scope := identity.ScopeFrom(r.Context())
+		t, err := aud.CreateTopic(r.Context(), scope, key, req.Name)
+		if err != nil {
+			http.Error(w, "failed to update topic", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, topicDTO{ID: t.ID, Key: t.Key, Name: t.Name})
+	}
+}
+
+// deleteTopic handles DELETE /v1/topics/{key}.
+// Permanently removes the topic and all its memberships. Returns 204.
+func deleteTopic(aud *audience.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := chi.URLParam(r, "key")
+		scope := identity.ScopeFrom(r.Context())
+		if err := aud.DeleteTopic(r.Context(), scope, key); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "topic not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to delete topic", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// deleteTopicSubscriber handles DELETE /v1/topics/{key}/subscribers/{subscriberId}.
+// Removes the subscriber's membership. Returns 204. The topic must exist
+// (404 if not); removing a non-member is a no-op (still 204).
+func deleteTopicSubscriber(aud *audience.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := chi.URLParam(r, "key")
+		subscriberID := chi.URLParam(r, "subscriberId")
+		scope := identity.ScopeFrom(r.Context())
+		if err := aud.RemoveTopicSubscriber(r.Context(), scope, key, subscriberID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "topic not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to remove subscriber from topic", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// #36 — Webhook endpoint management routes
+// ---------------------------------------------------------------------------
+
+// webhookEndpointDTO is the JSON shape returned by webhook-endpoint endpoints.
+type webhookEndpointDTO struct {
+	ID     string `json:"id"`
+	URL    string `json:"url"`
+	Active bool   `json:"active"`
+}
+
+func toWebhookEndpointDTO(e domain.WebhookEndpoint) webhookEndpointDTO {
+	return webhookEndpointDTO{ID: e.ID, URL: e.URL, Active: e.Active}
+}
+
+// getWebhookEndpoints handles GET /v1/webhooks/endpoints.
+// Returns all endpoints (active and inactive) for the scope.
+func getWebhookEndpoints(wh *webhooksout.ManagementService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scope := identity.ScopeFrom(r.Context())
+		list, err := wh.List(r.Context(), scope)
+		if err != nil {
+			http.Error(w, "failed to list webhook endpoints", http.StatusInternalServerError)
+			return
+		}
+		dtos := make([]webhookEndpointDTO, 0, len(list))
+		for _, e := range list {
+			dtos = append(dtos, toWebhookEndpointDTO(e))
+		}
+		type response struct {
+			Data []webhookEndpointDTO `json:"data"`
+		}
+		writeJSON(w, http.StatusOK, response{Data: dtos})
+	}
+}
+
+// webhookEndpointCreateRequest is the body for POST /v1/webhooks/endpoints.
+type webhookEndpointCreateRequest struct {
+	URL    string `json:"url"`
+	Active bool   `json:"active"`
+}
+
+// postWebhookEndpoint handles POST /v1/webhooks/endpoints.
+func postWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req webhookEndpointCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.URL == "" {
+			http.Error(w, "url is required", http.StatusBadRequest)
+			return
+		}
+		scope := identity.ScopeFrom(r.Context())
+		ep, err := wh.Create(r.Context(), scope, req.URL, req.Active)
+		if err != nil {
+			http.Error(w, "failed to create webhook endpoint", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusCreated, toWebhookEndpointDTO(ep))
+	}
+}
+
+// getWebhookEndpoint handles GET /v1/webhooks/endpoints/{id}.
+func getWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		scope := identity.ScopeFrom(r.Context())
+		ep, err := wh.GetByID(r.Context(), scope, id)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "webhook endpoint not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to get webhook endpoint", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, toWebhookEndpointDTO(ep))
+	}
+}
+
+// webhookEndpointUpdateRequest is the body for PUT /v1/webhooks/endpoints/{id}.
+type webhookEndpointUpdateRequest struct {
+	URL    string `json:"url"`
+	Active *bool  `json:"active"`
+}
+
+// putWebhookEndpoint handles PUT /v1/webhooks/endpoints/{id}.
+// Updates the URL; if active is present also flips the active flag.
+func putWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		var req webhookEndpointUpdateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.URL == "" {
+			http.Error(w, "url is required", http.StatusBadRequest)
+			return
+		}
+		scope := identity.ScopeFrom(r.Context())
+		ep, err := wh.Update(r.Context(), scope, id, req.URL, req.Active)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "webhook endpoint not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to update webhook endpoint", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, toWebhookEndpointDTO(ep))
+	}
+}
+
+// deleteWebhookEndpoint handles DELETE /v1/webhooks/endpoints/{id}.
+func deleteWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		scope := identity.ScopeFrom(r.Context())
+		if err := wh.Delete(r.Context(), scope, id); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "webhook endpoint not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to delete webhook endpoint", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
