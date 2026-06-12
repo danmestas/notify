@@ -1,20 +1,28 @@
 {{define "content"}}{{$page := .Page}}
-<section class="console-section">
+<section class="console-section" data-signals="{{$page.Signals}}">
   {{template "page-header" $page.Header}}
 
   <div class="console-action-row">
-    {{/* Edit affordance stubbed disabled in Wave 1; unlocks in Wave 2. */}}
-    <span class="btn btn-primary console-action"
-          aria-disabled="true"
-          title="Editing workflows is available in Wave 2."
-          data-component="wave2-stub">
-      Edit workflow
-    </span>
+    <a class="btn btn-outline" href="/console/workflows">← Back</a>
+    {{if not $page.ReadOnly}}
+    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}/duplicate">Duplicate</a>
+    {{if $page.ConfirmDelete}}
+    <span class="console-confirm-label">Delete "{{$page.Name}}"? All history is retained.</span>
+    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}">Cancel</a>
+    <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/delete" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <button type="submit" class="btn btn-danger">Confirm delete</button>
+    </form>
+    {{else}}
+    <a class="btn btn-danger" href="/console/workflows/{{$page.TriggerIdentifier}}?confirmDelete=true">Delete</a>
+    {{end}}
+    {{end}}
   </div>
 
   <div class="console-detail-grid">
 
-    <section class="console-card" aria-labelledby="wf-steps-heading">
+    {{/* Left pane: step list */}}
+    <section class="console-card" aria-labelledby="wf-steps-heading" id="wf-step-list">
       <h2 id="wf-steps-heading" class="console-card-title">Steps</h2>
       {{if $page.Steps}}
       <ol class="wf-step-list" role="list">
@@ -22,13 +30,33 @@
         <li class="wf-step-item" data-step-index="{{$i}}">
           <header class="wf-step-header">
             <span class="chip chip-step wf-step-type-chip">{{$step.Type}}</span>
-            <span class="wf-step-id">
-              <code>{{$step.StepID}}</code>
-            </span>
-            {{if $step.Name}}
-            <span class="wf-step-name">{{$step.Name}}</span>
-            {{end}}
+            <span class="wf-step-id"><code>{{$step.StepID}}</code></span>
+            {{if $step.Name}}<span class="wf-step-name">{{$step.Name}}</span>{{end}}
           </header>
+          {{if not $page.ReadOnly}}
+          <div class="wf-step-actions">
+            {{if gt $i 0}}
+            <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/steps/reorder" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="stepId" value="{{$step.StepID}}">
+              <input type="hidden" name="direction" value="up">
+              <button type="submit" class="btn-icon" title="Move up" aria-label="Move step up">↑</button>
+            </form>
+            {{end}}
+            {{if lt $i (sub (len $page.Steps) 1)}}
+            <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/steps/reorder" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="stepId" value="{{$step.StepID}}">
+              <input type="hidden" name="direction" value="down">
+              <button type="submit" class="btn-icon" title="Move down" aria-label="Move step down">↓</button>
+            </form>
+            {{end}}
+            <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/steps/{{$step.StepID}}/delete" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <button type="submit" class="btn-icon btn-icon-danger" title="Remove step" aria-label="Remove step">✕</button>
+            </form>
+          </div>
+          {{end}}
           {{if $step.ControlValuesJSON}}
           <details class="wf-step-controls">
             <summary class="wf-step-controls-summary">Control values</summary>
@@ -41,57 +69,91 @@
       {{else}}
       <p class="console-lede">No steps defined.</p>
       {{end}}
+
+      {{if not $page.ReadOnly}}
+      <div class="wf-add-step">
+        <h3 class="console-card-title" style="margin-top:var(--space-4)">Add step</h3>
+        <div class="wf-step-type-buttons">
+          {{range $type := list "in_app" "email" "push" "sms" "delay" "digest"}}
+          <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/steps" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <input type="hidden" name="type" value="{{$type}}">
+            <button type="submit" class="btn btn-outline btn-sm">+ {{$type}}</button>
+          </form>
+          {{end}}
+        </div>
+      </div>
+      {{end}}
     </section>
 
+    {{/* Right pane: workflow config */}}
     <section class="console-card" aria-labelledby="wf-meta-heading">
-      <h2 id="wf-meta-heading" class="console-card-title">Definition</h2>
-      <dl class="wf-meta-list">
-        <div class="wf-meta-row">
-          <dt>ID</dt>
-          <dd><code>{{$page.ID}}</code></dd>
+      <h2 id="wf-meta-heading" class="console-card-title">Configuration</h2>
+
+      {{if $page.FormError}}
+      <p class="console-form-error" role="alert">{{$page.FormError}}</p>
+      {{end}}
+
+      {{if not $page.ReadOnly}}
+      <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/save">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <div class="form-row">
+          <label class="form-label" for="wf-name">Name</label>
+          <input class="console-input" type="text" id="wf-name" name="name" value="{{$page.Name}}" required>
         </div>
+        <div class="form-row">
+          <label class="form-label">Trigger identifier</label>
+          <code id="wf-detail-ti" class="console-input-readonly">{{$page.TriggerIdentifier}}</code>
+          <button type="button" class="btn-icon wf-copy-btn" title="Copy"
+                  data-on:click="navigator.clipboard.writeText({{$page.TriggerIdentifier | jsEscape}})">⧉</button>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="wf-payload-schema">Payload schema (JSON)</label>
+          <textarea class="console-input" id="wf-payload-schema" name="payload_schema" rows="4">{{$page.PayloadSchemaJSON}}</textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </form>
+
+      <div class="wf-activate-section" style="margin-top:var(--space-4)">
+        <h3 class="console-card-title">Status</h3>
+        <p class="wf-status-current">
+          {{if $page.Active}}<span class="chip chip-success">active</span>{{else}}<span class="chip chip-warning">inactive</span>{{end}}
+        </p>
+        <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/activate">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          {{if $page.Active}}
+          <input type="hidden" name="active" value="0">
+          <button type="submit" class="btn btn-outline">Deactivate</button>
+          {{else}}
+          <input type="hidden" name="active" value="1">
+          <button type="submit" class="btn btn-primary">Activate</button>
+          {{end}}
+        </form>
+      </div>
+      {{else}}
+      {{/* Read-only display */}}
+      <dl class="wf-meta-list">
+        <div class="wf-meta-row"><dt>ID</dt><dd><code>{{$page.ID}}</code></dd></div>
         <div class="wf-meta-row">
           <dt>Trigger identifier</dt>
-          <dd>
-            <code id="wf-detail-ti">{{$page.TriggerIdentifier}}</code>
-            <button type="button"
-                    class="btn-icon wf-copy-btn"
-                    title="Copy trigger identifier"
-                    aria-label="Copy {{$page.TriggerIdentifier}}"
-                    data-on:click="navigator.clipboard.writeText({{$page.TriggerIdentifier | jsEscape}})">
-              ⧉
-            </button>
-          </dd>
+          <dd><code id="wf-detail-ti">{{$page.TriggerIdentifier}}</code>
+          <button type="button" class="btn-icon wf-copy-btn" title="Copy"
+                  data-on:click="navigator.clipboard.writeText({{$page.TriggerIdentifier | jsEscape}})">⧉</button></dd>
         </div>
         <div class="wf-meta-row">
           <dt>Status</dt>
-          <dd>
-            {{if $page.Active}}
-            <span class="chip chip-success">active</span>
-            {{else}}
-            <span class="chip chip-warning">inactive</span>
-            {{end}}
-          </dd>
+          <dd>{{if $page.Active}}<span class="chip chip-success">active</span>{{else}}<span class="chip chip-warning">inactive</span>{{end}}</dd>
         </div>
       </dl>
-
       {{if $page.PayloadSchemaJSON}}
       <div class="wf-payload-schema">
         <h3 class="wf-payload-schema-title">Payload schema</h3>
         <pre class="wf-code-block"><code>{{$page.PayloadSchemaJSON}}</code></pre>
       </div>
       {{end}}
+      {{end}}
     </section>
 
   </div>
-
-  {{/* Activity and Settings tabs are Wave 2. */}}
-  <nav class="console-tab-bar" aria-label="Workflow tabs">
-    <span class="console-tab is-active" aria-current="page">Definition</span>
-    <span class="console-tab console-tab-stub"
-          aria-disabled="true"
-          title="Activity tab is available in Wave 2.">Activity</span>
-  </nav>
-
 </section>
 {{end}}

@@ -206,7 +206,24 @@ func (c *Console) Routes() http.Handler {
 		pr.Get("/console/api/fragments/dashboard-kpis", c.serveFragmentDashboardKPIs)
 		pr.Get("/console/workflows", c.serveWorkflowsList)
 		pr.Get("/console/api/fragments/workflows-list", c.serveFragmentWorkflowsList)
+		// W2-A3: create + duplicate side-sheets. The literal `new` segment is
+		// registered before the {slug} wildcard so chi never matches "new" as a
+		// slug (chi prefers static segments, but the explicit order documents it).
+		pr.Get("/console/workflows/new", c.serveWorkflowNew)
+		pr.Get("/console/workflows/{slug}/duplicate", c.serveWorkflowDuplicate)
 		pr.Get("/console/workflows/{slug}", c.serveWorkflowDetail)
+		pr.Post("/console/api/workflows", c.handleWorkflowCreate)
+		pr.Post("/console/api/workflows/{slug}/duplicate", c.handleWorkflowDuplicate)
+		// W2-A4: editor mutations. `steps/reorder` is registered before the
+		// `steps/{stepId}/...` wildcards so the literal `reorder` segment wins.
+		pr.Post("/console/api/workflows/{slug}/save", c.handleWorkflowSave)
+		pr.Post("/console/api/workflows/{slug}/delete", c.handleWorkflowDelete)
+		pr.Post("/console/api/workflows/{slug}/activate", c.handleWorkflowActivate)
+		pr.Post("/console/api/workflows/{slug}/steps", c.handleWorkflowStepAdd)
+		pr.Post("/console/api/workflows/{slug}/steps/reorder", c.handleWorkflowStepReorder)
+		pr.Post("/console/api/workflows/{slug}/steps/{stepId}/delete", c.handleWorkflowStepDelete)
+		pr.Post("/console/api/workflows/{slug}/steps/{stepId}/save", c.handleWorkflowStepSave)
+		pr.Get("/console/api/fragments/workflow-step-editor/{slug}/{stepId}", c.serveFragmentWorkflowStepEditor)
 		pr.Get("/console/analytics", c.servePageAnalytics)
 		pr.Get("/console/api/fragments/analytics-kpis", c.serveFragmentAnalyticsKPIs)
 		pr.Get("/console/api/fragments/analytics-charts", c.serveFragmentAnalyticsCharts)

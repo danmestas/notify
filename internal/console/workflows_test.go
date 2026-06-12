@@ -206,16 +206,13 @@ func TestWorkflowDetail_RendersDefinition(t *testing.T) {
 	if !strings.Contains(body, "Hello") {
 		t.Errorf("detail page missing in_app controlValues body")
 	}
-	// Edit affordance present but disabled.
-	if !strings.Contains(body, "Edit workflow") {
-		t.Errorf("detail page missing Edit workflow stub")
+	// Wave 2 editor: the name field is editable (the read-only "Edit
+	// workflow is Wave 2" stub is gone).
+	if !strings.Contains(body, `name="name"`) {
+		t.Errorf("detail page missing editable name field")
 	}
-	if !strings.Contains(body, "Wave 2") {
-		t.Errorf("detail page Edit stub missing Wave 2 tooltip")
-	}
-	// Activity tab stub present.
-	if !strings.Contains(body, "Activity") {
-		t.Errorf("detail page missing Activity tab stub")
+	if !strings.Contains(body, "/save") {
+		t.Errorf("detail page missing save form action")
 	}
 }
 
@@ -475,5 +472,375 @@ func (tc *testConsole) seedWorkflowWithSteps(t *testing.T, name, trigger string,
 	})
 	if err != nil {
 		t.Fatalf("seedWorkflowWithSteps: %v", err)
+	}
+}
+
+// newTestConsoleReadOnly boots a console whose Deps.ReadOnly is true, so
+// every mutation handler returns 403 server-side. It reuses the same store
+// and bootstrap key as newTestConsole.
+func newTestConsoleReadOnly(t *testing.T) *testConsole {
+	t.Helper()
+	tc := newTestConsole(t)
+	tc.deps.ReadOnly = true
+	tc.c = New(tc.deps)
+	tc.h = tc.c.Routes()
+	return tc
+}
+
+// ---- Wave 2: create side-sheet (W2-A3) ----
+
+func TestWorkflowNew_RendersCreateForm(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/new", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/console/workflows/new: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `action="/console/api/workflows"`) {
+		t.Errorf("/new missing create form action")
+	}
+	if !strings.Contains(body, csrf) {
+		t.Errorf("/new missing CSRF token in form")
+	}
+	if !strings.Contains(body, `name="name"`) {
+		t.Errorf("/new missing name input")
+	}
+	if !strings.Contains(body, `name="trigger_identifier"`) {
+		t.Errorf("/new missing trigger_identifier input")
+	}
+	// The list page itself must NOT show the create slide-over.
+	rrList := tc.get(t, "/console/workflows", cookie)
+	if strings.Contains(rrList.Body.String(), `action="/console/api/workflows"`) {
+		t.Errorf("/console/workflows should not render the create slide-over form")
+	}
+}
+
+func TestWorkflowCreate_PostRedirectsToEditor(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows", url.Values{
+		"csrf_token":         {csrf},
+		"name":               {"My Test WF"},
+		"trigger_identifier": {"my-test-wf"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("create workflow: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Location"); got != "/console/workflows/my-test-wf" {
+		t.Errorf("Location = %q, want /console/workflows/my-test-wf", got)
+	}
+}
+
+func TestWorkflowCreate_DuplicateIdentifierRendersError(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "Existing", "existing-wf")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows", url.Values{
+		"csrf_token":         {csrf},
+		"name":               {"Another"},
+		"trigger_identifier": {"existing-wf"},
+	}, cookie)
+	// Should redirect back to /new with an error indication (not 500).
+	if rr.Code == http.StatusInternalServerError {
+		t.Errorf("duplicate identifier returned 500, want redirect with error")
+	}
+}
+
+func TestWorkflowCreate_ReadOnlyBlocked(t *testing.T) {
+	tc := newTestConsoleReadOnly(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows", url.Values{
+		"csrf_token":         {csrf},
+		"name":               {"Test"},
+		"trigger_identifier": {"test"},
+	}, cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("ReadOnly create: status = %d, want 403", rr.Code)
+	}
+}
+
+// ---- Wave 2: duplicate side-sheet (W2-A3) ----
+
+func TestWorkflowDuplicate_RendersForm(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "Source WF", "source-wf")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/source-wf/duplicate", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("duplicate sheet: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `action="/console/api/workflows/source-wf/duplicate"`) {
+		t.Errorf("duplicate form missing correct action")
+	}
+	if !strings.Contains(body, csrf) {
+		t.Errorf("duplicate form missing CSRF token")
+	}
+	if !strings.Contains(body, "Copy of Source WF") {
+		t.Errorf("duplicate form missing pre-filled name")
+	}
+}
+
+func TestWorkflowDuplicate_PostRedirectsToNewEditor(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "Source WF", "source-wf")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/source-wf/duplicate", url.Values{
+		"csrf_token":         {csrf},
+		"name":               {"Copy of Source WF"},
+		"trigger_identifier": {"source-wf-copy"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("duplicate POST: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Location"); got != "/console/workflows/source-wf-copy" {
+		t.Errorf("Location = %q, want /console/workflows/source-wf-copy", got)
+	}
+}
+
+func TestWorkflowDuplicate_ReadOnlyBlocked(t *testing.T) {
+	tc := newTestConsoleReadOnly(t)
+	tc.seedWorkflow(t, "Source WF", "source-wf")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/source-wf/duplicate", url.Values{
+		"csrf_token":         {csrf},
+		"name":               {"Copy"},
+		"trigger_identifier": {"source-wf-copy"},
+	}, cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("ReadOnly duplicate: status = %d, want 403", rr.Code)
+	}
+}
+
+// ---- Wave 2: editor — step add/remove/reorder (W2-A4) ----
+
+func TestWorkflowEditor_StepAdd(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps", url.Values{
+		"csrf_token": {csrf},
+		"type":       {"email"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("step add: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	rr2 := tc.get(t, "/console/workflows/my-wf", cookie)
+	if !strings.Contains(rr2.Body.String(), "email") {
+		t.Errorf("after step add, detail page missing email step")
+	}
+}
+
+func TestWorkflowEditor_StepDelete(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "email-1", Type: "email", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/email-1/delete", url.Values{
+		"csrf_token": {csrf},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("step delete: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	rr2 := tc.get(t, "/console/workflows/my-wf", cookie)
+	if strings.Contains(rr2.Body.String(), "email-1") {
+		t.Errorf("after step delete, detail page still shows email-1")
+	}
+}
+
+func TestWorkflowEditor_StepReorder(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "email-1", Type: "email", ControlValues: json.RawMessage(`{}`)},
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	// Move in_app-1 up (index 1 -> index 0).
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/reorder", url.Values{
+		"csrf_token": {csrf},
+		"stepId":     {"in_app-1"},
+		"direction":  {"up"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("step reorder: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	rr2 := tc.get(t, "/console/workflows/my-wf", cookie)
+	body := rr2.Body.String()
+	inAppPos := strings.Index(body, "in_app-1")
+	emailPos := strings.Index(body, "email-1")
+	if inAppPos == -1 || emailPos == -1 {
+		t.Fatalf("detail page missing step ids after reorder")
+	}
+	if inAppPos > emailPos {
+		t.Errorf("after reorder up, in_app-1 appears after email-1 — want before")
+	}
+}
+
+// ---- Wave 2: activate toggle (W2-A4) ----
+
+func TestWorkflowEditor_ActivateToggle(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedInactiveWorkflow(t, "Toggle WF", "toggle-wf")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/toggle-wf/activate", url.Values{
+		"csrf_token": {csrf},
+		"active":     {"1"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("activate: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	rr2 := tc.get(t, "/console/workflows/toggle-wf", cookie)
+	if !strings.Contains(rr2.Body.String(), "chip-success") {
+		t.Errorf("after activate, detail page missing active chip")
+	}
+}
+
+// ---- Wave 2: delete (W2-A4) ----
+
+func TestWorkflowEditor_ConfirmDeleteState(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "Delete Me", "delete-me")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/delete-me?confirmDelete=true", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("confirm delete state: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Confirm delete") {
+		t.Errorf("confirmDelete page missing 'Confirm delete' button")
+	}
+	if !strings.Contains(body, "console-confirm-label") {
+		t.Errorf("confirmDelete page missing console-confirm-label")
+	}
+}
+
+func TestWorkflowEditor_DeleteRedirectsToList(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "Delete Me", "delete-me")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/delete-me/delete", url.Values{
+		"csrf_token": {csrf},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("delete: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Location"); got != "/console/workflows" {
+		t.Errorf("Location = %q, want /console/workflows", got)
+	}
+}
+
+func TestWorkflowEditor_DeleteReadOnlyBlocked(t *testing.T) {
+	tc := newTestConsoleReadOnly(t)
+	tc.seedWorkflow(t, "Delete Me", "delete-me")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/delete-me/delete", url.Values{
+		"csrf_token": {csrf},
+	}, cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("ReadOnly delete: status = %d, want 403", rr.Code)
+	}
+}
+
+// ---- Wave 2: validation errors surface inline (W2-A4) ----
+
+func TestWorkflowEditor_SaveWithEmptyNameShowsError(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/save", url.Values{
+		"csrf_token": {csrf},
+		"name":       {""},
+	}, cookie)
+	if rr.Code == http.StatusInternalServerError {
+		t.Errorf("empty name save returned 500")
+	}
+}
+
+// ---- Wave 2: auth gates ----
+
+func TestWorkflowNew_RequiresAuth(t *testing.T) {
+	tc := newTestConsole(t)
+	rr := tc.get(t, "/console/workflows/new", nil)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("/console/workflows/new without session: status = %d, want 303", rr.Code)
+	}
+}
+
+func TestWorkflowCreate_RequiresAuth(t *testing.T) {
+	tc := newTestConsole(t)
+	rr := tc.postForm(t, "/console/api/workflows", url.Values{
+		"name": {"Test"},
+	}, nil)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("POST /console/api/workflows without session: status = %d, want 303", rr.Code)
+	}
+}
+
+// ---- Wave 2: no native confirm() dialogs ----
+
+func TestConsoleWorkflowTemplates_NoNativeConfirm(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, _ := tc.login(t)
+
+	pages := []string{
+		"/console/workflows",
+		"/console/workflows/new",
+		"/console/workflows/my-wf",
+		"/console/workflows/my-wf?confirmDelete=true",
+	}
+	for _, path := range pages {
+		rr := tc.get(t, path, cookie)
+		if strings.Contains(rr.Body.String(), "confirm(") || strings.Contains(rr.Body.String(), "alert(") {
+			t.Errorf("%s: contains native confirm()/alert() call", path)
+		}
+	}
+}
+
+// ---- Wave 2: POST->303 not SSE ----
+
+func TestWorkflowMutations_NotSSE(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "email-1", Type: "email", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	endpoints := []struct {
+		method string
+		path   string
+		body   url.Values
+	}{
+		{"POST", "/console/api/workflows", url.Values{"csrf_token": {csrf}, "name": {"X"}, "trigger_identifier": {"x-mut-test"}}},
+		{"POST", "/console/api/workflows/my-wf/steps", url.Values{"csrf_token": {csrf}, "type": {"in_app"}}},
+		{"POST", "/console/api/workflows/my-wf/steps/email-1/delete", url.Values{"csrf_token": {csrf}}},
+		{"POST", "/console/api/workflows/my-wf/delete", url.Values{"csrf_token": {csrf}}},
+	}
+	for _, ep := range endpoints {
+		rr := tc.postForm(t, ep.path, ep.body, cookie)
+		if strings.Contains(rr.Body.String(), "datastar-patch-elements") && rr.Code != http.StatusSeeOther {
+			t.Errorf("%s %s: body contains datastar-patch-elements on non-SSE endpoint", ep.method, ep.path)
+		}
 	}
 }

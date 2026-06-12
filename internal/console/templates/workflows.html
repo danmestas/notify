@@ -1,4 +1,4 @@
-{{define "content"}}{{$page := .Page}}
+{{define "content"}}{{$page := .Page}}{{$frag := $page.Fragment}}
 {{/*
   data-store seeds the Datastar signals. FilterQ/FilterStatus are piped
   through the json func so each value is JSON-marshaled into the attribute:
@@ -7,7 +7,7 @@
   the data-store JSON. Do NOT inline these as bare "{{...}}" string literals.
 */}}
 <section class="console-section"
-         data-store='{"wfFilter":{{$page.FilterQ | json}},"wfStatus":{{$page.FilterStatus | json}}}'>
+         data-store='{"wfFilter":{{$frag.FilterQ | json}},"wfStatus":{{$frag.FilterStatus | json}}}'>
   {{template "page-header" $page.Header}}
 
   <div class="console-filter-bar">
@@ -15,7 +15,7 @@
            type="search"
            class="console-input"
            placeholder="Search by name or identifier"
-           value="{{$page.FilterQ}}"
+           value="{{$frag.FilterQ}}"
            data-bind-wfFilter
            data-on-input__debounce.300ms="@get('/console/api/fragments/workflows-list')"
            aria-label="Search workflows">
@@ -24,22 +24,84 @@
             data-bind-wfStatus
             data-on-change="@get('/console/api/fragments/workflows-list')"
             aria-label="Filter by status">
-      <option value="" {{if eq $page.FilterStatus ""}}selected{{end}}>All statuses</option>
-      <option value="active" {{if eq $page.FilterStatus "active"}}selected{{end}}>Active</option>
-      <option value="inactive" {{if eq $page.FilterStatus "inactive"}}selected{{end}}>Inactive</option>
+      <option value="" {{if eq $frag.FilterStatus ""}}selected{{end}}>All statuses</option>
+      <option value="active" {{if eq $frag.FilterStatus "active"}}selected{{end}}>Active</option>
+      <option value="inactive" {{if eq $frag.FilterStatus "inactive"}}selected{{end}}>Inactive</option>
     </select>
-    {{if $page.HasFilters}}
-    <a href="/console/workflows" class="btn btn-outline console-filter-reset"
-       data-on:click="$wfFilter='';$wfStatus='';@get('/console/api/fragments/workflows-list')">
-      Reset
-    </a>
+    {{if not $page.ReadOnly}}
+    <a class="btn btn-primary" href="/console/workflows/new">+ Create workflow</a>
     {{end}}
-    {{template "action-button" (actionArgs "Create workflow" "/console/workflows/new" $page.ReadOnly)}}
   </div>
 
-  {{if $page.Empty}}
-  {{template "empty-state" $page.Empty}}
-  {{else}}
+  {{/* Create slide-over — rendered on /console/workflows/new */}}
+  <div id="workflow-create-slideover">
+    {{if $page.ShowCreate}}
+    <div class="console-slideover" role="dialog" aria-labelledby="wf-create-heading"
+         data-component="workflow-create">
+      <div class="console-slideover-header">
+        <h2 id="wf-create-heading" class="console-card-title">Create workflow</h2>
+        <a class="btn-icon console-slideover-close" href="/console/workflows" aria-label="Close">✕</a>
+      </div>
+      {{if $page.FormError}}
+      <p id="wf-form-error" class="console-form-error" role="alert">{{$page.FormError}}</p>
+      {{end}}
+      <form method="POST" action="/console/api/workflows">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <div class="form-row">
+          <label class="form-label" for="new-wf-name">Name *</label>
+          <input class="console-input" type="text" id="new-wf-name" name="name"
+                 placeholder="Welcome Email" required autofocus>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="new-wf-trigger">Trigger identifier *</label>
+          <input class="console-input console-input-mono" type="text" id="new-wf-trigger"
+                 name="trigger_identifier" placeholder="welcome-email"
+                 pattern="[a-z0-9_-]+" title="lowercase letters, digits, hyphens, underscores" required>
+        </div>
+        <div class="console-slideover-actions">
+          <a class="btn btn-outline" href="/console/workflows">Cancel</a>
+          <button type="submit" class="btn btn-primary">Create workflow</button>
+        </div>
+      </form>
+    </div>
+    {{end}}
+  </div>
+
+  {{/* Duplicate slide-over — rendered on /console/workflows/{slug}/duplicate */}}
+  <div id="workflow-duplicate-slideover">
+    {{if $page.ShowDuplicate}}
+    <div class="console-slideover" role="dialog" aria-labelledby="wf-dup-heading"
+         data-component="workflow-duplicate">
+      <div class="console-slideover-header">
+        <h2 id="wf-dup-heading" class="console-card-title">Duplicate workflow</h2>
+        <a class="btn-icon console-slideover-close" href="/console/workflows/{{$page.SourceSlug}}" aria-label="Close">✕</a>
+      </div>
+      {{if $page.FormError}}
+      <p class="console-form-error" role="alert">{{$page.FormError}}</p>
+      {{end}}
+      <form method="POST" action="/console/api/workflows/{{$page.SourceSlug}}/duplicate">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <div class="form-row">
+          <label class="form-label" for="dup-wf-name">Name *</label>
+          <input class="console-input" type="text" id="dup-wf-name" name="name"
+                 value="{{$page.SuggestedName}}" required autofocus>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="dup-wf-trigger">Trigger identifier *</label>
+          <input class="console-input console-input-mono" type="text" id="dup-wf-trigger"
+                 name="trigger_identifier" value="{{$page.SuggestedTrigger}}"
+                 pattern="[a-z0-9_-]+" required>
+        </div>
+        <div class="console-slideover-actions">
+          <a class="btn btn-outline" href="/console/workflows/{{$page.SourceSlug}}">Cancel</a>
+          <button type="submit" class="btn btn-primary">Duplicate workflow</button>
+        </div>
+      </form>
+    </div>
+    {{end}}
+  </div>
+
+  {{/* Main table */}}
   <div class="console-table-wrap">
     <table class="console-table" aria-label="Workflows">
       <thead>
@@ -47,11 +109,11 @@
           <th scope="col">Name</th>
           <th scope="col">Status</th>
           <th scope="col">Steps</th>
+          <th scope="col">Actions</th>
         </tr>
       </thead>
-      {{template "workflows-tbody" $page}}
+      {{template "workflows-tbody" $frag}}
     </table>
   </div>
-  {{end}}
 </section>
 {{end}}

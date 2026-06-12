@@ -56,6 +56,7 @@ var assetsFS embed.FS
 //go:embed templates/partials/toast.html
 //go:embed templates/partials/dashboard_kpis.html
 //go:embed templates/partials/workflows_list.html
+//go:embed templates/partials/workflow_step_editor.html
 //go:embed templates/partials/analytics_kpis.html
 //go:embed templates/partials/analytics_charts.html
 //go:embed templates/partials/activity_tbody.html

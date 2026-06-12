@@ -3,11 +3,13 @@
   list. Only the tbody and its content are replaced; the table skeleton
   and filter bar stay in place. The outer element carries the stable id
   the fragment endpoint (/console/api/fragments/workflows-list) patches.
+  Binds a workflowsListView; each workflowRow already carries its own
+  ReadOnly / ConfirmDelete / CSRF so the row template needs no dict.
 */}}
 {{define "workflows-tbody"}}
 <tbody id="workflows-tbody">
   {{if .Empty}}
-  <tr><td colspan="3">{{template "empty-state" .Empty}}</td></tr>
+  <tr><td colspan="4">{{template "empty-state" .Empty}}</td></tr>
   {{else}}
   {{range .Rows}}
   {{template "workflow-row" .}}
@@ -50,6 +52,22 @@
       <span class="chip chip-default">—</span>
       {{end}}
     </span>
+  </td>
+  <td class="wf-col-actions">
+    {{if not .ReadOnly}}
+    {{if .ConfirmDelete}}
+    <span class="console-confirm-label">Delete?</span>
+    <a class="btn btn-outline btn-sm" href="/console/workflows">Cancel</a>
+    <form method="POST" action="/console/api/workflows/{{.TriggerIdentifier}}/delete" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button type="submit" class="btn btn-danger btn-sm">Confirm</button>
+    </form>
+    {{else}}
+    <a class="btn btn-outline btn-sm" href="{{.Href}}">Edit</a>
+    <a class="btn btn-outline btn-sm" href="/console/workflows/{{.TriggerIdentifier}}/duplicate">Dup</a>
+    <a class="btn btn-danger btn-sm" href="/console/api/fragments/workflows-list?confirmDelete={{.TriggerIdentifier | urlquery}}">Delete</a>
+    {{end}}
+    {{end}}
   </td>
 </tr>
 {{end}}

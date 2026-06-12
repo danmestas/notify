@@ -151,6 +151,14 @@ func (s *Service) Publish(ctx context.Context, scope domain.Scope, triggerIdenti
 	if err != nil {
 		return err
 	}
+	// A nil engine means the service is wired for store-only operation
+	// (the operator console seeds and edits workflow rows without a live
+	// engine connection in tests). Registration is skipped; Create already
+	// persists rows without touching the engine, so this keeps the two
+	// paths consistent.
+	if s.eng == nil {
+		return nil
+	}
 	return s.eng.RegisterWorkflow(ctx, def)
 }
 
@@ -207,10 +215,14 @@ func (s *Service) Update(ctx context.Context, scope domain.Scope, slug string, i
 	}
 
 	// Re-register the compiled DAG so in-flight triggers use the new definition.
-	// Compile was already validated above; cannot fail here.
-	def, _ := Compile(candidate)
-	if err := s.eng.RegisterWorkflow(ctx, def); err != nil {
-		return domain.Workflow{}, fmt.Errorf("authoring: re-register workflow: %w", err)
+	// Compile was already validated above; cannot fail here. A nil engine
+	// (store-only wiring, e.g. the console in tests) skips registration —
+	// the row is already persisted, consistent with Create.
+	if s.eng != nil {
+		def, _ := Compile(candidate)
+		if err := s.eng.RegisterWorkflow(ctx, def); err != nil {
+			return domain.Workflow{}, fmt.Errorf("authoring: re-register workflow: %w", err)
+		}
 	}
 
 	return candidate, nil

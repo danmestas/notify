@@ -99,6 +99,23 @@ func staticFuncMap() template.FuncMap {
 		// not negates a boolean; used in templates that cannot use "if not x"
 		// (which is valid Go template syntax but can look ambiguous for readers).
 		"not": func(v bool) bool { return !v },
+		// list packs a variadic of strings into a slice the workflow editor
+		// ranges over to render its per-type "add step" buttons.
+		"list": func(items ...string) []string { return items },
+		// sub subtracts b from a; the editor's "is this the last step?" guard
+		// uses it to hide the move-down button on the final step.
+		"sub": func(a, b int) int { return a - b },
+		// dict packs alternating key/value pairs into a map so a template can
+		// pass several named values into a sub-template (no struct needed).
+		"dict": func(pairs ...any) map[string]any {
+			m := make(map[string]any, len(pairs)/2)
+			for i := 0; i+1 < len(pairs); i += 2 {
+				if k, ok := pairs[i].(string); ok {
+					m[k] = pairs[i+1]
+				}
+			}
+			return m
+		},
 		// activityEmptyDetail returns an empty activityDetailView for the
 		// initial panel render (no notification selected). The type is
 		// defined in activity.go (same package).

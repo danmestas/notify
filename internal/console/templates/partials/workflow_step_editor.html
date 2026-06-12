@@ -1,0 +1,93 @@
+{{define "workflow-step-editor"}}
+<div id="workflow-step-editor">
+  {{if .Step}}
+  {{$step := .Step}}{{$slug := .Slug}}{{$csrf := .CSRF}}{{$readOnly := .ReadOnly}}
+  <div class="wf-step-editor-header">
+    <h3 class="console-card-title">{{$step.Type}} — <code>{{$step.StepID}}</code></h3>
+  </div>
+  {{if not $readOnly}}
+  <form method="POST" action="/console/api/workflows/{{$slug}}/steps/{{$step.StepID}}/save">
+    <input type="hidden" name="csrf_token" value="{{$csrf}}">
+    {{if eq $step.Type "email"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-subject">Subject</label>
+      <input class="console-input" type="text" id="cv-subject" name="subject"
+             value="{{index $step.ControlMap "subject"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-body">Body</label>
+      <textarea class="console-input" id="cv-body" name="body" rows="4">{{index $step.ControlMap "body"}}</textarea>
+    </div>
+    {{else if eq $step.Type "in_app"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-subject">Subject</label>
+      <input class="console-input" type="text" id="cv-subject" name="subject"
+             value="{{index $step.ControlMap "subject"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-body">Body</label>
+      <textarea class="console-input" id="cv-body" name="body" rows="3">{{index $step.ControlMap "body"}}</textarea>
+    </div>
+    {{else if eq $step.Type "push"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-title">Title</label>
+      <input class="console-input" type="text" id="cv-title" name="title"
+             value="{{index $step.ControlMap "title"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-body">Body</label>
+      <textarea class="console-input" id="cv-body" name="body" rows="3">{{index $step.ControlMap "body"}}</textarea>
+    </div>
+    {{else if eq $step.Type "sms"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-body">Message</label>
+      <textarea class="console-input" id="cv-body" name="body" rows="3">{{index $step.ControlMap "body"}}</textarea>
+    </div>
+    {{else if eq $step.Type "delay"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-amount">Amount</label>
+      <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
+             value="{{index $step.ControlMap "amount"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-unit">Unit</label>
+      <select class="console-input" id="cv-unit" name="unit">
+        <option value="seconds" {{if eq (index $step.ControlMap "unit") "seconds"}}selected{{end}}>Seconds</option>
+        <option value="minutes" {{if eq (index $step.ControlMap "unit") "minutes"}}selected{{end}}>Minutes</option>
+        <option value="hours" {{if eq (index $step.ControlMap "unit") "hours"}}selected{{end}}>Hours</option>
+        <option value="days" {{if eq (index $step.ControlMap "unit") "days"}}selected{{end}}>Days</option>
+      </select>
+    </div>
+    {{else if eq $step.Type "digest"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-amount">Window amount</label>
+      <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
+             value="{{index $step.ControlMap "amount"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-unit">Window unit</label>
+      <select class="console-input" id="cv-unit" name="unit">
+        <option value="seconds" {{if eq (index $step.ControlMap "unit") "seconds"}}selected{{end}}>Seconds</option>
+        <option value="minutes" {{if eq (index $step.ControlMap "unit") "minutes"}}selected{{end}}>Minutes</option>
+        <option value="hours" {{if eq (index $step.ControlMap "unit") "hours"}}selected{{end}}>Hours</option>
+        <option value="days" {{if eq (index $step.ControlMap "unit") "days"}}selected{{end}}>Days</option>
+      </select>
+    </div>
+    {{else}}
+    <div class="form-row">
+      <label class="form-label">Control values (JSON)</label>
+      <textarea class="console-input" name="control_values_json" rows="4">{{$step.ControlValuesJSON}}</textarea>
+    </div>
+    {{end}}
+    <div class="console-slideover-actions">
+      <button type="submit" class="btn btn-primary">Save step</button>
+    </div>
+  </form>
+  {{else}}
+  <pre class="wf-code-block"><code>{{$step.ControlValuesJSON}}</code></pre>
+  {{end}}
+  {{else}}
+  <p class="console-lede">Select a step to edit.</p>
+  {{end}}
+</div>
+{{end}}
