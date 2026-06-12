@@ -6,6 +6,7 @@ package authoring
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -151,4 +152,141 @@ func (s *Service) Publish(ctx context.Context, scope domain.Scope, triggerIdenti
 		return err
 	}
 	return s.eng.RegisterWorkflow(ctx, def)
+}
+
+// UpdateInput carries the mutable fields for an Update call.
+type UpdateInput struct {
+	Name          string
+	Steps         []domain.Step
+	PayloadSchema json.RawMessage
+}
+
+// ErrCompileFailure wraps a Compile error so HTTP handlers can map it to 422.
+type ErrCompileFailure struct{ Cause error }
+
+func (e *ErrCompileFailure) Error() string { return "compile failure: " + e.Cause.Error() }
+func (e *ErrCompileFailure) Unwrap() error { return e.Cause }
+
+// Update persists a new name/steps/payload_schema for the identified workflow,
+// recompiles the DAG, and re-registers it with the engine so edits take effect
+// on the next trigger. A step configuration that fails Compile (e.g. invalid
+// delay amount) is rejected with an ErrCompileFailure before any write occurs.
+// Returns store.ErrNotFound when the workflow does not exist in this scope.
+func (s *Service) Update(ctx context.Context, scope domain.Scope, slug string, in UpdateInput) (domain.Workflow, error) {
+	// Load the existing row to obtain its ID (required for the UPDATE predicate).
+	existing, err := s.store.Workflows().GetByTriggerIdentifier(ctx, scope, slug)
+	if err != nil {
+		return domain.Workflow{}, err
+	}
+
+	steps, err := json.Marshal(in.Steps)
+	if err != nil {
+		return domain.Workflow{}, fmt.Errorf("authoring: marshal steps: %w", err)
+	}
+
+	// Build the candidate workflow and compile it before writing; reject on
+	// compile failure with an ErrCompileFailure (maps to HTTP 422).
+	candidate := domain.Workflow{
+		ID:                existing.ID,
+		OrgID:             existing.OrgID,
+		EnvID:             existing.EnvID,
+		TriggerIdentifier: existing.TriggerIdentifier,
+		Active:            existing.Active,
+		Origin:            existing.Origin,
+		Name:              in.Name,
+		Steps:             steps,
+		PayloadSchema:     in.PayloadSchema,
+	}
+	if _, err := Compile(candidate); err != nil {
+		return domain.Workflow{}, &ErrCompileFailure{Cause: err}
+	}
+
+	// Persist.
+	if err := s.store.Workflows().Update(ctx, scope, candidate); err != nil {
+		return domain.Workflow{}, err
+	}
+
+	// Re-register the compiled DAG so in-flight triggers use the new definition.
+	// Compile was already validated above; cannot fail here.
+	def, _ := Compile(candidate)
+	if err := s.eng.RegisterWorkflow(ctx, def); err != nil {
+		return domain.Workflow{}, fmt.Errorf("authoring: re-register workflow: %w", err)
+	}
+
+	return candidate, nil
+}
+
+// Delete removes the workflow row. The engine does not expose an explicit
+// deregister API (no KV delete on NATS subject, and registering an empty-step
+// DAG would corrupt the registry). Hard-deleting the store row is the correct
+// decision: in-flight runs hold their own snapshot inside the engine and will
+// complete normally; notification history rows reference workflow_id as a plain
+// string (no FK), so they survive and remain queryable for audit purposes.
+//
+// Returns store.ErrNotFound when the workflow does not exist in this scope.
+func (s *Service) Delete(ctx context.Context, scope domain.Scope, slug string) error {
+	return s.store.Workflows().Delete(ctx, scope, slug)
+}
+
+// SetActive flips the active flag for the identified workflow. Inactive
+// workflows are skipped at trigger.Ingest time (acknowledged=false, no-op).
+// The engine DAG is not deregistered — re-activating is instant, no
+// re-publish needed.
+// Returns store.ErrNotFound when the workflow does not exist in this scope.
+func (s *Service) SetActive(ctx context.Context, scope domain.Scope, slug string, active bool) (domain.Workflow, error) {
+	if err := s.store.Workflows().SetActive(ctx, scope, slug, active); err != nil {
+		return domain.Workflow{}, err
+	}
+	return s.store.Workflows().GetByTriggerIdentifier(ctx, scope, slug)
+}
+
+// DuplicateInput carries the desired name and identifier for the new workflow.
+type DuplicateInput struct {
+	Name              string
+	TriggerIdentifier string
+}
+
+// ErrIdentifierConflict is returned by Duplicate when the desired
+// TriggerIdentifier already exists in this scope.
+var ErrIdentifierConflict = fmt.Errorf("authoring: trigger identifier already exists")
+
+// Duplicate copies an existing workflow under a new name and identifier,
+// inheriting the source's steps and payload schema, then publishes the new
+// DAG. Returns ErrIdentifierConflict (maps to 409) when the new identifier is
+// already taken. Returns store.ErrNotFound when the source slug does not exist.
+func (s *Service) Duplicate(ctx context.Context, scope domain.Scope, srcSlug string, in DuplicateInput) (domain.Workflow, error) {
+	src, err := s.store.Workflows().GetByTriggerIdentifier(ctx, scope, srcSlug)
+	if err != nil {
+		return domain.Workflow{}, err
+	}
+
+	// Check for identifier collision before writing.
+	if _, checkErr := s.store.Workflows().GetByTriggerIdentifier(ctx, scope, in.TriggerIdentifier); checkErr == nil {
+		return domain.Workflow{}, ErrIdentifierConflict
+	} else if !isNotFound(checkErr) {
+		return domain.Workflow{}, fmt.Errorf("authoring: check identifier: %w", checkErr)
+	}
+
+	newWF := domain.Workflow{
+		Name:              in.Name,
+		TriggerIdentifier: in.TriggerIdentifier,
+		Active:            true,
+		Steps:             src.Steps,
+		PayloadSchema:     src.PayloadSchema,
+	}
+	created, err := s.store.Workflows().Create(ctx, scope, newWF)
+	if err != nil {
+		return domain.Workflow{}, err
+	}
+
+	if err := s.Publish(ctx, scope, in.TriggerIdentifier); err != nil {
+		return domain.Workflow{}, err
+	}
+
+	return created, nil
+}
+
+// isNotFound reports whether err is a store.ErrNotFound sentinel.
+func isNotFound(err error) bool {
+	return errors.Is(err, store.ErrNotFound)
 }

@@ -113,6 +113,9 @@ type stepControls struct {
 // non-error response with Acknowledged=false / Status="error" (documented
 // choice: trigger ingestion is best-effort acknowledgement, mirroring the reference
 // response DTO carrying an error array rather than a transport error).
+// An inactive workflow is silently skipped: Acknowledged=false, Status="error",
+// no engine run, no notification row. This matches the activate-toggle contract
+// (spec-02 B4): deactivating a workflow causes triggers to no-op cleanly.
 func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerRequest) (TriggerResponse, error) {
 	wf, err := svc.s.Workflows().GetByTriggerIdentifier(ctx, scope, req.Name)
 	if errors.Is(err, store.ErrNotFound) {
@@ -124,6 +127,18 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 	}
 	if err != nil {
 		return TriggerResponse{}, err
+	}
+
+	// Inactive workflows must no-op at ingest time: no run is started and no
+	// notification row is written. The acknowledged=false / Status="error"
+	// shape matches the existing unknown-workflow response so callers get a
+	// consistent non-success signal without a transport error.
+	if !wf.Active {
+		return TriggerResponse{
+			Acknowledged: false,
+			Status:       "error",
+			Error:        []string{"workflow is inactive"},
+		}, nil
 	}
 
 	var steps []domain.Step

@@ -3,6 +3,7 @@ package authoring_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -232,4 +233,320 @@ func mustSteps(t *testing.T, steps []domain.Step) json.RawMessage {
 		t.Fatalf("marshal steps: %v", err)
 	}
 	return b
+}
+
+func TestUpdate_RecompilesAndReregisters(t *testing.T) {
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	defer eng.Stop()
+
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, eng)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Original",
+		TriggerIdentifier: "upd-wf",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := svc.Publish(ctx, scope, "upd-wf"); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	// Update to a two-step workflow.
+	updated, err := svc.Update(ctx, scope, "upd-wf", authoring.UpdateInput{
+		Name: "Updated",
+		Steps: []domain.Step{
+			{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"v2"}`)},
+			{StepID: "S2", Type: "email", ControlValues: json.RawMessage(`{"subject":"s","body":"b"}`)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Name != "Updated" {
+		t.Fatalf("updated.Name = %q, want Updated", updated.Name)
+	}
+	// TriggerIdentifier must not change.
+	if updated.TriggerIdentifier != "upd-wf" {
+		t.Fatalf("TriggerIdentifier changed to %q", updated.TriggerIdentifier)
+	}
+}
+
+func TestUpdate_ReturnsNotFoundForMissingWorkflow(t *testing.T) {
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	defer eng.Stop()
+
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, eng)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	_, err = svc.Update(ctx, scope, "no-such-slug", authoring.UpdateInput{
+		Name:  "X",
+		Steps: []domain.Step{{StepID: "S1", Type: "in_app"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for missing workflow")
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected store.ErrNotFound, got %v", err)
+	}
+}
+
+func TestUpdate_422OnBadDelayStep(t *testing.T) {
+	// Compile-failure test is pure (no engine needed): the bad step is caught
+	// before any store write occurs, so we can use a nil engine stand-in that
+	// is never called.
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	defer eng.Stop()
+
+	svc := authoring.New(st, eng)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "WF",
+		TriggerIdentifier: "bad-delay",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app"}},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := svc.Publish(ctx, scope, "bad-delay"); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	// Attempt to update with a delay step missing a positive amount.
+	_, err = svc.Update(ctx, scope, "bad-delay", authoring.UpdateInput{
+		Name: "Bad",
+		Steps: []domain.Step{
+			{StepID: "d1", Type: "delay", ControlValues: json.RawMessage(`{"amount":0,"unit":"seconds"}`)},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected ErrCompileFailure for bad delay step")
+	}
+	var compileErr *authoring.ErrCompileFailure
+	if !errors.As(err, &compileErr) {
+		t.Fatalf("expected *authoring.ErrCompileFailure, got %T: %v", err, err)
+	}
+}
+
+func TestDelete_RemovesWorkflow(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	defer eng.Stop()
+
+	svc := authoring.New(st, eng)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Bye",
+		TriggerIdentifier: "del-wf",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app"}},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := svc.Publish(ctx, scope, "del-wf"); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	if err := svc.Delete(ctx, scope, "del-wf"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	// GetBySlug must return ErrNotFound.
+	if _, err := svc.GetBySlug(ctx, scope, "del-wf"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+
+	// Deleting again must return ErrNotFound.
+	if err := svc.Delete(ctx, scope, "del-wf"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for double-delete, got %v", err)
+	}
+}
+
+func TestDuplicate_CopiesStepsAndPublishes(t *testing.T) {
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	defer eng.Stop()
+
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, eng)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	origSteps := []domain.Step{
+		{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hello"}`)},
+	}
+	if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Source",
+		TriggerIdentifier: "src-wf",
+		Steps:             origSteps,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := svc.Publish(ctx, scope, "src-wf"); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	dup, err := svc.Duplicate(ctx, scope, "src-wf", authoring.DuplicateInput{
+		Name:              "Source (Copy)",
+		TriggerIdentifier: "src-wf-copy",
+	})
+	if err != nil {
+		t.Fatalf("Duplicate: %v", err)
+	}
+	if dup.TriggerIdentifier != "src-wf-copy" {
+		t.Fatalf("TriggerIdentifier = %q, want src-wf-copy", dup.TriggerIdentifier)
+	}
+	if dup.Name != "Source (Copy)" {
+		t.Fatalf("Name = %q, want 'Source (Copy)'", dup.Name)
+	}
+
+	// Source steps must be inherited.
+	src, err := svc.GetBySlug(ctx, scope, "src-wf")
+	if err != nil {
+		t.Fatalf("GetBySlug src: %v", err)
+	}
+	if string(dup.Steps) != string(src.Steps) {
+		t.Fatalf("steps mismatch: dup=%s src=%s", dup.Steps, src.Steps)
+	}
+}
+
+func TestDuplicate_409OnIdentifierCollision(t *testing.T) {
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	defer eng.Stop()
+
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, eng)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	for _, slug := range []string{"dup-src", "dup-existing"} {
+		if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+			Name:              slug,
+			TriggerIdentifier: slug,
+			Steps:             []domain.Step{{StepID: "S1", Type: "in_app"}},
+		}); err != nil {
+			t.Fatalf("Create %s: %v", slug, err)
+		}
+		if err := svc.Publish(ctx, scope, slug); err != nil {
+			t.Fatalf("Publish %s: %v", slug, err)
+		}
+	}
+
+	_, err = svc.Duplicate(ctx, scope, "dup-src", authoring.DuplicateInput{
+		Name:              "Collision",
+		TriggerIdentifier: "dup-existing",
+	})
+	if err == nil {
+		t.Fatal("expected ErrIdentifierConflict for duplicate identifier")
+	}
+	if !errors.Is(err, authoring.ErrIdentifierConflict) {
+		t.Fatalf("expected ErrIdentifierConflict, got %T: %v", err, err)
+	}
+}
+
+func TestSetActive_TogglesActiveFlag(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	defer eng.Stop()
+
+	svc := authoring.New(st, eng)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Toggle",
+		TriggerIdentifier: "toggle-wf",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app"}},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := svc.Publish(ctx, scope, "toggle-wf"); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	wf, err := svc.SetActive(ctx, scope, "toggle-wf", false)
+	if err != nil {
+		t.Fatalf("SetActive false: %v", err)
+	}
+	if wf.Active {
+		t.Fatal("expected active=false after SetActive(false)")
+	}
+
+	wf, err = svc.SetActive(ctx, scope, "toggle-wf", true)
+	if err != nil {
+		t.Fatalf("SetActive true: %v", err)
+	}
+	if !wf.Active {
+		t.Fatal("expected active=true after SetActive(true)")
+	}
 }

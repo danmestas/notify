@@ -60,6 +60,10 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 			pr.Post("/v1/workflows", postWorkflow(au))
 			pr.Get("/v1/workflows", getWorkflows(au))
 			pr.Get("/v1/workflows/{slug}", getWorkflow(au))
+			pr.Put("/v1/workflows/{slug}", putWorkflow(au))
+			pr.Delete("/v1/workflows/{slug}", deleteWorkflow(au))
+			pr.Patch("/v1/workflows/{slug}/activate", patchWorkflowActivate(au))
+			pr.Post("/v1/workflows/{slug}/duplicate", postWorkflowDuplicate(au))
 		}
 		if st != nil {
 			pr.Get("/v1/notifications", getNotifications(st))
@@ -516,6 +520,186 @@ func getWorkflow(au *authoring.Service) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, workflowDetailDTO{
+			ID:                wf.ID,
+			Name:              wf.Name,
+			TriggerIdentifier: wf.TriggerIdentifier,
+			Active:            wf.Active,
+			Origin:            wf.Origin,
+			Steps:             wf.Steps,
+			PayloadSchema:     wf.PayloadSchema,
+		})
+	}
+}
+
+// workflowUpdateRequest is the PUT /v1/workflows/{slug} body.
+type workflowUpdateRequest struct {
+	Name          string                `json:"name"`
+	Steps         []workflowStepRequest `json:"steps"`
+	PayloadSchema json.RawMessage       `json:"payloadSchema,omitempty"`
+}
+
+// putWorkflow updates an existing workflow's name, steps, and payload schema,
+// recompiles the DAG, and re-registers it with the engine. Returns 404 when
+// the workflow does not exist in this scope. Returns 422 when the steps fail
+// compilation (e.g. a delay step with a non-positive amount).
+func putWorkflow(au *authoring.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slug := chi.URLParam(r, "slug")
+		var req workflowUpdateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		allowed := make(map[string]bool, len(allowedStepTypes))
+		for _, t := range allowedStepTypes {
+			allowed[t] = true
+		}
+		steps := make([]domain.Step, 0, len(req.Steps))
+		for i, s := range req.Steps {
+			if !allowed[s.Type] {
+				msg := "step[" + itoa(i) + "].type " + s.Type +
+					" is not valid; allowed: " + strings.Join(allowedStepTypes, ", ")
+				http.Error(w, msg, http.StatusUnprocessableEntity)
+				return
+			}
+			id := s.StepID
+			if id == "" {
+				id = s.Type + "-" + itoa(i)
+			}
+			steps = append(steps, domain.Step{
+				StepID:        id,
+				Type:          s.Type,
+				ControlValues: s.ControlValues,
+			})
+		}
+		scope := identity.ScopeFrom(r.Context())
+		wf, err := au.Update(r.Context(), scope, slug, authoring.UpdateInput{
+			Name:          req.Name,
+			Steps:         steps,
+			PayloadSchema: req.PayloadSchema,
+		})
+		if err != nil {
+			var compileErr *authoring.ErrCompileFailure
+			if errors.As(err, &compileErr) {
+				http.Error(w, compileErr.Error(), http.StatusUnprocessableEntity)
+				return
+			}
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "workflow not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, workflowDetailDTO{
+			ID:                wf.ID,
+			Name:              wf.Name,
+			TriggerIdentifier: wf.TriggerIdentifier,
+			Active:            wf.Active,
+			Origin:            wf.Origin,
+			Steps:             wf.Steps,
+			PayloadSchema:     wf.PayloadSchema,
+		})
+	}
+}
+
+// deleteWorkflow removes a workflow and its engine DAG registration within the
+// request Scope. Returns 404 when the workflow does not exist in this scope.
+// Returns 204 on success (no body).
+func deleteWorkflow(au *authoring.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slug := chi.URLParam(r, "slug")
+		scope := identity.ScopeFrom(r.Context())
+		if err := au.Delete(r.Context(), scope, slug); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "workflow not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// activateRequest is the PATCH /v1/workflows/{slug}/activate body.
+type activateRequest struct {
+	Active bool `json:"active"`
+}
+
+// patchWorkflowActivate toggles the active flag for the identified workflow.
+// Body: {"active": bool}. Returns 404 when the workflow does not exist in
+// this scope. Returns the updated full workflow DTO on success.
+func patchWorkflowActivate(au *authoring.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slug := chi.URLParam(r, "slug")
+		var req activateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		scope := identity.ScopeFrom(r.Context())
+		wf, err := au.SetActive(r.Context(), scope, slug, req.Active)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "workflow not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, workflowDetailDTO{
+			ID:                wf.ID,
+			Name:              wf.Name,
+			TriggerIdentifier: wf.TriggerIdentifier,
+			Active:            wf.Active,
+			Origin:            wf.Origin,
+			Steps:             wf.Steps,
+			PayloadSchema:     wf.PayloadSchema,
+		})
+	}
+}
+
+// duplicateRequest is the POST /v1/workflows/{slug}/duplicate body.
+type duplicateRequest struct {
+	Name              string `json:"name"`
+	TriggerIdentifier string `json:"triggerIdentifier"`
+}
+
+// postWorkflowDuplicate copies a workflow under a new name and identifier,
+// inherits the source steps and payload schema, and publishes the new DAG.
+// Returns 404 when the source workflow does not exist in this scope.
+// Returns 409 when the desired TriggerIdentifier is already taken.
+func postWorkflowDuplicate(au *authoring.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		srcSlug := chi.URLParam(r, "slug")
+		var req duplicateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.TriggerIdentifier == "" {
+			http.Error(w, "triggerIdentifier is required", http.StatusBadRequest)
+			return
+		}
+		scope := identity.ScopeFrom(r.Context())
+		wf, err := au.Duplicate(r.Context(), scope, srcSlug, authoring.DuplicateInput{
+			Name:              req.Name,
+			TriggerIdentifier: req.TriggerIdentifier,
+		})
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "workflow not found", http.StatusNotFound)
+				return
+			}
+			if errors.Is(err, authoring.ErrIdentifierConflict) {
+				http.Error(w, "trigger identifier already exists", http.StatusConflict)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusCreated, workflowDetailDTO{
 			ID:                wf.ID,
 			Name:              wf.Name,
 			TriggerIdentifier: wf.TriggerIdentifier,
