@@ -1,0 +1,20 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section">
+  {{template "page-header" $page.Header}}
+
+  {{/* Range selector tabs — triggers a full-page reload so both fragments
+       refresh together. Datastar handles the tab highlight via data-on:click
+       rewriting the URL; for graceful degradation the tabs are plain links. */}}
+  <nav class="analytics-range-tabs" aria-label="Time range">
+    <a href="/console/analytics?range=24h"
+       class="analytics-range-tab{{if eq $page.KPIs.Range "24h"}} is-active{{end}}">24h</a>
+    <a href="/console/analytics?range=7d"
+       class="analytics-range-tab{{if eq $page.KPIs.Range "7d"}} is-active{{end}}">7d</a>
+    <a href="/console/analytics?range=30d"
+       class="analytics-range-tab{{if eq $page.KPIs.Range "30d"}} is-active{{end}}">30d</a>
+  </nav>
+
+  {{template "analytics-kpis" $page.KPIs}}
+  {{template "analytics-charts" $page.Charts}}
+</section>
+{{end}}

@@ -1,0 +1,123 @@
+{{/*
+  analytics-charts — the analytics page chart section. Binds an analyticsChartsView.
+  The outer div carries the stable id the fragment endpoint patches.
+
+  Three charts (all inline SVG, no external charting library):
+    1. Delivery Trend — per-day sent count area/line chart
+    2. Delivery by Channel — horizontal bar chart of totals per channel
+    3. Failed by Day — per-day failed count line chart
+
+  Wave-4 placeholder cards are rendered for Workflow Runs Trend and Active
+  Subscribers Trend (require net-new aggregations).
+
+  Channel toggle: each channel pill is a Datastar signal button. Clicking
+  a channel name toggles it in/out of the analyticsChannels signal and
+  re-fetches the fragment.
+*/}}
+{{define "analytics-charts"}}
+<div id="analytics-charts" class="analytics-charts"
+     data-range="{{.Range}}"
+     data-signals__ifmissing='{"analyticsRange":"{{.Range}}","analyticsChannels":""}'>
+
+  {{/* Channel legend / toggle controls */}}
+  {{if .Channels}}
+  <section class="analytics-legend" aria-label="Channel legend">
+    <span class="analytics-legend-label">Channels</span>
+    <ul class="analytics-legend-list" role="list">
+      {{range .Channels}}
+      {{$active := index $.ActiveChannels .}}
+      <li>
+        <button type="button"
+                class="analytics-channel-toggle{{if $active}} is-active{{end}}"
+                data-channel="{{.}}"
+                data-on:click="$analyticsChannels = $analyticsChannels === $el.dataset.channel ? '' : $el.dataset.channel; @get('/console/api/fragments/analytics-charts')"
+                aria-pressed="{{if $active}}true{{else}}false{{end}}">
+          {{.}}
+        </button>
+      </li>
+      {{end}}
+    </ul>
+  </section>
+  {{end}}
+
+  {{/* Delivery Trend chart */}}
+  <section class="card analytics-chart-card" aria-label="Delivery trend">
+    <h2 class="analytics-chart-title">Delivery Trend</h2>
+    {{if .TrendChart.Empty}}
+    <p class="console-empty-state-description">No deliveries in this period.</p>
+    {{else}}
+    <svg class="analytics-chart-svg" role="img"
+         viewBox="0 0 {{.TrendChart.Width}} {{.TrendChart.Height}}"
+         width="{{.TrendChart.Width}}" height="{{.TrendChart.Height}}"
+         aria-label="{{.TrendChart.Total}} deliveries sent over the selected period">
+      <polyline fill="none" class="analytics-trend-line" points="{{.TrendChart.Points}}"></polyline>
+    </svg>
+    <p class="analytics-chart-total">{{.TrendChart.Total}} sent</p>
+    {{end}}
+  </section>
+
+  {{/* Delivery by Channel bar chart */}}
+  <section class="card analytics-chart-card" aria-label="Deliveries by channel">
+    <h2 class="analytics-chart-title">Delivery by Channel</h2>
+    {{if .ByChannelChart.Empty}}
+    <p class="console-empty-state-description">No deliveries in this period.</p>
+    {{else}}
+    <ul class="analytics-bar-chart" role="list" aria-label="Delivery counts per channel">
+      {{range .ByChannelChart.Bars}}
+      <li class="analytics-bar-row">
+        <span class="analytics-bar-label">{{.Channel}}</span>
+        <div class="analytics-bar-track" role="presentation">
+          <div class="analytics-bar-fill {{.Tone.Class}}"
+               style="width:{{.Pct}}%"
+               aria-hidden="true"></div>
+        </div>
+        <span class="analytics-bar-count">{{.Count}}</span>
+      </li>
+      {{end}}
+    </ul>
+    <p class="analytics-chart-total">{{.ByChannelChart.Total}} total</p>
+    {{end}}
+  </section>
+
+  {{/* Failed by Day chart */}}
+  <section class="card analytics-chart-card" aria-label="Failed deliveries trend">
+    <h2 class="analytics-chart-title">Failed by Day</h2>
+    {{if .FailedChart.Empty}}
+    <p class="console-empty-state-description">No failures in this period.</p>
+    {{else}}
+    <svg class="analytics-chart-svg analytics-chart-svg--failed" role="img"
+         viewBox="0 0 {{.FailedChart.Width}} {{.FailedChart.Height}}"
+         width="{{.FailedChart.Width}}" height="{{.FailedChart.Height}}"
+         aria-label="{{.FailedChart.Total}} delivery failures over the selected period">
+      <polyline fill="none" class="analytics-failed-line" points="{{.FailedChart.Points}}"></polyline>
+    </svg>
+    <p class="analytics-chart-total">{{.FailedChart.Total}} failed</p>
+    {{end}}
+  </section>
+
+  {{/* Wave-4 placeholder: Workflow Runs Trend
+       Requires GAP-AF-02 list + count aggregation by day (#44) */}}
+  {{/* TODO(#44): replace with live Workflow Runs Trend chart once
+       workflow_id filter on analytics aggregations is available (Wave 4) */}}
+  <section class="card analytics-chart-card analytics-chart-stub"
+           aria-label="Workflow Runs Trend (coming in Wave 4)">
+    <h2 class="analytics-chart-title">Workflow Runs Trend</h2>
+    <p class="console-empty-state-description">
+      Workflow run trends will be available in a future release.
+    </p>
+  </section>
+
+  {{/* Wave-4 placeholder: Active Subscribers Trend
+       Requires GAP-AF-05 CountActiveSubscribers time-series variant (#45) */}}
+  {{/* TODO(#45): replace with live Active Subscribers Trend chart once
+       CountActiveSubscribers aggregation is available (Wave 4) */}}
+  <section class="card analytics-chart-card analytics-chart-stub"
+           aria-label="Active Subscribers Trend (coming in Wave 4)">
+    <h2 class="analytics-chart-title">Active Subscribers Trend</h2>
+    <p class="console-empty-state-description">
+      Subscriber activity trends will be available in a future release.
+    </p>
+  </section>
+
+</div>
+{{end}}

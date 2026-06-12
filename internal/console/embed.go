@@ -45,6 +45,7 @@ var assetsFS embed.FS
 //go:embed templates/layout.html
 //go:embed templates/login.html
 //go:embed templates/dashboard.html
+//go:embed templates/analytics.html
 //go:embed templates/not_found.html
 //go:embed templates/error.html
 //go:embed templates/workflows.html
@@ -54,4 +55,6 @@ var assetsFS embed.FS
 //go:embed templates/partials/toast.html
 //go:embed templates/partials/dashboard_kpis.html
 //go:embed templates/partials/workflows_list.html
+//go:embed templates/partials/analytics_kpis.html
+//go:embed templates/partials/analytics_charts.html
 var templatesFS embed.FS

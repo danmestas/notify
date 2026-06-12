@@ -54,9 +54,12 @@ func TestDashboard_RendersSeededKPIsAndNav(t *testing.T) {
 		t.Errorf("nav missing the Dashboard link")
 	}
 	if !strings.Contains(body, `href="/console/workflows"`) {
-		t.Errorf("nav missing the Workflows link (should be live after W1-4)")
+		t.Errorf("nav missing the Workflows link (live after W1-4)")
 	}
-	for _, dead := range []string{`href="/console/activity"`, `href="/console/analytics"`} {
+	if !strings.Contains(body, `href="/console/analytics"`) {
+		t.Errorf("nav missing the Analytics link (live after W1-7)")
+	}
+	for _, dead := range []string{`href="/console/activity"`} {
 		if strings.Contains(body, dead) {
 			t.Errorf("nav carries a placeholder link %s before its page exists", dead)
 		}

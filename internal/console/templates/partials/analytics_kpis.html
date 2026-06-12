@@ -1,0 +1,33 @@
+{{/*
+  analytics-kpis — the analytics page KPI card grid. Binds an analyticsKPIView.
+  The outer div carries the stable id the fragment endpoint patches.
+
+  Wave 1: Messages Delivered and Failed Deliveries are live; Active Subscribers
+  and Avg Messages/Subscriber stub "—" until GAP-AF-05 aggregations land in Wave 4.
+*/}}
+{{define "analytics-kpis"}}
+<div id="analytics-kpis" class="analytics-kpis" data-range="{{.Range}}">
+  <ul class="analytics-kpi-cards" role="list">
+    <li class="analytics-kpi-card tile-tone-success">
+      <span class="analytics-kpi-value">{{.MessagesDelivered}}</span>
+      <span class="analytics-kpi-label">Messages Delivered</span>
+    </li>
+    <li class="analytics-kpi-card tile-tone-danger">
+      <span class="analytics-kpi-value">{{.FailedDeliveries}}</span>
+      <span class="analytics-kpi-label">Failed Deliveries</span>
+    </li>
+    {{/* Wave-4 stub: requires GAP-AF-05 CountActiveSubscribers aggregation */}}
+    <li class="analytics-kpi-card tile-tone-default analytics-kpi-stub"
+        title="Active subscriber counts will be available in a future release (Wave 4).">
+      <span class="analytics-kpi-value">—</span>
+      <span class="analytics-kpi-label">Active Subscribers</span>
+    </li>
+    {{/* Wave-4 stub: requires GAP-AF-05 AverageMessagesPerSubscriber aggregation */}}
+    <li class="analytics-kpi-card tile-tone-default analytics-kpi-stub"
+        title="Average messages per subscriber will be available in a future release (Wave 4).">
+      <span class="analytics-kpi-value">—</span>
+      <span class="analytics-kpi-label">Avg Messages / Subscriber</span>
+    </li>
+  </ul>
+</div>
+{{end}}

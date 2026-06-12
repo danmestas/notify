@@ -31,6 +31,7 @@ type templateSet struct {
 // entry here, add the nav entry (if any) to navGroups.
 var pageContentFiles = map[string]string{
 	"dashboard":       "templates/dashboard.html",
+	"analytics":       "templates/analytics.html",
 	"not-found":       "templates/not_found.html",
 	"error":           "templates/error.html",
 	"workflows":       "templates/workflows.html",
@@ -171,8 +172,8 @@ var navGroups = []navGroup{
 	{Label: "Workflows", Entries: []navEntry{
 		{Label: "Workflows", Href: "/console/workflows", Section: "workflows"},
 	}},
-	{Label: "Activity"},  // entries land with W1-6
-	{Label: "Analytics"}, // entries land with W1-7
+	{Label: "Activity"}, // entries land with W1-6
+	{Entries: []navEntry{{Label: "Analytics", Href: "/console/analytics", Section: "analytics"}}},
 }
 
 // pageData is what the layout template binds for every full page.

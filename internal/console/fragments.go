@@ -30,6 +30,12 @@ type fragmentEnvelope struct {
 	WFFilter string `json:"wfFilter,omitempty"`
 	// WFStatus is the workflows-list status select: ""|"active"|"inactive".
 	WFStatus string `json:"wfStatus,omitempty"`
+	// AnalyticsRange is the analytics page time-window token ("24h", "7d",
+	// "30d"). Empty defaults to "7d".
+	AnalyticsRange string `json:"analyticsRange,omitempty"`
+	// AnalyticsChannels is a comma-separated list of toggled-on channel
+	// names for the analytics charts. Empty means all channels.
+	AnalyticsChannels string `json:"analyticsChannels,omitempty"`
 }
 
 // mergeFragmentParams merges the request's URL query with the Datastar
@@ -78,6 +84,10 @@ func envelopeToQuery(env fragmentEnvelope, key string) (string, string) {
 		return "q", env.WFFilter
 	case "wfStatus":
 		return "status", env.WFStatus
+	case "analyticsRange":
+		return "range", env.AnalyticsRange
+	case "analyticsChannels":
+		return "channels", env.AnalyticsChannels
 	}
 	return "", ""
 }

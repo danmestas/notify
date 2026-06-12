@@ -128,6 +128,9 @@ func New(deps Deps) *Console {
 //	GET  /console/workflows                               workflows list page
 //	GET  /console/api/fragments/workflows-list            workflows list fragment (PatchElements SSE)
 //	GET  /console/workflows/{slug}                        workflow detail page (read-only)
+//	GET  /console/analytics                               analytics page
+//	GET  /console/api/fragments/analytics-kpis            analytics KPI fragment (PatchElements SSE)
+//	GET  /console/api/fragments/analytics-charts          analytics charts fragment (PatchElements SSE)
 //	*                                                     layout-wrapped 404
 func (c *Console) Routes() http.Handler {
 	if c == nil {
@@ -154,6 +157,9 @@ func (c *Console) Routes() http.Handler {
 		pr.Get("/console/workflows", c.serveWorkflowsList)
 		pr.Get("/console/api/fragments/workflows-list", c.serveFragmentWorkflowsList)
 		pr.Get("/console/workflows/{slug}", c.serveWorkflowDetail)
+		pr.Get("/console/analytics", c.servePageAnalytics)
+		pr.Get("/console/api/fragments/analytics-kpis", c.serveFragmentAnalyticsKPIs)
+		pr.Get("/console/api/fragments/analytics-charts", c.serveFragmentAnalyticsCharts)
 	})
 
 	// Unmatched /console/* paths go through the full session gate, same
