@@ -29,6 +29,7 @@ import (
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/webhooksout"
 )
 
 // testConsole bundles everything a console test needs: the constructed
@@ -74,6 +75,7 @@ func newTestConsole(t *testing.T) *testConsole {
 		Integrations:  st.Integrations(),
 		Connectivity:  conn,
 		Audience:      audience.New(st),
+		Webhooks:      webhooksout.NewManagement(st),
 		MasterKey:     masterKey,
 	}
 	c := New(deps)

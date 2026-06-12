@@ -17,6 +17,7 @@ import (
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/webhooksout"
 )
 
 // devMode reflects NOTIFY_DEV=1 at process start. When true the asset
@@ -77,6 +78,9 @@ type Deps struct {
 	// (W2-C3, W2-C4, W2-C5). Nil is allowed only when no subscriber/topic
 	// routes are mounted; in practice New panics when Audience is nil.
 	Audience *audience.Service
+	// Webhooks is the webhook management service for CRUD (W2-D2).
+	// Nil is allowed only when no webhook routes are mounted.
+	Webhooks *webhooksout.ManagementService
 	// ReadOnly disables every mutation button via the actionButton
 	// template helper and renders the read-only banner. The chassis has
 	// no mutations beyond login/logout (which stay enabled — an operator
@@ -239,6 +243,14 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/topics/{key}/subscribers/{subscriberId}/remove", c.handleTopicRemoveSubscriber)
 		pr.Get("/console/api/fragments/topics-list", c.serveFragmentTopicsList)
 		pr.Get("/console/api/fragments/subscriber-autocomplete", c.serveFragmentSubscriberAutocomplete)
+		// W2-D2: webhook endpoint management
+		pr.Get("/console/webhooks", c.serveWebhooksPage)
+		pr.Get("/console/webhooks/new", c.serveWebhookNew)
+		pr.Post("/console/webhooks", c.handleWebhookCreate)
+		pr.Post("/console/api/webhooks/{id}/toggle", c.handleWebhookToggle)
+		pr.Post("/console/api/webhooks/{id}/delete", c.handleWebhookDelete)
+		pr.Post("/console/api/webhooks/{id}", c.handleWebhookUpdate)
+		pr.Get("/console/api/fragments/webhooks-list", c.serveFragmentWebhooksList)
 	})
 
 	// Unmatched /console/* paths go through the full session gate, same

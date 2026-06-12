@@ -57,6 +57,8 @@ type fragmentEnvelope struct {
 	// Topic list filter signals (W2-C4).
 	TopicsName string `json:"topicsName,omitempty"`
 	TopicsKey  string `json:"topicsKey,omitempty"`
+	// Webhooks list filter signal (W2-D2).
+	WebhooksFilter string `json:"webhooksFilter,omitempty"`
 }
 
 // mergeFragmentParams merges the request's URL query with the Datastar
@@ -143,6 +145,9 @@ func envelopeToQuery(env fragmentEnvelope, key string) (string, string) {
 		return "topicsName", env.TopicsName
 	case "topicsKey":
 		return "topicsKey", env.TopicsKey
+	// Webhooks list filter signal (W2-D2).
+	case "webhooksFilter":
+		return "q", env.WebhooksFilter
 	}
 	return "", ""
 }

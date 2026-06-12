@@ -1,0 +1,66 @@
+{{/*
+  webhooks-tbody — PatchElements fragment target for the webhooks list.
+  Binds webhooksListView.
+*/}}
+{{define "webhooks-tbody"}}{{$v := .}}
+<div id="webhooks-tbody" data-component="webhooks-tbody">
+  {{if eq (len $v.Rows) 0}}
+  <p class="console-muted">No webhook endpoints configured. Add one to start receiving delivery events.</p>
+  {{else}}
+  <table class="console-table">
+    <thead>
+      <tr>
+        <th>URL</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range $v.Rows}}
+      {{if eq $v.ConfirmDelete .ID}}
+      {{/* Two-step inline confirm row */}}
+      <tr id="webhook-row-{{.ID}}" class="confirm-row">
+        <td colspan="2">
+          <span class="console-confirm-label">Delete <code>{{.URL}}</code>? This cannot be undone.</span>
+        </td>
+        <td>
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/webhooks-list')">Cancel</button>
+          <form method="POST" action="/console/api/webhooks/{{.ID}}/delete" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
+            <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr id="webhook-row-{{.ID}}">
+        <td>
+          <code class="chip chip-default">{{.URL}}</code>
+        </td>
+        <td>
+          {{if .Active}}
+          <span class="chip chip-success">Active</span>
+          {{else}}
+          <span class="chip chip-warning">Inactive</span>
+          {{end}}
+        </td>
+        <td class="console-action-row">
+          {{if not $v.ReadOnly}}
+          <form method="POST" action="/console/api/webhooks/{{.ID}}/toggle" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
+            <button type="submit" class="btn btn-outline btn-sm">
+              {{if .Active}}Disable{{else}}Enable{{end}}
+            </button>
+          </form>
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/webhooks-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</div>
+{{end}}

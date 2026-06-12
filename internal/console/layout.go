@@ -43,6 +43,7 @@ var pageContentFiles = map[string]string{
 	"subscriber-detail": "templates/subscriber_detail.html",
 	"topics":            "templates/topics.html",
 	"topic-detail":      "templates/topic_detail.html",
+	"webhooks":          "templates/webhooks.html",
 }
 
 // loadTemplates builds the base tree and the per-page clones. Template
@@ -180,6 +181,7 @@ var navGroups = []navGroup{
 	{Entries: []navEntry{{Label: "Integrations", Href: "/console/integrations", Section: "integrations"}}},
 	{Entries: []navEntry{{Label: "Subscribers", Href: "/console/subscribers", Section: "subscribers"}}},
 	{Entries: []navEntry{{Label: "Topics", Href: "/console/topics", Section: "topics"}}},
+	{Entries: []navEntry{{Label: "Webhooks", Href: "/console/webhooks", Section: "webhooks"}}},
 }
 
 // pageData is what the layout template binds for every full page.

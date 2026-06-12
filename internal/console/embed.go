@@ -71,4 +71,6 @@ var assetsFS embed.FS
 //go:embed templates/partials/subscribers_tbody.html
 //go:embed templates/partials/topics_tbody.html
 //go:embed templates/partials/subscriber_autocomplete.html
+//go:embed templates/webhooks.html
+//go:embed templates/partials/webhooks_tbody.html
 var templatesFS embed.FS
