@@ -1,0 +1,41 @@
+{{/*
+  dashboard-kpis — the dashboard's KPI card strip + sparkline. Binds a
+  kpiView. The outer div carries the stable id the fragment endpoint
+  (/console/api/fragments/dashboard-kpis) patches; this template is the
+  reference example of the one-fragment-one-id convention.
+*/}}
+{{define "dashboard-kpis"}}
+<div id="dashboard-kpis" class="dashboard-kpis" data-channel="{{.Channel}}">
+  <section class="kpi-cards" aria-label="Delivery counts">
+    <ul class="page-header-tiles" role="list">
+      {{range .Tiles}}
+      <li class="page-header-tile {{.Tone.Class}}" data-tone="{{.Tone}}">
+        <span class="page-header-tile-count">{{.Count}}</span>
+        <span class="page-header-tile-label">{{.Label}}</span>
+      </li>
+      {{end}}
+      <li class="page-header-tile tile-tone-info" data-tone="info">
+        <span class="page-header-tile-count">{{.WorkflowCount}}</span>
+        <span class="page-header-tile-label">workflows</span>
+      </li>
+    </ul>
+  </section>
+  <section class="card dashboard-spark" aria-label="Deliveries, last 7 days">
+    <h2 class="dashboard-spark-title">Deliveries · last 7 days</h2>
+    {{if .Spark.Empty}}
+    <p class="console-empty-state-description">No deliveries in the last 7 days.</p>
+    {{else}}
+    <svg class="dashboard-sparkline" viewBox="0 0 {{.Spark.Width}} {{.Spark.Height}}"
+         width="{{.Spark.Width}}" height="{{.Spark.Height}}" role="img"
+         aria-label="{{.Spark.Total}} deliveries over the last 7 days">
+      <polyline fill="none" points="{{.Spark.Points}}"></polyline>
+    </svg>
+    <ul class="dashboard-spark-days" role="list">
+      {{range .Spark.Days}}
+      <li title="{{.Day}}: {{.Count}} deliveries"><span class="dashboard-spark-count">{{.Count}}</span></li>
+      {{end}}
+    </ul>
+    {{end}}
+  </section>
+</div>
+{{end}}

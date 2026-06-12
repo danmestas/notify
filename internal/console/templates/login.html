@@ -1,0 +1,35 @@
+{{define "login"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in — notify console</title>
+  <link rel="stylesheet" href="/console/assets/app.css">
+</head>
+<body class="console-login-body">
+  <main class="console-login-card">
+    <div class="console-brand console-login-brand">
+      <span class="console-mark" aria-hidden="true"></span>
+      <span class="console-name">notify console</span>
+    </div>
+    <h1>Sign in</h1>
+    <p class="console-lede">
+      Paste an environment API key to open the operator console.
+    </p>
+    {{if .Error}}
+    <p class="console-form-error" role="alert">{{.Error}}</p>
+    {{end}}
+    <form method="post" action="/console/login">
+      <label for="api_key">API key</label>
+      <input type="password" id="api_key" name="api_key"
+             autocomplete="off" autofocus required
+             placeholder="paste your API key">
+      <button type="submit" class="btn btn-primary">Sign in</button>
+    </form>
+    <p class="console-login-hint">
+      Keys are minted by <code class="console-mono">notify bootstrap</code>.
+      The session lives in an encrypted cookie scoped to /console.
+    </p>
+  </main>
+</body>
+</html>{{end}}

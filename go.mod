@@ -6,14 +6,18 @@ require (
 	github.com/aymerick/raymond v2.0.2+incompatible
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/nats-io/nats.go v1.50.0
+	github.com/starfederation/datastar-go v1.2.1
 	modernc.org/sqlite v1.52.0
 )
 
 require (
+	github.com/CAFxX/httpcompression v0.0.9 // indirect
+	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.21 // indirect
 	github.com/duckdb/duckdb-go-bindings/linux-amd64 v0.1.21 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/marcboeker/go-duckdb/mapping v0.0.21 // indirect
+	github.com/valyala/bytebufferpool v1.0.0 // indirect
 )
 
 require (

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -23,6 +24,7 @@ import (
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
+	"github.com/danmestas/notify/internal/console"
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/eventbus"
@@ -178,7 +180,25 @@ func runServe(args []string) error {
 	defer func() { _ = anStop() }()
 
 	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag, ing, conn, st, au)
-	srv := &http.Server{Addr: *addr, Handler: handler}
+
+	// Operator console: same listener, mounted at /console ahead of the
+	// public API. All console reads go through the same Scope-carrying
+	// services in-process.
+	consoleRoutes := console.New(console.Deps{
+		Logger:            slog.Default(),
+		Identity:          id,
+		Authoring:         au,
+		Analytics:         an,
+		MasterKey:         mk,
+		DagnatsConsoleURL: os.Getenv("NOTIFY_DAGNATS_CONSOLE_URL"),
+		ReadOnly:          os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",
+	}).Routes()
+	root := http.NewServeMux()
+	root.Handle("/console", consoleRoutes)
+	root.Handle("/console/", consoleRoutes)
+	root.Handle("/", handler)
+
+	srv := &http.Server{Addr: *addr, Handler: root}
 
 	go func() {
 		<-ctx.Done()

@@ -1,0 +1,15 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section">
+  <header class="page-header">
+    <h1>Page not found</h1>
+    <p class="console-lede">
+      {{if $page.Path}}<code class="console-mono">{{$page.Path}}</code>
+      doesn't exist in this console.{{else}}The requested path doesn't
+      exist.{{end}}
+    </p>
+  </header>
+  <p>
+    <a class="btn btn-outline" href="/console/">Return to dashboard</a>
+  </p>
+</section>
+{{end}}

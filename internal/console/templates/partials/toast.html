@@ -1,0 +1,10 @@
+{{/*
+  toast — the notification outlet patched by mutation responses. The
+  stable id is the PatchElements target; an empty message renders the
+  hidden idle shell. Mutation endpoints either patch this element or
+  answer with the toast-lift JSON shape ({"toast": "..."}).
+*/}}
+{{define "toast"}}
+<div id="console-toast" class="console-toast{{if .}} is-visible{{end}}"
+     role="status" aria-live="polite">{{.}}</div>
+{{end}}

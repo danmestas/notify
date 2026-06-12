@@ -1,0 +1,25 @@
+{{/*
+  page-header — one uniform header for every console page. Binds a
+  pageHeader (Title, Subtitle, Tiles []tile); each tile's Tone renders
+  via the typed tileTone.Class method (see layout.go).
+*/}}
+{{define "page-header"}}
+<header class="page-header" data-component="page-header">
+  <div class="page-header-title-row">
+    <h1>{{.Title}}</h1>
+  </div>
+  {{if .Subtitle}}<p class="console-lede">{{.Subtitle}}</p>{{end}}
+  {{if .Tiles}}
+  <ul class="page-header-tiles" role="list">
+    {{range .Tiles}}
+    <li class="page-header-tile {{.Tone.Class}}" data-tone="{{.Tone}}">
+      {{if .Href}}<a class="page-header-tile-link" href="{{.Href}}"{{if .Tooltip}} title="{{.Tooltip}}"{{end}}>{{end}}
+      <span class="page-header-tile-count">{{.Count}}</span>
+      <span class="page-header-tile-label">{{.Label}}</span>
+      {{if .Href}}</a>{{end}}
+    </li>
+    {{end}}
+  </ul>
+  {{end}}
+</header>
+{{end}}

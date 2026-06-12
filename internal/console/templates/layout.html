@@ -1,0 +1,74 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — notify console</title>
+  <link rel="stylesheet" href="/console/assets/app.css">
+  <script>
+    // Apply the persisted theme before first paint to avoid the
+    // light → dark flash. The attribute lives on <html> so the html
+    // element paints the chosen palette (dagnats layout idiom);
+    // theme.js owns the toggle UI, this stub owns early render only.
+    (function () {
+      try {
+        var t = localStorage.getItem("notify-console-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (_) {}
+    })();
+  </script>
+  <script type="module">
+    // Datastar is a native ES module; importing it registers every
+    // data-* plugin and schedules the engine's own deferred apply().
+    // The namespace lands on window.datastar so the browser smoke test
+    // can introspect bootstrap state (dagnats app.js idiom).
+    import * as datastar from "/console/assets/datastar.js";
+    window.datastar = datastar;
+  </script>
+  <script src="/console/assets/theme.js" defer></script>
+</head>
+<body>
+  <header class="console-header">
+    <div class="console-header-inner">
+      <a href="/console/" class="console-brand">
+        <span class="console-mark" aria-hidden="true"></span>
+        <span class="console-name">notify</span>
+      </a>
+      <nav class="console-nav" aria-label="primary">
+        {{range .Nav}}{{if .Entries}}
+        {{if .Label}}<span class="console-nav-group" aria-hidden="true">{{.Label}}</span>{{end}}
+        {{range .Entries}}
+        <a href="{{.Href}}" class="{{if eq $.Section .Section}}is-active{{end}}">{{.Label}}</a>
+        {{end}}
+        {{end}}{{end}}
+      </nav>
+      <div class="console-header-utils">
+        {{if .Scope.EnvID}}
+        <span class="console-actor" title="org {{.Scope.OrgID}} · env {{.Scope.EnvID}}">env {{.Scope.EnvID}}</span>
+        {{end}}
+        <button type="button" id="theme-toggle" class="theme-toggle"
+                data-theme-mode="system"
+                aria-label="Theme: system (click to cycle)">
+          <span class="theme-toggle-label">System</span>
+        </button>
+        <form method="post" action="/console/logout" class="console-logout">
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <button type="submit" class="btn btn-outline">Sign out</button>
+        </form>
+      </div>
+    </div>
+  </header>
+  <main class="console-main">
+    {{if .ReadOnly}}
+    <div class="console-readonly-banner" role="status">
+      <strong>Read-only mode</strong>
+      <span>Mutations are disabled for this console instance.</span>
+    </div>
+    {{end}}
+    {{template "content" .}}
+  </main>
+  <div id="toast-outlet">{{template "toast" ""}}</div>
+</body>
+</html>{{end}}

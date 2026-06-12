@@ -1,0 +1,12 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section">
+  {{template "page-header" $page.Header}}
+  {{template "dashboard-kpis" $page.KPIs}}
+  <p class="dashboard-refresh-row">
+    <button type="button" class="btn btn-outline"
+            data-on:click="@get('/console/api/fragments/dashboard-kpis')">
+      Refresh
+    </button>
+  </p>
+</section>
+{{end}}

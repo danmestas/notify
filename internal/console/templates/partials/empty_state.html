@@ -1,0 +1,32 @@
+{{/*
+  empty-state — shared educational empty body (dagnats idiom). Binds an
+  emptyState (Icon, Title, Description, PrimaryAction, ReadOnly); the
+  information hierarchy is icon → title → description → optional action.
+*/}}
+{{define "empty-state"}}{{with .}}
+<div class="console-empty-state" data-component="empty-state">
+  {{if .Icon}}
+  <span class="console-empty-state-icon" data-kind="{{.Icon}}" aria-hidden="true">{{.Icon}}</span>
+  {{end}}
+  <h2 class="console-empty-state-title">{{.Title}}</h2>
+  <p class="console-empty-state-description">{{.Description}}</p>
+  {{with .PrimaryAction}}
+  {{template "action-button" (actionArgs .Label .Href $.ReadOnly)}}
+  {{end}}
+</div>
+{{end}}{{end}}
+
+{{/*
+  action-button — the ReadOnly-aware mutation CTA. Binds an actionButton
+  (Label, Href, ReadOnly). Read-only consoles render the button visible
+  but disabled with an explanatory tooltip, so the operator sees what
+  they would have been able to do.
+*/}}
+{{define "action-button"}}
+{{if .ReadOnly}}
+<span class="btn btn-outline console-action" aria-disabled="true"
+      title="Console is read-only; mutations are disabled.">{{.Label}}</span>
+{{else}}
+<a class="btn btn-outline console-action" href="{{.Href}}">{{.Label}}</a>
+{{end}}
+{{end}}
