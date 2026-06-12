@@ -24,6 +24,7 @@ import (
 
 	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/authoring"
+	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/store"
@@ -61,6 +62,7 @@ func newTestConsole(t *testing.T) *testConsole {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
+	conn := connectivity.New(st, masterKey)
 	deps := Deps{
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Identity:      id,
@@ -68,6 +70,8 @@ func newTestConsole(t *testing.T) *testConsole {
 		Analytics:     analytics.New(st, nil),
 		Notifications: st.Notifications(),
 		Messages:      st.Messages(),
+		Integrations:  st.Integrations(),
+		Connectivity:  conn,
 		MasterKey:     masterKey,
 	}
 	c := New(deps)
@@ -81,6 +85,10 @@ func newTestConsole(t *testing.T) *testConsole {
 		dbPath: dbPath,
 	}
 }
+
+// testBackground returns a context.Background for use in test helper calls
+// that don't have a *testing.T in scope. This keeps test code readable.
+func testBackground() context.Context { return context.Background() }
 
 // revokeAllKeys deletes every API key row by opening the temp SQLite file
 // directly (the store does not — and should not — export raw handles).
@@ -210,4 +218,29 @@ func (tc *testConsole) seedMessage(t *testing.T, m domain.Message) domain.Messag
 		t.Fatalf("seed message: %v", err)
 	}
 	return created
+}
+
+// seedIntegration creates an integration directly via the store for
+// integrations-page tests. EncCredentials must be supplied by the caller
+// (use []byte("fake-ciphertext") for unit tests that never decrypt).
+func (tc *testConsole) seedIntegration(t *testing.T, in domain.Integration) domain.Integration {
+	t.Helper()
+	created, err := tc.st.Integrations().Create(context.Background(), tc.scope, in)
+	if err != nil {
+		t.Fatalf("seed integration: %v", err)
+	}
+	return created
+}
+
+// postForm issues an authenticated form POST and returns the recorder.
+func (tc *testConsole) postForm(t *testing.T, path string, values url.Values, cookie *http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	rr := httptest.NewRecorder()
+	tc.h.ServeHTTP(rr, req)
+	return rr
 }

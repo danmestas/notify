@@ -1,0 +1,510 @@
+// integrations_test.go proves the W2 integrations store page and fragment
+// endpoints. Pattern follows analytics_test.go: production services over a
+// temp SQLite store, full login/session stack, white-box template assertions.
+//
+// Test index:
+//
+//	TestIntegrations_PageRenderWithSeededIntegrations  — page renders rows
+//	TestIntegrations_PageEmptyState                    — empty store empty-states
+//	TestIntegrations_UnauthenticatedRedirectsToLogin   — auth gate
+//	TestIntegrations_NavEntryIsLive                    — nav link present
+//	TestIntegrations_CredentialsNeverRenderedRaw       — sentinel, not real secrets
+//	TestFragment_IntegrationsGrid_SSEFraming           — SSE content-type
+//	TestFragment_IntegrationsGrid_FilterByChannel      — channel filter
+//	TestFragment_IntegrationsGrid_SeededRows           — row content present
+//	TestFragment_IntegrationDetail_SSEFraming          — detail SSE
+//	TestFragment_IntegrationDetail_CredentialsMasked   — credentials are masked
+//	TestFragment_IntegrationDetail_EmptyOnMissingID    — missing id → empty panel
+//	TestIntegrations_MutationBlockedWhenReadOnly       — ReadOnly gate on mutations
+//	TestIntegrations_ToggleActive_ReadOnlyBlocked      — ReadOnly toggle gate
+//	TestIntegrations_Delete_ReadOnlyBlocked            — ReadOnly delete gate
+//	TestIntegrations_Update_ReadOnlyBlocked            — ReadOnly update gate
+//	TestIntegrations_Create_ReadOnlyBlocked            — ReadOnly create gate
+//	TestIntegrations_ScopeIsolation                    — alt-scope rows not visible
+//	TestIntegrations_RouteAuth                         — all new routes behind session gate
+package console
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/danmestas/notify/internal/connectivity"
+	"github.com/danmestas/notify/internal/domain"
+)
+
+// ─── page render ─────────────────────────────────────────────────────────────
+
+func TestIntegrations_PageRenderWithSeededIntegrations(t *testing.T) {
+	tc := newTestConsole(t)
+
+	tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Primary:        true,
+		Identifier:     "smtp-primary",
+		EncCredentials: []byte("fake-ciphertext"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/integrations", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations: status = %d, want 200 (body: %s)",
+			rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, "Integration Store") {
+		t.Errorf("integrations page missing title")
+	}
+	if !strings.Contains(body, "smtp-primary") {
+		t.Errorf("integrations page missing seeded identifier")
+	}
+	if !strings.Contains(body, `id="integrations-grid"`) {
+		t.Errorf("integrations page missing #integrations-grid")
+	}
+	if !strings.Contains(body, `id="integration-detail"`) {
+		t.Errorf("integrations page missing #integration-detail")
+	}
+	// Credentials must NEVER appear raw.
+	if strings.Contains(body, "fake-ciphertext") {
+		t.Errorf("integrations page leaked raw enc_credentials blob")
+	}
+}
+
+func TestIntegrations_PageEmptyState(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/integrations", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "No integrations yet") {
+		t.Errorf("empty integrations page missing empty-state copy")
+	}
+}
+
+func TestIntegrations_UnauthenticatedRedirectsToLogin(t *testing.T) {
+	tc := newTestConsole(t)
+	rr := tc.get(t, "/console/integrations", nil)
+	if rr.Code != http.StatusSeeOther {
+		t.Errorf("unauthenticated /console/integrations: status = %d, want 303", rr.Code)
+	}
+	if got := rr.Header().Get("Location"); got != "/console/login" {
+		t.Errorf("redirect location = %q, want /console/login", got)
+	}
+}
+
+func TestIntegrations_NavEntryIsLive(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/integrations", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations: status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `href="/console/integrations"`) {
+		t.Errorf("integrations page missing nav link")
+	}
+	// Nav entry should be marked active.
+	if !strings.Contains(body, `is-active`) {
+		t.Errorf("integrations page nav link not marked as active")
+	}
+}
+
+// TestIntegrations_CredentialsNeverRenderedRaw is the key security assertion:
+// the page HTML must contain the masked sentinel but never the raw secret.
+func TestIntegrations_CredentialsNeverRenderedRaw(t *testing.T) {
+	tc := newTestConsole(t)
+
+	// Seed via connectivity so real credentials are stored encrypted.
+	_, err := tc.deps.Connectivity.CreateSMTP(
+		testBackground(), tc.scope, "smtp-test",
+		connectivity.SMTPConfig{
+			Addr:     "smtp.example.com:587",
+			Host:     "smtp.example.com",
+			Username: "user@example.com",
+			Password: "s3cr3t-p4ssword",
+			From:     "noreply@example.com",
+		},
+		false,
+	)
+	if err != nil {
+		t.Fatalf("CreateSMTP: %v", err)
+	}
+
+	integrations, err := tc.st.Integrations().List(testBackground(), tc.scope)
+	if err != nil || len(integrations) == 0 {
+		t.Fatalf("list integrations: err=%v, count=%d", err, len(integrations))
+	}
+	id := integrations[0].ID
+
+	cookie, _ := tc.login(t)
+
+	// Check page
+	rr := tc.get(t, "/console/integrations", cookie)
+	body := rr.Body.String()
+	if strings.Contains(body, "s3cr3t-p4ssword") {
+		t.Errorf("page leaked raw password in page HTML")
+	}
+
+	// Check detail fragment
+	rr = tc.getWithQuery(t, "/console/api/fragments/integration-detail",
+		url.Values{"id": {id}}.Encode(), cookie)
+	body = rr.Body.String()
+	if strings.Contains(body, "s3cr3t-p4ssword") {
+		t.Errorf("detail fragment leaked raw password")
+	}
+	// Sentinel must be present.
+	if !strings.Contains(body, connectivity.CredentialMaskSentinel) {
+		t.Errorf("detail fragment missing credential mask sentinel %q", connectivity.CredentialMaskSentinel)
+	}
+}
+
+// ─── grid fragment ────────────────────────────────────────────────────────────
+
+func TestFragment_IntegrationsGrid_SSEFraming(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "smtp-1",
+		EncCredentials: []byte("fake"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/integrations-grid", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("integrations grid fragment: status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "datastar-patch-elements") {
+		t.Errorf("grid fragment missing SSE event marker")
+	}
+	if !strings.Contains(body, `id="integrations-grid"`) {
+		t.Errorf("grid fragment missing stable patch target id")
+	}
+}
+
+func TestFragment_IntegrationsGrid_SeededRows(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "smtp-visible",
+		EncCredentials: []byte("fake"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/integrations-grid", cookie)
+	body := rr.Body.String()
+	if !strings.Contains(body, "smtp-visible") {
+		t.Errorf("grid fragment missing seeded identifier")
+	}
+}
+
+func TestFragment_IntegrationsGrid_FilterByChannel(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "smtp-email",
+		EncCredentials: []byte("fake"),
+	})
+	tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "ntfy",
+		Channel:        "push",
+		Active:         true,
+		Identifier:     "ntfy-push",
+		EncCredentials: []byte("fake"),
+	})
+	cookie, _ := tc.login(t)
+
+	// Filter for email only — should see smtp but not ntfy.
+	rr := tc.getWithQuery(t, "/console/api/fragments/integrations-grid",
+		url.Values{"channel": {"email"}}.Encode(), cookie)
+	body := rr.Body.String()
+	if !strings.Contains(body, "smtp-email") {
+		t.Errorf("email-filtered grid missing smtp-email")
+	}
+	if strings.Contains(body, "ntfy-push") {
+		t.Errorf("email-filtered grid leaked ntfy-push")
+	}
+
+	// Filter for push only.
+	rr = tc.getWithQuery(t, "/console/api/fragments/integrations-grid",
+		url.Values{"channel": {"push"}}.Encode(), cookie)
+	body = rr.Body.String()
+	if !strings.Contains(body, "ntfy-push") {
+		t.Errorf("push-filtered grid missing ntfy-push")
+	}
+	if strings.Contains(body, "smtp-email") {
+		t.Errorf("push-filtered grid leaked smtp-email")
+	}
+}
+
+// ─── detail fragment ──────────────────────────────────────────────────────────
+
+func TestFragment_IntegrationDetail_SSEFraming(t *testing.T) {
+	tc := newTestConsole(t)
+	row := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "smtp-detail",
+		EncCredentials: []byte("fake"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.getWithQuery(t, "/console/api/fragments/integration-detail",
+		url.Values{"id": {row.ID}}.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("detail fragment: status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "datastar-patch-elements") {
+		t.Errorf("detail fragment missing SSE event marker")
+	}
+	if !strings.Contains(body, `id="integration-detail"`) {
+		t.Errorf("detail fragment missing stable patch target id")
+	}
+}
+
+func TestFragment_IntegrationDetail_CredentialsMasked(t *testing.T) {
+	tc := newTestConsole(t)
+
+	_, err := tc.deps.Connectivity.CreateSMTP(
+		testBackground(), tc.scope, "smtp-masked",
+		connectivity.SMTPConfig{
+			Addr:     "smtp.example.com:587",
+			Host:     "smtp.example.com",
+			Username: "u@example.com",
+			Password: "top-secret",
+			From:     "noreply@example.com",
+		},
+		false,
+	)
+	if err != nil {
+		t.Fatalf("CreateSMTP: %v", err)
+	}
+	integrations, err := tc.st.Integrations().List(testBackground(), tc.scope)
+	if err != nil || len(integrations) == 0 {
+		t.Fatalf("list: err=%v count=%d", err, len(integrations))
+	}
+
+	cookie, _ := tc.login(t)
+	rr := tc.getWithQuery(t, "/console/api/fragments/integration-detail",
+		url.Values{"id": {integrations[0].ID}}.Encode(), cookie)
+	body := rr.Body.String()
+
+	if strings.Contains(body, "top-secret") {
+		t.Errorf("detail fragment leaked raw password 'top-secret'")
+	}
+	if !strings.Contains(body, connectivity.CredentialMaskSentinel) {
+		t.Errorf("detail fragment missing sentinel %q", connectivity.CredentialMaskSentinel)
+	}
+}
+
+func TestFragment_IntegrationDetail_EmptyOnMissingID(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	// No id param → empty panel.
+	rr := tc.get(t, "/console/api/fragments/integration-detail", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("empty detail fragment: status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `id="integration-detail"`) {
+		t.Errorf("empty detail fragment missing target id")
+	}
+
+	// Non-existent id → empty panel (not 404).
+	rr = tc.getWithQuery(t, "/console/api/fragments/integration-detail",
+		url.Values{"id": {"nonexistent-id"}}.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("not-found detail fragment: status = %d", rr.Code)
+	}
+}
+
+// ─── read-only gate ────────────────────────────────────────────────────────
+
+// newReadOnlyTestConsole is newTestConsole but with ReadOnly=true.
+func newReadOnlyTestConsole(t *testing.T) *testConsole {
+	t.Helper()
+	tc := newTestConsole(t)
+	tc.deps.ReadOnly = true
+	// Rebuild with ReadOnly set.
+	c := New(tc.deps)
+	tc.c = c
+	tc.h = c.Routes()
+	return tc
+}
+
+func TestIntegrations_MutationBlockedWhenReadOnly(t *testing.T) {
+	tc := newReadOnlyTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	// The page should render (GET is still allowed).
+	rr := tc.get(t, "/console/integrations", cookie)
+	if rr.Code != http.StatusOK {
+		t.Errorf("read-only integrations page: status = %d, want 200", rr.Code)
+	}
+}
+
+func TestIntegrations_Create_ReadOnlyBlocked(t *testing.T) {
+	tc := newReadOnlyTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.postForm(t, "/console/integrations",
+		url.Values{"provider_id": {"smtp"}, "identifier": {"x"}},
+		cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("read-only create: status = %d, want 403", rr.Code)
+	}
+}
+
+func TestIntegrations_Update_ReadOnlyBlocked(t *testing.T) {
+	tc := newReadOnlyTestConsole(t)
+	row := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "ro-update",
+		EncCredentials: []byte("fake"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.postForm(t, "/console/integrations/"+row.ID,
+		url.Values{"_method": {"PUT"}, "identifier": {"changed"}},
+		cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("read-only update: status = %d, want 403", rr.Code)
+	}
+}
+
+func TestIntegrations_Delete_ReadOnlyBlocked(t *testing.T) {
+	tc := newReadOnlyTestConsole(t)
+	row := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "ro-delete",
+		EncCredentials: []byte("fake"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.postForm(t, "/console/integrations/"+row.ID+"/delete",
+		url.Values{},
+		cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("read-only delete: status = %d, want 403", rr.Code)
+	}
+}
+
+func TestIntegrations_ToggleActive_ReadOnlyBlocked(t *testing.T) {
+	tc := newReadOnlyTestConsole(t)
+	row := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "ro-toggle",
+		EncCredentials: []byte("fake"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.postForm(t, "/console/integrations/"+row.ID+"/active",
+		url.Values{"active": {"false"}},
+		cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("read-only toggle: status = %d, want 403", rr.Code)
+	}
+}
+
+// ─── scope isolation ─────────────────────────────────────────────────────────
+
+func TestIntegrations_ScopeIsolation(t *testing.T) {
+	tc := newTestConsole(t)
+	altScope := tc.altScope(t)
+
+	// Seed one integration under the test scope and one under the alt scope.
+	tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "mine",
+		EncCredentials: []byte("fake"),
+	})
+	// Seed directly into altScope via store.
+	_, err := tc.st.Integrations().Create(testBackground(), altScope, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "not-mine",
+		EncCredentials: []byte("fake"),
+	})
+	if err != nil {
+		t.Fatalf("seed alt integration: %v", err)
+	}
+
+	cookie, _ := tc.login(t)
+
+	// Page must show "mine" but not "not-mine".
+	rr := tc.get(t, "/console/integrations", cookie)
+	body := rr.Body.String()
+	if !strings.Contains(body, "mine") {
+		t.Errorf("page missing own integration 'mine'")
+	}
+	if strings.Contains(body, "not-mine") {
+		t.Errorf("page leaked alt-scope integration 'not-mine'")
+	}
+}
+
+// ─── route auth ───────────────────────────────────────────────────────────────
+
+// TestIntegrations_RouteAuth verifies all new integrations routes redirect to
+// login when called without a session. handler_test.go chi.Walk covers the
+// full route table — this test is additional coverage for the specific paths.
+func TestIntegrations_RouteAuth(t *testing.T) {
+	tc := newTestConsole(t)
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/console/integrations"},
+		{http.MethodGet, "/console/api/fragments/integrations-grid"},
+		{http.MethodGet, "/console/api/fragments/integration-detail"},
+		{http.MethodGet, "/console/api/fragments/integration-provider-form"},
+		{http.MethodPost, "/console/integrations"},
+		{http.MethodPost, "/console/integrations/x"},
+		{http.MethodPost, "/console/integrations/x/delete"},
+		{http.MethodPost, "/console/integrations/x/active"},
+	}
+
+	for _, rt := range routes {
+		t.Run(rt.method+" "+rt.path, func(t *testing.T) {
+			var rr *httptest.ResponseRecorder
+			if rt.method == http.MethodGet {
+				rr = tc.get(t, rt.path, nil)
+			} else {
+				rr = tc.postForm(t, rt.path, url.Values{}, nil)
+			}
+			if rr.Code != http.StatusSeeOther {
+				t.Errorf("%s %s: status = %d, want 303", rt.method, rt.path, rr.Code)
+			}
+			if got := rr.Header().Get("Location"); got != "/console/login" {
+				t.Errorf("%s %s: Location = %q, want /console/login", rt.method, rt.path, got)
+			}
+		})
+	}
+}

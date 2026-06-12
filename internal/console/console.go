@@ -13,6 +13,7 @@ import (
 
 	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/authoring"
+	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/store"
 )
@@ -62,6 +63,15 @@ type Deps struct {
 	// Messages provides the MessageRepo for the activity detail panel
 	// (W1-6); used for the transactionId-workaround message lookup.
 	Messages store.MessageRepo
+	// Integrations provides the IntegrationRepo for the integrations store
+	// page (W2). List / GetByID / SetActive / Delete are called directly;
+	// credential-merge updates go through Connectivity.Update.
+	Integrations store.IntegrationRepo
+	// Connectivity is the connectivity service used by the integrations page
+	// for Update (credential merge + primary-conflict detection). Nil is
+	// allowed only when no integration mutation routes are mounted; in
+	// practice New panics when Integrations is non-nil and Connectivity is nil.
+	Connectivity *connectivity.Service
 	// ReadOnly disables every mutation button via the actionButton
 	// template helper and renders the read-only banner. The chassis has
 	// no mutations beyond login/logout (which stay enabled — an operator
@@ -99,6 +109,9 @@ func New(deps Deps) *Console {
 	}
 	if deps.Messages == nil {
 		panic("console.New: deps.Messages is nil")
+	}
+	if deps.Integrations != nil && deps.Connectivity == nil {
+		panic("console.New: Connectivity must be set when Integrations is provided")
 	}
 	if len(deps.MasterKey) != 32 {
 		panic(fmt.Sprintf("console.New: MasterKey must be 32 bytes for AES-256-GCM, got %d", len(deps.MasterKey)))
@@ -189,6 +202,16 @@ func (c *Console) Routes() http.Handler {
 		pr.Get("/console/activity", c.serveActivityPage)
 		pr.Get("/console/api/fragments/activity-list", c.serveFragmentActivityList)
 		pr.Get("/console/api/fragments/activity-detail", c.serveFragmentActivityDetail)
+		// W2: integrations store
+		pr.Get("/console/integrations", c.serveIntegrationsPage)
+		pr.Get("/console/integrations/{id}", c.serveIntegrationsPage)
+		pr.Post("/console/integrations", c.handleIntegrationCreate)
+		pr.Post("/console/integrations/{id}", c.handleIntegrationUpdate)
+		pr.Post("/console/integrations/{id}/delete", c.handleIntegrationDelete)
+		pr.Post("/console/integrations/{id}/active", c.handleIntegrationToggleActive)
+		pr.Get("/console/api/fragments/integrations-grid", c.serveFragmentIntegrationsGrid)
+		pr.Get("/console/api/fragments/integration-detail", c.serveFragmentIntegrationDetail)
+		pr.Get("/console/api/fragments/integration-provider-form", c.serveFragmentIntegrationProviderForm)
 	})
 
 	// Unmatched /console/* paths go through the full session gate, same

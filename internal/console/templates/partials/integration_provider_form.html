@@ -1,0 +1,102 @@
+{{/*
+  integration-provider-form — step-2 create flow: per-provider credential
+  form. Binds integrationProviderFormView. Shown when the operator selects
+  a provider tile from the provider catalog.
+*/}}
+{{define "integration-provider-form"}}
+<div id="integration-provider-form" class="integration-provider-form-inner">
+  {{if .ProviderID}}
+  <div class="integration-provider-form-header">
+    <h2 class="integration-provider-form-title">Connect {{.Label}}</h2>
+    <span class="activity-channel-badge activity-channel-badge--{{.Channel}}">{{.Channel}}</span>
+  </div>
+
+  {{if $.ReadOnly}}
+  <p class="console-lede">Console is read-only; mutations are disabled.</p>
+  {{else}}
+  <form method="post"
+        action="/console/integrations"
+        class="integration-create-form"
+        autocomplete="off">
+    <input type="hidden" name="csrf_token" value="">
+    <input type="hidden" name="provider_id" value="{{.ProviderID}}">
+
+    <div class="console-form-field">
+      <label class="console-form-label" for="create-identifier">Identifier</label>
+      <input type="text"
+             id="create-identifier"
+             name="identifier"
+             class="console-input"
+             placeholder="e.g. smtp-primary"
+             required>
+    </div>
+
+    <div class="console-form-field">
+      <label class="console-form-label" for="create-primary">
+        <input type="checkbox" id="create-primary" name="primary" value="on">
+        Set as primary provider for {{.Channel}}
+      </label>
+    </div>
+
+    {{if .CredFields}}
+    <fieldset class="integration-cred-fieldset">
+      <legend class="integration-cred-legend">Credentials</legend>
+      {{range .CredFields}}
+      <div class="console-form-field">
+        <label class="console-form-label" for="create-{{.Key}}">
+          {{.Label}}{{if .Required}} <span aria-hidden="true">*</span>{{end}}
+        </label>
+        <input type="{{if or (eq .Key "password") (eq .Key "token") (eq .Key "api_token")}}password{{else}}text{{end}}"
+               id="create-{{.Key}}"
+               name="{{.Key}}"
+               class="console-input"
+               autocomplete="new-password"
+               {{if .Required}}required{{end}}>
+      </div>
+      {{end}}
+    </fieldset>
+    {{end}}
+
+    <div class="integration-form-actions">
+      <button type="button"
+              class="btn btn-outline"
+              data-on:click="$integrationProviderFormOpen=false">
+        Cancel
+      </button>
+      <button type="submit" class="btn btn-outline">Connect</button>
+    </div>
+  </form>
+  {{end}}
+  {{else}}
+  {{/* Step 1: provider catalog selection */}}
+  <h2 class="integration-provider-form-title">Connect a Provider</h2>
+  <div class="integration-provider-catalog">
+    <button type="button"
+            class="integration-provider-tile"
+            data-on:click="@get('/console/api/fragments/integration-provider-form?provider=smtp')">
+      <span class="integration-provider-tile-label">SMTP Email</span>
+      <span class="activity-channel-badge activity-channel-badge--email">email</span>
+    </button>
+    <button type="button"
+            class="integration-provider-tile"
+            data-on:click="@get('/console/api/fragments/integration-provider-form?provider=cloudflare_email')">
+      <span class="integration-provider-tile-label">Cloudflare Email</span>
+      <span class="activity-channel-badge activity-channel-badge--email">email</span>
+    </button>
+    <button type="button"
+            class="integration-provider-tile"
+            data-on:click="@get('/console/api/fragments/integration-provider-form?provider=ntfy')">
+      <span class="integration-provider-tile-label">ntfy Push</span>
+      <span class="activity-channel-badge activity-channel-badge--push">push</span>
+    </button>
+  </div>
+  <div class="integration-form-actions">
+    <button type="button"
+            class="btn btn-outline"
+            data-on:click="$integrationProviderFormOpen=false">
+      Cancel
+    </button>
+  </div>
+  {{end}}
+</div>
+{{end}}

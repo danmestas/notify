@@ -1,0 +1,75 @@
+{{/*
+  integrations-grid — PatchElements fragment target for the integrations
+  list. The outer element carries the stable id so the default outer-mode
+  patch lines up. Binds integrationsGridView / integrationsListView (both
+  expose Rows, Channel, Empty, ReadOnly).
+*/}}
+{{define "integrations-grid"}}
+<div id="integrations-grid">
+  {{if .Empty}}
+  {{template "empty-state" .Empty}}
+  {{else}}
+  <div class="console-table-wrap">
+    <table class="console-table" aria-label="Integrations">
+      <thead>
+        <tr>
+          <th scope="col">Provider</th>
+          <th scope="col">Channel</th>
+          <th scope="col">Identifier</th>
+          <th scope="col">Status</th>
+          <th scope="col">Primary</th>
+          <th scope="col"></th>
+        </tr>
+      </thead>
+      <tbody id="integrations-tbody">
+        {{range .Rows}}
+        {{template "integration-row" .}}
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{/*
+  integration-row — one <tr> in the integrations table. Binds integrationRow.
+  Clicking the row opens the detail drawer via Datastar signals.
+*/}}
+{{define "integration-row"}}
+<tr class="console-table-row integration-table-row"
+    data-on:click="$integrationDetailId={{.ID | jsEscape}};$integrationDetailOpen=true;@get('/console/api/fragments/integration-detail?id='+$integrationDetailId)"
+    data-component="integration-row">
+  <td class="integration-col-provider">
+    <span class="integration-provider-label">{{.ProviderLabel}}</span>
+  </td>
+  <td class="integration-col-channel">
+    <span class="activity-channel-badge activity-channel-badge--{{.Channel}}">{{.ChannelLabel}}</span>
+  </td>
+  <td class="integration-col-identifier">
+    <code class="integration-identifier">{{.Identifier}}</code>
+  </td>
+  <td class="integration-col-status">
+    {{if .Active}}
+    <span class="chip chip-success" aria-label="active">active</span>
+    {{else}}
+    <span class="chip chip-warning" aria-label="inactive">inactive</span>
+    {{end}}
+  </td>
+  <td class="integration-col-primary">
+    {{if .Primary}}
+    <span class="chip chip-info" aria-label="primary provider" title="Primary provider for this channel">★ primary</span>
+    {{else}}
+    <span class="chip chip-default">—</span>
+    {{end}}
+  </td>
+  <td class="integration-col-actions">
+    <button type="button"
+            class="btn btn-outline integration-configure-btn"
+            aria-label="Configure {{.ProviderLabel}}"
+            data-on:click.stop="$integrationDetailId={{.ID | jsEscape}};$integrationDetailOpen=true;@get('/console/api/fragments/integration-detail?id='+$integrationDetailId)">
+      Configure
+    </button>
+  </td>
+</tr>
+{{end}}

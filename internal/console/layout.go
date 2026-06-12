@@ -38,6 +38,7 @@ var pageContentFiles = map[string]string{
 	"error":           "templates/error.html",
 	"workflows":       "templates/workflows.html",
 	"workflow-detail": "templates/workflow_detail.html",
+	"integrations":    "templates/integrations.html",
 }
 
 // loadTemplates builds the base tree and the per-page clones. Template
@@ -90,6 +91,9 @@ func staticFuncMap() template.FuncMap {
 		},
 		"jsEscape": jsEscapeStringLiteral,
 		"json":     jsonLiteral,
+		// not negates a boolean; used in templates that cannot use "if not x"
+		// (which is valid Go template syntax but can look ambiguous for readers).
+		"not": func(v bool) bool { return !v },
 		// activityEmptyDetail returns an empty activityDetailView for the
 		// initial panel render (no notification selected). The type is
 		// defined in activity.go (same package).
@@ -169,6 +173,7 @@ var navGroups = []navGroup{
 	{Entries: []navEntry{{Label: "Workflows", Href: "/console/workflows", Section: "workflows"}}},
 	{Entries: []navEntry{{Label: "Activity", Href: "/console/activity", Section: "activity"}}},
 	{Entries: []navEntry{{Label: "Analytics", Href: "/console/analytics", Section: "analytics"}}},
+	{Entries: []navEntry{{Label: "Integrations", Href: "/console/integrations", Section: "integrations"}}},
 }
 
 // pageData is what the layout template binds for every full page.

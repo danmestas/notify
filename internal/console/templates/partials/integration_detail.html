@@ -1,0 +1,154 @@
+{{/*
+  integration-detail — detail drawer for one integration. Binds
+  integrationDetailView. Credentials are always shown masked (••••••);
+  the form submits the masked sentinel unchanged so the server keeps the
+  stored encrypted value.
+*/}}
+{{define "integration-detail"}}
+<div id="integration-detail" class="integration-detail-inner">
+  {{if .Empty}}
+  <div class="integration-detail-empty">
+    <p class="console-lede">Select an integration to configure it.</p>
+  </div>
+  {{else}}
+  {{$in := .Integration}}
+  <div class="integration-detail-header">
+    <div class="integration-detail-title">
+      <span class="integration-provider-label">{{$in.ProviderLabel}}</span>
+      <span class="activity-channel-badge activity-channel-badge--{{$in.Channel}}">{{$in.ChannelLabel}}</span>
+      {{if $in.Primary}}
+      <span class="chip chip-info" title="Primary provider for this channel">★ primary</span>
+      {{end}}
+    </div>
+    <button type="button"
+            class="btn btn-outline integration-close-btn"
+            aria-label="Close"
+            data-on:click="$integrationDetailOpen=false;$integrationDetailId=''">
+      ✕
+    </button>
+  </div>
+
+  <code class="integration-identifier">{{$in.Identifier}}</code>
+
+  {{/* Active toggle */}}
+  <div class="integration-detail-active">
+    <span class="integration-detail-label">Status</span>
+    {{if $in.Active}}
+    <span class="chip chip-success">active</span>
+    {{else}}
+    <span class="chip chip-warning">inactive</span>
+    {{end}}
+    {{if not $.ReadOnly}}
+    <form method="post"
+          action="/console/integrations/{{$in.ID}}/active"
+          class="integration-toggle-form">
+      <input type="hidden" name="csrf_token" value="">
+      {{if $in.Active}}
+      <input type="hidden" name="active" value="false">
+      <button type="submit" class="btn btn-outline">Deactivate</button>
+      {{else}}
+      <input type="hidden" name="active" value="true">
+      <button type="submit" class="btn btn-outline">Activate</button>
+      {{end}}
+    </form>
+    {{end}}
+  </div>
+
+  {{/* Edit form or read-only view */}}
+  {{if $.ReadOnly}}
+  <div class="integration-detail-readonly">
+    <p class="console-lede">Console is read-only; mutations are disabled.</p>
+    {{if .CredFields}}
+    <dl class="integration-cred-list">
+      {{range .CredFields}}
+      <dt class="integration-cred-label">{{.Label}}</dt>
+      <dd class="integration-cred-value"><code>{{.Value}}</code></dd>
+      {{end}}
+    </dl>
+    {{end}}
+  </div>
+  {{else}}
+  <form method="post"
+        action="/console/integrations/{{$in.ID}}"
+        class="integration-edit-form"
+        autocomplete="off">
+    <input type="hidden" name="_method" value="PUT">
+    <input type="hidden" name="csrf_token" value="">
+
+    <div class="console-form-field">
+      <label class="console-form-label" for="edit-identifier-{{$in.ID}}">Identifier</label>
+      <input type="text"
+             id="edit-identifier-{{$in.ID}}"
+             name="identifier"
+             class="console-input"
+             value="{{$in.Identifier}}"
+             required>
+    </div>
+
+    <div class="console-form-field">
+      <label class="console-form-label" for="edit-primary-{{$in.ID}}">
+        <input type="checkbox"
+               id="edit-primary-{{$in.ID}}"
+               name="primary"
+               value="on"
+               {{if $in.Primary}}checked{{end}}>
+        Primary provider for {{$in.ChannelLabel}}
+      </label>
+    </div>
+
+    {{if .CredFields}}
+    <fieldset class="integration-cred-fieldset">
+      <legend class="integration-cred-legend">Credentials</legend>
+      <p class="console-lede integration-cred-hint">
+        Fields show <code>{{"••••••"}}</code> — leave unchanged to keep the stored secret.
+        Replace only the fields you want to update.
+      </p>
+      {{range .CredFields}}
+      <div class="console-form-field">
+        <label class="console-form-label" for="edit-{{.Key}}-{{$in.ID}}">
+          {{.Label}}{{if .Required}} <span aria-hidden="true">*</span>{{end}}
+        </label>
+        <input type="{{if or (eq .Key "password") (eq .Key "token") (eq .Key "api_token")}}password{{else}}text{{end}}"
+               id="edit-{{.Key}}-{{$in.ID}}"
+               name="{{.Key}}"
+               class="console-input"
+               value="{{.Value}}"
+               autocomplete="new-password"
+               {{if .Required}}required{{end}}>
+      </div>
+      {{end}}
+    </fieldset>
+    {{end}}
+
+    <div class="integration-form-actions">
+      <button type="submit" class="btn btn-outline">Save changes</button>
+    </div>
+  </form>
+
+  {{/* Delete zone */}}
+  <div class="integration-danger-zone">
+    {{if .ConfirmDelete}}
+    <p class="integration-danger-label">Delete {{$in.ProviderLabel}} ({{$in.Identifier}})?</p>
+    <div class="integration-confirm-delete-actions">
+      <button type="button"
+              class="btn btn-outline"
+              data-on:click="@get('/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}})">
+        Cancel
+      </button>
+      <form method="post" action="/console/integrations/{{$in.ID}}/delete" class="integration-delete-form">
+        <input type="hidden" name="csrf_token" value="">
+        <button type="submit" class="btn btn-outline integration-delete-confirm-btn">Confirm delete</button>
+      </form>
+    </div>
+    {{else}}
+    <button type="button"
+            class="btn btn-outline integration-delete-btn"
+            data-on:click="@get('/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}}+'&confirmDelete=true')">
+      Delete integration
+    </button>
+    {{end}}
+  </div>
+  {{end}}
+  {{end}}
+</div>
+{{end}}

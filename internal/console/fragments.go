@@ -45,6 +45,10 @@ type fragmentEnvelope struct {
 	ActivityStatus      string `json:"activityStatus,omitempty"`
 	// SelectedNotificationId drives the detail panel open/close.
 	SelectedNotificationId string `json:"selectedNotificationId,omitempty"`
+	// Integration store filter signals (W2).
+	IntegrationChannel string `json:"integrationChannel,omitempty"`
+	// IntegrationDetailId is the ID of the open detail drawer ("" = closed).
+	IntegrationDetailId string `json:"integrationDetailId,omitempty"`
 }
 
 // mergeFragmentParams merges the request's URL query with the Datastar
@@ -112,6 +116,11 @@ func envelopeToQuery(env fragmentEnvelope, key string) (string, string) {
 		return "status", env.ActivityStatus
 	case "selectedNotificationId":
 		return "notification_id", env.SelectedNotificationId
+	// Integration store filter signals.
+	case "integrationChannel":
+		return "channel", env.IntegrationChannel
+	case "integrationDetailId":
+		return "id", env.IntegrationDetailId
 	}
 	return "", ""
 }

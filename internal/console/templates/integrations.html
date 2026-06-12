@@ -1,0 +1,81 @@
+{{define "content"}}{{$page := .Page}}
+{{/*
+  data-signals seeds the Datastar signal store for the integrations page.
+  integrationChannel filters the grid; integrationDetailId opens the drawer.
+  Values are server-marshaled so any special character cannot break out of
+  the attribute (same pattern as activity.html).
+*/}}
+<section class="console-section"
+         data-signals="{{$page.Signals}}">
+  {{template "page-header" $page.Header}}
+
+  <div class="integration-toolbar">
+    {{/* Channel filter tabs */}}
+    <nav class="integration-channel-tabs" id="integration-channel-tabs" aria-label="Filter by channel">
+      <button type="button"
+              class="integration-tab"
+              data-class-is-active="$integrationChannel === ''"
+              data-on:click="$integrationChannel='';@get('/console/api/fragments/integrations-grid')">
+        All
+      </button>
+      <button type="button"
+              class="integration-tab"
+              data-class-is-active="$integrationChannel === 'email'"
+              data-on:click="$integrationChannel='email';@get('/console/api/fragments/integrations-grid')">
+        Email
+      </button>
+      <button type="button"
+              class="integration-tab"
+              data-class-is-active="$integrationChannel === 'push'"
+              data-on:click="$integrationChannel='push';@get('/console/api/fragments/integrations-grid')">
+        Push
+      </button>
+      <button type="button"
+              class="integration-tab"
+              data-class-is-active="$integrationChannel === 'in_app'"
+              data-on:click="$integrationChannel='in_app';@get('/console/api/fragments/integrations-grid')">
+        In-app
+      </button>
+    </nav>
+
+    {{if not $page.ReadOnly}}
+    <button type="button"
+            class="btn btn-outline"
+            data-on:click="$integrationProviderFormOpen=true;@get('/console/api/fragments/integration-provider-form')">
+      + Connect Provider
+    </button>
+    {{end}}
+  </div>
+
+  <div class="integration-layout">
+    {{/* Grid — loads via Datastar on-load; initial server render ensures no-JS fallback */}}
+    <div id="integrations-grid"
+         data-on-load="@get('/console/api/fragments/integrations-grid')">
+      {{template "integrations-grid" $page}}
+    </div>
+
+    {{/* Detail drawer — visible when integrationDetailOpen is true */}}
+    <aside id="integration-detail"
+           class="integration-detail-drawer"
+           data-show="$integrationDetailOpen"
+           aria-label="Integration detail">
+      <div id="integration-detail-inner">
+        <div class="integration-detail-inner">
+          <div class="integration-detail-empty">
+            <p class="console-lede">Select an integration to configure it.</p>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  {{/* Provider form panel — visible when integrationProviderFormOpen */}}
+  <div id="integration-provider-form"
+       class="integration-provider-panel"
+       data-show="$integrationProviderFormOpen">
+    <div class="integration-provider-form-inner">
+      <p class="console-lede">Choose a provider to connect.</p>
+    </div>
+  </div>
+</section>
+{{end}}

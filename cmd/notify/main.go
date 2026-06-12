@@ -191,6 +191,8 @@ func runServe(args []string) error {
 		Analytics:         an,
 		Notifications:     st.Notifications(),
 		Messages:          st.Messages(),
+		Integrations:      st.Integrations(),
+		Connectivity:      conn,
 		MasterKey:         mk,
 		DagnatsConsoleURL: os.Getenv("NOTIFY_DAGNATS_CONSOLE_URL"),
 		ReadOnly:          os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",
