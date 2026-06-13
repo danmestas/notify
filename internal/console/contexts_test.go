@@ -87,6 +87,104 @@ func TestContexts_InvalidJSONDoesNot500(t *testing.T) {
 	}
 }
 
+func TestContexts_CreateInvalidJSONShowsBanner(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	// POST invalid JSON → should 303 to /console/contexts/new?dataError=...
+	rr := tc.postForm(t, "/console/contexts",
+		url.Values{
+			"type":       {"tenant"},
+			"id":         {"bad"},
+			"data":       {`{not valid json}`},
+			"csrf_token": {csrf},
+		}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("invalid JSON: want 303, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "dataError") {
+		t.Fatalf("redirect location %q missing dataError param", loc)
+	}
+
+	// Following the redirect must render the error banner.
+	rr2 := tc.get(t, loc, cookie)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("GET %s: status=%d body=%s", loc, rr2.Code, rr2.Body.String())
+	}
+	if !strings.Contains(rr2.Body.String(), "Invalid JSON") {
+		t.Errorf("error banner missing from page after invalid JSON create; body:\n%s", rr2.Body.String())
+	}
+}
+
+func TestContexts_CreateConflictShowsBanner(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	// Create once successfully.
+	rr := tc.postForm(t, "/console/contexts",
+		url.Values{"type": {"tenant"}, "id": {"dup"}, "csrf_token": {csrf}},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("first create: status=%d", rr.Code)
+	}
+
+	// Create again with same type/id → should 303 to /console/contexts/new?conflict=1
+	rr2 := tc.postForm(t, "/console/contexts",
+		url.Values{"type": {"tenant"}, "id": {"dup"}, "csrf_token": {csrf}},
+		cookie)
+	if rr2.Code != http.StatusSeeOther {
+		t.Fatalf("duplicate create: want 303, got %d body=%s", rr2.Code, rr2.Body.String())
+	}
+	loc := rr2.Header().Get("Location")
+	if !strings.Contains(loc, "conflict") {
+		t.Fatalf("redirect location %q missing conflict param", loc)
+	}
+
+	// Following the redirect must render the conflict banner.
+	rr3 := tc.get(t, loc, cookie)
+	if rr3.Code != http.StatusOK {
+		t.Fatalf("GET %s: status=%d body=%s", loc, rr3.Code, rr3.Body.String())
+	}
+	if !strings.Contains(rr3.Body.String(), "already exists") {
+		t.Errorf("conflict banner missing from page; body:\n%s", rr3.Body.String())
+	}
+}
+
+func TestContexts_UpdateInvalidJSONShowsBanner(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	// Seed a context to update.
+	rr := tc.postForm(t, "/console/contexts",
+		url.Values{"type": {"tenant"}, "id": {"upd-bad"}, "data": {`{"v":1}`}, "csrf_token": {csrf}},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("create: status=%d", rr.Code)
+	}
+
+	// POST invalid JSON to the update endpoint → 303 to detail page with ?dataError=...
+	rr2 := tc.postForm(t, "/console/api/contexts/tenant/upd-bad",
+		url.Values{"data": {`{not json}`}, "csrf_token": {csrf}},
+		cookie)
+	if rr2.Code != http.StatusSeeOther {
+		t.Fatalf("invalid JSON update: want 303, got %d body=%s", rr2.Code, rr2.Body.String())
+	}
+	loc := rr2.Header().Get("Location")
+	if !strings.Contains(loc, "dataError") {
+		t.Fatalf("redirect location %q missing dataError param", loc)
+	}
+
+	// Following the redirect must render the error banner.
+	rr3 := tc.get(t, loc, cookie)
+	if rr3.Code != http.StatusOK {
+		t.Fatalf("GET %s: status=%d body=%s", loc, rr3.Code, rr3.Body.String())
+	}
+	if !strings.Contains(rr3.Body.String(), "Invalid JSON") {
+		t.Errorf("error banner missing from detail page after invalid JSON update; body:\n%s", rr3.Body.String())
+	}
+}
+
 func TestContexts_ReadOnlyBlocksMutation(t *testing.T) {
 	tc := newReadOnlyTestConsole(t)
 	cookie, csrf := tc.login(t)

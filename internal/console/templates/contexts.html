@@ -22,6 +22,9 @@
         <h2 id="context-create-heading" class="console-card-title">New context</h2>
         <a class="btn-icon console-slideover-close" href="/console/contexts" aria-label="Close">✕</a>
       </div>
+      {{if $page.FormError}}
+      <p class="console-form-error" role="alert">{{$page.FormError}}</p>
+      {{end}}
       <form method="POST" action="/console/contexts" class="context-create-form">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">

@@ -35,6 +35,7 @@ type contextsPageView struct {
 	Signals    template.JS
 	ReadOnly   bool
 	ShowCreate bool
+	FormError  string
 }
 
 type contextsListView struct {
@@ -186,12 +187,20 @@ func (c *Console) serveContextNew(w http.ResponseWriter, r *http.Request) {
 		header = pageHeader{Title: "Contexts"}
 	}
 
+	var formErr string
+	if de := r.URL.Query().Get("dataError"); de != "" {
+		formErr = "Invalid JSON — changes were not saved."
+	} else if r.URL.Query().Get("conflict") != "" {
+		formErr = "A context with that type and external ID already exists."
+	}
+
 	view := contextsPageView{
 		Header:     header,
 		Fragment:   frag,
 		Signals:    contextsSignalsJSON(""),
 		ReadOnly:   c.deps.ReadOnly,
 		ShowCreate: !c.deps.ReadOnly,
+		FormError:  formErr,
 	}
 	c.renderPage(w, r, http.StatusOK, "contexts", "New context", view)
 }
@@ -224,6 +233,11 @@ func (c *Console) serveContextDetail(w http.ResponseWriter, r *http.Request) {
 
 	pretty, _ := json.MarshalIndent(ctx.Data, "", "  ")
 
+	var detailFormErr string
+	if de := r.URL.Query().Get("dataError"); de != "" {
+		detailFormErr = "Invalid JSON — changes were not saved."
+	}
+
 	s, _ := sessionFromContext(r.Context())
 	view := contextDetailView{
 		Header: pageHeader{
@@ -234,6 +248,7 @@ func (c *Console) serveContextDetail(w http.ResponseWriter, r *http.Request) {
 		DataPretty:    string(pretty),
 		ReadOnly:      c.deps.ReadOnly,
 		ConfirmDelete: r.URL.Query().Get("confirmDelete") == "true",
+		FormError:     detailFormErr,
 		CSRF:          s.CSRF,
 		Signals:       contextsSignalsJSON(""),
 	}

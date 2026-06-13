@@ -9,7 +9,7 @@
     </div>
     <div class="console-card-body">
       {{if $page.FormError}}
-      <div class="form-error console-alert">{{$page.FormError}}</div>
+      <p class="console-form-error" role="alert">{{$page.FormError}}</p>
       {{end}}
       {{if not $page.ReadOnly}}
       <form method="POST" action="/console/api/contexts/{{$page.Ctx.Type}}/{{$page.Ctx.ExternalID}}">
