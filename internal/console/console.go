@@ -18,6 +18,7 @@ import (
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/contexts"
+	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/identity"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -109,6 +110,9 @@ type Deps struct {
 	// Layouts provides layout CRUD for the layouts pages (W4-L1).
 	// Nil is allowed only when no layout routes are mounted.
 	Layouts store.LayoutRepo
+	// EnvVars is the env vars service for the variables CRUD pages (W4-V1).
+	// Nil is allowed only when no variables routes are mounted.
+	EnvVars *envvars.Service
 	// Trigger is the trigger service used by the workflow test/trigger page
 	// (W2-A5). The console calls Ingest in-process — no loopback HTTP.
 	// Nil disables test-trigger POSTs (returns "service unavailable").
@@ -342,6 +346,16 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/api/layouts/{key}/delete", c.handleLayoutDelete)
 		pr.Get("/console/api/fragments/layouts-list", c.serveFragmentLayoutsList)
 		pr.Get("/console/api/fragments/layout-editor", c.serveFragmentLayoutEditor)
+		// W4-V2: variables CRUD
+		if c.deps.EnvVars != nil {
+			pr.Get("/console/variables", c.serveVariablesPage)
+			pr.Get("/console/variables/new", c.serveVariableNew)
+			pr.Get("/console/variables/{key}", c.serveVariableDetail)
+			pr.Get("/console/api/fragments/variables-list", c.serveFragmentVariablesList)
+			pr.Post("/console/api/variables", c.handleVariableCreate)
+			pr.Post("/console/api/variables/{key}", c.handleVariableUpdate)
+			pr.Post("/console/api/variables/{key}/delete", c.handleVariableDelete)
+		}
 		// W3: agents management + conversation console. The literal `new`
 		// segment is registered before the {identifier} wildcard so chi never
 		// matches "new" as an identifier.

@@ -46,6 +46,9 @@ var pageContentFiles = map[string]string{
 	"topics":            "templates/topics.html",
 	"topic-detail":      "templates/topic_detail.html",
 	"webhooks":          "templates/webhooks.html",
+	// W4-V1/V2: variables CRUD.
+	"variables":       "templates/variables.html",
+	"variable-detail": "templates/variable_detail.html",
 	// W4: contexts CRUD.
 	"contexts":       "templates/contexts.html",
 	"context-detail": "templates/context_detail.html",
@@ -211,6 +214,7 @@ var navGroups = []navGroup{
 	{Entries: []navEntry{{Label: "Subscribers", Href: "/console/subscribers", Section: "subscribers"}}},
 	{Entries: []navEntry{{Label: "Topics", Href: "/console/topics", Section: "topics"}}},
 	{Entries: []navEntry{{Label: "Webhooks", Href: "/console/webhooks", Section: "webhooks"}}},
+	{Entries: []navEntry{{Label: "Variables", Href: "/console/variables", Section: "variables"}}},
 	{Entries: []navEntry{{Label: "Contexts", Href: "/console/contexts", Section: "contexts"}}},
 	{Entries: []navEntry{{Label: "Layouts", Href: "/console/layouts", Section: "layouts"}}},
 	{Entries: []navEntry{{Label: "Agents", Href: "/console/agents", Section: "agents"}}},

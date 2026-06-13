@@ -21,6 +21,7 @@ import (
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inbound"
 	"github.com/danmestas/notify/internal/inboxapi"
@@ -37,7 +38,7 @@ import (
 // (GET /v1/notifications, GET /v1/notifications/{id}).
 // wh may be nil; when non-nil it enables webhook-endpoint management routes
 // (GET/POST /v1/webhooks/endpoints, GET/PUT/DELETE /v1/webhooks/endpoints/{id}).
-func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, inb *inbound.Service, an *analytics.Service, ag *agentsapi.Service, ing *ingress.Service, conn *connectivity.Service, st *store.Store, auth ...*authoring.Service) http.Handler {
+func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, inb *inbound.Service, an *analytics.Service, ag *agentsapi.Service, ing *ingress.Service, conn *connectivity.Service, st *store.Store, ev *envvars.Service, auth ...*authoring.Service) http.Handler {
 	if len(auth) > 1 {
 		panic("httpapi.New: at most one *authoring.Service")
 	}
@@ -124,6 +125,13 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 			pr.Get("/v1/contexts/{type}/{id}", getContext(ctxSvc))
 			pr.Put("/v1/contexts/{type}/{id}", putContext(ctxSvc))
 			pr.Delete("/v1/contexts/{type}/{id}", deleteContext(ctxSvc))
+		}
+		// W4-V1 environment variables management.
+		if ev != nil {
+			pr.Get("/v1/env-vars", getEnvVars(ev))
+			pr.Post("/v1/env-vars", postEnvVar(ev))
+			pr.Put("/v1/env-vars/{key}", putEnvVar(ev))
+			pr.Delete("/v1/env-vars/{key}", deleteEnvVar(ev))
 		}
 		inbox.Routes(pr)
 		if inb != nil {

@@ -29,6 +29,7 @@ import (
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/eventbus"
 	"github.com/danmestas/notify/internal/httpapi"
 	"github.com/danmestas/notify/internal/identity"
@@ -186,6 +187,11 @@ func runServe(args []string) error {
 	inb := inbound.New(trg)
 	ag := agentsapi.New(ags)
 
+	ev, err := envvars.New(st, mk)
+	if err != nil {
+		return fmt.Errorf("envvars.New: %w", err)
+	}
+
 	an, anClose, err := analyticsBackend(ctx, st, bus)
 	if err != nil {
 		return fmt.Errorf("analyticsBackend: %w", err)
@@ -197,7 +203,7 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = anStop() }()
 
-	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag, ing, conn, st, au)
+	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag, ing, conn, st, ev, au)
 
 	// Operator console: same listener, mounted at /console ahead of the
 	// public API. All console reads go through the same Scope-carrying
@@ -215,6 +221,7 @@ func runServe(args []string) error {
 		Webhooks:          webhooksout.NewManagement(st),
 		Contexts:          contexts.New(st),
 		Layouts:           st.Layouts(),
+		EnvVars:           ev,
 		Trigger:           trg,
 		Agents:            ags,
 		Composer:          consoleComposer{ing},

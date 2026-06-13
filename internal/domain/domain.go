@@ -207,3 +207,15 @@ type Context struct {
 	CreatedAt  string          `db:"created_at"`
 	UpdatedAt  string          `db:"updated_at"`
 }
+
+// EnvVar is a per-scope key/value environment variable. Values are stored
+// AES-GCM-encrypted in env_var_values and never held in this struct.
+type EnvVar struct {
+	ID        string `db:"id"`
+	OrgID     string `db:"org_id"`
+	EnvID     string `db:"environment_id"`
+	Key       string `db:"key"`
+	IsSecret  bool   `db:"is_secret"`
+	CreatedAt string `db:"created_at"`
+	UpdatedAt string `db:"updated_at"`
+}

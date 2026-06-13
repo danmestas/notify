@@ -1,0 +1,56 @@
+{{/*
+  variables-tbody — PatchElements fragment target for the variables list.
+  Binds variablesListView.
+*/}}
+{{define "variables-tbody"}}{{$v := .}}
+<div id="variables-tbody" data-component="variables-tbody">
+  {{if eq (len $v.Rows) 0}}
+  <p class="console-muted">No variables found. Create one to get started.</p>
+  {{else}}
+  <table class="console-table">
+    <thead>
+      <tr>
+        <th>Key</th>
+        <th>Secret</th>
+        <th>Value</th>
+        <th>Updated</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range $v.Rows}}
+      {{if eq $v.ConfirmDelete .Key}}
+      <tr id="variable-row-{{.ID}}" class="confirm-row">
+        <td colspan="4">
+          <span class="console-confirm-label">Delete <code>{{.Key}}</code>? This cannot be undone.</span>
+        </td>
+        <td>
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/variables-list')">Cancel</button>
+          <form method="POST" action="/console/api/variables/{{.Key}}/delete" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
+            <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr id="variable-row-{{.ID}}">
+        <td><code class="chip chip-default">{{.Key}}</code></td>
+        <td>{{if .IsSecret}}<span class="chip chip-default">secret</span>{{else}}—{{end}}</td>
+        <td class="console-muted">{{.MaskedValue}}</td>
+        <td class="console-muted">{{.UpdatedAt}}</td>
+        <td class="console-action-row">
+          {{if not $v.ReadOnly}}
+          <a class="btn btn-outline btn-sm" href="/console/variables/{{.Key}}">Edit</a>
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/variables-list?confirmDelete={{.Key | urlquery}}')">Delete</button>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</div>
+{{end}}

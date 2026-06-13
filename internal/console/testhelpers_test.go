@@ -30,6 +30,7 @@ import (
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
@@ -122,6 +123,10 @@ func newTestConsole(t *testing.T) *testConsole {
 	conn := connectivity.New(st, masterKey)
 	ags := agentstore.New(st)
 	composer := &stubComposer{}
+	ev, err := envvars.New(st, masterKey)
+	if err != nil {
+		t.Fatalf("envvars.New: %v", err)
+	}
 	deps := Deps{
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Identity:      id,
@@ -135,6 +140,7 @@ func newTestConsole(t *testing.T) *testConsole {
 		Webhooks:      webhooksout.NewManagement(st),
 		Contexts:      contexts.New(st),
 		Layouts:       st.Layouts(),
+		EnvVars:       ev,
 		Trigger:       newStubTrigger(""),
 		Agents:        ags,
 		Composer:      composer,

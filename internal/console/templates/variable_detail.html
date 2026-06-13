@@ -1,0 +1,81 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section"
+         data-signals="{{$page.Signals}}">
+  {{template "page-header" $page.Header}}
+
+  <div class="console-card">
+    <div class="console-card-header">
+      <span class="console-card-title">Variable</span>
+    </div>
+    <div class="console-card-body">
+      {{if $page.FormError}}
+      <div class="form-error console-alert">{{$page.FormError}}</div>
+      {{end}}
+
+      <div class="form-row">
+        <label class="form-label">Key</label>
+        <code class="chip chip-default">{{$page.EV.Key}}</code>
+      </div>
+
+      <div class="form-row">
+        <label class="form-label">Value</label>
+        {{if $page.Revealed}}
+        <code class="console-input">{{$page.Value}}</code>
+        <a class="btn btn-outline btn-sm" href="/console/variables/{{$page.EV.Key}}">Hide</a>
+        {{else}}
+        <code class="console-input">{{$page.Value}}</code>
+        <a class="btn btn-outline btn-sm" href="/console/variables/{{$page.EV.Key}}?reveal=1">Reveal</a>
+        {{end}}
+      </div>
+
+      <div class="form-row">
+        <label class="form-label">Secret</label>
+        <span>{{if $page.EV.IsSecret}}Yes{{else}}No{{end}}</span>
+      </div>
+
+      {{if not $page.ReadOnly}}
+      <form method="POST" action="/console/api/variables/{{$page.EV.Key}}">
+        <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+        <div class="form-row">
+          <label class="form-label" for="var-value-edit">New value</label>
+          <input class="console-input" type="text" id="var-value-edit" name="value"
+                 placeholder="Leave blank to keep existing">
+        </div>
+        <div class="form-row">
+          <label class="form-label">
+            <input type="checkbox" name="is_secret" value="on"{{if $page.EV.IsSecret}} checked{{end}}>
+            Secret
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save changes</button>
+          <a class="btn btn-outline" href="/console/variables">Back to list</a>
+        </div>
+      </form>
+      {{else}}
+      <a class="btn btn-outline" href="/console/variables">Back to list</a>
+      {{end}}
+    </div>
+  </div>
+
+  {{if not $page.ReadOnly}}
+  <div class="console-card console-card-danger">
+    <div class="console-card-header">
+      <span class="console-card-title">Delete variable</span>
+    </div>
+    <div class="console-card-body">
+      {{if $page.ConfirmDelete}}
+      <p class="console-muted">Are you sure? This cannot be undone.</p>
+      <form method="POST" action="/console/api/variables/{{$page.EV.Key}}/delete" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+        <button type="submit" class="btn btn-danger">Confirm delete</button>
+      </form>
+      <a class="btn btn-outline" href="/console/variables/{{$page.EV.Key}}">Cancel</a>
+      {{else}}
+      <a class="btn btn-outline" href="/console/variables/{{$page.EV.Key}}?confirmDelete=true">Delete this variable</a>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+</section>
+{{end}}
