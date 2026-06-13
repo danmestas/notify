@@ -1,0 +1,20 @@
+{{define "content"}}{{$page := .Page}}
+{{/*
+  conversations — W4-A5 Global Conversations list. Cross-agent, scope-guarded.
+  data-signals seeds the globalConvCursor/globalConvAgent signal store so
+  the fragment re-fetches carry the current pagination cursor and agent filter.
+*/}}
+<section class="console-section"
+         data-signals="{{$page.Signals}}">
+  {{template "page-header" $page.Header}}
+
+  <div class="console-filter-bar">
+    <input type="text" class="console-input"
+           placeholder="Filter by agent identifier…"
+           data-bind="globalConvAgent"
+           data-on:input__debounce.300ms="$globalConvCursor = ''; @get('/console/api/fragments/global-conversations')">
+  </div>
+
+  {{template "global-conversations-tbody" $page.Fragment}}
+</section>
+{{end}}

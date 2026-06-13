@@ -54,6 +54,8 @@ func (svc *Service) Routes(r chi.Router) {
 	// Wave 3 additions.
 	r.Get("/v1/agents/{identifier}/conversations", svc.listConversations)
 	r.Get("/v1/agents/{identifier}/channels/{integrationID}/setup", svc.channelSetup)
+	// Wave 4: global cross-agent conversations (GAP-AF-07).
+	r.Get("/v1/inbox/conversations", svc.listGlobalConversations)
 }
 
 // agentRequest is the POST /v1/agents body.
@@ -379,6 +381,30 @@ func (svc *Service) channelSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, channelSetupResponse{
 		WebhookURL: base + "/v1/inbound/" + integrationID,
+	})
+}
+
+// listGlobalConversations returns the cross-agent conversation list for the
+// current scope. No {agentIdentifier} path segment — this is the global inbox
+// view required by Activity Feed §3.3.1 (GAP-AF-07).
+//
+// GET /v1/inbox/conversations?cursor=<ulid>&limit=20&agent=<identifier>
+func (svc *Service) listGlobalConversations(w http.ResponseWriter, r *http.Request) {
+	scope := identity.ScopeFrom(r.Context())
+
+	q := r.URL.Query()
+	limit := parseLimit(q.Get("limit"), 0)
+	cursor := q.Get("cursor")
+	agentIdentifier := q.Get("agent")
+
+	items, next, err := svc.store.Activities().ListConversations(r.Context(), scope, agentIdentifier, cursor, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": items,
+		"next":  next,
 	})
 }
 

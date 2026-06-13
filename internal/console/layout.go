@@ -67,6 +67,8 @@ var pageContentFiles = map[string]string{
 	"agents":             "templates/agents.html",
 	"agent-detail":       "templates/agent_detail.html",
 	"agent-conversation": "templates/agent_conversation.html",
+	// W4-A5: global conversations list.
+	"conversations": "templates/conversations.html",
 	// W4-E1/E2: environments + API keys.
 	"environments": "templates/environments.html",
 	"api-keys":     "templates/api_keys.html",
@@ -168,22 +170,23 @@ func navIconSVG(key string) template.HTML {
 	const open = `<svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">`
 	const closeSVG = `</svg>`
 	paths := map[string]string{
-		"dashboard":    `<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>`,
-		"workflows":    `<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 6h6a4 4 0 0 1 4 4v0M6 8v8"/>`,
-		"activity":     `<path d="M3 12h4l3 8 4-16 3 8h4"/>`,
-		"subscribers":  `<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/>`,
-		"topics":       `<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>`,
-		"integrations": `<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M7 14v2a2 2 0 0 0 2 2h2M14 7h2a2 2 0 0 1 2 2v2"/>`,
-		"webhooks":     `<path d="M18 16.98a4 4 0 1 0-2.5-7.4M6.5 9.5A4 4 0 1 0 9 16.98M12 8v4l3 3"/>`,
-		"agents":       `<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 2v4M9 13h.01M15 13h.01M2 14h2M20 14h2"/>`,
-		"analytics":    `<path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6"/><rect x="13" y="7" width="3" height="10"/>`,
-		"variables":    `<path d="M4 7V4h16v3M9 20h6M12 4v16"/>`,
-		"contexts":     `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/>`,
-		"layouts":      `<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>`,
-		"translations": `<path d="M4 5h7M9 3v2c0 4-2 7-5 9M5 9c0 3 3 5 7 5"/><path d="M14 19l3-7 3 7M14.5 17h5"/>`,
-		"domains":      `<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20z"/>`,
-		"environments": `<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>`,
-		"api-keys":     `<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`,
+		"dashboard":     `<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>`,
+		"workflows":     `<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 6h6a4 4 0 0 1 4 4v0M6 8v8"/>`,
+		"activity":      `<path d="M3 12h4l3 8 4-16 3 8h4"/>`,
+		"subscribers":   `<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/>`,
+		"topics":        `<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>`,
+		"integrations":  `<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M7 14v2a2 2 0 0 0 2 2h2M14 7h2a2 2 0 0 1 2 2v2"/>`,
+		"webhooks":      `<path d="M18 16.98a4 4 0 1 0-2.5-7.4M6.5 9.5A4 4 0 1 0 9 16.98M12 8v4l3 3"/>`,
+		"agents":        `<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 2v4M9 13h.01M15 13h.01M2 14h2M20 14h2"/>`,
+		"conversations": `<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`,
+		"analytics":     `<path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6"/><rect x="13" y="7" width="3" height="10"/>`,
+		"variables":     `<path d="M4 7V4h16v3M9 20h6M12 4v16"/>`,
+		"contexts":      `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/>`,
+		"layouts":       `<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>`,
+		"translations":  `<path d="M4 5h7M9 3v2c0 4-2 7-5 9M5 9c0 3 3 5 7 5"/><path d="M14 19l3-7 3 7M14.5 17h5"/>`,
+		"domains":       `<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20z"/>`,
+		"environments":  `<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>`,
+		"api-keys":      `<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`,
 	}
 	p, ok := paths[key]
 	if !ok {
@@ -279,6 +282,7 @@ var navGroups = []navGroup{
 	}},
 	{Label: "AGENTS", Entries: []navEntry{
 		{Label: "Agents", Href: "/console/agents", Section: "agents", Icon: "agents", BadgeKey: "agents"},
+		{Label: "Conversations", Href: "/console/conversations", Section: "conversations", Icon: "conversations"},
 	}},
 	{Label: "SYSTEM", Entries: []navEntry{
 		{Label: "Analytics", Href: "/console/analytics", Section: "analytics", Icon: "analytics"},

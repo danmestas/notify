@@ -432,6 +432,9 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/agents/{identifier}/conversations/{id}/compose", c.handleConversationCompose)
 		pr.Get("/console/api/fragments/agents-list", c.serveFragmentAgentsList)
 		pr.Get("/console/api/fragments/agent-conversations", c.serveFragmentAgentConversations)
+		// W4-A5: global conversations list (cross-agent inbox, #46).
+		pr.Get("/console/conversations", c.serveConversationsPage)
+		pr.Get("/console/api/fragments/global-conversations", c.serveFragmentGlobalConversations)
 	})
 
 	// Unmatched /console/* paths go through the full session gate, same

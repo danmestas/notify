@@ -31,6 +31,29 @@ type ActivityRepo interface {
 	// takes precedence (only before is applied). Empty cursors return the most
 	// recent limit rows.
 	Page(ctx context.Context, scope domain.Scope, conversationID string, limit int, before, after string) ([]agentdomain.Activity, error)
+	// ListConversations returns one ConversationSummary per distinct
+	// conversation_id, ordered by the most recent activity in that conversation
+	// (last_message_at DESC, last_activity_id DESC for tie-breaking).
+	// limit ≤ 0 → default 20, hard cap 200.
+	// agentIdentifier, when non-empty, narrows the result to a single agent.
+	// cursor is the LastActivityID of the last row on the previous page;
+	// empty cursor returns the first page.
+	// Returns the summaries and the next-page cursor ("" when no more pages).
+	ListConversations(ctx context.Context, scope domain.Scope, agentIdentifier, cursor string, limit int) ([]ConversationSummary, string, error)
+}
+
+// ConversationSummary is one row of the cross-agent conversation list returned
+// by ActivityRepo.ListConversations. It carries the most recent activity
+// timestamp for a conversation thread together with the conversation's metadata.
+type ConversationSummary struct {
+	ConversationID   string // conversations.id
+	AgentIdentifier  string // agents.identifier
+	AgentName        string // agents.name (may be empty)
+	SubscriberID     string // conversations.subscriber_id
+	PlatformThreadID string // conversations.platform_thread_id
+	Status           string // conversations.status ("open"/"closed")
+	LastMessageAt    string // max(conversation_activities.created_at) for this conversation
+	LastActivityID   string // id of that most-recent activity row (keyset cursor anchor)
 }
 
 type activityRepo struct {
@@ -203,4 +226,173 @@ func (repo *activityRepo) History(ctx context.Context, scope domain.Scope, conve
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// listConversationsDefaultLimit and listConversationsMaxLimit cap
+// ListConversations pages.
+const (
+	listConversationsDefaultLimit = 20
+	listConversationsMaxLimit     = 200
+)
+
+// ListConversations returns one ConversationSummary per distinct conversation,
+// ordered by max(activity.created_at) DESC with a ULID id tiebreaker.
+// It joins the conversations and agents tables to resolve display metadata.
+func (repo *activityRepo) ListConversations(ctx context.Context, scope domain.Scope, agentIdentifier, cursor string, limit int) ([]ConversationSummary, string, error) {
+	if limit <= 0 {
+		limit = listConversationsDefaultLimit
+	}
+	if limit > listConversationsMaxLimit {
+		limit = listConversationsMaxLimit
+	}
+
+	// Base query: one row per conversation with max activity timestamp + the
+	// activity ULID of that max row (for deterministic keyset ordering).
+	// The join walks: conversation_activities → conversations → agents.
+	// All three tables are scoped by org_id + environment_id.
+	//
+	// Keyset: (last_message_at DESC, last_activity_id DESC). Since activity IDs
+	// are ULIDs, lexicographic DESC on id is equivalent to time DESC with
+	// sub-millisecond tiebreaking, consistent with the rest of the codebase.
+	const baseCols = `
+		ca.conversation_id,
+		ag.identifier   AS agent_identifier,
+		ag.name         AS agent_name,
+		c.subscriber_id,
+		c.platform_thread_id,
+		c.status,
+		MAX(ca.created_at) AS last_message_at,
+		MAX(ca.id)          AS last_activity_id`
+
+	const baseFrom = `
+		FROM conversation_activities ca
+		JOIN conversations c
+		  ON c.id = ca.conversation_id
+		 AND c.org_id = ca.org_id
+		 AND c.environment_id = ca.environment_id
+		JOIN agents ag
+		  ON ag.id = c.agent_id
+		 AND ag.org_id = ca.org_id
+		 AND ag.environment_id = ca.environment_id`
+
+	var (
+		dbRows *sql.Rows
+		err    error
+	)
+
+	if agentIdentifier == "" && cursor == "" {
+		dbRows, err = repo.r.QueryContext(
+			ctx,
+			`SELECT`+baseCols+baseFrom+`
+			 WHERE ca.org_id = ? AND ca.environment_id = ?
+			 GROUP BY ca.conversation_id
+			 ORDER BY last_message_at DESC, last_activity_id DESC
+			 LIMIT ?`,
+			scope.OrgID, scope.EnvID, limit,
+		)
+	} else if agentIdentifier != "" && cursor == "" {
+		dbRows, err = repo.r.QueryContext(
+			ctx,
+			`SELECT`+baseCols+baseFrom+`
+			 WHERE ca.org_id = ? AND ca.environment_id = ?
+			   AND ag.identifier = ?
+			 GROUP BY ca.conversation_id
+			 ORDER BY last_message_at DESC, last_activity_id DESC
+			 LIMIT ?`,
+			scope.OrgID, scope.EnvID, agentIdentifier, limit,
+		)
+	} else {
+		// Resolve the anchor row's (created_at, id) from the activity table.
+		// The cursor is the last_activity_id of the last row on the previous page.
+		var anchorAt string
+		if err := repo.r.QueryRowContext(
+			ctx,
+			`SELECT created_at FROM conversation_activities
+			 WHERE org_id = ? AND environment_id = ? AND id = ?`,
+			scope.OrgID, scope.EnvID, cursor,
+		).Scan(&anchorAt); err != nil {
+			// Anchor is absent or wrong scope: fall through to first page.
+			anchorAt = ""
+			cursor = ""
+		}
+
+		if cursor == "" {
+			// Anchor gone; return first page (may miss a race-deleted activity).
+			if agentIdentifier == "" {
+				dbRows, err = repo.r.QueryContext(
+					ctx,
+					`SELECT`+baseCols+baseFrom+`
+					 WHERE ca.org_id = ? AND ca.environment_id = ?
+					 GROUP BY ca.conversation_id
+					 ORDER BY last_message_at DESC, last_activity_id DESC
+					 LIMIT ?`,
+					scope.OrgID, scope.EnvID, limit,
+				)
+			} else {
+				dbRows, err = repo.r.QueryContext(
+					ctx,
+					`SELECT`+baseCols+baseFrom+`
+					 WHERE ca.org_id = ? AND ca.environment_id = ?
+					   AND ag.identifier = ?
+					 GROUP BY ca.conversation_id
+					 ORDER BY last_message_at DESC, last_activity_id DESC
+					 LIMIT ?`,
+					scope.OrgID, scope.EnvID, agentIdentifier, limit,
+				)
+			}
+		} else if agentIdentifier == "" {
+			dbRows, err = repo.r.QueryContext(
+				ctx,
+				`SELECT`+baseCols+baseFrom+`
+				 WHERE ca.org_id = ? AND ca.environment_id = ?
+				 GROUP BY ca.conversation_id
+				 HAVING (last_message_at < ? OR (last_message_at = ? AND last_activity_id < ?))
+				 ORDER BY last_message_at DESC, last_activity_id DESC
+				 LIMIT ?`,
+				scope.OrgID, scope.EnvID, anchorAt, anchorAt, cursor, limit,
+			)
+		} else {
+			dbRows, err = repo.r.QueryContext(
+				ctx,
+				`SELECT`+baseCols+baseFrom+`
+				 WHERE ca.org_id = ? AND ca.environment_id = ?
+				   AND ag.identifier = ?
+				 GROUP BY ca.conversation_id
+				 HAVING (last_message_at < ? OR (last_message_at = ? AND last_activity_id < ?))
+				 ORDER BY last_message_at DESC, last_activity_id DESC
+				 LIMIT ?`,
+				scope.OrgID, scope.EnvID, agentIdentifier, anchorAt, anchorAt, cursor, limit,
+			)
+		}
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = dbRows.Close() }()
+
+	var out []ConversationSummary
+	for dbRows.Next() {
+		var s ConversationSummary
+		if err := dbRows.Scan(
+			&s.ConversationID, &s.AgentIdentifier, &s.AgentName,
+			&s.SubscriberID, &s.PlatformThreadID, &s.Status,
+			&s.LastMessageAt, &s.LastActivityID,
+		); err != nil {
+			return nil, "", err
+		}
+		out = append(out, s)
+	}
+	if err := dbRows.Err(); err != nil {
+		return nil, "", err
+	}
+	if out == nil {
+		return []ConversationSummary{}, "", nil
+	}
+
+	// Build next-page cursor: the LastActivityID of the last row.
+	var nextCursor string
+	if len(out) == limit {
+		nextCursor = out[len(out)-1].LastActivityID
+	}
+	return out, nextCursor, nil
 }

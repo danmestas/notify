@@ -601,3 +601,197 @@ func TestConversationRepo_GetByThread(t *testing.T) {
 		t.Errorf("cross-tenant err = %v, want ErrNotFound", err)
 	}
 }
+
+// TestActivityRepo_ListConversations proves ListConversations:
+//   - returns one row per distinct conversation ordered by last-activity DESC
+//   - keyset cursor walks pages without duplicates
+//   - agentIdentifier filter narrows to one agent
+//   - cross-env isolation (other scope rows never appear)
+//   - empty repo returns empty slice (not nil/error)
+func TestActivityRepo_ListConversations(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	other := domain.Scope{OrgID: "o1", EnvID: "e2"}
+
+	// Create two agents in scope.
+	agentA, err := s.Agents().Create(ctx, scope, agentdomain.Agent{
+		Identifier: "agent-a",
+		Name:       "Agent A",
+		Runtime:    agentdomain.RuntimeMesh,
+		Active:     true,
+	})
+	if err != nil {
+		t.Fatalf("create agent-a: %v", err)
+	}
+	agentB, err := s.Agents().Create(ctx, scope, agentdomain.Agent{
+		Identifier: "agent-b",
+		Name:       "Agent B",
+		Runtime:    agentdomain.RuntimeMesh,
+		Active:     true,
+	})
+	if err != nil {
+		t.Fatalf("create agent-b: %v", err)
+	}
+	// Create an agent in the other scope.
+	agentOther, err := s.Agents().Create(ctx, other, agentdomain.Agent{
+		Identifier: "agent-other",
+		Name:       "Agent Other",
+		Runtime:    agentdomain.RuntimeMesh,
+		Active:     true,
+	})
+	if err != nil {
+		t.Fatalf("create agent-other: %v", err)
+	}
+
+	// Upsert conversations: 3 for agent-a, 2 for agent-b.
+	convIDs := make([]string, 0, 5)
+	for i := 0; i < 3; i++ {
+		c, err := s.Conversations().Upsert(ctx, scope, agentdomain.Conversation{
+			AgentID:          agentA.ID,
+			PlatformThreadID: fmt.Sprintf("thread-a-%d", i),
+			SubscriberID:     fmt.Sprintf("sub-a-%d", i),
+		})
+		if err != nil {
+			t.Fatalf("upsert conv agent-a %d: %v", i, err)
+		}
+		convIDs = append(convIDs, c.ID)
+	}
+	for i := 0; i < 2; i++ {
+		c, err := s.Conversations().Upsert(ctx, scope, agentdomain.Conversation{
+			AgentID:          agentB.ID,
+			PlatformThreadID: fmt.Sprintf("thread-b-%d", i),
+			SubscriberID:     fmt.Sprintf("sub-b-%d", i),
+		})
+		if err != nil {
+			t.Fatalf("upsert conv agent-b %d: %v", i, err)
+		}
+		convIDs = append(convIDs, c.ID)
+	}
+	// One conversation in the other scope (must never appear in scope's list).
+	otherConv, err := s.Conversations().Upsert(ctx, other, agentdomain.Conversation{
+		AgentID:          agentOther.ID,
+		PlatformThreadID: "thread-x-0",
+	})
+	if err != nil {
+		t.Fatalf("upsert conv other scope: %v", err)
+	}
+
+	// Append one activity per conversation so they have last-activity rows.
+	allConvIDs := append(convIDs, otherConv.ID)
+	scopes := []domain.Scope{scope, scope, scope, scope, scope, other}
+	for i, cID := range allConvIDs {
+		sc := scopes[i]
+		if _, err := s.Activities().Append(ctx, sc, agentdomain.Activity{
+			ConversationID: cID,
+			Role:           "user",
+			Content:        json.RawMessage(`{"parts":[{"text":"hi"}]}`),
+		}); err != nil {
+			t.Fatalf("append activity %d: %v", i, err)
+		}
+	}
+
+	// ── All conversations in scope (no filter) ─────────────────────────────
+	page, nextCursor, err := s.Activities().ListConversations(ctx, scope, "", "", 0)
+	if err != nil {
+		t.Fatalf("ListConversations all: %v", err)
+	}
+	if len(page) != 5 {
+		t.Fatalf("all: want 5, got %d", len(page))
+	}
+	// Verify ordering: rows must be in descending last-message-at order.
+	for i, row := range page[:len(page)-1] {
+		if row.LastMessageAt < page[i+1].LastMessageAt {
+			t.Errorf("order violation at [%d]: %s < %s", i, row.LastMessageAt, page[i+1].LastMessageAt)
+		}
+	}
+	// No more pages when we requested all 5 and received < limit.
+	if nextCursor != "" {
+		t.Errorf("want empty next cursor, got %q", nextCursor)
+	}
+
+	// ── Cross-env isolation ────────────────────────────────────────────────
+	otherPage, _, err := s.Activities().ListConversations(ctx, other, "", "", 0)
+	if err != nil {
+		t.Fatalf("ListConversations other scope: %v", err)
+	}
+	if len(otherPage) != 1 {
+		t.Fatalf("other scope: want 1, got %d", len(otherPage))
+	}
+	if otherPage[0].AgentIdentifier != "agent-other" {
+		t.Errorf("other scope: want agent-other, got %q", otherPage[0].AgentIdentifier)
+	}
+
+	// ── Agent filter ───────────────────────────────────────────────────────
+	filtered, _, err := s.Activities().ListConversations(ctx, scope, "agent-a", "", 0)
+	if err != nil {
+		t.Fatalf("ListConversations agent-a filter: %v", err)
+	}
+	if len(filtered) != 3 {
+		t.Fatalf("agent-a filter: want 3, got %d", len(filtered))
+	}
+	for _, row := range filtered {
+		if row.AgentIdentifier != "agent-a" {
+			t.Errorf("filter leak: got agent %q", row.AgentIdentifier)
+		}
+	}
+
+	// ── Keyset pagination ──────────────────────────────────────────────────
+	p1, cur1, err := s.Activities().ListConversations(ctx, scope, "", "", 2)
+	if err != nil {
+		t.Fatalf("page 1: %v", err)
+	}
+	if len(p1) != 2 {
+		t.Fatalf("page 1: want 2, got %d", len(p1))
+	}
+	if cur1 == "" {
+		t.Fatal("page 1: want non-empty next cursor")
+	}
+
+	p2, cur2, err := s.Activities().ListConversations(ctx, scope, "", cur1, 2)
+	if err != nil {
+		t.Fatalf("page 2: %v", err)
+	}
+	if len(p2) != 2 {
+		t.Fatalf("page 2: want 2, got %d", len(p2))
+	}
+	if cur2 == "" {
+		t.Fatal("page 2: want non-empty next cursor")
+	}
+
+	p3, cur3, err := s.Activities().ListConversations(ctx, scope, "", cur2, 2)
+	if err != nil {
+		t.Fatalf("page 3: %v", err)
+	}
+	if len(p3) != 1 {
+		t.Fatalf("page 3 (last): want 1, got %d", len(p3))
+	}
+	if cur3 != "" {
+		t.Errorf("page 3: want empty next cursor, got %q", cur3)
+	}
+
+	// Union of pages must equal full result with no duplicates.
+	all := append(append(p1, p2...), p3...)
+	seen := map[string]bool{}
+	for _, row := range all {
+		if seen[row.ConversationID] {
+			t.Errorf("duplicate ConversationID %s across pages", row.ConversationID)
+		}
+		seen[row.ConversationID] = true
+	}
+	if len(seen) != 5 {
+		t.Fatalf("union of pages: want 5 distinct ConversationIDs, got %d", len(seen))
+	}
+
+	// ── Empty result (no conversations) ───────────────────────────────────
+	empty, _, err := s.Activities().ListConversations(ctx, domain.Scope{OrgID: "o9", EnvID: "e9"}, "", "", 0)
+	if err != nil {
+		t.Fatalf("empty scope: %v", err)
+	}
+	if empty == nil {
+		t.Error("empty scope: want non-nil slice, got nil")
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty scope: want 0, got %d", len(empty))
+	}
+}

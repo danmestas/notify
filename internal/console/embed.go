@@ -42,6 +42,8 @@ var assetsFS embed.FS
 // The layout and shared partials form the base tree; each page file owns
 // one `content` overlay (see loadTemplates in layout.go).
 //
+// W4-A5: global conversations list.
+//
 //go:embed templates/layout.html
 //go:embed templates/login.html
 //go:embed templates/dashboard.html
@@ -101,4 +103,6 @@ var assetsFS embed.FS
 //go:embed templates/environments.html
 //go:embed templates/api_keys.html
 //go:embed templates/partials/environments_tbody.html
+//go:embed templates/conversations.html
+//go:embed templates/partials/global_conversations_tbody.html
 var templatesFS embed.FS
