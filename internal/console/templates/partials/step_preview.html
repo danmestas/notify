@@ -1,0 +1,9 @@
+{{define "step-preview"}}
+<div id="step-preview-pane" class="step-preview-pane">
+  {{if .IsError}}
+  <pre class="step-preview-error console-lede">{{.Error}}</pre>
+  {{else}}
+  <pre class="step-preview-output wf-code-block">{{.Output}}</pre>
+  {{end}}
+</div>
+{{end}}

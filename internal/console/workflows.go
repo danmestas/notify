@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/aymerick/raymond"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/danmestas/notify/internal/authoring"
@@ -37,6 +38,7 @@ import (
 //   - POST /console/api/workflows/{slug}/steps/{id}/delete remove step
 //   - POST /console/api/workflows/{slug}/steps/{id}/save   step config update
 //   - GET  /console/api/fragments/workflow-step-editor/{slug}/{id}
+//   - GET  /console/api/fragments/step-preview            live Handlebars preview (W4-W3)
 //
 // Every mutation handler is gated on Deps.ReadOnly server-side and
 // answers a native form POST with a 303 redirect (no SSE).
@@ -156,6 +158,16 @@ type workflowStepEditorView struct {
 	Slug     string
 	CSRF     string
 	ReadOnly bool
+}
+
+// stepPreviewView is what the step-preview fragment binds (W4-W3).
+type stepPreviewView struct {
+	// Output is the rendered Handlebars output on success.
+	Output string
+	// Error is a template compile/render error shown inline; never causes a 500.
+	Error string
+	// IsError is true when Error is set, so the template can choose the error style.
+	IsError bool
 }
 
 // workflowTestView is what workflow_test.html binds (W2-A5).
@@ -1773,4 +1785,110 @@ func workflowStatusTone(active bool) tileTone {
 // isNotFound reports whether err is a store not-found sentinel.
 func isNotFound(err error) bool {
 	return errors.Is(err, store.ErrNotFound)
+}
+
+// ─── W4-W3: Handlebars live-preview pane ─────────────────────────────────────
+
+// serveFragmentStepPreview handles
+// GET /console/api/fragments/step-preview.
+//
+// Query parameters (sent as Datastar signals via @get):
+//
+//	tmpl    — the Handlebars template string to render
+//	payload — a JSON object whose keys become the {{payload.*}} namespace
+//
+// The endpoint is read-only (GET, no CSRF required, no state mutation).
+// Template errors are returned as inline HTML — never a 500.
+// Scope safety: raymond evaluates a logicless Handlebars template; there
+// is no file I/O, no network access, and no helper registration — the
+// sandbox is raymond's own strict evaluation model.
+func (c *Console) serveFragmentStepPreview(w http.ResponseWriter, r *http.Request) {
+	if w == nil {
+		panic("serveFragmentStepPreview: w is nil")
+	}
+	if r == nil {
+		panic("serveFragmentStepPreview: r is nil")
+	}
+
+	// Read signals (Datastar @get sends signals as a URL-encoded JSON query
+	// param). Fall back to raw query params so plain HTTP GET also works
+	// (browser navigation / tests).
+	var tmplStr, payloadStr string
+	env, ok := readSignalsBestEffort(r)
+	if ok {
+		tmplStr = env.WfPreviewTmpl
+		payloadStr = env.WfPreviewPayload
+	}
+	// URL query params override / supplement signal values so a plain
+	// GET ?tmpl=…&payload=… (curl, tests) also works.
+	if q := r.URL.Query().Get("tmpl"); q != "" {
+		tmplStr = q
+	}
+	if q := r.URL.Query().Get("payload"); q != "" {
+		payloadStr = q
+	}
+
+	view := renderStepPreview(tmplStr, payloadStr)
+
+	html, err := renderFragment(c.ts.base, "step-preview", view)
+	if err != nil {
+		c.deps.Logger.Error("console: render step-preview fragment", "err", err)
+		http.Error(w, "render failed", http.StatusInternalServerError)
+		return
+	}
+	c.patchHTML(w, r, html)
+}
+
+// renderStepPreview renders tmplStr against a data map built from
+// payloadStr (a JSON object). It is extracted from the handler so tests
+// can call it without HTTP plumbing.
+//
+// The data namespace is byte-for-byte the send-time context built in
+// internal/delivery/delivery.go (and email.go / push.go):
+//
+//	data := map[string]any{"subscriber": subMap, "payload": payloadMap}
+//
+// so a body that renders {{payload.name}} in the preview renders the same
+// at send time. A passthrough {{t}} helper is registered to mirror
+// template.RenderI18n — an unseeded translate key renders verbatim, so a
+// template that uses {{t "key"}} previews without a spurious error.
+// There is no subscriber at design time, so {{subscriber.*}} resolves to
+// "" (the same fail-soft behaviour the engine uses for an absent path).
+//
+// Template errors (parse or execute) and bad payload JSON surface as
+// stepPreviewView.Error rather than panicking or returning a 500. This
+// uses raymond directly (the same library internal/delivery/template
+// wraps) so we can distinguish a compile error from a successful render
+// — the package-level Render helper deliberately swallows errors into the
+// literal source, which a preview pane must not do.
+func renderStepPreview(tmplStr, payloadStr string) stepPreviewView {
+	// Parse the template first so we can report compile errors distinctly
+	// from execute errors. raymond.Parse returns an error on malformed
+	// Handlebars (unterminated {{ etc.).
+	tpl, err := raymond.Parse(tmplStr)
+	if err != nil {
+		return stepPreviewView{IsError: true, Error: "Template error: " + err.Error()}
+	}
+	// Mirror template.RenderI18n: an unseeded key renders verbatim.
+	tpl.RegisterHelper("t", func(key string) string { return key })
+
+	// Build the data context. payload is a JSON object; if it is empty or
+	// not valid JSON we report the JSON error so the operator can fix it.
+	payloadData := make(map[string]any)
+	if payloadStr != "" {
+		if jsonErr := json.Unmarshal([]byte(payloadStr), &payloadData); jsonErr != nil {
+			return stepPreviewView{IsError: true, Error: "Payload JSON error: " + jsonErr.Error()}
+		}
+	}
+
+	data := map[string]any{
+		"payload":    payloadData,
+		"subscriber": map[string]any{},
+	}
+
+	out, err := tpl.Exec(data)
+	if err != nil {
+		return stepPreviewView{IsError: true, Error: "Render error: " + err.Error()}
+	}
+	return stepPreviewView{Output: out}
 }

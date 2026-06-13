@@ -72,6 +72,10 @@ type fragmentEnvelope struct {
 	AgentsFilter string `json:"agentsFilter,omitempty"`
 	AgentsPage   string `json:"agentsPage,omitempty"`
 	ConvPage     string `json:"convPage,omitempty"`
+	// W4-W3: live-preview pane in the step editor. WfPreviewTmpl is the
+	// Handlebars template string; WfPreviewPayload is the sample JSON payload.
+	WfPreviewTmpl    string `json:"wfPreviewTmpl,omitempty"`
+	WfPreviewPayload string `json:"wfPreviewPayload,omitempty"`
 }
 
 // mergeFragmentParams merges the request's URL query with the Datastar

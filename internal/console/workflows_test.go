@@ -1210,3 +1210,135 @@ func TestWorkflowMutations_NotSSE(t *testing.T) {
 		}
 	}
 }
+
+// ---- W4-W3: Handlebars live-preview pane ----
+
+// TestRenderStepPreview_VariableSubstitution proves a payload variable
+// substitutes through the same namespace the send-time engine uses
+// ({{payload.*}}, mirroring internal/delivery/delivery.go).
+func TestRenderStepPreview_VariableSubstitution(t *testing.T) {
+	cases := []struct {
+		name    string
+		tmpl    string
+		payload string
+		want    string
+	}{
+		{"payload var", "Hello {{payload.name}}", `{"name":"World"}`, "Hello World"},
+		{"nested payload", "You have {{payload.order.count}} items", `{"order":{"count":3}}`, "You have 3 items"},
+		{"missing path empty", "Hi {{payload.nope}}", `{"name":"x"}`, "Hi "},
+		{"empty payload renders", "Plain text", "", "Plain text"},
+		{"each block", "{{#each payload.items}}{{this}},{{/each}}", `{"items":["a","b"]}`, "a,b,"},
+		{"if block", "{{#if payload.on}}Y{{else}}N{{/if}}", `{"on":true}`, "Y"},
+		{"t helper passthrough", `{{t "greeting"}}`, "{}", "greeting"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := renderStepPreview(c.tmpl, c.payload)
+			if got.IsError {
+				t.Fatalf("renderStepPreview(%q,%q): unexpected error %q", c.tmpl, c.payload, got.Error)
+			}
+			if got.Output != c.want {
+				t.Errorf("renderStepPreview(%q,%q) = %q, want %q", c.tmpl, c.payload, got.Output, c.want)
+			}
+		})
+	}
+}
+
+// TestRenderStepPreview_InvalidTemplateInlineError proves a malformed
+// Handlebars template surfaces an inline error (never a panic / 500).
+func TestRenderStepPreview_InvalidTemplateInlineError(t *testing.T) {
+	got := renderStepPreview("Hello {{#if payload.x}}unterminated", `{"x":true}`)
+	if !got.IsError {
+		t.Fatalf("expected IsError for malformed template, got output %q", got.Output)
+	}
+	if got.Error == "" {
+		t.Errorf("expected a non-empty inline error message")
+	}
+	if got.Output != "" {
+		t.Errorf("expected empty output on error, got %q", got.Output)
+	}
+}
+
+// TestRenderStepPreview_InvalidPayloadInlineError proves bad payload JSON
+// surfaces an inline error rather than rendering against a half-parsed map.
+func TestRenderStepPreview_InvalidPayloadInlineError(t *testing.T) {
+	got := renderStepPreview("Hello {{payload.name}}", `{bad json`)
+	if !got.IsError {
+		t.Fatalf("expected IsError for malformed payload JSON, got output %q", got.Output)
+	}
+	if !strings.Contains(got.Error, "Payload JSON") {
+		t.Errorf("expected payload JSON error, got %q", got.Error)
+	}
+}
+
+// TestRenderStepPreview_ScopeSafety proves the preview engine is logicless:
+// a user template cannot reach the filesystem or invoke unregistered helpers
+// to escape the sandbox. An unknown helper invocation does not execute
+// arbitrary code; it either renders empty or surfaces an inline error — never
+// a panic, never an OS-level side effect.
+func TestRenderStepPreview_ScopeSafety(t *testing.T) {
+	// No filesystem helper exists; {{include}} / {{require}} are not registered.
+	// Such a template must not panic and must not leak host content.
+	for _, tmpl := range []string{
+		`{{require "/etc/passwd"}}`,
+		`{{include "../../secret"}}`,
+		`{{readFile "/etc/hosts"}}`,
+		`{{exec "rm -rf /"}}`,
+	} {
+		got := renderStepPreview(tmpl, "{}")
+		// Whatever the outcome (empty render or inline error), it must never
+		// contain host file content and must never crash the handler.
+		if strings.Contains(got.Output, "root:") {
+			t.Errorf("template %q leaked host file content: %q", tmpl, got.Output)
+		}
+	}
+}
+
+// TestFragmentStepPreview_RendersLive drives the full HTTP fragment: a GET
+// with tmpl + payload query params returns the rendered output in a Datastar
+// patch, never a 500.
+func TestFragmentStepPreview_RendersLive(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.getWithQuery(t, "/console/api/fragments/step-preview",
+		"tmpl="+url.QueryEscape("Hello {{payload.name}}")+"&payload="+url.QueryEscape(`{"name":"World"}`),
+		cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("step-preview: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Hello World") {
+		t.Errorf("step-preview body missing rendered output, got: %s", body)
+	}
+	if !strings.Contains(body, "step-preview-pane") {
+		t.Errorf("step-preview body missing pane target id, got: %s", body)
+	}
+}
+
+// TestFragmentStepPreview_InvalidTemplateNo500 proves the HTTP path returns
+// 200 with an inline error for a malformed template — never a 500.
+func TestFragmentStepPreview_InvalidTemplateNo500(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.getWithQuery(t, "/console/api/fragments/step-preview",
+		"tmpl="+url.QueryEscape("Hi {{#if payload.x}}oops")+"&payload="+url.QueryEscape(`{"x":true}`),
+		cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("step-preview malformed: status = %d, want 200 (no 500)", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "step-preview-error") {
+		t.Errorf("expected inline error class in body, got: %s", rr.Body.String())
+	}
+}
+
+// TestFragmentStepPreview_RequiresAuth proves the fragment sits behind the
+// session gate like every other fragment route.
+func TestFragmentStepPreview_RequiresAuth(t *testing.T) {
+	tc := newTestConsole(t)
+	rr := tc.get(t, "/console/api/fragments/step-preview", nil)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("step-preview without session: status = %d, want 303", rr.Code)
+	}
+}

@@ -298,6 +298,8 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/api/workflows/{slug}/steps/{stepId}/delete", c.handleWorkflowStepDelete)
 		pr.Post("/console/api/workflows/{slug}/steps/{stepId}/save", c.handleWorkflowStepSave)
 		pr.Get("/console/api/fragments/workflow-step-editor/{slug}/{stepId}", c.serveFragmentWorkflowStepEditor)
+		// W4-W3: Handlebars live-preview pane (read-only GET fragment; no mutation).
+		pr.Get("/console/api/fragments/step-preview", c.serveFragmentStepPreview)
 		// W2-A5: workflow test/trigger page
 		pr.Get("/console/workflows/{slug}/test", c.serveWorkflowTestPage)
 		pr.Post("/console/api/workflows/{slug}/test", c.handleWorkflowTest)

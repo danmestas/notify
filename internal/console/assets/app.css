@@ -1984,3 +1984,84 @@ a.activity-item-run { color: var(--accent); }
 #workflow-step-editor {
   padding: var(--space-4);
 }
+
+/* ===== W4-W3: Handlebars live-preview pane ================================ */
+
+/* Two-column split: editor textarea on the left, rendered preview on the right. */
+.wf-preview-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+/* On narrow viewports (mobile / narrow panels) stack vertically. */
+@media (max-width: 700px) {
+  .wf-preview-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.wf-preview-split-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.wf-preview-split-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.wf-preview-label {
+  margin: 0 0 var(--space-1);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.wf-preview-hint {
+  margin: 0 0 var(--space-2);
+  font-size: 0.75rem;
+}
+
+/* The preview textarea matches the step body textarea height visually. */
+.wf-preview-textarea {
+  resize: vertical;
+}
+
+/* Preview output box: fixed height, scrollable, monospace. */
+.step-preview-pane {
+  min-height: 7rem;
+}
+
+.step-preview-output {
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 7rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  overflow-y: auto;
+}
+
+/* Error state: highlight the error text so it is immediately distinguishable. */
+.step-preview-error {
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 7rem;
+  background: var(--surface);
+  border: 1px solid var(--danger, #e53e3e);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--danger, #e53e3e);
+  overflow-y: auto;
+  margin: 0;
+}
