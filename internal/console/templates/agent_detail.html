@@ -1,0 +1,175 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section"
+         data-signals="{{$page.Signals}}">
+  {{template "page-header" $page.Header}}
+
+  <div class="console-action-row">
+    <a class="btn btn-outline" href="/console/agents">← Back to agents</a>
+    <code class="console-muted">{{$page.Agent.Identifier}}</code>
+    {{if not $page.ReadOnly}}
+    {{if $page.ConfirmDelete}}
+    <span class="console-confirm-label">Delete this agent? This cannot be undone.</span>
+    <a class="btn btn-outline" href="/console/agents/{{$page.Agent.Identifier}}">Cancel</a>
+    <form method="POST" action="/console/agents/{{$page.Agent.Identifier}}/delete" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <button type="submit" class="btn btn-danger">Confirm delete</button>
+    </form>
+    {{else}}
+    <form method="POST" action="/console/agents/{{$page.Agent.Identifier}}/activate" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      {{if $page.Agent.Active}}
+      <button type="submit" class="btn btn-outline">Deactivate</button>
+      {{else}}
+      <button type="submit" class="btn btn-primary">Activate</button>
+      {{end}}
+    </form>
+    <a class="btn btn-danger"
+       href="/console/agents/{{$page.Agent.Identifier}}?confirmDelete=true">Delete agent</a>
+    {{end}}
+    {{end}}
+  </div>
+
+  {{if $page.FormError}}
+  <div class="console-alert console-alert-danger" role="alert">{{$page.FormError}}</div>
+  {{end}}
+
+  {{/* Tab bar — bookmarkable deep links, one history entry per tab */}}
+  <nav class="console-tab-bar" aria-label="Agent tabs">
+    <a href="/console/agents/{{$page.Agent.Identifier}}/tabs/overview"
+       class="console-tab{{if eq $page.ActiveTab "overview"}} is-active{{end}}">Overview</a>
+    <a href="/console/agents/{{$page.Agent.Identifier}}/tabs/channels"
+       class="console-tab{{if eq $page.ActiveTab "channels"}} is-active{{end}}">Channels</a>
+    <a href="/console/agents/{{$page.Agent.Identifier}}/tabs/conversations"
+       class="console-tab{{if eq $page.ActiveTab "conversations"}} is-active{{end}}">Conversations</a>
+  </nav>
+
+  {{if eq $page.ActiveTab "overview"}}
+  <div class="console-detail-grid">
+    <section class="console-card" aria-labelledby="agent-overview-heading">
+      <h2 id="agent-overview-heading" class="console-card-title">Overview</h2>
+      <dl class="wf-meta-list">
+        <div class="wf-meta-row">
+          <dt>Identifier</dt>
+          <dd><code>{{$page.Agent.Identifier}}</code></dd>
+        </div>
+        <div class="wf-meta-row">
+          <dt>Runtime</dt>
+          <dd><span class="chip chip-default">{{$page.Agent.Runtime}}</span></dd>
+        </div>
+        <div class="wf-meta-row">
+          <dt>Status</dt>
+          <dd>
+            {{if $page.Agent.Active}}
+            <span class="chip chip-success">active</span>
+            {{else}}
+            <span class="chip chip-default">inactive</span>
+            {{end}}
+          </dd>
+        </div>
+        {{if $page.Agent.Description}}
+        <div class="wf-meta-row">
+          <dt>Description</dt>
+          <dd>{{$page.Agent.Description}}</dd>
+        </div>
+        {{end}}
+        <div class="wf-meta-row">
+          <dt>Created</dt>
+          <dd class="console-muted">{{$page.Agent.CreatedAt}}</dd>
+        </div>
+        <div class="wf-meta-row">
+          <dt>Updated</dt>
+          <dd class="console-muted">{{$page.Agent.UpdatedAt}}</dd>
+        </div>
+      </dl>
+    </section>
+
+    {{if not $page.ReadOnly}}
+    <section class="console-card" aria-labelledby="agent-edit-heading">
+      <h2 id="agent-edit-heading" class="console-card-title">Edit</h2>
+      <form method="POST" action="/console/agents/{{$page.Agent.Identifier}}/save" class="console-form">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <div class="form-row">
+          <label class="form-label" for="edit-name">Name</label>
+          <input class="console-input" type="text" id="edit-name" name="name"
+                 value="{{$page.Agent.Name}}">
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="edit-description">Description</label>
+          <textarea class="console-input" id="edit-description" name="description"
+                    rows="2">{{$page.Agent.Description}}</textarea>
+        </div>
+        {{if eq $page.Agent.Runtime "mesh"}}
+        <div class="form-row">
+          <label class="form-label" for="edit-meshSubject">Mesh subject</label>
+          <input class="console-input" type="text" id="edit-meshSubject" name="meshSubject"
+                 value="{{$page.Agent.MeshSubject}}">
+        </div>
+        {{end}}
+        {{if eq $page.Agent.Runtime "bridge"}}
+        <div class="form-row">
+          <label class="form-label" for="edit-bridgeUrl">Bridge URL</label>
+          <input class="console-input" type="url" id="edit-bridgeUrl" name="bridgeUrl"
+                 value="{{$page.Agent.BridgeURL}}">
+        </div>
+        {{end}}
+        <div class="form-row">
+          <label class="form-label" for="edit-welcomeMessage">Welcome message</label>
+          <textarea class="console-input" id="edit-welcomeMessage" name="welcomeMessage"
+                    rows="2">{{$page.Agent.WelcomeMessage}}</textarea>
+        </div>
+        <div class="console-form-actions">
+          <button type="submit" class="btn btn-primary">Save changes</button>
+        </div>
+      </form>
+    </section>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{if eq $page.ActiveTab "channels"}}
+  <div class="console-detail-grid">
+    <section class="console-card" aria-labelledby="agent-channels-heading">
+      <h2 id="agent-channels-heading" class="console-card-title">Channels</h2>
+      {{if $page.Links}}
+      <div class="console-table-wrap">
+        <table class="console-table" aria-label="Linked channels">
+          <thead>
+            <tr>
+              <th scope="col">Integration ID</th>
+              <th scope="col">Connected</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range $page.Links}}
+            <tr>
+              <td><code>{{.IntegrationID}}</code></td>
+              <td class="console-muted">{{.ConnectedAt}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}
+      <div class="console-empty-state" data-component="empty-state">
+        <span class="console-empty-state-icon" aria-hidden="true">🔌</span>
+        <h2 class="console-empty-state-title">No channels linked</h2>
+        <p class="console-empty-state-description">
+          Link channel integrations to this agent via the API:
+          <code>POST /v1/agents/{{$page.Agent.Identifier}}/integrations</code>
+        </p>
+      </div>
+      {{end}}
+    </section>
+  </div>
+  {{end}}
+
+  {{if eq $page.ActiveTab "conversations"}}
+  <div class="console-detail-grid">
+    <section class="console-card" aria-labelledby="agent-convs-heading">
+      <h2 id="agent-convs-heading" class="console-card-title">Conversations</h2>
+      {{template "agent-conversations-tbody" $page.ConvsFragment}}
+    </section>
+  </div>
+  {{end}}
+</section>
+{{end}}

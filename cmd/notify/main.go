@@ -26,6 +26,7 @@ import (
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/console"
 	"github.com/danmestas/notify/internal/delivery"
+	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/eventbus"
 	"github.com/danmestas/notify/internal/httpapi"
@@ -39,6 +40,22 @@ import (
 	"github.com/danmestas/notify/internal/version"
 	"github.com/danmestas/notify/internal/webhooksout"
 )
+
+// consoleComposer adapts *ingress.Service to console.ConversationComposer:
+// the console's send-message form needs only the conversation thread handle
+// back, so this flattens ingress.ComposeResult to its ConversationID.
+type consoleComposer struct{ ing *ingress.Service }
+
+func (c consoleComposer) ComposeMessage(
+	ctx context.Context, scope domain.Scope,
+	agentIdentifier, conversationID, subscriberID, text string,
+) (string, error) {
+	res, err := c.ing.ComposeMessage(ctx, scope, agentIdentifier, conversationID, subscriberID, text)
+	if err != nil {
+		return "", err
+	}
+	return res.ConversationID, nil
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -196,6 +213,8 @@ func runServe(args []string) error {
 		Audience:          aud,
 		Webhooks:          webhooksout.NewManagement(st),
 		Trigger:           trg,
+		Agents:            ags,
+		Composer:          consoleComposer{ing},
 		MasterKey:         mk,
 		DagnatsConsoleURL: os.Getenv("NOTIFY_DAGNATS_CONSOLE_URL"),
 		ReadOnly:          os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",

@@ -152,63 +152,108 @@ func (s *Service) compose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent, err := s.agents.Agents().GetByIdentifier(r.Context(), scope, chi.URLParam(r, "agentIdentifier"))
+	res, err := s.ComposeMessage(r.Context(), scope, chi.URLParam(r, "agentIdentifier"),
+		req.ConversationID, req.SubscriberID, req.Text)
 	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	if _, ok := s.runtimes[agent.Runtime]; !ok {
-		http.Error(w, fmt.Sprintf("agent runtime %q is not executable on this server", agent.Runtime),
-			http.StatusUnprocessableEntity)
-		return
-	}
-
-	// Inbox adapter contract (RFC 0002 §6): integration_id is empty (no
-	// channel integration) and platform_thread_id is the inbox conversation
-	// id — client-supplied for thread continuity, minted for a new thread.
-	threadID := req.ConversationID
-	if threadID == "" {
-		threadID = corestore.NewULID()
-	}
-	conv, err := s.agents.Conversations().Upsert(r.Context(), scope, agentdomain.Conversation{
-		AgentID:          agent.ID,
-		IntegrationID:    "",
-		PlatformThreadID: threadID,
-		SubscriberID:     req.SubscriberID,
-	})
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-
-	content, err := json.Marshal(map[string][]agentdomain.Part{"parts": {{Text: req.Text}}})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	act, err := s.agents.Activities().Append(r.Context(), scope, agentdomain.Activity{
-		ConversationID: conv.ID,
-		Role:           "user",
-		Content:        content,
-	})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	runID, err := s.startTurn(r.Context(), scope, agent, conv.ID, act.ID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeComposeError(w, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(composeResponse{
+	_ = json.NewEncoder(w).Encode(composeResponse(res))
+}
+
+// ComposeResult is the outcome of a composed turn: the conversation thread
+// handle to keep composing into, the appended user activity, and the engine
+// run executing the turn.
+type ComposeResult struct {
+	ConversationID string // platform_thread_id of the conversation
+	ActivityID     string
+	RunID          string
+}
+
+// errUnknownRuntime marks an agent whose runtime has no registered executor.
+// Callers map it to 422 (the turn cannot be dispatched on this server).
+var errUnknownRuntime = errors.New("agent runtime is not executable on this server")
+
+// ComposeMessage resolves the agent, upserts the conversation, appends the
+// user activity, and starts the turn run. It is the in-process entry point the
+// HTTP compose handler and the console conversation view both call — the turn
+// always executes as engine work, never in-request (RFC 0002 §3). An empty
+// conversationID starts a new thread.
+func (s *Service) ComposeMessage(
+	ctx context.Context, scope domain.Scope,
+	agentIdentifier, conversationID, subscriberID, text string,
+) (ComposeResult, error) {
+	if text == "" {
+		return ComposeResult{}, fmt.Errorf("text is required")
+	}
+	if subscriberID == "" {
+		return ComposeResult{}, fmt.Errorf("subscriberId is required")
+	}
+
+	agent, err := s.agents.Agents().GetByIdentifier(ctx, scope, agentIdentifier)
+	if err != nil {
+		return ComposeResult{}, err
+	}
+	if _, ok := s.runtimes[agent.Runtime]; !ok {
+		return ComposeResult{}, fmt.Errorf("%w: %q", errUnknownRuntime, agent.Runtime)
+	}
+
+	// Inbox adapter contract (RFC 0002 §6): integration_id is empty (no
+	// channel integration) and platform_thread_id is the inbox conversation
+	// id — client-supplied for thread continuity, minted for a new thread.
+	threadID := conversationID
+	if threadID == "" {
+		threadID = corestore.NewULID()
+	}
+	conv, err := s.agents.Conversations().Upsert(ctx, scope, agentdomain.Conversation{
+		AgentID:          agent.ID,
+		IntegrationID:    "",
+		PlatformThreadID: threadID,
+		SubscriberID:     subscriberID,
+	})
+	if err != nil {
+		return ComposeResult{}, err
+	}
+
+	content, err := json.Marshal(map[string][]agentdomain.Part{"parts": {{Text: text}}})
+	if err != nil {
+		return ComposeResult{}, err
+	}
+	act, err := s.agents.Activities().Append(ctx, scope, agentdomain.Activity{
+		ConversationID: conv.ID,
+		Role:           "user",
+		Content:        content,
+	})
+	if err != nil {
+		return ComposeResult{}, err
+	}
+
+	runID, err := s.startTurn(ctx, scope, agent, conv.ID, act.ID)
+	if err != nil {
+		return ComposeResult{}, err
+	}
+
+	return ComposeResult{
 		ConversationID: conv.PlatformThreadID,
 		ActivityID:     act.ID,
 		RunID:          runID,
-	})
+	}, nil
+}
+
+// writeComposeError maps a ComposeMessage error to its HTTP status. Store
+// not-found stays a 404; an unknown runtime is a 422; everything else is a 500.
+func writeComposeError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, agentstore.ErrNotFound):
+		http.Error(w, "not found", http.StatusNotFound)
+	case errors.Is(err, errUnknownRuntime):
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 // startTurn ensures the agent's turn workflow exists and starts one run for

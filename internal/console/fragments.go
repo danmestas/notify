@@ -62,6 +62,11 @@ type fragmentEnvelope struct {
 	// Workflow activity tab filter signals (W2-A6).
 	WfActStatus string `json:"wfActStatus,omitempty"`
 	WfActRange  string `json:"wfActRange,omitempty"`
+	// Agents list filter signal (W3). AgentsPage/ConvPage are the keyset
+	// pagination cursors carried alongside their list filters.
+	AgentsFilter string `json:"agentsFilter,omitempty"`
+	AgentsPage   string `json:"agentsPage,omitempty"`
+	ConvPage     string `json:"convPage,omitempty"`
 }
 
 // mergeFragmentParams merges the request's URL query with the Datastar
@@ -156,6 +161,13 @@ func envelopeToQuery(env fragmentEnvelope, key string) (string, string) {
 		return "status", env.WfActStatus
 	case "wfActRange":
 		return "range", env.WfActRange
+	// Agents list + conversation pagination signals (W3).
+	case "agentsFilter":
+		return "q", env.AgentsFilter
+	case "agentsPage":
+		return "before", env.AgentsPage
+	case "convPage":
+		return "before", env.ConvPage
 	}
 	return "", ""
 }

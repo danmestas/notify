@@ -1,0 +1,49 @@
+{{/*
+  agent-conversations-tbody — PatchElements fragment target for the agent
+  detail conversations tab. Binds agentConvsListView. The outer element carries
+  the stable id so the default outer-mode patch lines up.
+*/}}
+{{define "agent-conversations-tbody"}}
+<div id="agent-conversations-tbody">
+  {{if .Empty}}
+  {{template "empty-state" .Empty}}
+  {{else}}
+  <div class="console-table-wrap">
+    <table class="console-table" aria-label="Conversations">
+      <thead>
+        <tr>
+          <th scope="col">Conversation ID</th>
+          <th scope="col">Subscriber</th>
+          <th scope="col">Status</th>
+          <th scope="col">Last activity</th>
+          <th scope="col"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{$frag := .}}
+        {{range .Rows}}
+        <tr class="console-table-row">
+          <td><code>{{.ID}}</code></td>
+          <td>{{if .SubscriberID}}{{.SubscriberID}}{{else}}<span class="console-muted">—</span>{{end}}</td>
+          <td><span class="chip chip-default">{{.Status}}</span></td>
+          <td class="console-muted">{{.LastActivityAt}}</td>
+          <td>
+            <a class="btn btn-sm btn-outline"
+               href="/console/agents/{{$frag.Identifier}}/conversations/{{.ID}}">Open</a>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{if .NextCursor}}
+  <div class="console-pagination">
+    <a class="btn btn-outline"
+       href="/console/agents/{{.Identifier}}/tabs/conversations?before={{.NextCursor}}">
+      Load older
+    </a>
+  </div>
+  {{end}}
+  {{end}}
+</div>
+{{end}}

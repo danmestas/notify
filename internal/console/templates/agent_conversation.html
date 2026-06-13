@@ -1,0 +1,103 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section agent-conversation"
+         data-signals="{{$page.Signals}}">
+  {{template "page-header" $page.Header}}
+
+  <div class="console-action-row">
+    <a class="btn btn-outline" href="/console/agents/{{$page.Agent.Identifier}}/tabs/conversations">
+      ← Back to conversations
+    </a>
+    <span class="console-muted">
+      Agent: <a href="/console/agents/{{$page.Agent.Identifier}}">{{$page.Agent.Name}}</a>
+    </span>
+  </div>
+
+  <div class="console-detail-grid">
+    <section class="console-card" aria-labelledby="conv-meta-heading">
+      <h2 id="conv-meta-heading" class="console-card-title">Conversation info</h2>
+      <dl class="wf-meta-list">
+        <div class="wf-meta-row">
+          <dt>ID</dt>
+          <dd><code>{{$page.Conv.ID}}</code></dd>
+        </div>
+        <div class="wf-meta-row">
+          <dt>Status</dt>
+          <dd><span class="chip chip-default">{{$page.Conv.Status}}</span></dd>
+        </div>
+        <div class="wf-meta-row">
+          <dt>Subscriber</dt>
+          <dd>{{if $page.Conv.SubscriberID}}{{$page.Conv.SubscriberID}}{{else}}<span class="console-muted">—</span>{{end}}</dd>
+        </div>
+        <div class="wf-meta-row">
+          <dt>Thread ID</dt>
+          <dd><code>{{$page.Conv.PlatformThreadID}}</code></dd>
+        </div>
+        <div class="wf-meta-row">
+          <dt>Created</dt>
+          <dd class="console-muted">{{$page.Conv.CreatedAt}}</dd>
+        </div>
+        <div class="wf-meta-row">
+          <dt>Last activity</dt>
+          <dd class="console-muted">{{$page.Conv.LastActivityAt}}</dd>
+        </div>
+      </dl>
+    </section>
+  </div>
+
+  {{/* Transcript — chat bubbles, oldest-first */}}
+  <div class="agent-transcript" id="transcript-list">
+    {{if $page.OlderCursor}}
+    <div class="console-pagination">
+      <a class="btn btn-outline"
+         href="/console/agents/{{$page.Agent.Identifier}}/conversations/{{$page.Conv.ID}}?before={{$page.OlderCursor}}">
+        Load older messages
+      </a>
+    </div>
+    {{end}}
+
+    {{if eq (len $page.Turns) 0}}
+    <div class="console-empty-state" data-component="empty-state">
+      <span class="console-empty-state-icon" aria-hidden="true">💬</span>
+      <h2 class="console-empty-state-title">No messages yet</h2>
+      <p class="console-empty-state-description">Messages in this conversation will appear here.</p>
+    </div>
+    {{end}}
+
+    {{range $page.Turns}}
+    <div class="agent-turn agent-turn--{{.Role}}">
+      <div class="agent-turn-header">
+        <span class="agent-turn-role chip {{if eq .Role "user"}}chip-info{{else if eq .Role "agent"}}chip-success{{else}}chip-default{{end}}">{{.Role}}</span>
+        <span class="agent-turn-time console-muted">{{.CreatedAt}}</span>
+        {{if .RunURL}}
+        <a class="agent-turn-run-link" href="{{.RunURL}}" target="_blank" rel="noopener">View run ↗</a>
+        {{end}}
+      </div>
+      <div class="agent-turn-body">{{.Text}}</div>
+    </div>
+    {{end}}
+  </div>
+
+  {{/* Compose box — native POST → 303 back to this page (Wave 3; no SSE).
+       The console relays the message through the ingress compose port
+       in-process; the reply lands on the next page load. */}}
+  {{if $page.CanCompose}}
+  <div class="agent-compose-box">
+    <form method="POST"
+          action="/console/agents/{{$page.Agent.Identifier}}/conversations/{{$page.Conv.ID}}/compose"
+          class="agent-compose-form">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <label class="form-label" for="compose-text">Send message</label>
+      <div class="agent-compose-row">
+        <textarea class="console-input agent-compose-textarea"
+                  id="compose-text"
+                  name="text"
+                  placeholder="Type a message…"
+                  rows="2" required></textarea>
+        <button type="submit" class="btn btn-primary">Send</button>
+      </div>
+      <span class="form-hint">Reply arrives on next load.</span>
+    </form>
+  </div>
+  {{end}}
+</section>
+{{end}}

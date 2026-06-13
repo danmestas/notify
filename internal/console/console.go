@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
@@ -29,6 +30,15 @@ import (
 // lightweight stub without a live engine.
 type TriggerIngester interface {
 	Ingest(ctx context.Context, scope domain.Scope, req trigger.TriggerRequest) (trigger.TriggerResponse, error)
+}
+
+// ConversationComposer is the inbox compose port the conversation view's
+// send-message form relays through (Wave 3). *ingress.Service satisfies it
+// structurally; the form POSTs to a console route that calls ComposeMessage
+// in-process and 303-redirects back — no SSE, no loopback HTTP. Nil disables
+// the compose box (the form renders a "service unavailable" notice instead).
+type ConversationComposer interface {
+	ComposeMessage(ctx context.Context, scope domain.Scope, agentIdentifier, conversationID, subscriberID, text string) (string, error)
 }
 
 // devMode reflects NOTIFY_DEV=1 at process start. When true the asset
@@ -97,6 +107,13 @@ type Deps struct {
 	// Nil disables test-trigger POSTs (returns "service unavailable").
 	// The production wiring passes *trigger.Service; tests may pass a stub.
 	Trigger TriggerIngester
+	// Agents provides the agents store for the agents CRUD pages and the
+	// conversation views (Wave 3). Nil is allowed only when no agent routes
+	// are mounted; in practice New panics when Agents is nil.
+	Agents *agentstore.Store
+	// Composer relays the conversation view's send-message form through the
+	// ingress compose path in-process (Wave 3). Nil disables the compose box.
+	Composer ConversationComposer
 	// ReadOnly disables every mutation button via the actionButton
 	// template helper and renders the read-only banner. The chassis has
 	// no mutations beyond login/logout (which stay enabled — an operator
@@ -140,6 +157,9 @@ func New(deps Deps) *Console {
 	}
 	if deps.Audience == nil {
 		panic("console.New: deps.Audience is nil")
+	}
+	if deps.Agents == nil {
+		panic("console.New: deps.Agents is nil")
 	}
 	if len(deps.MasterKey) != 32 {
 		panic(fmt.Sprintf("console.New: MasterKey must be 32 bytes for AES-256-GCM, got %d", len(deps.MasterKey)))
@@ -294,6 +314,23 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/api/webhooks/{id}/delete", c.handleWebhookDelete)
 		pr.Post("/console/api/webhooks/{id}", c.handleWebhookUpdate)
 		pr.Get("/console/api/fragments/webhooks-list", c.serveFragmentWebhooksList)
+		// W3: agents management + conversation console. The literal `new`
+		// segment is registered before the {identifier} wildcard so chi never
+		// matches "new" as an identifier.
+		pr.Get("/console/agents", c.serveAgentsPage)
+		pr.Get("/console/agents/new", c.serveAgentNew)
+		pr.Get("/console/agents/{identifier}", c.serveAgentDetailPage)
+		pr.Get("/console/agents/{identifier}/tabs/overview", c.serveAgentDetailPage)
+		pr.Get("/console/agents/{identifier}/tabs/channels", c.serveAgentDetailPage)
+		pr.Get("/console/agents/{identifier}/tabs/conversations", c.serveAgentDetailPage)
+		pr.Get("/console/agents/{identifier}/conversations/{id}", c.serveConversationPage)
+		pr.Post("/console/agents", c.handleAgentCreate)
+		pr.Post("/console/agents/{identifier}/save", c.handleAgentSave)
+		pr.Post("/console/agents/{identifier}/delete", c.handleAgentDelete)
+		pr.Post("/console/agents/{identifier}/activate", c.handleAgentToggleActive)
+		pr.Post("/console/agents/{identifier}/conversations/{id}/compose", c.handleConversationCompose)
+		pr.Get("/console/api/fragments/agents-list", c.serveFragmentAgentsList)
+		pr.Get("/console/api/fragments/agent-conversations", c.serveFragmentAgentConversations)
 	})
 
 	// Unmatched /console/* paths go through the full session gate, same

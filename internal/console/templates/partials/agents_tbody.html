@@ -1,0 +1,71 @@
+{{/*
+  agents-tbody — PatchElements fragment target for the agents list. The outer
+  element carries the stable id so the default outer-mode patch lines up. Binds
+  agentsListView. Two-step inline delete (chassis idiom): the first click
+  re-fetches the list with ?confirmDelete={identifier} so the row swaps into
+  confirm state; Cancel re-fetches the plain list; the POST form really deletes.
+*/}}
+{{define "agents-tbody"}}
+<div id="agents-tbody">
+  {{if .Empty}}
+  {{template "empty-state" .Empty}}
+  {{else}}
+  <div class="console-table-wrap">
+    <table class="console-table" aria-label="Agents">
+      <thead>
+        <tr>
+          <th scope="col">Identifier</th>
+          <th scope="col">Name</th>
+          <th scope="col">Runtime</th>
+          <th scope="col">Status</th>
+          <th scope="col">Channels</th>
+          <th scope="col">Updated</th>
+          <th scope="col"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{$frag := .}}
+        {{range .Rows}}
+        <tr class="console-table-row">
+          <td><code>{{.Identifier}}</code></td>
+          <td>{{if .Name}}{{.Name}}{{else}}<span class="console-muted">—</span>{{end}}</td>
+          <td><span class="chip chip-default">{{.Runtime}}</span></td>
+          <td>
+            {{if .Active}}
+            <span class="chip chip-success">active</span>
+            {{else}}
+            <span class="chip chip-default">inactive</span>
+            {{end}}
+          </td>
+          <td>{{.Channels}}</td>
+          <td class="console-muted">{{.UpdatedAt}}</td>
+          <td>
+            <div class="agent-row-actions">
+              <a class="btn-icon" href="/console/agents/{{.Identifier}}" title="View agent">↗</a>
+              {{if not $frag.ReadOnly}}
+              {{if eq $frag.ConfirmDelete .Identifier}}
+              <button type="button" class="btn btn-outline"
+                      data-on:click="@get('/console/api/fragments/agents-list')">
+                Cancel
+              </button>
+              <form method="POST" action="/console/agents/{{.Identifier}}/delete" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{$frag.CSRF}}">
+                <button type="submit" class="btn btn-danger">Confirm delete</button>
+              </form>
+              {{else}}
+              <button type="button" class="btn-icon" title="Delete agent"
+                      data-on:click="@get('/console/api/fragments/agents-list?confirmDelete={{.Identifier}}')">
+                ✕
+              </button>
+              {{end}}
+              {{end}}
+            </div>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+</div>
+{{end}}

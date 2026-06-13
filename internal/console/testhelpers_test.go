@@ -22,6 +22,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	agentdomain "github.com/danmestas/notify/internal/agents/domain"
+	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
@@ -66,13 +68,35 @@ func newStubTrigger(txid string) *stubTrigger {
 // Console (white-box access), its mounted handler, the bootstrap API key,
 // and the minted Scope + store for seeding.
 type testConsole struct {
-	c      *Console
-	h      http.Handler
-	key    string
-	scope  domain.Scope
-	st     *store.Store
-	deps   Deps
-	dbPath string
+	c          *Console
+	h          http.Handler
+	key        string
+	scope      domain.Scope
+	st         *store.Store
+	agentStore *agentstore.Store
+	composer   *stubComposer
+	deps       Deps
+	dbPath     string
+}
+
+// stubComposer is a console.ConversationComposer stub for unit tests: it
+// records the last compose call and returns the conversationID echoed back,
+// without a live engine.
+type stubComposer struct {
+	calls []composeCall
+	err   error
+}
+
+type composeCall struct {
+	agentIdentifier, conversationID, subscriberID, text string
+}
+
+func (s *stubComposer) ComposeMessage(_ context.Context, _ domain.Scope, agentIdentifier, conversationID, subscriberID, text string) (string, error) {
+	s.calls = append(s.calls, composeCall{agentIdentifier, conversationID, subscriberID, text})
+	if s.err != nil {
+		return "", s.err
+	}
+	return conversationID, nil
 }
 
 // newTestConsole boots a fresh tenant on a temp SQLite store and mounts
@@ -95,6 +119,8 @@ func newTestConsole(t *testing.T) *testConsole {
 	}
 
 	conn := connectivity.New(st, masterKey)
+	ags := agentstore.New(st)
+	composer := &stubComposer{}
 	deps := Deps{
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Identity:      id,
@@ -107,18 +133,65 @@ func newTestConsole(t *testing.T) *testConsole {
 		Audience:      audience.New(st),
 		Webhooks:      webhooksout.NewManagement(st),
 		Trigger:       newStubTrigger(""),
+		Agents:        ags,
+		Composer:      composer,
 		MasterKey:     masterKey,
 	}
 	c := New(deps)
 	return &testConsole{
-		c:      c,
-		h:      c.Routes(),
-		key:    key,
-		scope:  scope,
-		st:     st,
-		deps:   deps,
-		dbPath: dbPath,
+		c:          c,
+		h:          c.Routes(),
+		key:        key,
+		scope:      scope,
+		st:         st,
+		agentStore: ags,
+		composer:   composer,
+		deps:       deps,
+		dbPath:     dbPath,
 	}
+}
+
+// seedAgent creates one agent row through the agents store under the test
+// scope and returns it.
+func (tc *testConsole) seedAgent(t *testing.T, a agentdomain.Agent) agentdomain.Agent {
+	t.Helper()
+	created, err := tc.agentStore.Agents().Create(context.Background(), tc.scope, a)
+	if err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+	return created
+}
+
+// seedAgentInScope creates an agent under an explicit scope (scope-isolation
+// tests).
+func (tc *testConsole) seedAgentInScope(t *testing.T, scope domain.Scope, a agentdomain.Agent) agentdomain.Agent {
+	t.Helper()
+	created, err := tc.agentStore.Agents().Create(context.Background(), scope, a)
+	if err != nil {
+		t.Fatalf("seed agent in scope: %v", err)
+	}
+	return created
+}
+
+// seedConversation upserts one conversation thread for an agent and returns
+// the stored row.
+func (tc *testConsole) seedConversation(t *testing.T, c agentdomain.Conversation) agentdomain.Conversation {
+	t.Helper()
+	created, err := tc.agentStore.Conversations().Upsert(context.Background(), tc.scope, c)
+	if err != nil {
+		t.Fatalf("seed conversation: %v", err)
+	}
+	return created
+}
+
+// seedActivity appends one activity to a conversation and returns it.
+func (tc *testConsole) seedActivity(t *testing.T, a agentdomain.Activity) agentdomain.Activity {
+	t.Helper()
+	created, err := tc.agentStore.Activities().Append(context.Background(), tc.scope, a)
+	if err != nil {
+		t.Fatalf("seed activity: %v", err)
+	}
+	return created
 }
 
 // testBackground returns a context.Background for use in test helper calls
