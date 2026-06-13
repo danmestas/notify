@@ -2,6 +2,7 @@ package console
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -140,7 +141,40 @@ func staticFuncMap() template.FuncMap {
 		"activityEmptyDetail": func() activityDetailView {
 			return activityDetailView{Empty: true}
 		},
+		// navIcon renders the inline line-SVG glyph for a sidebar entry by
+		// key (navEntry.Icon). Unknown keys fall back to a neutral dot so a
+		// new nav entry never renders a broken icon.
+		"navIcon": navIconSVG,
 	}
+}
+
+// navIconSVG maps a navEntry.Icon key to a 16x16 stroked line-icon. The
+// glyphs are hand-trimmed to match the MagicPath sidebar's feel (Lucide /
+// Feather family). currentColor + a shared viewBox keep them inheriting the
+// link colour and sizing from .console-nav-icon in app.css.
+func navIconSVG(key string) template.HTML {
+	const open = `<svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">`
+	const closeSVG = `</svg>`
+	paths := map[string]string{
+		"dashboard":    `<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>`,
+		"workflows":    `<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 6h6a4 4 0 0 1 4 4v0M6 8v8"/>`,
+		"activity":     `<path d="M3 12h4l3 8 4-16 3 8h4"/>`,
+		"subscribers":  `<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/>`,
+		"topics":       `<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>`,
+		"integrations": `<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M7 14v2a2 2 0 0 0 2 2h2M14 7h2a2 2 0 0 1 2 2v2"/>`,
+		"webhooks":     `<path d="M18 16.98a4 4 0 1 0-2.5-7.4M6.5 9.5A4 4 0 1 0 9 16.98M12 8v4l3 3"/>`,
+		"agents":       `<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 2v4M9 13h.01M15 13h.01M2 14h2M20 14h2"/>`,
+		"analytics":    `<path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6"/><rect x="13" y="7" width="3" height="10"/>`,
+		"variables":    `<path d="M4 7V4h16v3M9 20h6M12 4v16"/>`,
+		"contexts":     `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/>`,
+		"layouts":      `<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>`,
+		"domains":      `<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20z"/>`,
+	}
+	p, ok := paths[key]
+	if !ok {
+		p = `<circle cx="12" cy="12" r="3"/>`
+	}
+	return template.HTML(open + p + closeSVG) //nolint:gosec // static glyph set, no user input
 }
 
 // jsEscapeStringLiteral returns a single-quoted, JS-escaped string literal
@@ -190,49 +224,98 @@ func (c *Console) runURL(runID string) string {
 	return c.deps.DagnatsConsoleURL + "/console/runs/" + url.PathEscape(runID)
 }
 
-// navEntry is one link in the primary nav.
+// navEntry is one link in the sidebar nav. Icon is a key into the
+// navIcon template helper (inline line-SVG glyphs matching the mockup);
+// BadgeKey, when non-empty, selects a live count from pageData.NavCounts
+// rendered as a pill on the right of the entry.
 type navEntry struct {
-	Label   string
-	Href    string
-	Section string
+	Label    string
+	Href     string
+	Section  string
+	Icon     string
+	BadgeKey string
 }
 
-// navGroup is one section of the nav IA. Groups with no entries are not
-// rendered (placeholder-free: no link may point at a 404). The IA is
-// Dashboard · Workflows · Activity · Analytics; later slices append
-// their entries in their own PRs.
+// navGroup is one section of the sidebar IA. Label is the small
+// uppercase section header (NOTIFY / CHANNELS / AGENTS / SYSTEM in the
+// MagicPath mockup). Groups with no entries are not rendered
+// (placeholder-free: no link may point at a 404).
 type navGroup struct {
 	Label   string
 	Entries []navEntry
 }
 
-// navGroups is the console's primary nav inventory. Order is the render
-// order.
+// navGroups is the console's sidebar inventory grouped to match the
+// MagicPath mockup. Order is the render order. Every Href points at a
+// real mounted route — the mockup's aspirational "Conversations",
+// "API Keys", and "Settings" entries are omitted rather than rendered as
+// dead links; their slots return when the routes ship.
 var navGroups = []navGroup{
-	{Entries: []navEntry{{Label: "Dashboard", Href: "/console/", Section: "dashboard"}}},
-	{Entries: []navEntry{{Label: "Workflows", Href: "/console/workflows", Section: "workflows"}}},
-	{Entries: []navEntry{{Label: "Activity", Href: "/console/activity", Section: "activity"}}},
-	{Entries: []navEntry{{Label: "Analytics", Href: "/console/analytics", Section: "analytics"}}},
-	{Entries: []navEntry{{Label: "Integrations", Href: "/console/integrations", Section: "integrations"}}},
-	{Entries: []navEntry{{Label: "Subscribers", Href: "/console/subscribers", Section: "subscribers"}}},
-	{Entries: []navEntry{{Label: "Topics", Href: "/console/topics", Section: "topics"}}},
-	{Entries: []navEntry{{Label: "Webhooks", Href: "/console/webhooks", Section: "webhooks"}}},
-	{Entries: []navEntry{{Label: "Variables", Href: "/console/variables", Section: "variables"}}},
-	{Entries: []navEntry{{Label: "Contexts", Href: "/console/contexts", Section: "contexts"}}},
-	{Entries: []navEntry{{Label: "Layouts", Href: "/console/layouts", Section: "layouts"}}},
-	{Entries: []navEntry{{Label: "Domains", Href: "/console/domains", Section: "domains"}}},
-	{Entries: []navEntry{{Label: "Agents", Href: "/console/agents", Section: "agents"}}},
+	{Label: "NOTIFY", Entries: []navEntry{
+		{Label: "Dashboard", Href: "/console/", Section: "dashboard", Icon: "dashboard"},
+		{Label: "Workflows", Href: "/console/workflows", Section: "workflows", Icon: "workflows", BadgeKey: "workflows"},
+		{Label: "Activity", Href: "/console/activity", Section: "activity", Icon: "activity"},
+		{Label: "Subscribers", Href: "/console/subscribers", Section: "subscribers", Icon: "subscribers"},
+		{Label: "Topics", Href: "/console/topics", Section: "topics", Icon: "topics"},
+	}},
+	{Label: "CHANNELS", Entries: []navEntry{
+		{Label: "Integrations", Href: "/console/integrations", Section: "integrations", Icon: "integrations", BadgeKey: "integrations"},
+		{Label: "Webhooks", Href: "/console/webhooks", Section: "webhooks", Icon: "webhooks"},
+	}},
+	{Label: "AGENTS", Entries: []navEntry{
+		{Label: "Agents", Href: "/console/agents", Section: "agents", Icon: "agents", BadgeKey: "agents"},
+	}},
+	{Label: "SYSTEM", Entries: []navEntry{
+		{Label: "Analytics", Href: "/console/analytics", Section: "analytics", Icon: "analytics"},
+		{Label: "Variables", Href: "/console/variables", Section: "variables", Icon: "variables"},
+		{Label: "Contexts", Href: "/console/contexts", Section: "contexts", Icon: "contexts"},
+		{Label: "Layouts", Href: "/console/layouts", Section: "layouts", Icon: "layouts"},
+		{Label: "Domains", Href: "/console/domains", Section: "domains", Icon: "domains"},
+	}},
 }
+
+// consoleVersion is the build label shown in the sidebar footer
+// ("notify v0.9.2 · :3000" in the mockup). Static for now; a future
+// slice can plumb the real ldflags version + bound port.
+const consoleVersion = "v0.9.2"
 
 // pageData is what the layout template binds for every full page.
 type pageData struct {
-	Title    string
-	Section  string
-	Nav      []navGroup
-	Scope    domain.Scope
-	CSRF     string
-	ReadOnly bool
-	Page     any
+	Title      string
+	Section    string
+	Nav        []navGroup
+	NavCounts  map[string]int // sidebar badge counts keyed by navEntry.BadgeKey
+	Scope      domain.Scope
+	CSRF       string
+	ReadOnly   bool
+	Version    string // sidebar footer build label
+	DagnatsURL string // sidebar "dagnats console ↗" external link target ("" hides the link target)
+	Page       any
+}
+
+// navCounts computes the sidebar badge counts (workflows / integrations /
+// agents) for scope. Each lookup degrades to 0 on error or a nil service
+// so the chrome always renders — a missing count is a blank badge, never
+// a failed page. Cheap List calls over the current small datasets; if
+// these grow, swap to dedicated COUNT queries.
+func (c *Console) navCounts(ctx context.Context, scope domain.Scope) map[string]int {
+	counts := map[string]int{}
+	if c.deps.Authoring != nil {
+		if wfs, err := c.deps.Authoring.List(ctx, scope); err == nil {
+			counts["workflows"] = len(wfs)
+		}
+	}
+	if c.deps.Integrations != nil {
+		if ints, err := c.deps.Integrations.List(ctx, scope); err == nil {
+			counts["integrations"] = len(ints)
+		}
+	}
+	if c.deps.Agents != nil {
+		if ags, err := c.deps.Agents.Agents().List(ctx, scope); err == nil {
+			counts["agents"] = len(ags)
+		}
+	}
+	return counts
 }
 
 // renderPage executes section's page template into the layout and writes
@@ -256,13 +339,16 @@ func (c *Console) renderPage(
 	s, _ := sessionFromContext(r.Context())
 	scope, _ := domain.ScopeFromContext(r.Context())
 	data := pageData{
-		Title:    title,
-		Section:  section,
-		Nav:      navGroups,
-		Scope:    scope,
-		CSRF:     s.CSRF,
-		ReadOnly: c.deps.ReadOnly,
-		Page:     page,
+		Title:      title,
+		Section:    section,
+		Nav:        navGroups,
+		NavCounts:  c.navCounts(r.Context(), scope),
+		Scope:      scope,
+		CSRF:       s.CSRF,
+		ReadOnly:   c.deps.ReadOnly,
+		Version:    consoleVersion,
+		DagnatsURL: c.deps.DagnatsConsoleURL,
+		Page:       page,
 	}
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, "layout", data); err != nil {

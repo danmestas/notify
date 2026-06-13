@@ -30,38 +30,42 @@ func TestDashboard_RendersSeededKPIsAndNav(t *testing.T) {
 	}
 	body := rr.Body.String()
 
-	// KPI tiles: 3 total deliveries, 2 sent, 1 failed, 2 workflows.
+	// Delivery-health composition: the "Sent today" card totals all 3
+	// deliveries; the per-channel breakdown shows in_app (2) and email (1);
+	// "Active workflows … of 2" reflects the two seeded workflows; the
+	// errors card surfaces the one failed delivery.
 	for _, want := range []string{
-		`<span class="page-header-tile-count">3</span>`,
-		`<span class="page-header-tile-label">deliveries</span>`,
-		`<span class="page-header-tile-count">2</span>`,
-		`<span class="page-header-tile-label">sent</span>`,
-		`<span class="page-header-tile-count">1</span>`,
-		`<span class="page-header-tile-label">failed</span>`,
-		`<span class="page-header-tile-label">workflows</span>`,
+		"Delivery health",
+		`class="kpi-card-value">`, // KPI cards present
+		`class="kpi-breakdown"`,   // per-channel breakdown
+		`class="kpi-dot channel-in_app"`,
+		`class="kpi-dot channel-email"`,
+		"of 2", // active-workflows denominator
+		"Errors · 24h",
+		`class="dashboard-chart`, // per-channel chart card
+		"Recent activity",
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("dashboard missing %s", want)
+			t.Errorf("dashboard missing %q", want)
 		}
 	}
-	// Sparkline rendered (3 deliveries land in today's bucket).
-	if !strings.Contains(body, "dashboard-sparkline") {
-		t.Errorf("dashboard missing the sparkline SVG")
+	// The chart renders a polyline per named channel (deliveries landed
+	// today, so the chart is non-empty).
+	if !strings.Contains(body, "dashboard-chart-svg") {
+		t.Errorf("dashboard missing the per-channel chart SVG")
 	}
-	// Nav: Dashboard link active; Workflows, Activity, and Analytics all
-	// live (W1-4/5/6/7). No dead links remain.
-
-	if !strings.Contains(body, `href="/console/"`) {
-		t.Errorf("nav missing the Dashboard link")
-	}
-	for _, live := range []string{`href="/console/workflows"`, `href="/console/activity"`, `href="/console/analytics"`} {
-		if !strings.Contains(body, live) {
-			t.Errorf("nav missing live link %s", live)
-		}
-	}
-	for _, dead := range []string{} {
-		if strings.Contains(body, dead) {
-			t.Errorf("nav carries a placeholder link %s before its page exists", dead)
+	// Sidebar nav: grouped sections + Dashboard active; Workflows,
+	// Activity, and Analytics all live. No dead links remain.
+	for _, want := range []string{
+		"console-sidebar",
+		">NOTIFY<", ">CHANNELS<", ">AGENTS<", ">SYSTEM<",
+		`href="/console/"`,
+		`href="/console/workflows"`,
+		`href="/console/activity"`,
+		`href="/console/analytics"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard sidebar missing %q", want)
 		}
 	}
 }
@@ -74,11 +78,16 @@ func TestDashboard_EmptyStoreRendersZeroState(t *testing.T) {
 		t.Fatalf("GET /console/: status = %d, want 200", rr.Code)
 	}
 	body := rr.Body.String()
+	// Empty store: chart renders its empty state, the "Sent today" card
+	// shows a zero total, and the recent-activity panel its empty line.
 	if !strings.Contains(body, "No deliveries in the last 7 days.") {
-		t.Errorf("empty dashboard missing the sparkline empty state")
+		t.Errorf("empty dashboard missing the chart empty state")
 	}
-	if !strings.Contains(body, `<span class="page-header-tile-count">0</span>`) {
-		t.Errorf("empty dashboard missing zero tiles")
+	if !strings.Contains(body, `class="kpi-card-value">`) {
+		t.Errorf("empty dashboard missing the KPI cards")
+	}
+	if !strings.Contains(body, "No recent activity in this environment.") {
+		t.Errorf("empty dashboard missing the recent-activity empty state")
 	}
 }
 

@@ -72,8 +72,9 @@ func TestAgents_NavEntryIsLive(t *testing.T) {
 	if !strings.Contains(body, `href="/console/agents"`) {
 		t.Errorf("nav entry for agents not present")
 	}
-	// The list page renders section "agents", so the nav link is active.
-	if !strings.Contains(body, `class="is-active"`) {
+	// The list page renders section "agents", so the sidebar nav link is
+	// active (chassis idiom: "console-nav-link is-active" + aria-current).
+	if !strings.Contains(body, `console-nav-link is-active`) {
 		t.Errorf("expected an active nav entry on the agents page")
 	}
 }

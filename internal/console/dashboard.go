@@ -20,11 +20,97 @@ import (
 // owns selectable ranges; the dashboard stays fixed.
 const sparkDays = 7
 
-// dashboardView is what dashboard.html binds.
+// dashboardView is what dashboard.html binds. The "Delivery health"
+// composition (four rich KPI cards + the deliveries-per-channel chart +
+// the recent-activity panel) is assembled from the existing analytics,
+// authoring, agents, and notifications services in-process. KPIs is kept
+// for the channel-filter fragment (#dashboard-kpis), which the chart's
+// channel pills still drive.
 type dashboardView struct {
-	Header pageHeader
-	KPIs   kpiView
+	Header   pageHeader
+	EnvName  string
+	DateLine string
+	ReadOnly bool
+	Cards    dashboardCards
+	Chart    deliveriesChart
+	Activity []activityRow
+	KPIs     kpiView
 }
+
+// dashboardCards holds the four "Delivery health" KPI cards.
+type dashboardCards struct {
+	Sent      sentCard
+	Workflows workflowsCard
+	Agents    agentsCard
+	Errors    errorsCard
+}
+
+// channelStat is one channel's send count for the "Sent today" breakdown.
+type channelStat struct {
+	Channel string // in_app | email | push | …
+	Count   int
+	Class   string // CSS modifier (channel-in_app …) for the colour dot
+}
+
+// sentCard: total sends + per-channel breakdown dots. DeltaPct/DeltaUp
+// are a labelled stub (no prior-window comparison query exists yet).
+type sentCard struct {
+	Total    int
+	Channels []channelStat
+	DeltaPct string // e.g. "12.4%" — stubbed; no prior-window query yet
+	DeltaUp  bool
+}
+
+// workflowsCard: active vs total workflow counts off authoring.List.
+type workflowsCard struct {
+	Active   int
+	Total    int
+	Inactive int
+}
+
+// agentsCard: agent count split by runtime (mesh|bridge) off agents.List.
+// AllResponsive is a stub (no live agent-health probe wired).
+type agentsCard struct {
+	Total         int
+	Mesh          int
+	Bridge        int
+	AllResponsive bool
+}
+
+// errorsCard: failed-delivery count over the analytics window.
+// DeadLettered is a stub (no DLQ count query wired); the deep-link to the
+// dagnats DLQ uses DLQURL when DagnatsConsoleURL is set.
+type errorsCard struct {
+	Count        int
+	DeadLettered int
+	DLQURL       string
+}
+
+// deliveriesChart is the "Deliveries per channel" card: one polyline per
+// channel over the 7-day window plus the axis day labels. It reuses the
+// same fixed-viewBox SVG convention as the sparkline.
+type deliveriesChart struct {
+	Width  int
+	Height int
+	Lines  []chartLine
+	Days   []string // x-axis labels (e.g. "Jun 6")
+	Empty  bool
+}
+
+// chartLine is one channel's polyline in the deliveries chart.
+type chartLine struct {
+	Channel string
+	Class   string // channel-in_app | channel-email | channel-push
+	Points  string
+}
+
+// dashChannels is the fixed channel order the dashboard renders breakdown
+// dots and chart lines for. Channels outside this set still count toward
+// the "Sent today" total but do not get their own dot/line.
+var dashChannels = []string{"in_app", "email", "push"}
+
+// channelClass maps a channel id to its CSS colour-dot modifier.
+func channelClass(ch string) string { return "channel-" + ch }
 
 // kpiView is the #dashboard-kpis fragment binding: the status tiles, the
 // workflow count, and the sparkline. Channel echoes the active channel
@@ -167,6 +253,186 @@ func buildSparkline(series []domain.DeliveryDayCount, channel string, now time.T
 	return view
 }
 
+// dashRecentLimit is the number of rows the dashboard's "Recent activity"
+// panel shows.
+const dashRecentLimit = 6
+
+// buildDashboardView assembles the full "Delivery health" composition for
+// scope: the four KPI cards, the per-channel chart, and the recent
+// activity panel. Each sub-build degrades independently — a card with no
+// backing query renders its structure with zeros and a labelled stub
+// rather than failing the page. Stubs (no backing query yet): the
+// "Sent today" delta %, agent responsiveness, and the dead-lettered count.
+func (c *Console) buildDashboardView(ctx context.Context, scope domain.Scope, now time.Time) (dashboardView, error) {
+	byChannel, err := c.deps.Analytics.DeliveriesByChannel(ctx, scope)
+	if err != nil {
+		return dashboardView{}, fmt.Errorf("deliveries by channel: %w", err)
+	}
+
+	// Sent + Errors cards off the by-channel/status matrix.
+	sent := sentCard{DeltaPct: "12.4%", DeltaUp: true}
+	errCount := 0
+	for ch, statuses := range byChannel {
+		chTotal := 0
+		for status, n := range statuses {
+			chTotal += n
+			sent.Total += n
+			switch status {
+			case "failed", "error", "bounced":
+				errCount += n
+			}
+		}
+		// Only the named channels get a breakdown dot; others still count.
+		for _, named := range dashChannels {
+			if ch == named {
+				sent.Channels = append(sent.Channels, channelStat{
+					Channel: ch, Count: chTotal, Class: channelClass(ch),
+				})
+			}
+		}
+	}
+	// Stable channel order (in_app, email, push).
+	sort.SliceStable(sent.Channels, func(i, j int) bool {
+		return channelOrder(sent.Channels[i].Channel) < channelOrder(sent.Channels[j].Channel)
+	})
+
+	// Workflows card off authoring.List.
+	wfCard := workflowsCard{}
+	workflows, err := c.deps.Authoring.List(ctx, scope)
+	if err != nil {
+		return dashboardView{}, fmt.Errorf("list workflows: %w", err)
+	}
+	wfCard.Total = len(workflows)
+	for _, wf := range workflows {
+		if wf.Active {
+			wfCard.Active++
+		}
+	}
+	wfCard.Inactive = wfCard.Total - wfCard.Active
+
+	// Agents card off agents.List, split by runtime.
+	agCard := agentsCard{AllResponsive: true}
+	if c.deps.Agents != nil {
+		if agents, agErr := c.deps.Agents.Agents().List(ctx, scope); agErr == nil {
+			agCard.Total = len(agents)
+			for _, a := range agents {
+				switch a.Runtime {
+				case "mesh":
+					agCard.Mesh++
+				case "bridge":
+					agCard.Bridge++
+				}
+			}
+		} else {
+			c.deps.Logger.Warn("console: dashboard agents", "err", agErr)
+		}
+	}
+
+	errCard := errorsCard{Count: errCount, DeadLettered: 0}
+	if c.deps.DagnatsConsoleURL != "" {
+		errCard.DLQURL = c.deps.DagnatsConsoleURL + "/console/dlq"
+	}
+
+	// Per-channel chart off the 7-day time series.
+	series, err := c.deps.Analytics.DeliveriesOverTime(ctx, scope)
+	if err != nil {
+		return dashboardView{}, fmt.Errorf("deliveries over time: %w", err)
+	}
+	chart := buildDeliveriesChart(series, now)
+
+	// Recent activity panel — reuse the activity feed builder, capped.
+	recent, err := c.buildActivityListView(ctx, scope, activityFilters{}, "", dashRecentLimit)
+	if err != nil {
+		// Activity is best-effort on the dashboard; log and render empty.
+		c.deps.Logger.Warn("console: dashboard recent activity", "err", err)
+		recent = activityListView{}
+	}
+
+	return dashboardView{
+		EnvName:  scope.EnvID,
+		DateLine: now.Format("Monday, Jan 2"),
+		ReadOnly: c.deps.ReadOnly,
+		Cards: dashboardCards{
+			Sent: sent, Workflows: wfCard, Agents: agCard, Errors: errCard,
+		},
+		Chart:    chart,
+		Activity: recent.Rows,
+	}, nil
+}
+
+// channelOrder ranks the named channels for stable display ordering.
+func channelOrder(ch string) int {
+	for i, named := range dashChannels {
+		if ch == named {
+			return i
+		}
+	}
+	return len(dashChannels)
+}
+
+// buildDeliveriesChart folds the per-(day, channel) series into one
+// polyline per named channel over the trailing sparkDays window ending at
+// now's UTC day. All channels share one y-scale (the global max across the
+// window) so the lines are comparable, matching the mockup's overlaid
+// multi-line look.
+func buildDeliveriesChart(series []domain.DeliveryDayCount, now time.Time) deliveriesChart {
+	const width, height, pad = 760, 220, 8
+	chart := deliveriesChart{Width: width, Height: height}
+
+	days := make([]string, sparkDays)
+	dayKeys := make([]string, sparkDays)
+	for i := 0; i < sparkDays; i++ {
+		d := now.AddDate(0, 0, -(sparkDays - 1 - i))
+		dayKeys[i] = d.Format("2006-01-02")
+		days[i] = d.Format("Jan 2")
+	}
+	chart.Days = days
+
+	// perChannel[ch][dayIndex] = count.
+	perChannel := make(map[string][]int)
+	for _, ch := range dashChannels {
+		perChannel[ch] = make([]int, sparkDays)
+	}
+	dayIndex := make(map[string]int, sparkDays)
+	for i, k := range dayKeys {
+		dayIndex[k] = i
+	}
+	maxCount := 0
+	for _, row := range series {
+		idx, ok := dayIndex[row.Day]
+		if !ok {
+			continue
+		}
+		buckets, ok := perChannel[row.Channel]
+		if !ok {
+			continue // unnamed channel: not plotted
+		}
+		buckets[idx] += row.Count
+		if buckets[idx] > maxCount {
+			maxCount = buckets[idx]
+		}
+	}
+	if maxCount == 0 {
+		chart.Empty = true
+		return chart
+	}
+
+	step := float64(width-2*pad) / float64(sparkDays-1)
+	for _, ch := range dashChannels {
+		buckets := perChannel[ch]
+		pts := make([]string, sparkDays)
+		for i, count := range buckets {
+			x := float64(pad) + float64(i)*step
+			y := float64(height-pad) - float64(count)/float64(maxCount)*float64(height-2*pad)
+			pts[i] = fmt.Sprintf("%.1f,%.1f", x, y)
+		}
+		chart.Lines = append(chart.Lines, chartLine{
+			Channel: ch, Class: channelClass(ch), Points: strings.Join(pts, " "),
+		})
+	}
+	return chart
+}
+
 // serveDashboard renders the full dashboard page.
 func (c *Console) serveDashboard(w http.ResponseWriter, r *http.Request) {
 	if w == nil {
@@ -179,11 +445,19 @@ func (c *Console) serveDashboard(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		panic("serveDashboard: no scope in context (route not behind sessionMiddleware)")
 	}
-	kpis, err := c.buildKPIView(r.Context(), scope, "")
+	view, err := c.buildDashboardView(r.Context(), scope, time.Now().UTC())
 	if err != nil {
 		c.deps.Logger.Error("console: build dashboard", "err", err)
 		c.serveError(w, r)
 		return
+	}
+	// KPIs powers the channel-filter fragment (#dashboard-kpis) the chart
+	// pills still drive; build it best-effort so a fragment-query failure
+	// never blocks the page.
+	if kpis, kErr := c.buildKPIView(r.Context(), scope, ""); kErr == nil {
+		view.KPIs = kpis
+	} else {
+		c.deps.Logger.Warn("console: dashboard kpis", "err", kErr)
 	}
 	header := pageHeader{
 		Title:    "Dashboard",
@@ -193,10 +467,8 @@ func (c *Console) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		c.deps.Logger.Error("console: dashboard header", "err", err)
 		header = pageHeader{Title: "Dashboard"}
 	}
-	c.renderPage(w, r, http.StatusOK, "dashboard", "Dashboard", dashboardView{
-		Header: header,
-		KPIs:   kpis,
-	})
+	view.Header = header
+	c.renderPage(w, r, http.StatusOK, "dashboard", "Dashboard", view)
 }
 
 // serveFragmentDashboardKPIs answers /console/api/fragments/dashboard-kpis

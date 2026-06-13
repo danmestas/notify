@@ -1,12 +1,155 @@
 {{define "content"}}{{$page := .Page}}
-<section class="console-section">
-  {{template "page-header" $page.Header}}
-  {{template "dashboard-kpis" $page.KPIs}}
-  <p class="dashboard-refresh-row">
-    <button type="button" class="btn btn-outline"
-            data-on:click="@get('/console/api/fragments/dashboard-kpis')">
-      Refresh
-    </button>
-  </p>
+<section class="console-section dashboard">
+  <header class="dashboard-head">
+    <div>
+      <h2 class="dashboard-title">Delivery health</h2>
+      <p class="dashboard-subtitle">
+        Across the <strong>{{if $page.EnvName}}{{$page.EnvName}}{{else}}production{{end}}</strong> environment · {{$page.DateLine}}
+      </p>
+    </div>
+    {{if not $page.ReadOnly}}
+    <a href="/console/workflows" class="btn btn-primary dashboard-trigger">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg>
+      Trigger workflow
+    </a>
+    {{end}}
+  </header>
+
+  <div class="dashboard-cards">
+    {{/* Sent today */}}
+    <article class="kpi-card">
+      <div class="kpi-card-head">
+        <span class="kpi-card-label">Sent today</span>
+        <span class="kpi-card-glyph" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg>
+        </span>
+      </div>
+      <p class="kpi-card-value">
+        {{$page.Cards.Sent.Total}}
+        {{if $page.Cards.Sent.DeltaPct}}<span class="kpi-delta {{if $page.Cards.Sent.DeltaUp}}is-up{{else}}is-down{{end}}">{{if $page.Cards.Sent.DeltaUp}}↑{{else}}↓{{end}}{{$page.Cards.Sent.DeltaPct}}</span>{{end}}
+      </p>
+      <ul class="kpi-breakdown" role="list">
+        {{range $page.Cards.Sent.Channels}}
+        <li><span class="kpi-dot {{.Class}}" aria-hidden="true"></span>{{.Channel}} <b>{{.Count}}</b></li>
+        {{else}}
+        <li class="kpi-breakdown-empty">No deliveries yet</li>
+        {{end}}
+      </ul>
+    </article>
+
+    {{/* Active workflows */}}
+    <article class="kpi-card">
+      <div class="kpi-card-head">
+        <span class="kpi-card-label">Active workflows</span>
+        <span class="kpi-card-glyph" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 6h6a4 4 0 0 1 4 4M6 8v8"/></svg>
+        </span>
+      </div>
+      <p class="kpi-card-value">{{$page.Cards.Workflows.Active}} <span class="kpi-card-of">of {{$page.Cards.Workflows.Total}}</span></p>
+      <p class="kpi-card-note">
+        {{if $page.Cards.Workflows.Inactive}}<a href="/console/workflows">{{$page.Cards.Workflows.Inactive}} inactive — review →</a>{{else}}all active{{end}}
+      </p>
+    </article>
+
+    {{/* Agents */}}
+    <article class="kpi-card">
+      <div class="kpi-card-head">
+        <span class="kpi-card-label">Agents</span>
+        <span class="kpi-card-glyph" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 2v4M9 13h.01M15 13h.01"/></svg>
+        </span>
+      </div>
+      <p class="kpi-card-value">{{$page.Cards.Agents.Total}}</p>
+      <p class="kpi-card-sub">{{$page.Cards.Agents.Mesh}} mesh · {{$page.Cards.Agents.Bridge}} bridge</p>
+      <p class="kpi-card-note">{{if $page.Cards.Agents.AllResponsive}}<span class="kpi-dot channel-push" aria-hidden="true"></span>all responsive{{end}}</p>
+    </article>
+
+    {{/* Errors */}}
+    <article class="kpi-card kpi-card-danger">
+      <div class="kpi-card-head">
+        <span class="kpi-card-label">Errors · 24h</span>
+        <span class="kpi-card-glyph" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+        </span>
+      </div>
+      <p class="kpi-card-value">{{$page.Cards.Errors.Count}} <span class="kpi-card-sub-inline">{{$page.Cards.Errors.DeadLettered}} dead-lettered</span></p>
+      <p class="kpi-card-note">
+        {{if $page.Cards.Errors.DLQURL}}<a href="{{$page.Cards.Errors.DLQURL}}" target="_blank" rel="noopener" class="kpi-link-danger">Open DLQ in dagnats ↗</a>{{else}}<span class="kpi-link-danger">DLQ in dagnats</span>{{end}}
+      </p>
+    </article>
+  </div>
+
+  <div class="dashboard-lower">
+    {{/* Deliveries-per-channel chart */}}
+    <section class="card dashboard-chart" aria-label="Deliveries per channel, last 7 days">
+      <header class="dashboard-chart-head">
+        <div>
+          <h3 class="card-title">Deliveries</h3>
+          <p class="card-subtitle">per channel, 7d</p>
+        </div>
+        <div class="dashboard-chart-toggles">
+          {{/* Channel pills filter the live deliveries strip below via a
+               Datastar @get → PatchElements SSE round-trip (the same
+               #dashboard-kpis fragment the chart's counts come from). */}}
+          <div class="pill-group" role="group" aria-label="Filter deliveries by channel">
+            <button type="button" class="pill pill-channel"
+                    data-on:click="@get('/console/api/fragments/dashboard-kpis')">all</button>
+            {{range $page.Chart.Lines}}
+            <button type="button" class="pill pill-channel {{.Class}}"
+                    data-on:click="@get('/console/api/fragments/dashboard-kpis?channel={{.Channel}}')"><span class="kpi-dot {{.Class}}" aria-hidden="true"></span>{{.Channel}}</button>
+            {{end}}
+          </div>
+          <div class="pill-group seg" role="group" aria-label="Time range (display only)">
+            <span class="pill seg-item">24h</span>
+            <span class="pill seg-item is-active">7d</span>
+            <span class="pill seg-item">30d</span>
+          </div>
+        </div>
+      </header>
+      {{if $page.Chart.Empty}}
+      <p class="console-empty-state-description dashboard-chart-empty">No deliveries in the last 7 days.</p>
+      {{else}}
+      <svg class="dashboard-chart-svg" viewBox="0 0 {{$page.Chart.Width}} {{$page.Chart.Height}}"
+           preserveAspectRatio="none" role="img" aria-label="Deliveries per channel over the last 7 days">
+        {{range $page.Chart.Lines}}
+        <polyline class="chart-line {{.Class}}" fill="none" points="{{.Points}}"></polyline>
+        {{end}}
+      </svg>
+      <ul class="dashboard-chart-days" role="list">
+        {{range $page.Chart.Days}}<li>{{.}}</li>{{end}}
+      </ul>
+      {{end}}
+      {{/* Live deliveries-by-status strip: the SSE PatchElements target the
+           channel pills above drive. Kept compact under the chart. */}}
+      {{template "dashboard-kpis" $page.KPIs}}
+    </section>
+
+    {{/* Recent activity panel */}}
+    <section class="card dashboard-activity" aria-label="Recent activity">
+      <header class="dashboard-activity-head">
+        <h3 class="card-title">Recent activity</h3>
+        <a href="/console/activity" class="dashboard-activity-all">View all →</a>
+      </header>
+      <ul class="dashboard-activity-list" role="list">
+        {{range $page.Activity}}
+        <li class="activity-item">
+          <span class="activity-status-dot {{.StatusTone.Class}}" aria-hidden="true"></span>
+          <div class="activity-item-main">
+            <p class="activity-item-name">
+              {{.WorkflowName}}
+              {{if eq .Status "failed"}}<span class="activity-tag activity-tag-dlq">DLQ</span>{{end}}
+            </p>
+            <p class="activity-item-target">→ {{if .SubscriberID}}{{.SubscriberID}}{{else}}—{{end}}</p>
+          </div>
+          {{if .Channel}}<span class="activity-item-channel">{{.Channel}}</span>{{end}}
+          <span class="activity-item-time">{{.RelativeTime}}</span>
+          {{if .RunURL}}<a href="{{.RunURL}}" target="_blank" rel="noopener" class="activity-item-run">{{if .RunID}}{{.RunID}}{{else}}run{{end}} ↗</a>{{else if .RunID}}<span class="activity-item-run">{{.RunID}}</span>{{end}}
+        </li>
+        {{else}}
+        <li class="dashboard-activity-empty">No recent activity in this environment.</li>
+        {{end}}
+      </ul>
+    </section>
+  </div>
 </section>
 {{end}}

@@ -139,8 +139,8 @@ func TestBrowser_loginFlowAndDatastarBootstrap(t *testing.T) {
 	if got := evalString(t, ctx, "location.pathname"); got != "/console/" {
 		t.Fatalf("post-login pathname = %q, want /console/", got)
 	}
-	if got := evalString(t, ctx, "document.querySelector('.page-header h1')?.textContent || ''"); got != "Dashboard" {
-		t.Errorf("dashboard h1 = %q, want Dashboard", got)
+	if got := evalString(t, ctx, "document.querySelector('.console-topbar-title')?.textContent || ''"); got != "Dashboard" {
+		t.Errorf("dashboard title = %q, want Dashboard", got)
 	}
 	// Datastar bootstrap: the module namespace must land on window with
 	// the plugin-registration surface callable (v1.0.x exports no
@@ -157,20 +157,22 @@ func TestBrowser_loginFlowAndDatastarBootstrap(t *testing.T) {
 		t.Errorf("theme toggle missing from the header")
 	}
 
-	// PatchElements round-trip: the only thing Go-side tests can't see
-	// is the engine actually wiring data-on:click and morphing the DOM
-	// from the SSE event. Seed one more delivery server-side, click
-	// Refresh, and the deliveries tile must go 1 → 2 without a reload.
+	// PatchElements round-trip: the only thing Go-side tests can't see is
+	// the engine actually wiring data-on:click and morphing the DOM from
+	// the SSE event. The deliveries-by-status strip (#dashboard-kpis) is
+	// the patch target; the chart's "all" channel pill is the trigger.
+	// Seed one more delivery server-side, click the pill, and the
+	// deliveries count must go 1 → 2 without a reload.
 	before := evalString(t, ctx,
 		"document.querySelector('#dashboard-kpis .page-header-tile-count').textContent")
 	if before != "1" {
-		t.Fatalf("pre-refresh deliveries tile = %q, want 1", before)
+		t.Fatalf("pre-refresh deliveries count = %q, want 1", before)
 	}
 	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
 		{Channel: "in_app", Status: "sent"},
 	})
 	evalString(t, ctx,
-		"document.querySelector('.dashboard-refresh-row button').click(); 'clicked'")
+		"document.querySelector('.dashboard-chart-toggles .pill-channel').click(); 'clicked'")
 	patched := ""
 	const maxPolls = 20
 	for i := 0; i < maxPolls; i++ {
@@ -182,10 +184,10 @@ func TestBrowser_loginFlowAndDatastarBootstrap(t *testing.T) {
 		}
 	}
 	if patched != "2" {
-		t.Errorf("deliveries tile after Refresh = %q, want 2 — PatchElements round-trip failed", patched)
+		t.Errorf("deliveries count after channel-pill click = %q, want 2 — PatchElements round-trip failed", patched)
 	}
 	if got := evalString(t, ctx, "location.pathname"); got != "/console/" {
-		t.Errorf("Refresh caused a navigation to %q — patch should be in-place", got)
+		t.Errorf("pill click caused a navigation to %q — patch should be in-place", got)
 	}
 }
 

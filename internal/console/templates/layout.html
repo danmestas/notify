@@ -29,46 +29,101 @@
   </script>
   <script src="/console/assets/theme.js" defer></script>
 </head>
-<body>
-  <header class="console-header">
-    <div class="console-header-inner">
-      <a href="/console/" class="console-brand">
-        <span class="console-mark" aria-hidden="true"></span>
-        <span class="console-name">notify</span>
+<body class="console-shell">
+  <aside class="console-sidebar">
+    <a href="/console/" class="console-brand">
+      <span class="console-mark" aria-hidden="true"></span>
+      <span class="console-name">notify</span>
+      <span class="console-brand-suffix">console</span>
+    </a>
+    <nav class="console-nav" aria-label="primary">
+      {{range .Nav}}{{if .Entries}}
+      <div class="console-nav-section">
+        {{if .Label}}<p class="console-nav-group" aria-hidden="true">{{.Label}}</p>{{end}}
+        <ul class="console-nav-list" role="list">
+          {{range .Entries}}
+          <li>
+            <a href="{{.Href}}" class="console-nav-link{{if eq $.Section .Section}} is-active{{end}}"
+               {{if eq $.Section .Section}}aria-current="page"{{end}}>
+              {{if .Icon}}{{navIcon .Icon}}{{end}}
+              <span class="console-nav-text">{{.Label}}</span>
+              {{if .BadgeKey}}{{$n := index $.NavCounts .BadgeKey}}{{if $n}}<span class="console-nav-badge">{{$n}}</span>{{end}}{{end}}
+            </a>
+          </li>
+          {{end}}
+        </ul>
+      </div>
+      {{end}}{{end}}
+    </nav>
+    <div class="console-sidebar-footer">
+      <a href="{{if .DagnatsURL}}{{.DagnatsURL}}{{else}}#{{end}}" class="console-sidebar-extlink"
+         {{if .DagnatsURL}}target="_blank" rel="noopener"{{end}}>
+        <span class="console-sidebar-extlink-dot" aria-hidden="true"></span>
+        <span>dagnats console</span>
+        <span class="console-extlink-arrow" aria-hidden="true">↗</span>
       </a>
-      <nav class="console-nav" aria-label="primary">
-        {{range .Nav}}{{if .Entries}}
-        {{if .Label}}<span class="console-nav-group" aria-hidden="true">{{.Label}}</span>{{end}}
-        {{range .Entries}}
-        <a href="{{.Href}}" class="{{if eq $.Section .Section}}is-active{{end}}">{{.Label}}</a>
-        {{end}}
-        {{end}}{{end}}
-      </nav>
-      <div class="console-header-utils">
-        {{if .Scope.EnvID}}
-        <span class="console-actor" title="org {{.Scope.OrgID}} · env {{.Scope.EnvID}}">env {{.Scope.EnvID}}</span>
-        {{end}}
+      <p class="console-sidebar-version">notify {{.Version}} · :3000</p>
+    </div>
+  </aside>
+
+  <div class="console-content">
+    <header class="console-topbar">
+      <h1 class="console-topbar-title">{{.Title}}</h1>
+      <form class="console-search" role="search" data-on:submit="evt.preventDefault()">
+        <span class="console-search-icon" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        </span>
+        <input type="search" class="console-search-input" name="q"
+               placeholder="Search workflows, subscribers…"
+               aria-label="Search the console" autocomplete="off">
+        <kbd class="console-search-kbd" aria-hidden="true">⌘K</kbd>
+      </form>
+      <div class="console-topbar-utils">
+        <div class="console-env" data-signals="{envMenuOpen: false}">
+          <button type="button" class="console-env-trigger" aria-haspopup="menu"
+                  data-attr:aria-expanded="$envMenuOpen"
+                  data-on:click="$envMenuOpen = !$envMenuOpen">
+            <span class="console-env-dot" aria-hidden="true"></span>
+            <span class="console-env-name">{{if .Scope.EnvID}}{{.Scope.EnvID}}{{else}}production{{end}}</span>
+            <span class="console-env-chevron" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </span>
+          </button>
+          <div class="console-env-menu" role="menu" data-show="$envMenuOpen">
+            <p class="console-env-menu-head">Environment</p>
+            <span class="console-env-menu-item is-active" role="menuitemradio" aria-checked="true">
+              <span class="console-env-dot" aria-hidden="true"></span>
+              {{if .Scope.EnvID}}{{.Scope.EnvID}}{{else}}production{{end}}
+            </span>
+            {{if .Scope.OrgID}}<p class="console-env-menu-meta">org {{.Scope.OrgID}}</p>{{end}}
+            <div class="console-env-menu-sep" role="separator"></div>
+            <form method="post" action="/console/logout" class="console-logout" role="none">
+              <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+              <button type="submit" class="console-env-menu-action" role="menuitem">Sign out</button>
+            </form>
+          </div>
+        </div>
         <button type="button" id="theme-toggle" class="theme-toggle"
                 data-theme-mode="system"
-                aria-label="Theme: system (click to cycle)">
+                aria-label="Theme: system (click to cycle)" title="Toggle theme">
+          <span class="theme-toggle-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+          </span>
           <span class="theme-toggle-label">System</span>
         </button>
-        <form method="post" action="/console/logout" class="console-logout">
-          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-          <button type="submit" class="btn btn-outline">Sign out</button>
-        </form>
       </div>
-    </div>
-  </header>
-  <main class="console-main">
-    {{if .ReadOnly}}
-    <div class="console-readonly-banner" role="status">
-      <strong>Read-only mode</strong>
-      <span>Mutations are disabled for this console instance.</span>
-    </div>
-    {{end}}
-    {{template "content" .}}
-  </main>
+    </header>
+
+    <main class="console-main">
+      {{if .ReadOnly}}
+      <div class="console-readonly-banner" role="status">
+        <strong>Read-only mode</strong>
+        <span>Mutations are disabled for this console instance.</span>
+      </div>
+      {{end}}
+      {{template "content" .}}
+    </main>
+  </div>
   <div id="toast-outlet">{{template "toast" ""}}</div>
 </body>
 </html>{{end}}
