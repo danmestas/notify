@@ -1,0 +1,67 @@
+{{/*
+  environments-tbody — PatchElements fragment target for the environments list.
+  Binds environmentsListView.
+*/}}
+{{define "environments-tbody"}}{{$v := .}}
+<div id="environments-tbody" data-component="environments-tbody">
+  {{if eq (len $v.Rows) 0}}
+  <p class="console-muted">No environments found.</p>
+  {{else}}
+  <table class="console-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Identifier</th>
+        <th>Type</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range $v.Rows}}
+      {{if eq $v.ConfirmDelete .ID}}
+      {{/* Two-step inline confirm row */}}
+      <tr id="env-row-{{.ID}}" class="confirm-row">
+        <td colspan="4">
+          <span class="console-confirm-label">Delete <code>{{.Name}}</code>? This cannot be undone.</span>
+        </td>
+        <td>
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/environments-list')">Cancel</button>
+          <form method="POST" action="/console/api/environments/{{.ID}}/delete" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
+            <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr id="env-row-{{.ID}}">
+        <td>
+          <span class="console-label">{{.Name}}</span>
+          {{if .IsCurrent}}<span class="chip chip-info" title="Active session environment">current</span>{{end}}
+        </td>
+        <td><code class="chip chip-default">{{.Identifier}}</code></td>
+        <td class="console-muted">{{if .Type}}{{.Type}}{{else}}—{{end}}</td>
+        <td>
+          {{if .IsCurrent}}
+          <span class="chip chip-success">Active</span>
+          {{else}}
+          <span class="chip chip-default">Available</span>
+          {{end}}
+        </td>
+        <td class="console-action-row">
+          {{if not $v.ReadOnly}}
+          {{if not .IsCurrent}}
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/environments-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
+          {{end}}
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</div>
+{{end}}

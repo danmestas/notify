@@ -135,6 +135,10 @@ type Deps struct {
 	// must always be able to sign out); the flag exists so later slices
 	// inherit one switch instead of inventing their own.
 	ReadOnly bool
+	// HTTPAddr is the server's bound address (e.g. ":3000" or
+	// "https://notify.example.com"). Used by the API Keys page to show the
+	// "API URL" card. Empty string renders a placeholder.
+	HTTPAddr string
 }
 
 // Console is the operator-console handler factory. Construct with New;
@@ -360,6 +364,15 @@ func (c *Console) Routes() http.Handler {
 			pr.Post("/console/api/variables/{key}", c.handleVariableUpdate)
 			pr.Post("/console/api/variables/{key}/delete", c.handleVariableDelete)
 		}
+		// W4-E1/E2: environments + API keys management.
+		pr.Get("/console/settings/environments", c.serveEnvironmentsPage)
+		pr.Get("/console/settings/environments/new", c.serveEnvironmentNew)
+		pr.Post("/console/settings/environments", c.handleEnvironmentCreate)
+		pr.Post("/console/api/environments/{id}", c.handleEnvironmentUpdate)
+		pr.Post("/console/api/environments/{id}/delete", c.handleEnvironmentDelete)
+		pr.Get("/console/api/fragments/environments-list", c.serveFragmentEnvironmentsList)
+		pr.Get("/console/settings/api-keys", c.serveAPIKeysPage)
+		pr.Post("/console/settings/api-keys/regenerate", c.handleAPIKeyRegenerate)
 		// W4-D1/D2: inbound domain management (#53).
 		if c.deps.InboundDomains != nil {
 			pr.Get("/console/domains", c.serveDomainsPage)

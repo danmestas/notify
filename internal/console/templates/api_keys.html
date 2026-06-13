@@ -1,0 +1,82 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section">
+  {{template "page-header" $page.Header}}
+
+  {{/* One-time reveal card — only shown after create or rotate */}}
+  {{if $page.NewRawKey}}
+  <div class="console-alert console-alert-success" role="alert" id="api-key-reveal-card">
+    <strong>{{if $page.NewKeyRotated}}API key rotated.{{else}}New API key minted.{{end}}</strong>
+    Copy this key now — it will not be shown again.
+    <div class="console-secret-reveal">
+      <code id="new-api-key-value" class="console-secret-value">{{$page.NewRawKey}}</code>
+      <button type="button" class="btn btn-outline btn-sm"
+              data-on:click="navigator.clipboard.writeText(document.getElementById('new-api-key-value').textContent)">Copy</button>
+    </div>
+  </div>
+  {{end}}
+
+  {{/* Application Identifier card */}}
+  <div class="console-card">
+    <div class="console-card-header">
+      <h2 class="console-card-title">Application Identifier</h2>
+      <p class="console-card-subtitle">Use this as the <code>applicationIdentifier</code> in your Inbox SDK config. This value is public.</p>
+    </div>
+    <div class="console-card-body">
+      <div class="console-secret-reveal">
+        <code class="console-secret-value">{{$page.Env.Identifier}}</code>
+        <button type="button" class="btn btn-outline btn-sm"
+                data-on:click="navigator.clipboard.writeText('{{$page.Env.Identifier | jsEscape}}')">Copy</button>
+      </div>
+    </div>
+  </div>
+
+  {{/* Secret Key card */}}
+  <div class="console-card" data-signals="{showKey: false}">
+    <div class="console-card-header">
+      <h2 class="console-card-title">Secret Key</h2>
+      <p class="console-card-subtitle">Authenticate server-side requests. Keep this secret — never expose it in client-side code.</p>
+    </div>
+    <div class="console-card-body">
+      <div class="console-secret-reveal">
+        {{/* Masked display — always safe to render */}}
+        <code class="console-secret-value"
+              data-bind-value="$showKey ? '{{$page.MaskedKey | jsEscape}}' : '{{$page.MaskedKey | jsEscape}}'">{{$page.MaskedKey}}</code>
+        <button type="button" class="btn btn-outline btn-sm"
+                data-on:click="$showKey = !$showKey"
+                aria-label="Toggle key visibility">
+          <span data-text="$showKey ? 'Hide' : 'Reveal'">Reveal</span>
+        </button>
+      </div>
+      {{if not $page.ReadOnly}}
+      <div class="console-card-actions">
+        {{if $page.ConfirmRotate}}
+        <form method="POST" action="/console/settings/api-keys/regenerate">
+          <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+          <span class="console-confirm-label">Rotate the active key? The old key stops working immediately.</span>
+          <a class="btn btn-outline btn-sm" href="/console/settings/api-keys">Cancel</a>
+          <button type="submit" class="btn btn-danger btn-sm">Confirm rotate</button>
+        </form>
+        {{else}}
+        <a class="btn btn-outline btn-sm" href="/console/settings/api-keys?confirmRotate=1">Rotate key</a>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+  </div>
+
+  {{/* API URL card */}}
+  <div class="console-card">
+    <div class="console-card-header">
+      <h2 class="console-card-title">API URL</h2>
+      <p class="console-card-subtitle">The base URL for all server-side API calls to this notify instance.</p>
+    </div>
+    <div class="console-card-body">
+      <div class="console-secret-reveal">
+        <code class="console-secret-value">{{if $page.APIURL}}{{$page.APIURL}}{{else}}http://localhost:3000{{end}}</code>
+        <button type="button" class="btn btn-outline btn-sm"
+                data-on:click="navigator.clipboard.writeText('{{if $page.APIURL}}{{$page.APIURL | jsEscape}}{{else}}http://localhost:3000{{end}}')">Copy</button>
+      </div>
+    </div>
+  </div>
+</section>
+{{end}}

@@ -94,4 +94,7 @@ var assetsFS embed.FS
 //go:embed templates/agent_conversation.html
 //go:embed templates/partials/agents_tbody.html
 //go:embed templates/partials/agent_conversations_tbody.html
+//go:embed templates/environments.html
+//go:embed templates/api_keys.html
+//go:embed templates/partials/environments_tbody.html
 var templatesFS embed.FS

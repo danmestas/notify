@@ -230,6 +230,7 @@ func runServe(args []string) error {
 		MasterKey:         mk,
 		DagnatsConsoleURL: os.Getenv("NOTIFY_DAGNATS_CONSOLE_URL"),
 		ReadOnly:          os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",
+		HTTPAddr:          *addr,
 	}).Routes()
 	root := http.NewServeMux()
 	root.Handle("/console", consoleRoutes)

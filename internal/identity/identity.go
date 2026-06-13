@@ -23,6 +23,11 @@ import (
 // keyLen is the number of random bytes in a freshly minted API key.
 const keyLen = 32
 
+// apiKeyMaskPrefix is the fixed mask string prepended to the last 4 hex chars
+// when showing a masked API key in the console UI. The mask length is chosen
+// to cover a 64-char hex key minus the visible suffix.
+const apiKeyMaskPrefix = "••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••"
+
 // Service issues and verifies API keys against the backing store.
 type Service struct {
 	store *store.Store
@@ -84,6 +89,116 @@ func (svc *Service) Bootstrap(ctx context.Context, orgName, envIdentifier string
 	return hex.EncodeToString(raw), scope, nil
 }
 
+// CreateEnvironment mints a new environment (and its first API key) for an
+// existing org. It mirrors the Bootstrap pattern so console handlers call one
+// method rather than importing the store directly.
+// Returns (rawHex, environment, scope, error). The rawHex is the API key shown
+// once; subsequent calls to DecryptForDisplay expose the masked form only.
+func (svc *Service) CreateEnvironment(ctx context.Context, orgID, name, envType string) (string, domain.Environment, domain.Scope, error) {
+	env := domain.Environment{
+		Name:       name,
+		Identifier: strings.ToLower(strings.ReplaceAll(name, " ", "-")),
+		Type:       envType,
+	}
+	created, scope, err := svc.store.Environments().Create(ctx, orgID, env)
+	if err != nil {
+		return "", domain.Environment{}, domain.Scope{}, fmt.Errorf("identity: create environment: %w", err)
+	}
+
+	raw := make([]byte, keyLen)
+	if _, err := rand.Read(raw); err != nil {
+		return "", domain.Environment{}, domain.Scope{}, fmt.Errorf("identity: mint key for new env: %w", err)
+	}
+
+	enc, err := svc.encrypt(raw)
+	if err != nil {
+		return "", domain.Environment{}, domain.Scope{}, fmt.Errorf("identity: encrypt new env key: %w", err)
+	}
+
+	if _, err := svc.store.ApiKeys().Create(ctx, scope, domain.APIKey{
+		Hash:   hashKey(raw),
+		EncKey: enc,
+	}); err != nil {
+		return "", domain.Environment{}, domain.Scope{}, fmt.Errorf("identity: create env api key: %w", err)
+	}
+
+	return hex.EncodeToString(raw), created, scope, nil
+}
+
+// DecryptForDisplay lists the scope's API keys, decrypts the first active key,
+// and returns (maskedKey, last4, rawHex, error). rawHex is the full plaintext
+// hex string — the caller MUST only surface it in the one-time reveal context;
+// maskedKey is always safe to render.
+// Fails closed: any decrypt error returns an error rather than exposing a
+// partial or empty key.
+func (svc *Service) DecryptForDisplay(ctx context.Context, scope domain.Scope) (maskedKey, last4, rawHex string, err error) {
+	keys, err := svc.store.ApiKeys().List(ctx, scope)
+	if err != nil {
+		return "", "", "", fmt.Errorf("identity: list api keys: %w", err)
+	}
+	if len(keys) == 0 {
+		return "", "", "", fmt.Errorf("identity: no api keys for scope")
+	}
+	raw, err := svc.decrypt(keys[0].EncKey)
+	if err != nil {
+		return "", "", "", fmt.Errorf("identity: decrypt api key: %w", err)
+	}
+	full := hex.EncodeToString(raw)
+	if len(full) < 4 {
+		return "", "", "", fmt.Errorf("identity: decoded key too short")
+	}
+	l4 := full[len(full)-4:]
+	masked := apiKeyMaskPrefix + l4
+	return masked, l4, full, nil
+}
+
+// RotateKey revokes all existing API keys for scope and mints a fresh one
+// within a single write transaction. Returns the new raw hex (shown once).
+func (svc *Service) RotateKey(ctx context.Context, scope domain.Scope) (string, error) {
+	raw := make([]byte, keyLen)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("identity: mint rotate key: %w", err)
+	}
+
+	enc, err := svc.encrypt(raw)
+	if err != nil {
+		return "", fmt.Errorf("identity: encrypt rotate key: %w", err)
+	}
+
+	// Delete-then-insert in a single transaction: the old key(s) vanish and
+	// the new one appears atomically — there is never a window where the scope
+	// has no valid key.
+	writer, _ := svc.store.Pools()
+	tx, err := writer.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("identity: rotate begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(
+		ctx,
+		`DELETE FROM api_keys WHERE org_id = ? AND environment_id = ?`,
+		scope.OrgID, scope.EnvID,
+	); err != nil {
+		return "", fmt.Errorf("identity: rotate delete old keys: %w", err)
+	}
+
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO api_keys (hash, environment_id, org_id, enc_key, user_id)
+		 VALUES (?, ?, ?, ?, ?)`,
+		hashKey(raw), scope.EnvID, scope.OrgID, enc, "",
+	); err != nil {
+		return "", fmt.Errorf("identity: rotate insert new key: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("identity: rotate commit: %w", err)
+	}
+
+	return hex.EncodeToString(raw), nil
+}
+
 // Authenticate resolves a presented hex key back to its Scope, hashing it and
 // looking up the stored row. A miss returns the store's not-found error.
 func (svc *Service) Authenticate(ctx context.Context, presentedKey string) (domain.Scope, error) {
@@ -121,6 +236,13 @@ func (svc *Service) Middleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(domain.ContextWithScope(r.Context(), scope)))
 	})
+}
+
+// Store returns the backing store. The console uses this to call
+// EnvironmentRepo methods (List/Update/Delete/CountByOrg) without importing
+// the store package directly in every handler.
+func (svc *Service) Store() *store.Store {
+	return svc.store
 }
 
 // ScopeFrom extracts the request Scope set by Middleware. It panics when the
