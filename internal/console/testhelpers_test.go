@@ -32,6 +32,7 @@ import (
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/identity"
+	"github.com/danmestas/notify/internal/inbounddomains"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/webhooksout"
@@ -128,23 +129,24 @@ func newTestConsole(t *testing.T) *testConsole {
 		t.Fatalf("envvars.New: %v", err)
 	}
 	deps := Deps{
-		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Identity:      id,
-		Authoring:     authoring.New(st, nil),
-		Analytics:     analytics.New(st, nil),
-		Notifications: st.Notifications(),
-		Messages:      st.Messages(),
-		Integrations:  st.Integrations(),
-		Connectivity:  conn,
-		Audience:      audience.New(st),
-		Webhooks:      webhooksout.NewManagement(st),
-		Contexts:      contexts.New(st),
-		Layouts:       st.Layouts(),
-		EnvVars:       ev,
-		Trigger:       newStubTrigger(""),
-		Agents:        ags,
-		Composer:      composer,
-		MasterKey:     masterKey,
+		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Identity:       id,
+		Authoring:      authoring.New(st, nil),
+		Analytics:      analytics.New(st, nil),
+		Notifications:  st.Notifications(),
+		Messages:       st.Messages(),
+		Integrations:   st.Integrations(),
+		Connectivity:   conn,
+		Audience:       audience.New(st),
+		Webhooks:       webhooksout.NewManagement(st),
+		Contexts:       contexts.New(st),
+		Layouts:        st.Layouts(),
+		EnvVars:        ev,
+		InboundDomains: inbounddomains.New(st),
+		Trigger:        newStubTrigger(""),
+		Agents:         ags,
+		Composer:       composer,
+		MasterKey:      masterKey,
 	}
 	c := New(deps)
 	return &testConsole{

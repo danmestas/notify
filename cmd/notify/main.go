@@ -34,6 +34,7 @@ import (
 	"github.com/danmestas/notify/internal/httpapi"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inbound"
+	"github.com/danmestas/notify/internal/inbounddomains"
 	"github.com/danmestas/notify/internal/inboxapi"
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/realtime"
@@ -222,6 +223,7 @@ func runServe(args []string) error {
 		Contexts:          contexts.New(st),
 		Layouts:           st.Layouts(),
 		EnvVars:           ev,
+		InboundDomains:    inbounddomains.New(st),
 		Trigger:           trg,
 		Agents:            ags,
 		Composer:          consoleComposer{ing},

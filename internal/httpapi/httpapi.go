@@ -24,6 +24,7 @@ import (
 	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inbound"
+	"github.com/danmestas/notify/internal/inbounddomains"
 	"github.com/danmestas/notify/internal/inboxapi"
 	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/store"
@@ -55,6 +56,11 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 	var ctxSvc *contexts.Service
 	if st != nil {
 		ctxSvc = contexts.New(st)
+	}
+	// Wire the inbound domains service when a store is present (#53).
+	var inboundDomainSvc *inbounddomains.Service
+	if st != nil {
+		inboundDomainSvc = inbounddomains.New(st)
 	}
 	r := chi.NewRouter()
 	// Liveness probe, mounted outside the auth group so container/orchestrator
@@ -132,6 +138,14 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 			pr.Post("/v1/env-vars", postEnvVar(ev))
 			pr.Put("/v1/env-vars/{key}", putEnvVar(ev))
 			pr.Delete("/v1/env-vars/{key}", deleteEnvVar(ev))
+		}
+		// W4-D1 inbound domain management (#53).
+		if inboundDomainSvc != nil {
+			pr.Get("/v1/inbound/domains", getInboundDomains(inboundDomainSvc))
+			pr.Post("/v1/inbound/domains", postInboundDomain(inboundDomainSvc))
+			pr.Get("/v1/inbound/domains/{name}", getInboundDomain(inboundDomainSvc))
+			pr.Post("/v1/inbound/domains/{name}/verify", postInboundDomainVerify(inboundDomainSvc))
+			pr.Delete("/v1/inbound/domains/{name}", deleteInboundDomain(inboundDomainSvc))
 		}
 		inbox.Routes(pr)
 		if inb != nil {

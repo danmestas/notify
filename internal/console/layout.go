@@ -55,6 +55,9 @@ var pageContentFiles = map[string]string{
 	// W4-L1: layouts list + editor.
 	"layouts":       "templates/layouts.html",
 	"layout-editor": "templates/layout_editor.html",
+	// W4-D: inbound domains.
+	"domains":       "templates/domains.html",
+	"domain-detail": "templates/domain_detail.html",
 	// W3: agents CRUD + conversation console.
 	"agents":             "templates/agents.html",
 	"agent-detail":       "templates/agent_detail.html",
@@ -217,6 +220,7 @@ var navGroups = []navGroup{
 	{Entries: []navEntry{{Label: "Variables", Href: "/console/variables", Section: "variables"}}},
 	{Entries: []navEntry{{Label: "Contexts", Href: "/console/contexts", Section: "contexts"}}},
 	{Entries: []navEntry{{Label: "Layouts", Href: "/console/layouts", Section: "layouts"}}},
+	{Entries: []navEntry{{Label: "Domains", Href: "/console/domains", Section: "domains"}}},
 	{Entries: []navEntry{{Label: "Agents", Href: "/console/agents", Section: "agents"}}},
 }
 

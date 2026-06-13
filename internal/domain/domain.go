@@ -219,3 +219,17 @@ type EnvVar struct {
 	CreatedAt string `db:"created_at"`
 	UpdatedAt string `db:"updated_at"`
 }
+
+// InboundDomain is a per-scope domain authorized for inbound email reception.
+type InboundDomain struct {
+	ID                 string `db:"id"`
+	OrgID              string `db:"org_id"`
+	EnvID              string `db:"environment_id"`
+	Name               string `db:"name"`
+	Status             string `db:"status"` // "pending" | "verified" | "failed"
+	MXConfigured       bool   `db:"mx_configured"`
+	ExpectedMXHost     string `db:"expected_mx_host"`
+	ExpectedMXPriority int    `db:"expected_mx_priority"`
+	CreatedAt          string `db:"created_at"`
+	UpdatedAt          string `db:"updated_at"`
+}

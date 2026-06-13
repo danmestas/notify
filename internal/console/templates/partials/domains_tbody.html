@@ -1,0 +1,48 @@
+{{/*
+  domains-tbody — PatchElements fragment target for the inbound domains list.
+  Binds domainsListView.
+*/}}
+{{define "domains-tbody"}}{{$v := .}}
+<div id="domains-tbody" data-component="domains-tbody">
+  {{if eq (len $v.Rows) 0}}
+  <p class="console-muted">No inbound domains yet. Add your first domain to start receiving email.</p>
+  {{else}}
+  <table class="console-table">
+    <thead>
+      <tr>
+        <th>Domain</th>
+        <th>Status</th>
+        <th>MX Configured</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range $v.Rows}}
+      <tr>
+        <td><a href="/console/domains/{{.Name}}">{{.Name}}</a></td>
+        <td>
+          {{if eq .Status "verified"}}
+          <span class="badge badge-success">Verified</span>
+          {{else if eq .Status "failed"}}
+          <span class="badge badge-danger">Failed</span>
+          {{else}}
+          <span class="badge badge-neutral">Pending</span>
+          {{end}}
+        </td>
+        <td>
+          {{if .MXConfigured}}
+          <span class="badge badge-success">Yes</span>
+          {{else}}
+          <span class="badge badge-neutral">No</span>
+          {{end}}
+        </td>
+        <td>
+          <a href="/console/domains/{{.Name}}" class="btn btn-sm btn-outline">View</a>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</div>
+{{end}}

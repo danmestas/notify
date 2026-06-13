@@ -13,8 +13,8 @@ import (
 func TestMigrate_0012_AppliesContexts(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 13 {
-		t.Fatalf("expected 13 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 14 {
+		t.Fatalf("expected 14 recorded migrations, got %d", n)
 	}
 
 	var name string

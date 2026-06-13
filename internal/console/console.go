@@ -20,6 +20,7 @@ import (
 	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/identity"
+	"github.com/danmestas/notify/internal/inbounddomains"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
@@ -113,6 +114,9 @@ type Deps struct {
 	// EnvVars is the env vars service for the variables CRUD pages (W4-V1).
 	// Nil is allowed only when no variables routes are mounted.
 	EnvVars *envvars.Service
+	// InboundDomains is the inbound domain management service (W4-D1, #53).
+	// Nil is allowed only when no domain routes are mounted.
+	InboundDomains *inbounddomains.Service
 	// Trigger is the trigger service used by the workflow test/trigger page
 	// (W2-A5). The console calls Ingest in-process — no loopback HTTP.
 	// Nil disables test-trigger POSTs (returns "service unavailable").
@@ -355,6 +359,16 @@ func (c *Console) Routes() http.Handler {
 			pr.Post("/console/api/variables", c.handleVariableCreate)
 			pr.Post("/console/api/variables/{key}", c.handleVariableUpdate)
 			pr.Post("/console/api/variables/{key}/delete", c.handleVariableDelete)
+		}
+		// W4-D1/D2: inbound domain management (#53).
+		if c.deps.InboundDomains != nil {
+			pr.Get("/console/domains", c.serveDomainsPage)
+			pr.Get("/console/domains/new", c.serveDomainNew)
+			pr.Get("/console/domains/{name}", c.serveDomainDetail)
+			pr.Post("/console/domains", c.handleDomainCreate)
+			pr.Post("/console/api/domains/{name}/verify", c.handleDomainVerify)
+			pr.Post("/console/api/domains/{name}/delete", c.handleDomainDelete)
+			pr.Get("/console/api/fragments/domains-list", c.serveFragmentDomainsList)
 		}
 		// W3: agents management + conversation console. The literal `new`
 		// segment is registered before the {identifier} wildcard so chi never
