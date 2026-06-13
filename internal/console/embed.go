@@ -86,6 +86,10 @@ var assetsFS embed.FS
 //go:embed templates/layouts.html
 //go:embed templates/layout_editor.html
 //go:embed templates/partials/layouts_tbody.html
+//go:embed templates/translations.html
+//go:embed templates/translation_editor.html
+//go:embed templates/translation_settings.html
+//go:embed templates/partials/translations_tbody.html
 //go:embed templates/domains.html
 //go:embed templates/domain_detail.html
 //go:embed templates/partials/domains_tbody.html

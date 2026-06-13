@@ -1,0 +1,63 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section"
+         data-signals="{{$page.Signals}}">
+  {{template "page-header" $page.Header}}
+
+  {{if $page.FormError}}
+  <div class="console-alert console-alert--error" role="alert">{{$page.FormError}}</div>
+  {{end}}
+
+  <div class="console-editor-layout">
+    <div class="console-editor-main">
+      <form method="POST" action="/console/api/translations/{{$page.Locale}}/save"
+            class="translation-editor-form">
+        <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+        <div class="form-row">
+          <label class="form-label" for="translation-content">
+            Key/value pairs (JSON object)
+          </label>
+          <textarea class="console-input console-textarea-mono"
+                    id="translation-content"
+                    name="content"
+                    rows="20"
+                    data-bind="translationContent"
+                    placeholder='{"greeting": "Hello", "farewell": "Goodbye"}'
+                    {{if $page.ReadOnly}}readonly{{end}}>{{$page.Content}}</textarea>
+        </div>
+        {{if not $page.ReadOnly}}
+        <div class="console-form-actions">
+          <a class="btn btn-outline" href="/console/translations">← Back to locales</a>
+          <button type="submit" class="btn btn-primary">Save changes</button>
+        </div>
+        {{end}}
+      </form>
+    </div>
+
+    <div class="console-editor-sidebar">
+      <div class="console-card">
+        <h3 class="console-card-title">Locale</h3>
+        <p class="console-card-value">{{$page.Locale}}</p>
+      </div>
+
+      {{if not $page.ReadOnly}}
+      <div class="console-card">
+        <h3 class="console-card-title">Delete locale</h3>
+        {{if $page.ConfirmDelete}}
+        <p>Delete <strong>{{$page.Locale}}</strong> and all its keys?</p>
+        <div class="console-card-actions">
+          <a href="/console/translations/{{$page.Locale}}" class="btn btn-sm btn-outline">Cancel</a>
+          <form method="POST" action="/console/api/translations/{{$page.Locale}}/delete" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+            <button type="submit" class="btn btn-sm btn-danger">Confirm delete</button>
+          </form>
+        </div>
+        {{else}}
+        <a href="/console/translations/{{$page.Locale}}?confirmDelete=true"
+           class="btn btn-sm btn-outline btn-danger">Delete locale</a>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+  </div>
+</section>
+{{end}}

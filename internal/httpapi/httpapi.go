@@ -115,6 +115,14 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 			pr.Get("/v1/layouts/{key}", getLayout(layouts))
 			pr.Put("/v1/layouts/{key}", putLayout(layouts))
 			pr.Delete("/v1/layouts/{key}", deleteLayout(layouts))
+			// Translations management (W4-L2).
+			translations := st.Translations()
+			pr.Get("/v1/translations", getTranslations(translations))
+			pr.Post("/v1/translations", postTranslation(translations))
+			pr.Get("/v1/translations/{locale}", getTranslation(translations))
+			pr.Put("/v1/translations/{locale}", putTranslationLocale(translations))
+			pr.Put("/v1/translations/{locale}/{key}", putTranslationKey(translations))
+			pr.Delete("/v1/translations/{locale}/{key}", deleteTranslationKey(translations))
 		}
 		// Wave-2 webhook endpoint management (#36).
 		if wh != nil {

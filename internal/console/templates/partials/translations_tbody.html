@@ -1,0 +1,54 @@
+{{/*
+  translations-tbody — PatchElements fragment target for the locales list.
+  Binds translationsListView.
+*/}}
+{{define "translations-tbody"}}{{$v := .}}
+<div id="translations-tbody" data-component="translations-tbody">
+  {{if eq (len $v.Rows) 0}}
+  <p class="console-muted">No locales yet — add one to get started.</p>
+  {{else}}
+  <table class="console-table">
+    <thead>
+      <tr>
+        <th>Locale</th>
+        <th>Keys</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range $v.Rows}}
+      {{if eq $v.ConfirmDelete .Locale}}
+      <tr id="translation-row-{{.Locale}}" class="confirm-row">
+        <td colspan="2">
+          <span class="console-confirm-label">Delete locale <code>{{.Locale}}</code> and all its keys?</span>
+        </td>
+        <td class="console-action-row">
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/translations-list')">Cancel</button>
+          {{if not $v.ReadOnly}}
+          <form method="POST" action="/console/api/translations/{{.Locale}}/delete" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
+            <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
+          </form>
+          {{end}}
+        </td>
+      </tr>
+      {{else}}
+      <tr id="translation-row-{{.Locale}}">
+        <td><a href="/console/translations/{{.Locale}}"><code class="chip chip-default">{{.Locale}}</code></a></td>
+        <td>{{.KeyCount}}</td>
+        <td class="console-action-row">
+          <a href="/console/translations/{{.Locale}}" class="btn btn-outline btn-sm">Edit</a>
+          {{if not $v.ReadOnly}}
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/translations-list?confirmDelete={{.Locale | urlquery}}')">Delete</button>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</div>
+{{end}}

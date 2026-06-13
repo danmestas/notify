@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -23,6 +24,14 @@ type EnvironmentRepo interface {
 	// CountByOrg returns the number of environments owned by orgID.
 	// Used by the delete guard to prevent destroying the last environment.
 	CountByOrg(ctx context.Context, orgID string) (int, error)
+	GetTranslationSettings(ctx context.Context, scope domain.Scope) (TranslationSettings, error)
+	SetTranslationSettings(ctx context.Context, scope domain.Scope, s TranslationSettings) error
+}
+
+// TranslationSettings are the env-level i18n config columns added in 0015.
+type TranslationSettings struct {
+	DefaultLocale string   // BCP-47, e.g. "en"
+	TargetLocales []string // JSON array persisted as TEXT
 }
 
 type envRepo struct {
@@ -137,4 +146,48 @@ func (repo *envRepo) CountByOrg(ctx context.Context, orgID string) (int, error) 
 		return 0, err
 	}
 	return count, nil
+}
+
+// GetTranslationSettings reads the env-level translation config columns.
+// An environment with no prior Set yields zero-value settings (empty default
+// locale, empty target list).
+func (repo *envRepo) GetTranslationSettings(ctx context.Context, scope domain.Scope) (TranslationSettings, error) {
+	var defaultLocale, targetsJSON string
+	err := repo.r.QueryRowContext(
+		ctx,
+		`SELECT COALESCE(translation_default_locale,''), COALESCE(translation_target_locales,'[]')
+		 FROM environments WHERE org_id=? AND id=?`,
+		scope.OrgID, scope.EnvID,
+	).Scan(&defaultLocale, &targetsJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TranslationSettings{}, ErrNotFound
+	}
+	if err != nil {
+		return TranslationSettings{}, err
+	}
+	var targets []string
+	if err := json.Unmarshal([]byte(targetsJSON), &targets); err != nil {
+		return TranslationSettings{}, err
+	}
+	return TranslationSettings{DefaultLocale: defaultLocale, TargetLocales: targets}, nil
+}
+
+// SetTranslationSettings persists the env-level translation config columns.
+// TargetLocales is JSON-marshalled into the TEXT column.
+func (repo *envRepo) SetTranslationSettings(ctx context.Context, scope domain.Scope, s TranslationSettings) error {
+	targets := s.TargetLocales
+	if targets == nil {
+		targets = []string{}
+	}
+	b, err := json.Marshal(targets)
+	if err != nil {
+		return err
+	}
+	_, err = repo.w.ExecContext(
+		ctx,
+		`UPDATE environments SET translation_default_locale=?, translation_target_locales=?
+		 WHERE org_id=? AND id=?`,
+		s.DefaultLocale, string(b), scope.OrgID, scope.EnvID,
+	)
+	return err
 }

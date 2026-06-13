@@ -56,6 +56,10 @@ var pageContentFiles = map[string]string{
 	// W4-L1: layouts list + editor.
 	"layouts":       "templates/layouts.html",
 	"layout-editor": "templates/layout_editor.html",
+	// W4-L2: translations list + locale editor + settings.
+	"translations":         "templates/translations.html",
+	"translation-editor":   "templates/translation_editor.html",
+	"translation-settings": "templates/translation_settings.html",
 	// W4-D: inbound domains.
 	"domains":       "templates/domains.html",
 	"domain-detail": "templates/domain_detail.html",
@@ -171,6 +175,7 @@ func navIconSVG(key string) template.HTML {
 		"variables":    `<path d="M4 7V4h16v3M9 20h6M12 4v16"/>`,
 		"contexts":     `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/>`,
 		"layouts":      `<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>`,
+		"translations": `<path d="M4 5h7M9 3v2c0 4-2 7-5 9M5 9c0 3 3 5 7 5"/><path d="M14 19l3-7 3 7M14.5 17h5"/>`,
 		"domains":      `<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20z"/>`,
 		"environments": `<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>`,
 		"api-keys":     `<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`,
@@ -275,6 +280,7 @@ var navGroups = []navGroup{
 		{Label: "Variables", Href: "/console/variables", Section: "variables", Icon: "variables"},
 		{Label: "Contexts", Href: "/console/contexts", Section: "contexts", Icon: "contexts"},
 		{Label: "Layouts", Href: "/console/layouts", Section: "layouts", Icon: "layouts"},
+		{Label: "Translations", Href: "/console/translations", Section: "translations", Icon: "translations"},
 		{Label: "Domains", Href: "/console/domains", Section: "domains", Icon: "domains"},
 	}},
 	{Label: "SETTINGS", Entries: []navEntry{

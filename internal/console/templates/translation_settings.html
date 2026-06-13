@@ -1,0 +1,37 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section">
+  {{template "page-header" $page.Header}}
+
+  {{if $page.FormError}}
+  <div class="console-alert console-alert--error" role="alert">{{$page.FormError}}</div>
+  {{end}}
+
+  <div class="console-card" style="max-width:480px">
+    <h2 class="console-card-title">Translation settings</h2>
+    <form method="POST" action="/console/api/translations/settings">
+      <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+      <div class="form-row">
+        <label class="form-label" for="default-locale">Default locale</label>
+        <input class="console-input" type="text" id="default-locale" name="default_locale"
+               value="{{$page.DefaultLocale}}"
+               placeholder="en"
+               {{if $page.ReadOnly}}readonly{{end}}>
+      </div>
+      <div class="form-row">
+        <label class="form-label" for="target-locales">Target locales</label>
+        <input class="console-input" type="text" id="target-locales" name="target_locales"
+               value="{{$page.TargetLocales}}"
+               placeholder="es, fr, de"
+               {{if $page.ReadOnly}}readonly{{end}}>
+        <small class="console-help">Comma-separated list of BCP-47 locale codes</small>
+      </div>
+      {{if not $page.ReadOnly}}
+      <div class="console-form-actions">
+        <a class="btn btn-outline" href="/console/translations">Cancel</a>
+        <button type="submit" class="btn btn-primary">Save settings</button>
+      </div>
+      {{end}}
+    </form>
+  </div>
+</section>
+{{end}}

@@ -222,6 +222,8 @@ func runServe(args []string) error {
 		Webhooks:          webhooksout.NewManagement(st),
 		Contexts:          contexts.New(st),
 		Layouts:           st.Layouts(),
+		Translations:      st.Translations(),
+		Environments:      st.Environments(),
 		EnvVars:           ev,
 		InboundDomains:    inbounddomains.New(st),
 		Trigger:           trg,

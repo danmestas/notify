@@ -141,6 +141,8 @@ func newTestConsole(t *testing.T) *testConsole {
 		Webhooks:       webhooksout.NewManagement(st),
 		Contexts:       contexts.New(st),
 		Layouts:        st.Layouts(),
+		Translations:   st.Translations(),
+		Environments:   st.Environments(),
 		EnvVars:        ev,
 		InboundDomains: inbounddomains.New(st),
 		Trigger:        newStubTrigger(""),

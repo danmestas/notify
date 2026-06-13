@@ -111,6 +111,13 @@ type Deps struct {
 	// Layouts provides layout CRUD for the layouts pages (W4-L1).
 	// Nil is allowed only when no layout routes are mounted.
 	Layouts store.LayoutRepo
+	// Translations provides translation CRUD for the translations pages (W4-L2).
+	// Nil is allowed only when no translation routes are mounted.
+	Translations store.TranslationRepo
+	// Environments provides env-level settings reads/writes (translation
+	// settings W4-L2). Nil means the settings panel shows read-only with
+	// empty defaults.
+	Environments store.EnvironmentRepo
 	// EnvVars is the env vars service for the variables CRUD pages (W4-V1).
 	// Nil is allowed only when no variables routes are mounted.
 	EnvVars *envvars.Service
@@ -354,6 +361,20 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/api/layouts/{key}/delete", c.handleLayoutDelete)
 		pr.Get("/console/api/fragments/layouts-list", c.serveFragmentLayoutsList)
 		pr.Get("/console/api/fragments/layout-editor", c.serveFragmentLayoutEditor)
+		// W4-L2: translations list, locale editor, settings. The literal
+		// `new` and `settings` segments are registered before the {locale}
+		// wildcard so chi never matches them as a locale code.
+		if c.deps.Translations != nil {
+			pr.Get("/console/translations", c.serveTranslationsPage)
+			pr.Get("/console/translations/new", c.serveTranslationsNew)
+			pr.Get("/console/translations/settings", c.serveTranslationsSettings)
+			pr.Get("/console/translations/{locale}", c.serveLocaleEditor)
+			pr.Post("/console/api/translations", c.handleTranslationLocaleCreate)
+			pr.Post("/console/api/translations/{locale}/save", c.handleTranslationLocaleSave)
+			pr.Post("/console/api/translations/{locale}/delete", c.handleTranslationLocaleDelete)
+			pr.Post("/console/api/translations/settings", c.handleTranslationSettingsSave)
+			pr.Get("/console/api/fragments/translations-list", c.serveFragmentTranslationsList)
+		}
 		// W4-V2: variables CRUD
 		if c.deps.EnvVars != nil {
 			pr.Get("/console/variables", c.serveVariablesPage)
