@@ -11,3 +11,8 @@ var ErrNotFound = errors.New("store: not found")
 // a caller error, not a server fault — HTTP handlers map it to 400, not 500.
 // Callers compare with errors.Is.
 var ErrInvalidCursor = errors.New("store: invalid cursor")
+
+// ErrConflict is returned by inserts that would violate a unique constraint —
+// e.g. creating a row whose natural key already exists. It is a caller error;
+// HTTP handlers map it to 409, not 500. Callers compare with errors.Is.
+var ErrConflict = errors.New("store: conflict")

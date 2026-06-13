@@ -1,0 +1,57 @@
+{{define "content"}}{{$page := .Page}}
+<div data-signals="{{$page.Signals}}">
+<section class="console-section">
+  {{template "page-header" $page.Header}}
+
+  {{if $page.ConfirmDelete}}
+  <div class="console-confirm-banner">
+    <span class="console-confirm-label">Delete layout <code>{{$page.Layout.Key}}</code>? This cannot be undone.</span>
+    <a class="btn btn-outline btn-sm" href="/console/layouts/{{$page.Layout.Key}}">Cancel</a>
+    {{if not $page.ReadOnly}}
+    <form method="POST" action="/console/api/layouts/{{$page.Layout.Key}}/delete" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+      <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
+    </form>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{if not $page.ReadOnly}}
+  <form method="POST" action="/console/api/layouts/{{$page.Layout.Key}}/save" class="layout-editor-form">
+    <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+    <div class="form-row">
+      <label class="form-label" for="layout-name">Name</label>
+      <input class="console-input" type="text" id="layout-name" name="name"
+             value="{{$page.Layout.Name}}" required maxlength="128">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="layout-content">Content template</label>
+      <textarea class="console-input console-textarea-mono" id="layout-content" name="content"
+                rows="20" placeholder="&lt;html&gt;&#123;&#123;content&#125;&#125;&lt;/html&gt;">{{$page.Layout.Content}}</textarea>
+      <p class="console-help">Use <code>&#123;&#123;content&#125;&#125;</code> where the step body should be injected.</p>
+    </div>
+    <div class="console-form-actions">
+      <a href="/console/layouts" class="btn btn-outline">Back to list</a>
+      <button type="submit" class="btn btn-primary">Save changes</button>
+      {{if not $page.ConfirmDelete}}
+      <a href="/console/layouts/{{$page.Layout.Key}}?confirmDelete=true"
+         class="btn btn-outline btn-danger">Delete…</a>
+      {{end}}
+    </div>
+  </form>
+  {{else}}
+  <div class="form-row">
+    <label class="form-label">Name</label>
+    <p class="console-text">{{$page.Layout.Name}}</p>
+  </div>
+  <div class="form-row">
+    <label class="form-label">Content template</label>
+    <pre class="console-textarea-mono">{{$page.Layout.Content}}</pre>
+  </div>
+  <div class="console-form-actions">
+    <a href="/console/layouts" class="btn btn-outline">Back to list</a>
+  </div>
+  {{end}}
+</section>
+</div>
+{{end}}

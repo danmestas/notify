@@ -62,6 +62,8 @@ type fragmentEnvelope struct {
 	// Contexts list filter signals (W4-C2).
 	ContextsType   string `json:"contextsType,omitempty"`
 	ContextsSearch string `json:"contextsSearch,omitempty"`
+	// LayoutsFilter is the layouts-list name/key search input (W4-L1).
+	LayoutsFilter string `json:"layoutsFilter,omitempty"`
 	// Workflow activity tab filter signals (W2-A6).
 	WfActStatus string `json:"wfActStatus,omitempty"`
 	WfActRange  string `json:"wfActRange,omitempty"`
@@ -164,6 +166,9 @@ func envelopeToQuery(env fragmentEnvelope, key string) (string, string) {
 		return "type", env.ContextsType
 	case "contextsSearch":
 		return "q", env.ContextsSearch
+	// Layouts list filter signal (W4-L1).
+	case "layoutsFilter":
+		return "q", env.LayoutsFilter
 	// Workflow activity tab filter signals (W2-A6).
 	case "wfActStatus":
 		return "status", env.WfActStatus

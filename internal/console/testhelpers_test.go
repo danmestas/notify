@@ -134,6 +134,7 @@ func newTestConsole(t *testing.T) *testConsole {
 		Audience:      audience.New(st),
 		Webhooks:      webhooksout.NewManagement(st),
 		Contexts:      contexts.New(st),
+		Layouts:       st.Layouts(),
 		Trigger:       newStubTrigger(""),
 		Agents:        ags,
 		Composer:      composer,

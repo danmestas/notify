@@ -1,0 +1,58 @@
+{{/*
+  layouts-tbody — PatchElements fragment target for the layouts list.
+  Binds layoutsListView.
+*/}}
+{{define "layouts-tbody"}}{{$v := .}}
+<div id="layouts-tbody" data-component="layouts-tbody">
+  {{if eq (len $v.Rows) 0}}
+  <p class="console-muted">No layouts yet. Create one to start wrapping notification content.</p>
+  {{else}}
+  <table class="console-table">
+    <thead>
+      <tr>
+        <th>Key</th>
+        <th>Name</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range $v.Rows}}
+      {{if eq $v.ConfirmDelete .Key}}
+      <tr id="layout-row-{{.Key}}" class="confirm-row">
+        <td colspan="2">
+          <span class="console-confirm-label">Delete <code>{{.Key}}</code>? This cannot be undone.</span>
+        </td>
+        <td>
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/layouts-list')">Cancel</button>
+          <form method="POST" action="/console/api/layouts/{{.Key}}/delete" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
+            <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr id="layout-row-{{.Key}}">
+        <td><a href="/console/layouts/{{.Key}}"><code class="chip chip-default">{{.Key}}</code></a></td>
+        <td>{{.Name}}</td>
+        <td class="console-action-row">
+          {{if not $v.ReadOnly}}
+          <a href="/console/layouts/{{.Key}}" class="btn btn-outline btn-sm">Edit</a>
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/layouts-list?confirmDelete={{.Key | urlquery}}')">Delete</button>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+      {{end}}
+    </tbody>
+  </table>
+  {{if $v.NextKey}}
+  <div class="console-pagination">
+    <button type="button" class="btn btn-outline btn-sm"
+            data-on:click="@get('/console/api/fragments/layouts-list?after={{$v.NextKey | urlquery}}')">Load more</button>
+  </div>
+  {{end}}
+  {{end}}
+</div>
+{{end}}

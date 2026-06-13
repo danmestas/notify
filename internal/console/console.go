@@ -106,6 +106,9 @@ type Deps struct {
 	// Contexts is the context service for the contexts CRUD pages (W4-C1).
 	// Nil is allowed only when no contexts routes are mounted.
 	Contexts *contexts.Service
+	// Layouts provides layout CRUD for the layouts pages (W4-L1).
+	// Nil is allowed only when no layout routes are mounted.
+	Layouts store.LayoutRepo
 	// Trigger is the trigger service used by the workflow test/trigger page
 	// (W2-A5). The console calls Ingest in-process — no loopback HTTP.
 	// Nil disables test-trigger POSTs (returns "service unavailable").
@@ -328,6 +331,17 @@ func (c *Console) Routes() http.Handler {
 			pr.Post("/console/api/contexts/{type}/{id}/delete", c.handleContextDelete)
 			pr.Get("/console/api/fragments/contexts-list", c.serveFragmentContextsList)
 		}
+		// W4-L1: layouts list, create, editor. The literal `new` segment is
+		// registered before the {key} wildcard so chi never matches "new" as
+		// a layout key.
+		pr.Get("/console/layouts", c.serveLayoutsPage)
+		pr.Get("/console/layouts/new", c.serveLayoutsNew)
+		pr.Get("/console/layouts/{key}", c.serveLayoutEditor)
+		pr.Post("/console/api/layouts", c.handleLayoutCreate)
+		pr.Post("/console/api/layouts/{key}/save", c.handleLayoutSave)
+		pr.Post("/console/api/layouts/{key}/delete", c.handleLayoutDelete)
+		pr.Get("/console/api/fragments/layouts-list", c.serveFragmentLayoutsList)
+		pr.Get("/console/api/fragments/layout-editor", c.serveFragmentLayoutEditor)
 		// W3: agents management + conversation console. The literal `new`
 		// segment is registered before the {identifier} wildcard so chi never
 		// matches "new" as an identifier.

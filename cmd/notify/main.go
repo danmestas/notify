@@ -214,6 +214,7 @@ func runServe(args []string) error {
 		Audience:          aud,
 		Webhooks:          webhooksout.NewManagement(st),
 		Contexts:          contexts.New(st),
+		Layouts:           st.Layouts(),
 		Trigger:           trg,
 		Agents:            ags,
 		Composer:          consoleComposer{ing},

@@ -101,6 +101,13 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 		if st != nil {
 			pr.Get("/v1/notifications", getNotifications(st))
 			pr.Get("/v1/notifications/{id}", getNotification(st))
+			// Layouts management (W4-L1).
+			layouts := st.Layouts()
+			pr.Get("/v1/layouts", getLayouts(layouts))
+			pr.Post("/v1/layouts", postLayout(layouts))
+			pr.Get("/v1/layouts/{key}", getLayout(layouts))
+			pr.Put("/v1/layouts/{key}", putLayout(layouts))
+			pr.Delete("/v1/layouts/{key}", deleteLayout(layouts))
 		}
 		// Wave-2 webhook endpoint management (#36).
 		if wh != nil {
