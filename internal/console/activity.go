@@ -14,11 +14,15 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/trigger"
 )
 
 const (
@@ -119,6 +123,22 @@ type activityDetailView struct {
 	Messages     []domain.Message
 	RunURL       string // empty when DagnatsConsoleURL is unset
 	Empty        bool   // true when no notification is selected or found
+	// CSRF is the session token for the inline Resend form (W4 #55). Empty
+	// when no session (renderEmpty path) — the form is only shown for a
+	// selected notification.
+	CSRF string
+	// ReadOnly hides the Resend action when the console is read-only (W4 #55).
+	ReadOnly bool
+	// CanResend reports whether the durable resend action is wired
+	// (Deps.Trigger != nil). When false the Resend button is omitted.
+	CanResend bool
+	// ConfirmResend renders the two-step inline confirm state for Resend
+	// (chassis idiom: no native confirm() since it sends a real message).
+	ConfirmResend bool
+	// ResendRunURL / ResendError carry the post-resend banner: the deep-link
+	// to the new engine run, or the failure message. Mutually exclusive.
+	ResendRunURL string
+	ResendError  string
 }
 
 // ─── signal envelope extensions ─────────────────────────────────────────────
@@ -533,10 +553,23 @@ func (c *Console) serveFragmentActivityDetail(w http.ResponseWriter, r *http.Req
 		msgs = nil
 	}
 
+	s, _ := sessionFromContext(r.Context())
+	// resendRunURL is the deep-link to the new run minted by a just-completed
+	// resend (the handler 303-redirects here with ?resendRun=<run_id>).
+	resendRunURL := ""
+	if rid := r.URL.Query().Get("resendRun"); rid != "" {
+		resendRunURL = c.runURL(rid)
+	}
 	html, err := renderFragment(c.ts.base, "activity-detail-panel", activityDetailView{
-		Notification: n,
-		Messages:     msgs,
-		RunURL:       c.runURL(n.RunID),
+		Notification:  n,
+		Messages:      msgs,
+		RunURL:        c.runURL(n.RunID),
+		CSRF:          s.CSRF,
+		ReadOnly:      c.deps.ReadOnly,
+		CanResend:     c.deps.Trigger != nil,
+		ConfirmResend: r.URL.Query().Get("confirmResend") == "true",
+		ResendRunURL:  resendRunURL,
+		ResendError:   r.URL.Query().Get("resendError"),
 	})
 	if err != nil {
 		c.deps.Logger.Error("console: render detail panel", "err", err)
@@ -544,4 +577,110 @@ func (c *Console) serveFragmentActivityDetail(w http.ResponseWriter, r *http.Req
 		return
 	}
 	c.patchHTML(w, r, html)
+}
+
+// handleNotificationResend handles POST /console/activity/{id}/resend
+// (W4 ADR-013, #55): the durable resend-notification action. It re-fires the
+// notification's workflow for the same subscriber and payload through the
+// engine, yielding a new run, then 303-redirects back to the activity page with
+// the new run surfaced via ?resendRun= (or ?resendError= on failure). This is a
+// native form POST → 303 (never SSE); the inline two-step confirm guards the
+// real send.
+func (c *Console) handleNotificationResend(w http.ResponseWriter, r *http.Request) {
+	if w == nil {
+		panic("handleNotificationResend: w is nil")
+	}
+	if r == nil {
+		panic("handleNotificationResend: r is nil")
+	}
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
+		panic("handleNotificationResend: no scope in context")
+	}
+	if c.deps.ReadOnly {
+		http.Error(w, "console is read-only", http.StatusForbidden)
+		return
+	}
+	notifID := chi.URLParam(r, "id")
+	if notifID == "" {
+		http.Error(w, "missing notification id", http.StatusBadRequest)
+		return
+	}
+	// The detail panel re-opens this notification after the redirect.
+	backURL := "/console/activity?notification_id=" + url.QueryEscape(notifID)
+
+	if c.deps.Trigger == nil {
+		http.Redirect(w, r, backURL+"&resendError="+
+			url.QueryEscape("Resend service unavailable."), http.StatusSeeOther)
+		return
+	}
+
+	n, err := c.deps.Notifications.Get(r.Context(), scope, notifID)
+	if err != nil {
+		c.deps.Logger.Warn("console: resend get notification", "id", notifID, "err", err)
+		http.Redirect(w, r, backURL+"&resendError="+
+			url.QueryEscape("Notification not found."), http.StatusSeeOther)
+		return
+	}
+
+	// The notification carries the internal workflow id; trigger.Ingest needs
+	// the workflow's trigger identifier (slug) to re-fire it.
+	wf, err := c.deps.Authoring.GetByID(r.Context(), scope, n.WorkflowID)
+	if err != nil {
+		c.deps.Logger.Warn("console: resend workflow lookup",
+			"workflow_id", n.WorkflowID, "err", err)
+		http.Redirect(w, r, backURL+"&resendError="+
+			url.QueryEscape("Workflow for this notification no longer exists."),
+			http.StatusSeeOther)
+		return
+	}
+
+	payload := n.Payload
+	if len(payload) == 0 {
+		payload = json.RawMessage("{}")
+	}
+	resp, err := c.deps.Trigger.Ingest(r.Context(), scope, trigger.TriggerRequest{
+		Name:    wf.TriggerIdentifier,
+		To:      trigger.ToField{SubscriberID: n.SubscriberID},
+		Payload: payload,
+	})
+	if err != nil {
+		c.deps.Logger.Error("console: resend ingest", "id", notifID, "err", err)
+		http.Redirect(w, r, backURL+"&resendError="+
+			url.QueryEscape("Resend failed: "+err.Error()), http.StatusSeeOther)
+		return
+	}
+	if !resp.Acknowledged {
+		msg := "Resend not acknowledged."
+		if len(resp.Error) > 0 {
+			msg = resp.Error[0]
+		}
+		http.Redirect(w, r, backURL+"&resendError="+url.QueryEscape(msg),
+			http.StatusSeeOther)
+		return
+	}
+
+	// Resolve the new run id from the freshly-minted transaction so the panel
+	// can deep-link it. The run id is written on the new notification row.
+	newRunID := c.runIDFromTransaction(r.Context(), scope, resp.TransactionID)
+	dest := backURL
+	if newRunID != "" {
+		dest += "&resendRun=" + url.QueryEscape(newRunID)
+	}
+	http.Redirect(w, r, dest, http.StatusSeeOther)
+}
+
+// runIDFromTransaction looks up the most recent notification for a transaction
+// id and returns its run id (empty when not found). Mirrors
+// runURLFromTransaction but returns the raw id so the caller can pass it through
+// a redirect.
+func (c *Console) runIDFromTransaction(ctx context.Context, scope domain.Scope, txid string) string {
+	if c == nil || txid == "" {
+		return ""
+	}
+	page, err := c.deps.Notifications.List(ctx, scope, store.NotificationFilter{TransactionID: txid}, "", 1)
+	if err != nil || len(page.Items) == 0 {
+		return ""
+	}
+	return page.Items[0].RunID
 }

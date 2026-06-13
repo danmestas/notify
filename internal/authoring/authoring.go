@@ -135,6 +135,14 @@ func (s *Service) GetBySlug(ctx context.Context, scope domain.Scope, slug string
 	return s.store.Workflows().GetByTriggerIdentifier(ctx, scope, slug)
 }
 
+// GetByID loads a single workflow by its internal ULID id within the Scope.
+// Returns store.ErrNotFound when no matching row exists. Used by the console
+// resend action (W4 #55), which has a notification's WorkflowID and needs the
+// workflow's trigger identifier to re-fire it.
+func (s *Service) GetByID(ctx context.Context, scope domain.Scope, id string) (domain.Workflow, error) {
+	return s.store.Workflows().GetByID(ctx, scope, id)
+}
+
 // List returns all workflows for the Scope, ordered by insertion.
 func (s *Service) List(ctx context.Context, scope domain.Scope) ([]domain.Workflow, error) {
 	return s.store.Workflows().List(ctx, scope)

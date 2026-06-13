@@ -45,6 +45,15 @@ type ConversationComposer interface {
 	ComposeMessage(ctx context.Context, scope domain.Scope, agentIdentifier, conversationID, subscriberID, text string) (string, error)
 }
 
+// CredentialVerifier is the durable credential-verify port the integration
+// drawer's "Verify credentials" action calls (W4 ADR-013, #55). It kicks an
+// engine run that probes the integration's provider credentials and returns the
+// new dagnats run id the console deep-links to. *credverify.Service satisfies it
+// in production; tests supply a stub. Nil renders the Verify button disabled.
+type CredentialVerifier interface {
+	Start(ctx context.Context, scope domain.Scope, integrationID string) (string, error)
+}
+
 // devMode reflects NOTIFY_DEV=1 at process start. When true the asset
 // handlers send no-cache headers so CSS/JS edits show up on reload without
 // manually busting the browser cache. Read once — the value cannot change
@@ -137,6 +146,11 @@ type Deps struct {
 	// Nil disables test-trigger POSTs (returns "service unavailable").
 	// The production wiring passes *trigger.Service; tests may pass a stub.
 	Trigger TriggerIngester
+	// CredVerifier kicks the durable credential-verify run for the integration
+	// drawer's "Verify credentials" action (W4 ADR-013, #55). Nil renders the
+	// Verify button disabled with a tooltip. The production wiring passes
+	// *credverify.Service; tests may pass a stub.
+	CredVerifier CredentialVerifier
 	// Agents provides the agents store for the agents CRUD pages and the
 	// conversation views (Wave 3). Nil is allowed only when no agent routes
 	// are mounted; in practice New panics when Agents is nil.
@@ -319,6 +333,11 @@ func (c *Console) Routes() http.Handler {
 		pr.Get("/console/activity", c.serveActivityPage)
 		pr.Get("/console/api/fragments/activity-list", c.serveFragmentActivityList)
 		pr.Get("/console/api/fragments/activity-detail", c.serveFragmentActivityDetail)
+		// W4 ADR-013 (#55): durable resend-notification action. Native form
+		// POST → 303; two-step inline confirm in the detail panel (it sends a
+		// real message). Re-fires the notification's workflow for the same
+		// subscriber + payload through the engine, yielding a new run.
+		pr.Post("/console/activity/{id}/resend", c.handleNotificationResend)
 		// W4-W2: SSE live-tail — one endpoint, both activity consumers
 		// (global feed + per-workflow tab). ?target=wf&workflow=<id> scopes
 		// it to one workflow's tbody.
@@ -330,6 +349,11 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/integrations/{id}", c.handleIntegrationUpdate)
 		pr.Post("/console/integrations/{id}/delete", c.handleIntegrationDelete)
 		pr.Post("/console/integrations/{id}/active", c.handleIntegrationToggleActive)
+		// W4 ADR-013 (#55): durable credential-verify action. Native form
+		// POST → 303; two-step inline confirm in the drawer (it performs a real
+		// provider handshake). Kicks an engine run that probes the credentials
+		// and surfaces the run deep-link + result.
+		pr.Post("/console/integrations/{id}/verify", c.handleIntegrationVerify)
 		pr.Get("/console/api/fragments/integrations-grid", c.serveFragmentIntegrationsGrid)
 		pr.Get("/console/api/fragments/integration-detail", c.serveFragmentIntegrationDetail)
 		pr.Get("/console/api/fragments/integration-activity", c.serveFragmentIntegrationActivity)

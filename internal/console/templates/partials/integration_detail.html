@@ -59,7 +59,7 @@
     <form method="post"
           action="/console/integrations/{{$in.ID}}/active"
           class="integration-toggle-form">
-      <input type="hidden" name="csrf_token" value="">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
       {{if $in.Active}}
       <input type="hidden" name="active" value="false">
       <button type="submit" class="btn btn-outline">Deactivate</button>
@@ -68,6 +68,44 @@
       <button type="submit" class="btn btn-outline">Activate</button>
       {{end}}
     </form>
+    {{end}}
+  </div>
+
+  {{/* W4 ADR-013 (#55): durable credential-verify action. Two-step inline
+       confirm (chassis idiom — no native confirm(); the probe performs a real
+       provider handshake). On confirm a native POST kicks an engine run; the
+       result banner deep-links to that run in the dagnats console. */}}
+  <div class="integration-verify-zone">
+    {{if $.VerifyRunURL}}
+    <div class="console-banner console-banner--success" role="status" id="integration-verify-success">
+      <strong>Verification run started.</strong>
+      A durable credentials check was kicked off for this integration.
+      <a class="console-link" href="{{$.VerifyRunURL}}" target="_blank" rel="noopener noreferrer">View run in dagnats ↗</a>
+    </div>
+    {{else if $.VerifyError}}
+    <p class="console-form-error" role="alert" id="integration-verify-error">{{$.VerifyError}}</p>
+    {{end}}
+
+    {{if not $.ReadOnly}}
+    {{if not $.CanVerify}}
+    <button type="button" class="btn btn-outline" disabled aria-disabled="true"
+            title="Credential verification is unavailable.">Verify credentials</button>
+    {{else if $.ConfirmVerify}}
+    <span class="console-confirm-label">Verify credentials? This performs a real provider handshake.</span>
+    <button type="button" class="btn btn-outline"
+            data-on:click="@get('/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}})">
+      Cancel
+    </button>
+    <form method="post" action="/console/integrations/{{$in.ID}}/verify" class="integration-verify-form" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <button type="submit" class="btn btn-primary integration-verify-confirm-btn">Confirm verify</button>
+    </form>
+    {{else}}
+    <button type="button" class="btn btn-outline integration-verify-btn"
+            data-on:click="@get('/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}}+'&confirmVerify=true')">
+      Verify credentials
+    </button>
+    {{end}}
     {{end}}
   </div>
 
@@ -90,7 +128,7 @@
         class="integration-edit-form"
         autocomplete="off">
     <input type="hidden" name="_method" value="PUT">
-    <input type="hidden" name="csrf_token" value="">
+    <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
 
     <div class="console-form-field">
       <label class="console-form-label" for="edit-identifier-{{$in.ID}}">Identifier</label>
@@ -153,7 +191,7 @@
         Cancel
       </button>
       <form method="post" action="/console/integrations/{{$in.ID}}/delete" class="integration-delete-form">
-        <input type="hidden" name="csrf_token" value="">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <button type="submit" class="btn btn-outline integration-delete-confirm-btn">Confirm delete</button>
       </form>
     </div>

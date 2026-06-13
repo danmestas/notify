@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -127,6 +128,20 @@ type integrationDetailView struct {
 	ActiveTab string
 	// ActivityMessages is populated when ActiveTab == "activity" (W4-I2).
 	ActivityMessages []integrationActivityRow
+	// CSRF is the session token plumbed into the drawer's native POST forms
+	// (delete / active toggle / verify). Required for the credential-verify
+	// action's native form POST (W4 ADR-013, #55).
+	CSRF string
+	// CanVerify reports whether the durable credential-verify action is wired
+	// (Deps.CredVerifier != nil). When false the Verify button renders disabled.
+	CanVerify bool
+	// ConfirmVerify renders the two-step inline confirm for Verify (chassis
+	// idiom: no native confirm() since the probe performs a real handshake).
+	ConfirmVerify bool
+	// VerifyRunURL / VerifyError carry the post-verify banner: the deep-link to
+	// the verification engine run, or the failure message. Mutually exclusive.
+	VerifyRunURL string
+	VerifyError  string
 }
 
 // integrationActivityRow is one row in the Activity tab of the detail drawer.
@@ -389,6 +404,7 @@ func (c *Console) serveFragmentIntegrationDetail(w http.ResponseWriter, r *http.
 	}
 
 	confirmDelete := r.URL.Query().Get("confirmDelete") == "true"
+	confirmVerify := r.URL.Query().Get("confirmVerify") == "true"
 
 	renderEmpty := func() {
 		html, err := renderFragment(c.ts.base, "integration-detail", integrationDetailView{Empty: true})
@@ -419,12 +435,25 @@ func (c *Console) serveFragmentIntegrationDetail(w http.ResponseWriter, r *http.
 	// Build masked credential fields — real secrets are never included.
 	credFields := credentialFieldsForProvider(in.ProviderID)
 
+	s, _ := sessionFromContext(r.Context())
+	// verifyRunURL is the deep-link to the run a just-completed verify minted
+	// (the handler 303-redirects here with ?verifyRun=<run_id>).
+	verifyRunURL := ""
+	if rid := r.URL.Query().Get("verifyRun"); rid != "" {
+		verifyRunURL = c.runURL(rid)
+	}
+
 	html, err := renderFragment(c.ts.base, "integration-detail", integrationDetailView{
 		Integration:   integrationToRow(in),
 		CredFields:    credFields,
 		ConfirmDelete: confirmDelete,
 		ReadOnly:      c.deps.ReadOnly,
 		ActiveTab:     "settings",
+		CSRF:          s.CSRF,
+		CanVerify:     c.deps.CredVerifier != nil,
+		ConfirmVerify: confirmVerify,
+		VerifyRunURL:  verifyRunURL,
+		VerifyError:   r.URL.Query().Get("verifyError"),
 	})
 	if err != nil {
 		c.deps.Logger.Error("console: render integration detail", "err", err)
@@ -432,6 +461,51 @@ func (c *Console) serveFragmentIntegrationDetail(w http.ResponseWriter, r *http.
 		return
 	}
 	c.patchHTML(w, r, html)
+}
+
+// handleIntegrationVerify handles POST /console/integrations/{id}/verify
+// (W4 ADR-013, #55): the durable credential-verify action. It kicks an engine
+// run that probes the integration's provider credentials (a real handshake) and
+// 303-redirects back to the integrations page with the new run surfaced via
+// ?verifyRun= (or ?verifyError= on failure). Native form POST → 303; the inline
+// two-step confirm in the drawer guards the real probe.
+func (c *Console) handleIntegrationVerify(w http.ResponseWriter, r *http.Request) {
+	if w == nil {
+		panic("handleIntegrationVerify: w is nil")
+	}
+	if r == nil {
+		panic("handleIntegrationVerify: r is nil")
+	}
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
+		panic("handleIntegrationVerify: no scope in context")
+	}
+	if c.deps.ReadOnly {
+		http.Error(w, "console is read-only", http.StatusForbidden)
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "missing integration id", http.StatusBadRequest)
+		return
+	}
+	// The drawer re-opens this integration after the redirect.
+	backURL := "/console/integrations/" + url.PathEscape(id)
+
+	if c.deps.CredVerifier == nil {
+		http.Redirect(w, r, backURL+"?verifyError="+
+			url.QueryEscape("Credential verification is unavailable."), http.StatusSeeOther)
+		return
+	}
+
+	runID, err := c.deps.CredVerifier.Start(r.Context(), scope, id)
+	if err != nil {
+		c.deps.Logger.Error("console: credential verify start", "id", id, "err", err)
+		http.Redirect(w, r, backURL+"?verifyError="+
+			url.QueryEscape("Verification failed to start: "+err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, backURL+"?verifyRun="+url.QueryEscape(runID), http.StatusSeeOther)
 }
 
 // ─── fragment: integration activity tab ─────────────────────────────────────

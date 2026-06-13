@@ -28,6 +28,41 @@
       {{end}}
     </header>
 
+    {{/* W4 ADR-013 (#55): durable resend-notification action. Two-step inline
+         confirm (chassis idiom — no native confirm(); it sends a real message).
+         The fragment re-renders with ConfirmResend=true on the first click, then
+         a native POST form fires the durable engine run on confirm. */}}
+    {{if .ResendRunURL}}
+    <div class="console-banner console-banner--success" role="status" id="activity-resend-success">
+      <strong>Resend fired.</strong>
+      A new engine run was started for this notification.
+      <a class="console-link" href="{{.ResendRunURL}}" target="_blank" rel="noopener noreferrer">View run in dagnats ↗</a>
+    </div>
+    {{else if .ResendError}}
+    <p class="console-form-error" role="alert" id="activity-resend-error">{{.ResendError}}</p>
+    {{end}}
+
+    {{if and .CanResend (not .ReadOnly)}}
+    <div class="activity-detail-actions">
+      {{if .ConfirmResend}}
+      <span class="console-confirm-label">Resend this notification? It sends a real message to the subscriber.</span>
+      <button type="button" class="btn btn-outline"
+              data-on:click="@get('/console/api/fragments/activity-detail?notification_id={{$n.ID}}')">
+        Cancel
+      </button>
+      <form method="POST" action="/console/activity/{{$n.ID}}/resend" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <button type="submit" class="btn btn-primary">Confirm resend</button>
+      </form>
+      {{else}}
+      <button type="button" class="btn btn-outline activity-resend-btn"
+              data-on:click="@get('/console/api/fragments/activity-detail?notification_id={{$n.ID}}&confirmResend=true')">
+        Resend
+      </button>
+      {{end}}
+    </div>
+    {{end}}
+
     <dl class="activity-detail-fields">
       <dt>Notification ID</dt>
       <dd><code class="activity-monospace">{{$n.ID}}</code></dd>

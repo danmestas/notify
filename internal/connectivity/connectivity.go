@@ -347,6 +347,79 @@ func (svc *Service) Update(ctx context.Context, scope domain.Scope, id string, i
 	return updated, nil
 }
 
+// VerifyResult is the outcome of a credential verification probe (W4 ADR-013
+// credential-verify durable action). OK reports whether the probe succeeded;
+// Detail carries a short human message (provider id, endpoint reached, or the
+// failure cause) suitable for surfacing in the console and the engine run
+// output. No secret is ever included.
+type VerifyResult struct {
+	OK         bool   `json:"ok"`
+	ProviderID string `json:"providerId"`
+	Channel    string `json:"channel"`
+	Detail     string `json:"detail"`
+}
+
+// VerifyByID performs a real credentials probe against the provider configured
+// on integration id, scoped to scope. It resolves the integration, decrypts its
+// stored credentials, and attempts a provider-appropriate handshake that
+// validates the credentials WITHOUT delivering a message to a subscriber:
+//
+//   - smtp: dial the server and run AUTH (no MAIL/DATA);
+//   - cloudflare-email: an authenticated GET against the account email scope;
+//   - ntfy: an authenticated GET against the server root.
+//
+// A nil error with VerifyResult.OK=false means "reached the provider, but the
+// credentials were rejected" — a definite negative. A non-nil error means the
+// probe could not be completed (integration missing, decrypt failure, malformed
+// config); the caller decides whether that is retryable.
+func (svc *Service) VerifyByID(ctx context.Context, scope domain.Scope, id string) (VerifyResult, error) {
+	in, err := svc.store.Integrations().GetByID(ctx, scope, id)
+	if err != nil {
+		return VerifyResult{}, fmt.Errorf("connectivity: verify: load integration: %w", err)
+	}
+	plaintext, err := svc.decrypt(in.EncCredentials)
+	if err != nil {
+		return VerifyResult{}, fmt.Errorf("connectivity: verify: decrypt: %w", err)
+	}
+
+	providerID := in.ProviderID
+	if providerID == "" {
+		providerID = "smtp"
+	}
+	res := VerifyResult{ProviderID: providerID, Channel: in.Channel}
+
+	switch providerID {
+	case "smtp", "":
+		var cfg SMTPConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return VerifyResult{}, fmt.Errorf("connectivity: verify: unmarshal smtp config: %w", err)
+		}
+		ok, detail := probeSMTP(cfg)
+		res.OK, res.Detail = ok, detail
+		return res, nil
+	case "cloudflare-email":
+		var cfg CloudflareEmailConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return VerifyResult{}, fmt.Errorf("connectivity: verify: unmarshal cloudflare config: %w", err)
+		}
+		ok, detail := probeCloudflareEmail(ctx, cfg)
+		res.OK, res.Detail = ok, detail
+		return res, nil
+	case "ntfy":
+		var cfg NtfyConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return VerifyResult{}, fmt.Errorf("connectivity: verify: unmarshal ntfy config: %w", err)
+		}
+		ok, detail := probeNtfy(ctx, cfg)
+		res.OK, res.Detail = ok, detail
+		return res, nil
+	default:
+		res.OK = false
+		res.Detail = "unsupported provider for verification: " + providerID
+		return res, nil
+	}
+}
+
 // encrypt seals plaintext with AES-256-GCM, prepending the random 12-byte nonce
 // to the ciphertext.
 func (svc *Service) encrypt(plaintext []byte) ([]byte, error) {

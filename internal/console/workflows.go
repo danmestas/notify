@@ -186,6 +186,11 @@ type workflowTestView struct {
 	FormError string
 	// TransactionID is surfaced after a successful test fire (from ?txid=).
 	TransactionID string
+	// RunID is the dagnats run id minted for the test fire's transaction
+	// (empty when not yet available). Surfaced alongside RunURL so the operator
+	// sees the durable run reference even when the deep-link base is unset
+	// (W4 ADR-013, #55).
+	RunID string
 	// RunURL is the dagnats deep-link for the transaction's run (empty when
 	// DagnatsConsoleURL is unset or the run id is not yet available).
 	RunURL string
@@ -1274,9 +1279,11 @@ func (c *Console) serveWorkflowTestPage(w http.ResponseWriter, r *http.Request) 
 		Signals:           wfTestSignalsJSON(),
 		CSRF:              s.CSRF,
 	}
-	// If we have a txid, resolve a run URL from the notification store.
+	// If we have a txid, resolve the run id + deep-link from the notification
+	// store so the operator sees the durable run reference (W4 ADR-013, #55).
 	if txid := r.URL.Query().Get("txid"); txid != "" {
-		view.RunURL = c.runURLFromTransaction(r.Context(), scope, txid)
+		view.RunID = c.runIDFromTransaction(r.Context(), scope, txid)
+		view.RunURL = c.runURL(view.RunID)
 	}
 
 	c.renderPage(w, r, http.StatusOK, "workflow-test", wf.Name+" — Test", view)
@@ -1380,21 +1387,6 @@ func (c *Console) handleWorkflowTest(w http.ResponseWriter, r *http.Request) {
 	_ = activityHref // surfaced in template via TransactionID link
 	http.Redirect(w, r, testURL+"?txid="+url.QueryEscape(resp.TransactionID),
 		http.StatusSeeOther)
-}
-
-// runURLFromTransaction looks up the most recent notification for the given
-// transactionId and returns a dagnats run URL if available. Returns "" when
-// nothing is found or the deep-link base is unset.
-func (c *Console) runURLFromTransaction(ctx context.Context, scope domain.Scope, txid string) string {
-	if c == nil || c.deps.DagnatsConsoleURL == "" || txid == "" {
-		return ""
-	}
-	nf := store.NotificationFilter{TransactionID: txid}
-	page, err := c.deps.Notifications.List(ctx, scope, nf, "", 1)
-	if err != nil || len(page.Items) == 0 {
-		return ""
-	}
-	return c.runURL(page.Items[0].RunID)
 }
 
 // payloadExampleFromSchema derives a simple example JSON object from a

@@ -26,6 +26,7 @@ import (
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/console"
 	"github.com/danmestas/notify/internal/contexts"
+	"github.com/danmestas/notify/internal/credverify"
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
@@ -158,6 +159,12 @@ func runServe(args []string) error {
 	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).WithThrottle(bus).WithDigester(bus).HandleEmail)
 	eng.Handle("send.push", delivery.NewPush(st, conn).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandlePush)
 
+	// W4 ADR-013 (#55): durable credential-verify action. The verify task runs
+	// in this worker pool (registered before StartWorkers); the workflow is
+	// declared with the engine just after the workers start (below).
+	credVerify := credverify.New(eng, conn)
+	eng.Handle(credverify.TaskVerify, credVerify.Handler)
+
 	meshHub := *meshNATSURL
 	if meshHub == "" {
 		meshHub = *natsURL
@@ -172,6 +179,13 @@ func runServe(args []string) error {
 	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
 
 	eng.StartWorkers(ctx)
+
+	// Register the credential-verify workflow now that the engine is live.
+	// A failure here is non-fatal: the console renders the Verify button
+	// disabled if the run later cannot start, rather than refusing to boot.
+	if err := credVerify.Register(ctx); err != nil {
+		slog.Default().Error("credverify: register workflow", "err", err)
+	}
 
 	whStop, err := webhooksout.New(bus, st).Start(ctx)
 	if err != nil {
@@ -227,6 +241,7 @@ func runServe(args []string) error {
 		EnvVars:           ev,
 		InboundDomains:    inbounddomains.New(st),
 		Trigger:           trg,
+		CredVerifier:      credVerify,
 		Agents:            ags,
 		Composer:          consoleComposer{ing},
 		MasterKey:         mk,
