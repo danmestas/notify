@@ -1,10 +1,18 @@
-// analytics_test.go proves the Wave-1 analytics page and its two fragment
-// endpoints render real counts off a seeded store — the same full login +
-// session + Datastar-signal stack the dashboard tests use.
+// analytics_test.go proves the Wave-4 analytics depth page and its two fragment
+// endpoints render live counts off a seeded store — full login + session +
+// Datastar-signal stack. Wave-4 adds: live Active Subscribers + Avg Messages
+// KPI cards (GAP-AF-05), workflow filter (GAP-AF-06), and two new charts.
 //
 // Test surface:
 //
 //	TestAnalytics_RendersSeededKPIsAndCharts       — full page seeded render, 7d default
+//	TestAnalytics_LiveActiveSubscribersCard        — W4 Active Subscribers card is live (not "—")
+//	TestAnalytics_LiveAvgMessagesCard              — W4 Avg Messages card is live (not "—")
+//	TestAnalytics_WorkflowFilterRendersDropdown    — workflow filter dropdown present
+//	TestAnalytics_WorkflowFilter_IsolatesKPIs     — workflow_id scopes KPI fragment
+//	TestAnalytics_WorkflowFilter_IsolatesCharts   — workflow_id scopes charts fragment
+//	TestAnalytics_RunsTrendChart                   — Workflow Runs Trend chart present
+//	TestAnalytics_SubscribersTrendChart            — Active Subscribers Trend chart present
 //	TestAnalytics_EmptyStoreRendersZeroState       — empty store empty-states
 //	TestAnalytics_RangeTab24h                      — 24h range param echoed in fragment
 //	TestAnalytics_RangeTab30d                      — 30d range param echoed in fragment
@@ -19,10 +27,12 @@
 //	TestAnalytics_BuildBarChart                    — pure unit: bar chart math
 //	TestAnalytics_ParseActiveChannels              — pure unit: channel list parse
 //	TestAnalytics_ParseRange                       — pure unit: range parse/default
+//	TestAnalytics_ScopeIsolation                   — cross-tenant isolation
 package console
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -62,18 +72,19 @@ func TestAnalytics_RendersSeededKPIsAndCharts(t *testing.T) {
 		}
 	}
 
-	// Wave-4 stubs are present with "—".
+	// Wave-4 live cards are present (no stub "—" for Active Subscribers or Avg).
 	for _, want := range []string{
 		"Active Subscribers",
 		"Avg Messages / Subscriber",
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("analytics page missing Wave-4 stub card %q", want)
+			t.Errorf("analytics page missing W4 card label %q", want)
 		}
 	}
+	// Wave-4 cards must NOT render the stub "—" any longer.
 	stubCount := strings.Count(body, `<span class="analytics-kpi-value">—</span>`)
-	if stubCount != 2 {
-		t.Errorf("expected 2 '—' stub cards, got %d", stubCount)
+	if stubCount != 0 {
+		t.Errorf("Wave-4: expected 0 '—' stub cards, got %d", stubCount)
 	}
 
 	// Range tabs present.
@@ -91,6 +102,180 @@ func TestAnalytics_RendersSeededKPIsAndCharts(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("analytics page missing %s", want)
 		}
+	}
+}
+
+// TestAnalytics_LiveActiveSubscribersCard proves the Active Subscribers KPI card
+// renders a live number (not "—") when there are subscribers in the window (GAP-AF-05).
+func TestAnalytics_LiveActiveSubscribersCard(t *testing.T) {
+	tc := newTestConsole(t)
+	// Seed with explicit SubscriberIDs so CountActiveSubscribers returns > 0.
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", SubscriberID: "sub-1"},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-2"},
+		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1"},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/analytics", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/analytics: %d", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// The "—" stub must not appear at all (all four cards are live).
+	if strings.Contains(body, `<span class="analytics-kpi-value">—</span>`) {
+		t.Errorf("Active Subscribers card still showing stub '—': %s", body[:300])
+	}
+	// The label must be present.
+	if !strings.Contains(body, "Active Subscribers") {
+		t.Errorf("Active Subscribers label missing")
+	}
+}
+
+// TestAnalytics_LiveAvgMessagesCard proves the Avg Messages/Subscriber KPI card
+// renders a live float (not "—") when there is data (GAP-AF-05).
+func TestAnalytics_LiveAvgMessagesCard(t *testing.T) {
+	tc := newTestConsole(t)
+	// sub-1 gets 2 deliveries, sub-2 gets 1 → avg = 1.5.
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", SubscriberID: "sub-1"},
+		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1"},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-2"},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/analytics", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/analytics: %d", rr.Code)
+	}
+	body := rr.Body.String()
+
+	if strings.Contains(body, `<span class="analytics-kpi-value">—</span>`) {
+		t.Errorf("Avg Messages/Subscriber card still showing stub '—'")
+	}
+	if !strings.Contains(body, "Avg Messages / Subscriber") {
+		t.Errorf("Avg Messages / Subscriber label missing")
+	}
+	// "1.5" must appear somewhere in the KPI cards section.
+	if !strings.Contains(body, "1.5") {
+		t.Errorf("expected avg 1.5 to appear in the analytics page; body: %.400s", body)
+	}
+}
+
+// TestAnalytics_WorkflowFilterRendersDropdown verifies that the workflow filter
+// select element appears when there are workflows, and is absent when there are none (GAP-AF-06).
+func TestAnalytics_WorkflowFilterRendersDropdown(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	// Without any workflows: no dropdown.
+	rr := tc.get(t, "/console/analytics", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/analytics: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, `analytics-workflow-select`) {
+		t.Errorf("workflow filter dropdown rendered with no workflows")
+	}
+
+	// Seed a workflow — dropdown must appear.
+	tc.seedWorkflow(t, "Welcome Flow", "welcome")
+	rr = tc.get(t, "/console/analytics", cookie)
+	body = rr.Body.String()
+	if !strings.Contains(body, `analytics-workflow-select`) {
+		t.Errorf("workflow filter dropdown missing after seeding a workflow")
+	}
+	if !strings.Contains(body, "Welcome Flow") {
+		t.Errorf("workflow option label 'Welcome Flow' missing from dropdown")
+	}
+}
+
+// TestAnalytics_WorkflowFilter_IsolatesKPIs proves that the workflow_id query
+// param scopes the KPI fragment to only that workflow's rows (GAP-AF-06).
+func TestAnalytics_WorkflowFilter_IsolatesKPIs(t *testing.T) {
+	tc := newTestConsole(t)
+	// 3 rows for wf-a, 2 rows for wf-b.
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a"},
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a"},
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a"},
+		{Channel: "email", Status: "sent", WorkflowID: "wf-b"},
+		{Channel: "email", Status: "sent", WorkflowID: "wf-b"},
+	})
+	cookie, _ := tc.login(t)
+
+	// Filter to wf-a: expect delivered=3.
+	rr := tc.get(t, "/console/api/fragments/analytics-kpis?workflow_id=wf-a", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("analytics-kpis?workflow_id=wf-a: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `<span class="analytics-kpi-value">3</span>`) {
+		t.Errorf("workflow_id=wf-a: expected delivered=3, body: %.300s", body)
+	}
+	// wf-b's 2 rows must not appear as the Messages Delivered count.
+	if strings.Contains(body, `<span class="analytics-kpi-value">5</span>`) {
+		t.Errorf("workflow_id=wf-a filter leaked wf-b rows (showed total=5)")
+	}
+}
+
+// TestAnalytics_WorkflowFilter_IsolatesCharts proves the charts fragment is also
+// scoped by workflow_id (GAP-AF-06).
+func TestAnalytics_WorkflowFilter_IsolatesCharts(t *testing.T) {
+	tc := newTestConsole(t)
+	now := time.Now().UTC()
+	today := now.Format("2006-01-02") + "T12:00:00Z"
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a", CreatedAt: today},
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a", CreatedAt: today},
+		{Channel: "sms", Status: "sent", WorkflowID: "wf-b", CreatedAt: today},
+	})
+	cookie, _ := tc.login(t)
+
+	// Charts for wf-a should have email but NOT sms.
+	rr := tc.get(t, "/console/api/fragments/analytics-charts?workflow_id=wf-a", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("analytics-charts?workflow_id=wf-a: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "email") {
+		t.Errorf("wf-a chart missing email channel")
+	}
+	if strings.Contains(body, "3 total") {
+		t.Errorf("workflow_id=wf-a chart leaked wf-b (showed 3 total)")
+	}
+}
+
+// TestAnalytics_RunsTrendChart verifies the Workflow Runs Trend chart section
+// is present in the charts fragment (Wave 4 addition).
+func TestAnalytics_RunsTrendChart(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/analytics-charts", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("analytics-charts: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Workflow Runs Trend") {
+		t.Errorf("Workflow Runs Trend chart section missing from analytics-charts fragment")
+	}
+}
+
+// TestAnalytics_SubscribersTrendChart verifies the Active Subscribers Trend chart
+// section is present in the charts fragment (Wave 4 addition).
+func TestAnalytics_SubscribersTrendChart(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/analytics-charts", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("analytics-charts: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Active Subscribers Trend") {
+		t.Errorf("Active Subscribers Trend chart section missing from analytics-charts fragment")
 	}
 }
 
@@ -209,6 +394,10 @@ func TestFragment_AnalyticsKPIs_SeededCounts(t *testing.T) {
 	if !strings.Contains(body, `<span class="analytics-kpi-value">1</span>`) {
 		t.Errorf("analytics-kpis fragment missing failed count 1")
 	}
+	// No stubs.
+	if strings.Contains(body, `<span class="analytics-kpi-value">—</span>`) {
+		t.Errorf("analytics-kpis fragment has unexpected stub card '—'")
+	}
 }
 
 func TestFragment_AnalyticsKPIs_RangeSignal(t *testing.T) {
@@ -276,13 +465,9 @@ func TestFragment_AnalyticsCharts_ChannelToggle(t *testing.T) {
 }
 
 // TestFragment_AnalyticsCharts_ChannelToggleQuoteSafe proves the channel-toggle
-// control is immune to JS-literal breakout: a channel name carrying a single
-// quote is emitted into a data-channel attribute (HTML-escaped) and read in JS
-// via $el.dataset.channel — it must never appear raw inside a JS string literal
-// in the data-on:click handler.
+// control is immune to JS-literal breakout.
 func TestFragment_AnalyticsCharts_ChannelToggleQuoteSafe(t *testing.T) {
 	tc := newTestConsole(t)
-	// A hostile channel name with a single quote.
 	const evil = "ev'il"
 	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
 		{Channel: evil, Status: "sent"},
@@ -295,15 +480,12 @@ func TestFragment_AnalyticsCharts_ChannelToggleQuoteSafe(t *testing.T) {
 	}
 	body := rr.Body.String()
 
-	// The toggle handler must use the dataset idiom, not a JS literal.
 	if !strings.Contains(body, "$el.dataset.channel") {
 		t.Errorf("channel-toggle handler does not use the $el.dataset.channel idiom")
 	}
-	// The raw single-quoted breakout string must NOT appear in a JS literal.
 	if strings.Contains(body, `=== 'ev'il'`) || strings.Contains(body, `'ev'il'`) {
 		t.Errorf("channel name broke out of a JS string literal: %.400s", body)
 	}
-	// The channel name must be carried in an HTML-escaped data-channel attr.
 	if !strings.Contains(body, `data-channel="ev&#39;il"`) {
 		t.Errorf("channel name not HTML-escaped into data-channel attribute: %.400s", body)
 	}
@@ -447,13 +629,9 @@ func TestAnalytics_ParseRange(t *testing.T) {
 }
 
 // TestAnalytics_BuildCharts_WindowExclusion proves the range window clips
-// out-of-window rows from the chart totals. (This is time-window filtering,
-// NOT tenant isolation — see TestAnalytics_ScopeIsolation for that.)
+// out-of-window rows from the chart totals.
 func TestAnalytics_BuildCharts_WindowExclusion(t *testing.T) {
-	// Series contains rows for two different day windows. The 7d window
-	// should only count the last 7 days' worth of rows.
 	now := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
-	// 60 days ago — should be outside any range window.
 	old := now.AddDate(0, 0, -60).Format("2006-01-02")
 	recent := now.AddDate(0, 0, -2).Format("2006-01-02")
 	series := []domain.DeliveryDayCount{
@@ -468,9 +646,6 @@ func TestAnalytics_BuildCharts_WindowExclusion(t *testing.T) {
 
 // TestAnalytics_ScopeIsolation seeds deliveries under a SECOND org/env scope
 // and asserts they never appear in the test scope's analytics KPIs or charts.
-// Real isolation is enforced at the store layer; this proves the console
-// threads the request Scope through to every analytics query rather than
-// leaking another tenant's data.
 func TestAnalytics_ScopeIsolation(t *testing.T) {
 	tc := newTestConsole(t)
 
@@ -479,7 +654,7 @@ func TestAnalytics_ScopeIsolation(t *testing.T) {
 		{Channel: "email", Status: "sent"},
 	})
 
-	// Many deliveries for a DIFFERENT tenant — must stay invisible here.
+	// Many deliveries for a DIFFERENT tenant.
 	otherScope := domain.Scope{OrgID: "other-org", EnvID: "other-env"}
 	ctx := context.Background()
 	for i := 0; i < 50; i++ {
@@ -541,6 +716,30 @@ func TestAnalytics_BuildCharts_ChannelFilter(t *testing.T) {
 	}
 }
 
+// TestAnalytics_BuildCharts_RunsTrendIncludesAllStatuses verifies that
+// RunsTrendChart counts all delivery rows regardless of status or channel filter,
+// while TrendChart counts only sent rows through the filter.
+func TestAnalytics_BuildCharts_RunsTrendIncludesAllStatuses(t *testing.T) {
+	now := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+	day := now.Format("2006-01-02")
+	series := []domain.DeliveryDayCount{
+		{Day: day, Channel: "email", Status: "sent", Count: 3},
+		{Day: day, Channel: "email", Status: "failed", Count: 2},
+		{Day: day, Channel: "sms", Status: "sent", Count: 4},
+	}
+	// Filter to email only.
+	active := map[string]bool{"email": true}
+	charts := buildAnalyticsCharts(series, analyticsRange7d, active, now)
+	// TrendChart: only email+sent = 3.
+	if charts.TrendChart.Total != 3 {
+		t.Errorf("TrendChart.Total = %d, want 3", charts.TrendChart.Total)
+	}
+	// RunsTrendChart: all rows regardless of filter = 9.
+	if charts.RunsTrendChart.Total != 9 {
+		t.Errorf("RunsTrendChart.Total = %d, want 9 (all rows)", charts.RunsTrendChart.Total)
+	}
+}
+
 func TestAnalytics_RangeDays(t *testing.T) {
 	cases := []struct {
 		r    analyticsRange
@@ -573,9 +772,7 @@ func TestAnalytics_HandlerRoutesRegistered(t *testing.T) {
 	}
 }
 
-// TestAnalytics_RouteCountGrowth verifies the analytics page 200s after
-// all three analytics routes are wired. The handler_test.go chi.Walk covers
-// the full auth-gate sweep; this test proves the routes are present at all.
+// TestAnalytics_RouteCountGrowth verifies the analytics page 200s.
 func TestAnalytics_RouteCountGrowth(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)
@@ -584,3 +781,25 @@ func TestAnalytics_RouteCountGrowth(t *testing.T) {
 		t.Fatalf("/console/analytics: %d", rr.Code)
 	}
 }
+
+// TestAnalytics_RangeSince verifies rangeSince produces the correct cutoff.
+func TestAnalytics_RangeSince(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		rang analyticsRange
+		want time.Time
+	}{
+		{analyticsRange24h, time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)},
+		{analyticsRange7d, time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)},
+		{analyticsRange30d, time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC)},
+	}
+	for _, tc := range cases {
+		got := rangeSince(tc.rang, now)
+		if !got.Equal(tc.want) {
+			t.Errorf("rangeSince(%q, now) = %v, want %v", tc.rang, got, tc.want)
+		}
+	}
+}
+
+// Prevent unused import warning: fmt is used by seedDeliveries helper indirectly.
+var _ = fmt.Sprintf

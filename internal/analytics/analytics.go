@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -86,14 +87,27 @@ func (svc *Service) ingest(ctx context.Context, data []byte) {
 }
 
 // DeliveriesByChannel returns delivery counts grouped by channel then status
-// for scope.
-func (svc *Service) DeliveriesByChannel(ctx context.Context, scope domain.Scope) (map[string]map[string]int, error) {
-	return svc.repo.CountByChannelStatus(ctx, scope)
+// for scope, optionally filtered by workflow_id (GAP-AF-06).
+func (svc *Service) DeliveriesByChannel(ctx context.Context, scope domain.Scope, f store.AnalyticsFilter) (map[string]map[string]int, error) {
+	return svc.repo.CountByChannelStatus(ctx, scope, f)
 }
 
-// DeliveriesOverTime returns the per-day delivery time-series for scope.
-func (svc *Service) DeliveriesOverTime(ctx context.Context, scope domain.Scope) ([]domain.DeliveryDayCount, error) {
-	return svc.repo.DeliveriesByDay(ctx, scope)
+// DeliveriesOverTime returns the per-day delivery time-series for scope,
+// optionally filtered by workflow_id (GAP-AF-06).
+func (svc *Service) DeliveriesOverTime(ctx context.Context, scope domain.Scope, f store.AnalyticsFilter) ([]domain.DeliveryDayCount, error) {
+	return svc.repo.DeliveriesByDay(ctx, scope, f)
+}
+
+// CountActiveSubscribers returns the number of distinct subscribers with at
+// least one delivery row at or after since (GAP-AF-05).
+func (svc *Service) CountActiveSubscribers(ctx context.Context, scope domain.Scope, since time.Time) (int64, error) {
+	return svc.repo.CountActiveSubscribers(ctx, scope, since)
+}
+
+// AverageMessagesPerSubscriber returns the average delivery count per distinct
+// subscriber at or after since (GAP-AF-05). Returns 0 when no data.
+func (svc *Service) AverageMessagesPerSubscriber(ctx context.Context, scope domain.Scope, since time.Time) (float64, error) {
+	return svc.repo.AverageMessagesPerSubscriber(ctx, scope, since)
 }
 
 // Routes mounts the analytics query API. Callers MUST mount it inside the
@@ -107,7 +121,7 @@ func (svc *Service) Routes(r chi.Router) {
 // Scope as JSON.
 func (svc *Service) getDeliveries(w http.ResponseWriter, r *http.Request) {
 	scope := identity.ScopeFrom(r.Context())
-	m, err := svc.DeliveriesByChannel(r.Context(), scope)
+	m, err := svc.DeliveriesByChannel(r.Context(), scope, store.AnalyticsFilter{})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -121,7 +135,7 @@ func (svc *Service) getDeliveries(w http.ResponseWriter, r *http.Request) {
 // as a JSON array.
 func (svc *Service) getTimeseries(w http.ResponseWriter, r *http.Request) {
 	scope := identity.ScopeFrom(r.Context())
-	series, err := svc.DeliveriesOverTime(r.Context(), scope)
+	series, err := svc.DeliveriesOverTime(r.Context(), scope, store.AnalyticsFilter{})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

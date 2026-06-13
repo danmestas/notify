@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/store"
 )
 
 // dashboard.go renders GET /console/ — the Wave-1 landing page: KPI count
@@ -161,7 +162,7 @@ func (c *Console) buildKPIView(ctx context.Context, scope domain.Scope, channel 
 	if ctx == nil {
 		panic("buildKPIView: ctx is nil")
 	}
-	byChannel, err := c.deps.Analytics.DeliveriesByChannel(ctx, scope)
+	byChannel, err := c.deps.Analytics.DeliveriesByChannel(ctx, scope, store.AnalyticsFilter{})
 	if err != nil {
 		return kpiView{}, fmt.Errorf("deliveries by channel: %w", err)
 	}
@@ -192,7 +193,7 @@ func (c *Console) buildKPIView(ctx context.Context, scope domain.Scope, channel 
 		return kpiView{}, fmt.Errorf("list workflows: %w", err)
 	}
 
-	series, err := c.deps.Analytics.DeliveriesOverTime(ctx, scope)
+	series, err := c.deps.Analytics.DeliveriesOverTime(ctx, scope, store.AnalyticsFilter{})
 	if err != nil {
 		return kpiView{}, fmt.Errorf("deliveries over time: %w", err)
 	}
@@ -264,7 +265,7 @@ const dashRecentLimit = 6
 // rather than failing the page. Stubs (no backing query yet): the
 // "Sent today" delta %, agent responsiveness, and the dead-lettered count.
 func (c *Console) buildDashboardView(ctx context.Context, scope domain.Scope, now time.Time) (dashboardView, error) {
-	byChannel, err := c.deps.Analytics.DeliveriesByChannel(ctx, scope)
+	byChannel, err := c.deps.Analytics.DeliveriesByChannel(ctx, scope, store.AnalyticsFilter{})
 	if err != nil {
 		return dashboardView{}, fmt.Errorf("deliveries by channel: %w", err)
 	}
@@ -334,7 +335,7 @@ func (c *Console) buildDashboardView(ctx context.Context, scope domain.Scope, no
 	}
 
 	// Per-channel chart off the 7-day time series.
-	series, err := c.deps.Analytics.DeliveriesOverTime(ctx, scope)
+	series, err := c.deps.Analytics.DeliveriesOverTime(ctx, scope, store.AnalyticsFilter{})
 	if err != nil {
 		return dashboardView{}, fmt.Errorf("deliveries over time: %w", err)
 	}

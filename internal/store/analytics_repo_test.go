@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 )
@@ -48,7 +49,7 @@ func TestAnalyticsRepo_InsertAndCount(t *testing.T) {
 		t.Fatalf("insert isolation row: %v", err)
 	}
 
-	got, err := repo.CountByChannelStatus(ctx, scope)
+	got, err := repo.CountByChannelStatus(ctx, scope, AnalyticsFilter{})
 	if err != nil {
 		t.Fatalf("count: %v", err)
 	}
@@ -96,7 +97,7 @@ func TestAnalyticsRepo_DeliveriesByDay(t *testing.T) {
 		t.Fatalf("insert isolation row: %v", err)
 	}
 
-	got, err := repo.DeliveriesByDay(ctx, scope)
+	got, err := repo.DeliveriesByDay(ctx, scope, AnalyticsFilter{})
 	if err != nil {
 		t.Fatalf("DeliveriesByDay: %v", err)
 	}
@@ -107,5 +108,195 @@ func TestAnalyticsRepo_DeliveriesByDay(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DeliveriesByDay mismatch:\n got=%v\nwant=%v", got, want)
+	}
+}
+
+// TestAnalyticsRepo_CountByChannelStatus_WorkflowFilter verifies that the
+// workflow_id filter restricts results to rows for the specified workflow only,
+// and that rows from other workflows do not appear (GAP-AF-06).
+func TestAnalyticsRepo_CountByChannelStatus_WorkflowFilter(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Analytics()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	rows := []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a"},
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a"},
+		{Channel: "in_app", Status: "failed", WorkflowID: "wf-a"},
+		{Channel: "sms", Status: "sent", WorkflowID: "wf-b"},
+	}
+	for i, r := range rows {
+		if err := repo.Insert(ctx, scope, r); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+
+	got, err := repo.CountByChannelStatus(ctx, scope, AnalyticsFilter{WorkflowID: "wf-a"})
+	if err != nil {
+		t.Fatalf("CountByChannelStatus(wf-a): %v", err)
+	}
+	want := map[string]map[string]int{
+		"email":  {"sent": 2},
+		"in_app": {"failed": 1},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("CountByChannelStatus(wf-a) mismatch:\n got=%v\nwant=%v", got, want)
+	}
+
+	// wf-b has only sms/sent.
+	gotB, err := repo.CountByChannelStatus(ctx, scope, AnalyticsFilter{WorkflowID: "wf-b"})
+	if err != nil {
+		t.Fatalf("CountByChannelStatus(wf-b): %v", err)
+	}
+	wantB := map[string]map[string]int{"sms": {"sent": 1}}
+	if !reflect.DeepEqual(gotB, wantB) {
+		t.Fatalf("CountByChannelStatus(wf-b) mismatch:\n got=%v\nwant=%v", gotB, wantB)
+	}
+}
+
+// TestAnalyticsRepo_DeliveriesByDay_WorkflowFilter proves workflow_id scoping on
+// the time-series query (GAP-AF-06).
+func TestAnalyticsRepo_DeliveriesByDay_WorkflowFilter(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Analytics()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	rows := []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a", CreatedAt: "2026-06-09T10:00:00Z"},
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a", CreatedAt: "2026-06-09T11:00:00Z"},
+		{Channel: "in_app", Status: "sent", WorkflowID: "wf-b", CreatedAt: "2026-06-09T12:00:00Z"},
+	}
+	for i, r := range rows {
+		if err := repo.Insert(ctx, scope, r); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+
+	got, err := repo.DeliveriesByDay(ctx, scope, AnalyticsFilter{WorkflowID: "wf-a"})
+	if err != nil {
+		t.Fatalf("DeliveriesByDay(wf-a): %v", err)
+	}
+	want := []domain.DeliveryDayCount{
+		{Day: "2026-06-09", Channel: "email", Status: "sent", Count: 2},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DeliveriesByDay(wf-a) mismatch:\n got=%v\nwant=%v", got, want)
+	}
+}
+
+// TestAnalyticsRepo_CountActiveSubscribers verifies the distinct-subscriber
+// count, since-window, and cross-env isolation (GAP-AF-05).
+func TestAnalyticsRepo_CountActiveSubscribers(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Analytics()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	base := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+	rows := []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Format(time.RFC3339Nano)},
+		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Add(time.Hour).Format(time.RFC3339Nano)},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-2", CreatedAt: base.Add(2 * time.Hour).Format(time.RFC3339Nano)},
+		// Old row that falls outside the since window.
+		{Channel: "email", Status: "sent", SubscriberID: "sub-3", CreatedAt: base.Add(-48 * time.Hour).Format(time.RFC3339Nano)},
+	}
+	for i, r := range rows {
+		if err := repo.Insert(ctx, scope, r); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+	// Isolation: row in a different env must not count.
+	other := domain.Scope{OrgID: "o1", EnvID: "e2"}
+	if err := repo.Insert(ctx, other, domain.AnalyticsDelivery{
+		Channel: "email", Status: "sent", SubscriberID: "sub-4",
+		CreatedAt: base.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("insert other-scope row: %v", err)
+	}
+
+	// Since base: only sub-1 and sub-2 are within the window.
+	n, err := repo.CountActiveSubscribers(ctx, scope, base)
+	if err != nil {
+		t.Fatalf("CountActiveSubscribers: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("CountActiveSubscribers: got %d, want 2", n)
+	}
+
+	// Since zero: all three subscribers in scope (sub-1, sub-2, sub-3).
+	nAll, err := repo.CountActiveSubscribers(ctx, scope, time.Time{})
+	if err != nil {
+		t.Fatalf("CountActiveSubscribers(zero since): %v", err)
+	}
+	if nAll != 3 {
+		t.Fatalf("CountActiveSubscribers(zero): got %d, want 3", nAll)
+	}
+}
+
+// TestAnalyticsRepo_AverageMessagesPerSubscriber verifies the average delivery
+// count per subscriber, since-window, and the zero-row case (GAP-AF-05).
+func TestAnalyticsRepo_AverageMessagesPerSubscriber(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Analytics()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	base := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+
+	// sub-1 gets 2 rows, sub-2 gets 1 row → average = 1.5.
+	rows := []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Format(time.RFC3339Nano)},
+		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Add(time.Hour).Format(time.RFC3339Nano)},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-2", CreatedAt: base.Add(2 * time.Hour).Format(time.RFC3339Nano)},
+	}
+	for i, r := range rows {
+		if err := repo.Insert(ctx, scope, r); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+
+	avg, err := repo.AverageMessagesPerSubscriber(ctx, scope, base)
+	if err != nil {
+		t.Fatalf("AverageMessagesPerSubscriber: %v", err)
+	}
+	// 3 rows / 2 subscribers = 1.5
+	const want = 1.5
+	if avg != want {
+		t.Fatalf("AverageMessagesPerSubscriber: got %v, want %v", avg, want)
+	}
+
+	// Empty store → zero.
+	emptyScope := domain.Scope{OrgID: "o1", EnvID: "empty"}
+	avgEmpty, err := repo.AverageMessagesPerSubscriber(ctx, emptyScope, time.Time{})
+	if err != nil {
+		t.Fatalf("AverageMessagesPerSubscriber(empty): %v", err)
+	}
+	if avgEmpty != 0 {
+		t.Fatalf("AverageMessagesPerSubscriber(empty): got %v, want 0", avgEmpty)
+	}
+}
+
+// TestAnalyticsRepo_CountActiveSubscribers_ScopeIsolation proves that rows
+// from a different org/env are not included in counts (GAP-AF-05).
+func TestAnalyticsRepo_CountActiveSubscribers_ScopeIsolation(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Analytics()
+
+	scopeA := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	scopeB := domain.Scope{OrgID: "o1", EnvID: "e2"}
+	base := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+
+	_ = repo.Insert(ctx, scopeA, domain.AnalyticsDelivery{SubscriberID: "sub-a", Channel: "email", Status: "sent", CreatedAt: base.Format(time.RFC3339Nano)})
+	_ = repo.Insert(ctx, scopeB, domain.AnalyticsDelivery{SubscriberID: "sub-b", Channel: "email", Status: "sent", CreatedAt: base.Format(time.RFC3339Nano)})
+
+	n, err := repo.CountActiveSubscribers(ctx, scopeA, time.Time{})
+	if err != nil {
+		t.Fatalf("CountActiveSubscribers: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1, got %d (cross-scope leak?)", n)
 	}
 }

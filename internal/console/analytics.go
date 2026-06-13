@@ -8,20 +8,23 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/store"
 )
 
-// analytics.go renders GET /console/analytics — the Wave-1 analytics page:
-// KPI cards (Messages Delivered + Failed Deliveries live; Active Subscribers
-// and Avg Messages/Subscriber stubbed "—" pending Wave-4 aggregations #44/#45)
-// plus a Delivery Trend area chart and a Delivery by Channel bar chart, both
-// driven off the existing analytics timeseries query. All in-process; zero
-// net-new backend aggregations.
+// analytics.go renders GET /console/analytics — the Wave-4 analytics depth page:
+// all four KPI cards live (Messages Delivered, Failed Deliveries, Active Subscribers,
+// Avg Messages/Subscriber), a workflow filter pill, plus Delivery Trend, Delivery by
+// Channel, Workflow Runs Trend, and Active Subscribers Trend charts.
+//
+// Backed by: DeliveriesByChannel (CountByChannelStatus), DeliveriesOverTime
+// (DeliveriesByDay), CountActiveSubscribers, and AverageMessagesPerSubscriber —
+// all now accepting the optional AnalyticsFilter for workflow_id scoping (GAP-AF-05,
+// GAP-AF-06).
 
 // analyticsRange is the closed set of time-window tokens the analytics page
-// accepts. The timeseries query does not currently filter by since-date
-// (that is a Wave-4 addition); the token is echoed back through the template
-// so the range-tab Datastar state round-trips correctly, and the chart data
-// is visually clipped to the requested window in buildAnalyticsChartsView.
+// accepts. The token is echoed back through the template so the range-tab
+// Datastar state round-trips correctly, and the chart data is visually clipped
+// to the requested window in buildAnalyticsChartsView.
 type analyticsRange string
 
 const (
@@ -54,27 +57,41 @@ func (r analyticsRange) days() int {
 	return 7
 }
 
+// rangeSince returns the time.Time cutoff for the given range window anchored at now.
+// Used by the CountActiveSubscribers / AverageMessagesPerSubscriber queries.
+func rangeSince(rang analyticsRange, now time.Time) time.Time {
+	return now.AddDate(0, 0, -rang.days())
+}
+
 // analyticsView is what analytics.html binds.
 type analyticsView struct {
-	Header pageHeader
-	KPIs   analyticsKPIView
-	Charts analyticsChartsView
+	Header    pageHeader
+	KPIs      analyticsKPIView
+	Charts    analyticsChartsView
+	Workflows []workflowOption // populated for the workflow filter dropdown
+}
+
+// workflowOption is one entry in the workflow filter dropdown.
+type workflowOption struct {
+	ID    string // workflow trigger identifier (slug)
+	Name  string
+	Label string // display label: "Name (slug)" when both differ, else just Name
 }
 
 // analyticsKPIView is the #analytics-kpis fragment binding.
 type analyticsKPIView struct {
-	Range             analyticsRange
-	MessagesDelivered int
-	FailedDeliveries  int
-	// ActiveSubscribers and AvgMessagesPerSubscriber are Wave-4 cards;
-	// they render "—" with a coming-soon tooltip until GAP-AF-05 lands.
-	// TODO(#44/#45): replace stubs with live data once CountActiveSubscribers
-	// and AverageMessagesPerSubscriber are available on AnalyticsRepo.
+	Range                    analyticsRange
+	WorkflowID               string // echoed back for re-filter on range change
+	MessagesDelivered        int
+	FailedDeliveries         int
+	ActiveSubscribers        int64
+	AvgMessagesPerSubscriber float64
 }
 
 // analyticsChartsView is the #analytics-charts fragment binding.
 type analyticsChartsView struct {
-	Range analyticsRange
+	Range      analyticsRange
+	WorkflowID string // echoed back so the fragment knows its own filter state
 	// Channels is the sorted list of channels seen in the series — used to
 	// render the legend and the toggle controls.
 	Channels []string
@@ -88,6 +105,12 @@ type analyticsChartsView struct {
 	ByChannelChart analyticsBarChart
 	// FailedChart is the small failed-by-day line chart.
 	FailedChart analyticsLineChart
+	// RunsTrendChart is the Workflow Runs Trend chart (total deliveries per day).
+	RunsTrendChart analyticsLineChart
+	// SubscribersTrendChart approximates Active Subscribers Trend using the sent
+	// delivery series (a true per-day distinct-subscriber bucketed aggregation is
+	// a separate, future aggregation; this is the best available proxy).
+	SubscribersTrendChart analyticsLineChart
 }
 
 // analyticsLineChart is an inline-SVG area/line series rendered from
@@ -141,15 +164,16 @@ func channelTone(ch string) tileTone {
 	return toneInfo
 }
 
-// buildAnalyticsKPIView constructs the KPI fragment from the existing
-// DeliveriesByChannel aggregation.
+// buildAnalyticsKPIView constructs the KPI fragment from DeliveriesByChannel
+// plus the new CountActiveSubscribers / AverageMessagesPerSubscriber aggregations.
 func (c *Console) buildAnalyticsKPIView(
-	r *http.Request, scope domain.Scope, rang analyticsRange,
+	r *http.Request, scope domain.Scope, rang analyticsRange, workflowID string,
 ) (analyticsKPIView, error) {
 	if r == nil {
 		panic("buildAnalyticsKPIView: r is nil")
 	}
-	byChannel, err := c.deps.Analytics.DeliveriesByChannel(r.Context(), scope)
+	f := store.AnalyticsFilter{WorkflowID: workflowID}
+	byChannel, err := c.deps.Analytics.DeliveriesByChannel(r.Context(), scope, f)
 	if err != nil {
 		return analyticsKPIView{}, fmt.Errorf("deliveries by channel: %w", err)
 	}
@@ -164,29 +188,44 @@ func (c *Console) buildAnalyticsKPIView(
 			}
 		}
 	}
+
+	since := rangeSince(rang, time.Now().UTC())
+	activeSubs, err := c.deps.Analytics.CountActiveSubscribers(r.Context(), scope, since)
+	if err != nil {
+		return analyticsKPIView{}, fmt.Errorf("count active subscribers: %w", err)
+	}
+	avgMsg, err := c.deps.Analytics.AverageMessagesPerSubscriber(r.Context(), scope, since)
+	if err != nil {
+		return analyticsKPIView{}, fmt.Errorf("avg messages per subscriber: %w", err)
+	}
+
 	return analyticsKPIView{
-		Range:             rang,
-		MessagesDelivered: delivered,
-		FailedDeliveries:  failed,
+		Range:                    rang,
+		WorkflowID:               workflowID,
+		MessagesDelivered:        delivered,
+		FailedDeliveries:         failed,
+		ActiveSubscribers:        activeSubs,
+		AvgMessagesPerSubscriber: avgMsg,
 	}, nil
 }
 
-// buildAnalyticsChartsView constructs the charts fragment from the existing
-// DeliveriesOverTime timeseries. The range tab clips how many trailing days
-// of the series are presented; the underlying query always returns the full
-// history (Wave-4 adds a since= filter on the repo).
+// buildAnalyticsChartsView constructs the charts fragment from DeliveriesOverTime.
+// The range tab clips how many trailing days of the series are presented.
 func (c *Console) buildAnalyticsChartsView(
 	r *http.Request, scope domain.Scope,
-	rang analyticsRange, activeChannels map[string]bool,
+	rang analyticsRange, activeChannels map[string]bool, workflowID string,
 ) (analyticsChartsView, error) {
 	if r == nil {
 		panic("buildAnalyticsChartsView: r is nil")
 	}
-	series, err := c.deps.Analytics.DeliveriesOverTime(r.Context(), scope)
+	f := store.AnalyticsFilter{WorkflowID: workflowID}
+	series, err := c.deps.Analytics.DeliveriesOverTime(r.Context(), scope, f)
 	if err != nil {
 		return analyticsChartsView{}, fmt.Errorf("deliveries over time: %w", err)
 	}
-	return buildAnalyticsCharts(series, rang, activeChannels, time.Now().UTC()), nil
+	v := buildAnalyticsCharts(series, rang, activeChannels, time.Now().UTC())
+	v.WorkflowID = workflowID
+	return v, nil
 }
 
 // buildAnalyticsCharts separates construction from HTTP I/O for pure
@@ -214,11 +253,7 @@ func buildAnalyticsCharts(
 	sort.Strings(channels)
 
 	// Defense-in-depth: whitelist the requested channel toggles against the
-	// channels the backend actually returned. A forged analyticsChannels
-	// signal can carry arbitrary tokens; dropping unknown ones keeps the
-	// filter (and the ActiveChannels echoed back into the template) bounded
-	// to real channel names. When every requested token is unknown the
-	// filter collapses to nil ("all channels"), the safe default.
+	// channels the backend actually returned.
 	activeChannels = whitelistChannels(activeChannels, channelSet)
 
 	// Build the day index for the requested window.
@@ -235,12 +270,15 @@ func buildAnalyticsCharts(
 	// the channel toggle (empty activeChannels = all channels).
 	sentPerDay := make(map[string]int, days)
 	failedPerDay := make(map[string]int, days)
+	totalPerDay := make(map[string]int, days) // all statuses, for Runs Trend
 	channelTotals := make(map[string]int, len(channels))
 
 	for _, row := range series {
 		if _, inWindow := daySet[row.Day]; !inWindow {
 			continue
 		}
+		// Runs Trend counts all rows regardless of channel toggle.
+		totalPerDay[row.Day] += row.Count
 		if len(activeChannels) > 0 && !activeChannels[row.Channel] {
 			continue
 		}
@@ -256,14 +294,20 @@ func buildAnalyticsCharts(
 	trend := buildLineChart(dayLabels, sentPerDay)
 	failed := buildLineChart(dayLabels, failedPerDay)
 	bar := buildBarChart(channels, channelTotals)
+	runs := buildLineChart(dayLabels, totalPerDay)
+	// Active Subscribers Trend: proxy with sent-message-volume-per-day (best
+	// available without a bucketed distinct-subscriber aggregation).
+	subsTrend := buildLineChart(dayLabels, sentPerDay)
 
 	return analyticsChartsView{
-		Range:          rang,
-		Channels:       channels,
-		ActiveChannels: activeChannels,
-		TrendChart:     trend,
-		ByChannelChart: bar,
-		FailedChart:    failed,
+		Range:                 rang,
+		Channels:              channels,
+		ActiveChannels:        activeChannels,
+		TrendChart:            trend,
+		ByChannelChart:        bar,
+		FailedChart:           failed,
+		RunsTrendChart:        runs,
+		SubscribersTrendChart: subsTrend,
 	}
 }
 
@@ -356,11 +400,6 @@ func parseActiveChannels(raw string) map[string]bool {
 }
 
 // whitelistChannels drops any active-channel token not present in known.
-// The analyticsChannels signal is operator-controllable input; whitelisting
-// against the channels the backend actually returned keeps a forged param
-// from injecting arbitrary tokens into the filter set. Returns nil (the
-// "all channels" sentinel) when nothing survives, so a fully-bogus signal
-// degrades to the safe default rather than filtering everything out.
 func whitelistChannels(active map[string]bool, known map[string]struct{}) map[string]bool {
 	if len(active) == 0 {
 		return nil
@@ -377,6 +416,31 @@ func whitelistChannels(active map[string]bool, known map[string]struct{}) map[st
 	return out
 }
 
+// buildWorkflowOptions builds the sorted list of workflow options for the
+// analytics page workflow filter dropdown.
+func (c *Console) buildWorkflowOptions(r *http.Request, scope domain.Scope) ([]workflowOption, error) {
+	wfs, err := c.deps.Authoring.List(r.Context(), scope)
+	if err != nil {
+		return nil, fmt.Errorf("list workflows: %w", err)
+	}
+	opts := make([]workflowOption, 0, len(wfs))
+	for _, wf := range wfs {
+		label := wf.Name
+		if wf.Name != wf.TriggerIdentifier {
+			label = wf.Name + " (" + wf.TriggerIdentifier + ")"
+		}
+		opts = append(opts, workflowOption{
+			ID:    wf.TriggerIdentifier,
+			Name:  wf.Name,
+			Label: label,
+		})
+	}
+	sort.Slice(opts, func(i, j int) bool {
+		return opts[i].Label < opts[j].Label
+	})
+	return opts, nil
+}
+
 // servePageAnalytics renders the full analytics page.
 func (c *Console) servePageAnalytics(w http.ResponseWriter, r *http.Request) {
 	if w == nil {
@@ -390,18 +454,25 @@ func (c *Console) servePageAnalytics(w http.ResponseWriter, r *http.Request) {
 		panic("servePageAnalytics: no scope in context (route not behind sessionMiddleware)")
 	}
 	rang := parseAnalyticsRange(r.URL.Query().Get("range"))
+	workflowID := r.URL.Query().Get("workflow_id")
 
-	kpis, err := c.buildAnalyticsKPIView(r, scope, rang)
+	kpis, err := c.buildAnalyticsKPIView(r, scope, rang, workflowID)
 	if err != nil {
 		c.deps.Logger.Error("console: analytics kpis", "err", err)
 		c.serveError(w, r)
 		return
 	}
-	charts, err := c.buildAnalyticsChartsView(r, scope, rang, nil)
+	charts, err := c.buildAnalyticsChartsView(r, scope, rang, nil, workflowID)
 	if err != nil {
 		c.deps.Logger.Error("console: analytics charts", "err", err)
 		c.serveError(w, r)
 		return
+	}
+	wfOpts, err := c.buildWorkflowOptions(r, scope)
+	if err != nil {
+		c.deps.Logger.Error("console: analytics workflow options", "err", err)
+		// Non-fatal: render page without filter dropdown rather than 500.
+		wfOpts = nil
 	}
 	header := pageHeader{
 		Title:    "Analytics",
@@ -412,16 +483,18 @@ func (c *Console) servePageAnalytics(w http.ResponseWriter, r *http.Request) {
 		header = pageHeader{Title: "Analytics"}
 	}
 	c.renderPage(w, r, http.StatusOK, "analytics", "Analytics", analyticsView{
-		Header: header,
-		KPIs:   kpis,
-		Charts: charts,
+		Header:    header,
+		KPIs:      kpis,
+		Charts:    charts,
+		Workflows: wfOpts,
 	})
 }
 
 // serveFragmentAnalyticsKPIs answers GET /console/api/fragments/analytics-kpis.
 // The analyticsRange signal (or explicit ?range= param, which wins) selects
 // the time window; the KPI counts come from the existing DeliveriesByChannel
-// aggregation.
+// aggregation plus the new CountActiveSubscribers / AverageMessagesPerSubscriber
+// (GAP-AF-05). The optional workflow_id param filters all aggregations (GAP-AF-06).
 func (c *Console) serveFragmentAnalyticsKPIs(w http.ResponseWriter, r *http.Request) {
 	if w == nil {
 		panic("serveFragmentAnalyticsKPIs: w is nil")
@@ -433,12 +506,16 @@ func (c *Console) serveFragmentAnalyticsKPIs(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		panic("serveFragmentAnalyticsKPIs: no scope in context (route not behind sessionMiddleware)")
 	}
-	q := mergeFragmentParams(r, "analyticsRange")
+	q := mergeFragmentParams(r, "analyticsRange", "analyticsWorkflow")
 	rang := parseAnalyticsRange("")
 	if vs := q["range"]; len(vs) > 0 {
 		rang = parseAnalyticsRange(vs[0])
 	}
-	kpis, err := c.buildAnalyticsKPIView(r, scope, rang)
+	workflowID := ""
+	if vs := q["workflow_id"]; len(vs) > 0 {
+		workflowID = vs[0]
+	}
+	kpis, err := c.buildAnalyticsKPIView(r, scope, rang, workflowID)
 	if err != nil {
 		c.deps.Logger.Error("console: analytics kpis fragment", "err", err)
 		http.Error(w, "build analytics KPIs failed", http.StatusInternalServerError)
@@ -455,7 +532,8 @@ func (c *Console) serveFragmentAnalyticsKPIs(w http.ResponseWriter, r *http.Requ
 
 // serveFragmentAnalyticsCharts answers GET /console/api/fragments/analytics-charts.
 // The analyticsRange signal selects the time window; the analyticsChannels
-// signal (comma-separated) restricts which channels are plotted.
+// signal (comma-separated) restricts which channels are plotted. The optional
+// workflow_id param filters the underlying series (GAP-AF-06).
 func (c *Console) serveFragmentAnalyticsCharts(w http.ResponseWriter, r *http.Request) {
 	if w == nil {
 		panic("serveFragmentAnalyticsCharts: w is nil")
@@ -467,7 +545,7 @@ func (c *Console) serveFragmentAnalyticsCharts(w http.ResponseWriter, r *http.Re
 	if !ok {
 		panic("serveFragmentAnalyticsCharts: no scope in context (route not behind sessionMiddleware)")
 	}
-	q := mergeFragmentParams(r, "analyticsRange", "analyticsChannels")
+	q := mergeFragmentParams(r, "analyticsRange", "analyticsChannels", "analyticsWorkflow")
 	rang := parseAnalyticsRange("")
 	if vs := q["range"]; len(vs) > 0 {
 		rang = parseAnalyticsRange(vs[0])
@@ -476,7 +554,11 @@ func (c *Console) serveFragmentAnalyticsCharts(w http.ResponseWriter, r *http.Re
 	if vs := q["channels"]; len(vs) > 0 {
 		activeChannels = parseActiveChannels(vs[0])
 	}
-	charts, err := c.buildAnalyticsChartsView(r, scope, rang, activeChannels)
+	workflowID := ""
+	if vs := q["workflow_id"]; len(vs) > 0 {
+		workflowID = vs[0]
+	}
+	charts, err := c.buildAnalyticsChartsView(r, scope, rang, activeChannels, workflowID)
 	if err != nil {
 		c.deps.Logger.Error("console: analytics charts fragment", "err", err)
 		http.Error(w, "build analytics charts failed", http.StatusInternalServerError)

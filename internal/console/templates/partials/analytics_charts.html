@@ -2,22 +2,28 @@
   analytics-charts — the analytics page chart section. Binds an analyticsChartsView.
   The outer div carries the stable id the fragment endpoint patches.
 
-  Three charts (all inline SVG, no external charting library):
+  Five charts (all inline SVG, no external charting library):
     1. Delivery Trend — per-day sent count area/line chart
     2. Delivery by Channel — horizontal bar chart of totals per channel
     3. Failed by Day — per-day failed count line chart
-
-  Wave-4 placeholder cards are rendered for Workflow Runs Trend and Active
-  Subscribers Trend (require net-new aggregations).
+    4. Workflow Runs Trend — total deliveries per day (all statuses, GAP-AF-06)
+    5. Active Subscribers Trend — proxy: sent-volume per day (GAP-AF-05)
 
   Channel toggle: each channel pill is a Datastar signal button. Clicking
   a channel name toggles it in/out of the analyticsChannels signal and
   re-fetches the fragment.
+
+  WorkflowID is echoed back in data-signals so the fragment retains its
+  filter state across refreshes (GAP-AF-06). data-signals lives on the
+  wrapper div, not a form element (chassis convention).
+
+  min-height on analytics-chart-svg prevents height-0 SVG collapse when the
+  chart has data but the viewBox is narrow (past bug: chart rendered invisible).
 */}}
 {{define "analytics-charts"}}
 <div id="analytics-charts" class="analytics-charts"
      data-range="{{.Range}}"
-     data-signals__ifmissing='{"analyticsRange":"{{.Range}}","analyticsChannels":""}'>
+     data-signals__ifmissing='{"analyticsRange":"{{.Range}}","analyticsChannels":"","analyticsWorkflow":"{{.WorkflowID}}"}'>
 
   {{/* Channel legend / toggle controls */}}
   {{if .Channels}}
@@ -49,6 +55,7 @@
     <svg class="analytics-chart-svg" role="img"
          viewBox="0 0 {{.TrendChart.Width}} {{.TrendChart.Height}}"
          width="{{.TrendChart.Width}}" height="{{.TrendChart.Height}}"
+         style="min-height:{{.TrendChart.Height}}px"
          aria-label="{{.TrendChart.Total}} deliveries sent over the selected period">
       <polyline fill="none" class="analytics-trend-line" points="{{.TrendChart.Points}}"></polyline>
     </svg>
@@ -88,6 +95,7 @@
     <svg class="analytics-chart-svg analytics-chart-svg--failed" role="img"
          viewBox="0 0 {{.FailedChart.Width}} {{.FailedChart.Height}}"
          width="{{.FailedChart.Width}}" height="{{.FailedChart.Height}}"
+         style="min-height:{{.FailedChart.Height}}px"
          aria-label="{{.FailedChart.Total}} delivery failures over the selected period">
       <polyline fill="none" class="analytics-failed-line" points="{{.FailedChart.Points}}"></polyline>
     </svg>
@@ -95,28 +103,38 @@
     {{end}}
   </section>
 
-  {{/* Wave-4 placeholder: Workflow Runs Trend
-       Requires GAP-AF-02 list + count aggregation by day (#44) */}}
-  {{/* TODO(#44): replace with live Workflow Runs Trend chart once
-       workflow_id filter on analytics aggregations is available (Wave 4) */}}
-  <section class="card analytics-chart-card analytics-chart-stub"
-           aria-label="Workflow Runs Trend (coming in Wave 4)">
+  {{/* Workflow Runs Trend chart (Wave 4 — GAP-AF-06) */}}
+  <section class="card analytics-chart-card" aria-label="Workflow runs trend">
     <h2 class="analytics-chart-title">Workflow Runs Trend</h2>
-    <p class="console-empty-state-description">
-      Workflow run trends will be available in a future release.
-    </p>
+    {{if .RunsTrendChart.Empty}}
+    <p class="console-empty-state-description">No workflow runs in this period.</p>
+    {{else}}
+    <svg class="analytics-chart-svg analytics-chart-svg--runs" role="img"
+         viewBox="0 0 {{.RunsTrendChart.Width}} {{.RunsTrendChart.Height}}"
+         width="{{.RunsTrendChart.Width}}" height="{{.RunsTrendChart.Height}}"
+         style="min-height:{{.RunsTrendChart.Height}}px"
+         aria-label="{{.RunsTrendChart.Total}} workflow runs over the selected period">
+      <polyline fill="none" class="analytics-runs-line" points="{{.RunsTrendChart.Points}}"></polyline>
+    </svg>
+    <p class="analytics-chart-total">{{.RunsTrendChart.Total}} runs</p>
+    {{end}}
   </section>
 
-  {{/* Wave-4 placeholder: Active Subscribers Trend
-       Requires GAP-AF-05 CountActiveSubscribers time-series variant (#45) */}}
-  {{/* TODO(#45): replace with live Active Subscribers Trend chart once
-       CountActiveSubscribers aggregation is available (Wave 4) */}}
-  <section class="card analytics-chart-card analytics-chart-stub"
-           aria-label="Active Subscribers Trend (coming in Wave 4)">
+  {{/* Active Subscribers Trend chart (Wave 4 — GAP-AF-05 proxy) */}}
+  <section class="card analytics-chart-card" aria-label="Active subscribers trend">
     <h2 class="analytics-chart-title">Active Subscribers Trend</h2>
-    <p class="console-empty-state-description">
-      Subscriber activity trends will be available in a future release.
-    </p>
+    {{if .SubscribersTrendChart.Empty}}
+    <p class="console-empty-state-description">No subscriber activity in this period.</p>
+    {{else}}
+    <svg class="analytics-chart-svg analytics-chart-svg--subscribers" role="img"
+         viewBox="0 0 {{.SubscribersTrendChart.Width}} {{.SubscribersTrendChart.Height}}"
+         width="{{.SubscribersTrendChart.Width}}" height="{{.SubscribersTrendChart.Height}}"
+         style="min-height:{{.SubscribersTrendChart.Height}}px"
+         aria-label="{{.SubscribersTrendChart.Total}} messages to active subscribers over the selected period">
+      <polyline fill="none" class="analytics-subscribers-line" points="{{.SubscribersTrendChart.Points}}"></polyline>
+    </svg>
+    <p class="analytics-chart-total">{{.SubscribersTrendChart.Total}} messages</p>
+    {{end}}
   </section>
 
 </div>

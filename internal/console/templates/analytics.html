@@ -2,17 +2,48 @@
 <section class="console-section">
   {{template "page-header" $page.Header}}
 
-  {{/* Range selector tabs — triggers a full-page reload so both fragments
-       refresh together. Datastar handles the tab highlight via data-on:click
-       rewriting the URL; for graceful degradation the tabs are plain links. */}}
-  <nav class="analytics-range-tabs" aria-label="Time range">
-    <a href="/console/analytics?range=24h"
-       class="analytics-range-tab{{if eq $page.KPIs.Range "24h"}} is-active{{end}}">24h</a>
-    <a href="/console/analytics?range=7d"
-       class="analytics-range-tab{{if eq $page.KPIs.Range "7d"}} is-active{{end}}">7d</a>
-    <a href="/console/analytics?range=30d"
-       class="analytics-range-tab{{if eq $page.KPIs.Range "30d"}} is-active{{end}}">30d</a>
-  </nav>
+  {{/*
+    Analytics toolbar: time-range tabs + workflow filter pill.
+    Range tabs are plain links (full-page reload) so both fragments refresh together.
+    The workflow filter is a <select> that reloads the page with ?workflow_id= appended
+    to the current range; no SSE round-trip needed since both fragments must update.
+
+    data-signals on the wrapper (not on the form) per chassis convention (GAP-AF-06).
+  */}}
+  <div class="analytics-toolbar"
+       data-signals="{analyticsRange:'{{$page.KPIs.Range}}',analyticsWorkflow:'{{$page.KPIs.WorkflowID}}'}">
+
+    <nav class="analytics-range-tabs" aria-label="Time range">
+      <a href="/console/analytics?range=24h{{if $page.KPIs.WorkflowID}}&workflow_id={{$page.KPIs.WorkflowID}}{{end}}"
+         class="analytics-range-tab{{if eq $page.KPIs.Range "24h"}} is-active{{end}}">24h</a>
+      <a href="/console/analytics?range=7d{{if $page.KPIs.WorkflowID}}&workflow_id={{$page.KPIs.WorkflowID}}{{end}}"
+         class="analytics-range-tab{{if eq $page.KPIs.Range "7d"}} is-active{{end}}">7d</a>
+      <a href="/console/analytics?range=30d{{if $page.KPIs.WorkflowID}}&workflow_id={{$page.KPIs.WorkflowID}}{{end}}"
+         class="analytics-range-tab{{if eq $page.KPIs.Range "30d"}} is-active{{end}}">30d</a>
+    </nav>
+
+    {{/* Workflow filter dropdown — only rendered when there are workflows to filter by */}}
+    {{if $page.Workflows}}
+    <div class="analytics-workflow-filter">
+      <label class="analytics-workflow-filter-label" for="analytics-workflow-select">Workflow</label>
+      <select id="analytics-workflow-select"
+              class="analytics-workflow-select"
+              aria-label="Filter by workflow"
+              data-on:change="
+                var wid = $el.value;
+                var range = '{{$page.KPIs.Range}}';
+                var url = '/console/analytics?range=' + range;
+                if (wid) { url += '&workflow_id=' + encodeURIComponent(wid); }
+                window.location.href = url;">
+        <option value="">All workflows</option>
+        {{range $page.Workflows}}
+        <option value="{{.ID}}"{{if eq $.Page.KPIs.WorkflowID .ID}} selected{{end}}>{{.Label}}</option>
+        {{end}}
+      </select>
+    </div>
+    {{end}}
+
+  </div>
 
   {{template "analytics-kpis" $page.KPIs}}
   {{template "analytics-charts" $page.Charts}}

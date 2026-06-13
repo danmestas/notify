@@ -84,48 +84,28 @@ func (r *Repo) Insert(ctx context.Context, scope domain.Scope, d domain.Analytic
 }
 
 // CountByChannelStatus returns counts grouped by channel then status, filtered
-// to scope — identical result shape to the SQLite AnalyticsRepo.
-func (r *Repo) CountByChannelStatus(ctx context.Context, scope domain.Scope) (map[string]map[string]int, error) {
-	rows, err := r.db.QueryContext(
-		ctx,
-		`SELECT channel, status, COUNT(*)
-		 FROM analytics_deliveries
-		 WHERE org_id = ? AND environment_id = ?
-		 GROUP BY channel, status`,
-		scope.OrgID, scope.EnvID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	out := make(map[string]map[string]int)
-	for rows.Next() {
-		var (
-			channel string
-			status  string
-			n       int
-		)
-		if err := rows.Scan(&channel, &status, &n); err != nil {
-			return nil, err
-		}
-		byStatus := out[channel]
-		if byStatus == nil {
-			byStatus = make(map[string]int)
-			out[channel] = byStatus
-		}
-		byStatus[status] = n
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return out, nil
+// to scope and the optional AnalyticsFilter (GAP-AF-06).
+func (r *Repo) CountByChannelStatus(ctx context.Context, scope domain.Scope, f store.AnalyticsFilter) (map[string]map[string]int, error) {
+	return store.QueryCountByChannelStatus(ctx, r.db, scope, f)
 }
 
 // DeliveriesByDay returns ordered per-day delivery counts grouped by
 // (day, channel, status), scope-filtered. It delegates to the shared
 // store.QueryDeliveriesByDay so the DuckDB backend answers the over-time query
-// identically to the SQLite repo.
-func (r *Repo) DeliveriesByDay(ctx context.Context, scope domain.Scope) ([]domain.DeliveryDayCount, error) {
-	return store.QueryDeliveriesByDay(ctx, r.db, scope)
+// identically to the SQLite repo. The optional AnalyticsFilter may restrict to
+// a workflow_id (GAP-AF-06).
+func (r *Repo) DeliveriesByDay(ctx context.Context, scope domain.Scope, f store.AnalyticsFilter) ([]domain.DeliveryDayCount, error) {
+	return store.QueryDeliveriesByDay(ctx, r.db, scope, f)
+}
+
+// CountActiveSubscribers counts distinct subscriber_ids that appear in the
+// DuckDB backend for the given scope and since cutoff (GAP-AF-05).
+func (r *Repo) CountActiveSubscribers(ctx context.Context, scope domain.Scope, since time.Time) (int64, error) {
+	return store.QueryCountActiveSubscribers(ctx, r.db, scope, since)
+}
+
+// AverageMessagesPerSubscriber returns the average number of delivery rows per
+// distinct subscriber for the given scope and since cutoff (GAP-AF-05).
+func (r *Repo) AverageMessagesPerSubscriber(ctx context.Context, scope domain.Scope, since time.Time) (float64, error) {
+	return store.QueryAverageMessagesPerSubscriber(ctx, r.db, scope, since)
 }

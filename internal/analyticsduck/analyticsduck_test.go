@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
@@ -45,7 +46,7 @@ func TestRepo_InsertAndCount(t *testing.T) {
 		t.Fatalf("insert isolation row: %v", err)
 	}
 
-	got, err := repo.CountByChannelStatus(ctx, scope)
+	got, err := repo.CountByChannelStatus(ctx, scope, store.AnalyticsFilter{})
 	if err != nil {
 		t.Fatalf("count: %v", err)
 	}
@@ -126,7 +127,7 @@ func TestRepo_DeliveriesByDay(t *testing.T) {
 		t.Fatalf("insert isolation row: %v", err)
 	}
 
-	got, err := repo.DeliveriesByDay(ctx, scope)
+	got, err := repo.DeliveriesByDay(ctx, scope, store.AnalyticsFilter{})
 	if err != nil {
 		t.Fatalf("DeliveriesByDay: %v", err)
 	}
@@ -163,11 +164,75 @@ func TestRepo_FilePersistence(t *testing.T) {
 		t.Fatalf("open 2 (reopen file): %v", err)
 	}
 	defer func() { _ = reopened.Close() }()
-	got, err := reopened.CountByChannelStatus(ctx, scope)
+	got, err := reopened.CountByChannelStatus(ctx, scope, store.AnalyticsFilter{})
 	if err != nil {
 		t.Fatalf("count after reopen: %v", err)
 	}
 	if got["in_app"]["sent"] != 1 {
 		t.Fatalf("persistence: in_app.sent = %d after reopen, want 1 (full %v)", got["in_app"]["sent"], got)
+	}
+}
+
+// TestRepo_CountActiveSubscribers mirrors the SQLite test for DuckDB parity (GAP-AF-05).
+func TestRepo_CountActiveSubscribers(t *testing.T) {
+	ctx := context.Background()
+	repo, err := Open(ctx, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = repo.Close() }()
+
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	base := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+	rows := []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Format(time.RFC3339Nano)},
+		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Add(time.Hour).Format(time.RFC3339Nano)},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-2", CreatedAt: base.Add(2 * time.Hour).Format(time.RFC3339Nano)},
+	}
+	for i, r := range rows {
+		if err := repo.Insert(ctx, scope, r); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+
+	n, err := repo.CountActiveSubscribers(ctx, scope, base)
+	if err != nil {
+		t.Fatalf("CountActiveSubscribers: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("CountActiveSubscribers: got %d, want 2", n)
+	}
+}
+
+// TestRepo_AverageMessagesPerSubscriber mirrors the SQLite test for DuckDB parity (GAP-AF-05).
+func TestRepo_AverageMessagesPerSubscriber(t *testing.T) {
+	ctx := context.Background()
+	repo, err := Open(ctx, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = repo.Close() }()
+
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	base := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+	// sub-1 gets 2 rows, sub-2 gets 1 → avg = 1.5.
+	rows := []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Format(time.RFC3339Nano)},
+		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Add(time.Hour).Format(time.RFC3339Nano)},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-2", CreatedAt: base.Add(2 * time.Hour).Format(time.RFC3339Nano)},
+	}
+	for i, r := range rows {
+		if err := repo.Insert(ctx, scope, r); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+
+	avg, err := repo.AverageMessagesPerSubscriber(ctx, scope, base)
+	if err != nil {
+		t.Fatalf("AverageMessagesPerSubscriber: %v", err)
+	}
+	const want = 1.5
+	if avg != want {
+		t.Fatalf("AverageMessagesPerSubscriber: got %v, want %v", avg, want)
 	}
 }
