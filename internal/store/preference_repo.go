@@ -27,6 +27,9 @@ type PreferenceRepo interface {
 	// GetForWorkflow returns the workflow preference for (subscriber, workflow),
 	// or ErrNotFound if none exists.
 	GetForWorkflow(ctx context.Context, scope domain.Scope, subscriberID, workflowID string) (domain.Preference, error)
+	// ListAllForSubscriber returns all preference rows (global + per-workflow)
+	// for the subscriber in scope, ordered by type ASC, workflow_id ASC.
+	ListAllForSubscriber(ctx context.Context, scope domain.Scope, subscriberID string) ([]domain.Preference, error)
 }
 
 type preferenceRepo struct {
@@ -64,6 +67,35 @@ func (repo *preferenceRepo) GetGlobal(ctx context.Context, scope domain.Scope, s
 
 func (repo *preferenceRepo) GetForWorkflow(ctx context.Context, scope domain.Scope, subscriberID, workflowID string) (domain.Preference, error) {
 	return repo.get(ctx, scope, "workflow", subscriberID, workflowID)
+}
+
+func (repo *preferenceRepo) ListAllForSubscriber(ctx context.Context, scope domain.Scope, subscriberID string) ([]domain.Preference, error) {
+	rows, err := repo.r.QueryContext(
+		ctx,
+		`SELECT id, org_id, environment_id, type, subscriber_id, workflow_id, channels
+		 FROM preferences
+		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ?
+		 ORDER BY type ASC, workflow_id ASC`,
+		scope.OrgID, scope.EnvID, subscriberID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.Preference
+	for rows.Next() {
+		var (
+			p  domain.Preference
+			ch []byte
+		)
+		if err := rows.Scan(&p.ID, &p.OrgID, &p.EnvID, &p.Type, &p.SubscriberID, &p.WorkflowID, &ch); err != nil {
+			return nil, err
+		}
+		p.Channels = ch
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 func (repo *preferenceRepo) get(ctx context.Context, scope domain.Scope, typ, subscriberID, workflowID string) (domain.Preference, error) {

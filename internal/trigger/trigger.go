@@ -181,6 +181,12 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 		if err != nil {
 			return TriggerResponse{}, err
 		}
+		// Record the (transaction_id, topic_key) association before fanning out
+		// so the Topic Activity Feed can join analytics_deliveries via
+		// transaction_id even when the fan-out has zero members.
+		if err := svc.s.TopicTriggers().Record(ctx, scope, transactionID, req.To.TopicKey); err != nil {
+			return TriggerResponse{}, err
+		}
 		for _, subscriberID := range subs {
 			if _, err := svc.ingestForSubscriber(ctx, scope, wf, subscriberID, req); err != nil {
 				return TriggerResponse{}, err

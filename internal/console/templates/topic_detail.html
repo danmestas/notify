@@ -36,6 +36,10 @@
       <span class="chip chip-default">{{$page.MemberCount}}</span>
       {{end}}
     </a>
+    <a href="/console/topics/{{$page.Topic.Key}}?tab=activity"
+       class="console-tab{{if eq $page.ActiveTab "activity"}} is-active{{end}}">
+      Activity
+    </a>
   </nav>
 
   {{/* Overview tab */}}
@@ -153,6 +157,76 @@
       <div class="console-empty-state" data-component="empty-state">
         <h2 class="console-empty-state-title">No members yet</h2>
         <p class="console-empty-state-description">Add subscribers to this topic to enable broadcast delivery.</p>
+      </div>
+      {{end}}
+    </section>
+  </div>
+  {{end}}
+
+  {{/* Activity tab — W4-S2 (#41) */}}
+  {{if eq $page.ActiveTab "activity"}}
+  <div class="console-detail-grid">
+    <section class="console-card" aria-labelledby="topic-activity-heading">
+      <h2 id="topic-activity-heading" class="console-card-title">Activity</h2>
+      {{if $page.Activity.Rows}}
+      <div class="console-table-wrap">
+        <table class="console-table" aria-label="Topic activity">
+          <thead>
+            <tr>
+              <th scope="col">Transaction ID</th>
+              <th scope="col">Workflow</th>
+              <th scope="col">Channel</th>
+              <th scope="col">Status</th>
+              <th scope="col">Subscriber</th>
+              <th scope="col">Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range $page.Activity.Rows}}
+            <tr>
+              <td><code class="console-muted">{{.TransactionID}}</code></td>
+              <td>
+                {{if .WorkflowID}}
+                <code>{{.WorkflowID}}</code>
+                {{else}}
+                <span class="console-muted">—</span>
+                {{end}}
+              </td>
+              <td>
+                {{if .Channel}}<span class="chip chip-default">{{.Channel}}</span>{{else}}<span class="console-muted">—</span>{{end}}
+              </td>
+              <td>
+                {{if .Status}}
+                <span class="chip chip-{{.Status}}">{{.Status}}</span>
+                {{else}}
+                <span class="console-muted">pending</span>
+                {{end}}
+              </td>
+              <td>
+                {{if .SubscriberID}}<code>{{.SubscriberID}}</code>{{else}}<span class="console-muted">—</span>{{end}}
+              </td>
+              <td><span class="console-muted">{{.CreatedAt}}</span></td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{/* Cursor pagination */}}
+      {{if $page.Activity.NextCursor}}
+      <div class="console-pagination">
+        <a class="btn btn-outline"
+           href="/console/topics/{{$page.Topic.Key}}?tab=activity&cursor={{$page.Activity.NextCursor | urlquery}}">
+          Load more
+        </a>
+      </div>
+      {{end}}
+      {{else}}
+      <div class="console-empty-state" data-component="empty-state">
+        <h2 class="console-empty-state-title">No activity yet</h2>
+        <p class="console-empty-state-description">
+          Notifications triggered to this topic will appear here.
+          Trigger a workflow to this topic via the API to generate activity.
+        </p>
       </div>
       {{end}}
     </section>

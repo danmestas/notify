@@ -93,6 +93,14 @@ func (svc *Service) ChannelEnabled(ctx context.Context, scope domain.Scope, subs
 	return !ok || v, nil
 }
 
+// GetForSubscriber returns all preference rows (global + per-workflow) for the
+// subscriber in scope. The caller can inspect Type / WorkflowID to distinguish
+// the two layers. Returns an empty slice (not an error) when no preferences
+// have been saved.
+func (svc *Service) GetForSubscriber(ctx context.Context, scope domain.Scope, subscriberID string) ([]domain.Preference, error) {
+	return svc.store.Preferences().ListAllForSubscriber(ctx, scope, subscriberID)
+}
+
 // load unmarshals a fetched preference's channels, treating ErrNotFound as an
 // empty map.
 func (svc *Service) load(p domain.Preference, err error) (map[string]bool, error) {

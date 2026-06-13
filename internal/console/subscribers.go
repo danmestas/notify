@@ -1,17 +1,21 @@
 package console
 
-// subscribers.go implements W2-C3 (subscriber list + detail) and W2-C5
-// (subscriber activity tab) for the operator console.
+// subscribers.go implements W2-C3 (subscriber list + detail), W2-C5
+// (subscriber activity tab), and W4-S1 (subscriber preferences tab) for the
+// operator console.
 //
-// All data access is in-process via Deps.Audience (*audience.Service). No
-// loopback HTTP hops. Every mutation handler is gated on Deps.ReadOnly
-// server-side — disabled buttons in the template are not authorisation.
+// All data access is in-process via Deps.Audience (*audience.Service) and
+// Deps.Preferences (*preferences.Service). No loopback HTTP hops. Every
+// mutation handler is gated on Deps.ReadOnly server-side — disabled buttons
+// in the template are not authorisation.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"html/template"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -76,15 +80,42 @@ type subscriberRow struct {
 
 // subscriberDetailView is what subscriber_detail.html binds.
 type subscriberDetailView struct {
-	Header    pageHeader
-	Sub       domain.Subscriber
-	Activity  subscriberActivityView
-	Signals   template.JS
-	ReadOnly  bool
-	ActiveTab string // "overview" | "activity" | "preferences"
+	Header      pageHeader
+	Sub         domain.Subscriber
+	Activity    subscriberActivityView
+	Preferences subscriberPrefsView
+	Signals     template.JS
+	ReadOnly    bool
+	ActiveTab   string // "overview" | "activity" | "preferences"
 	// ConfirmDelete renders the inline two-step delete confirmation
 	// (?confirmDelete=true).
 	ConfirmDelete bool
+}
+
+// subscriberPrefsView is the preferences-tab content for a subscriber.
+type subscriberPrefsView struct {
+	// Global holds the subscriber's global channel preferences.
+	Global subscriberPrefRow
+	// Workflows holds per-workflow overrides.
+	Workflows []subscriberPrefRow
+	// HasData is true when at least one preference row exists.
+	HasData bool
+}
+
+// subscriberPrefRow is one row in the preferences table.
+type subscriberPrefRow struct {
+	// WorkflowID is empty for the global row.
+	WorkflowID string
+	// Label is a display label — "Global" for the global row, WorkflowID otherwise.
+	Label string
+	// Channels is the ordered list of per-channel toggle states.
+	Channels []prefChannelState
+}
+
+// prefChannelState is one channel toggle in a preference row.
+type prefChannelState struct {
+	Channel string
+	Enabled bool
 }
 
 // subscriberActivityView is the activity-tab content for a subscriber.
@@ -363,6 +394,16 @@ func (c *Console) serveSubscriberDetail(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	var prefs subscriberPrefsView
+	if tab == "preferences" {
+		var prefsErr error
+		prefs, prefsErr = c.buildSubscriberPreferences(r.Context(), scope, sub.SubscriberID)
+		if prefsErr != nil {
+			c.deps.Logger.Error("console: subscriber preferences", "err", prefsErr)
+			// non-fatal: render page with empty prefs view
+		}
+	}
+
 	first := strings.TrimSpace(sub.FirstName)
 	last := strings.TrimSpace(sub.LastName)
 	title := sub.SubscriberID
@@ -381,6 +422,7 @@ func (c *Console) serveSubscriberDetail(w http.ResponseWriter, r *http.Request) 
 		Header:        header,
 		Sub:           sub,
 		Activity:      activity,
+		Preferences:   prefs,
 		Signals:       template.JS(sigs),
 		ReadOnly:      c.deps.ReadOnly,
 		ActiveTab:     tab,
@@ -416,6 +458,171 @@ func (c *Console) buildSubscriberActivity(r *http.Request, scope domain.Scope, s
 		})
 	}
 	return subscriberActivityView{Messages: rows}, nil
+}
+
+// buildSubscriberPreferences fetches the subscriber's stored preferences and
+// returns a view struct for the Preferences tab. Absent preferences return a
+// view with HasData=false (empty-state stub in the template).
+func (c *Console) buildSubscriberPreferences(ctx context.Context, scope domain.Scope, subscriberID string) (subscriberPrefsView, error) {
+	if c.deps.Preferences == nil {
+		return subscriberPrefsView{}, nil
+	}
+	rows, err := c.deps.Preferences.GetForSubscriber(ctx, scope, subscriberID)
+	if err != nil {
+		return subscriberPrefsView{}, err
+	}
+	if len(rows) == 0 {
+		return subscriberPrefsView{}, nil
+	}
+
+	// Known ordered channel names (display order).
+	knownChannels := []string{"in_app", "email", "sms", "push"}
+
+	var global subscriberPrefRow
+	var workflows []subscriberPrefRow
+
+	for _, p := range rows {
+		// Decode channels JSON into map.
+		chanMap := make(map[string]bool)
+		if len(p.Channels) > 0 {
+			_ = json.Unmarshal(p.Channels, &chanMap)
+		}
+
+		// Build ordered channel state list; absent key => enabled (true).
+		var channels []prefChannelState
+		seen := make(map[string]bool)
+		for _, ch := range knownChannels {
+			enabled := true
+			if v, ok := chanMap[ch]; ok {
+				enabled = v
+			}
+			channels = append(channels, prefChannelState{Channel: ch, Enabled: enabled})
+			seen[ch] = true
+		}
+		// Append any extra channels not in the known list, sorted for stability.
+		var extras []string
+		for k := range chanMap {
+			if !seen[k] {
+				extras = append(extras, k)
+			}
+		}
+		sort.Strings(extras)
+		for _, ch := range extras {
+			channels = append(channels, prefChannelState{Channel: ch, Enabled: chanMap[ch]})
+		}
+
+		if p.Type == "subscriberGlobal" {
+			global = subscriberPrefRow{Label: "Global", Channels: channels}
+		} else {
+			label := p.WorkflowID
+			if label == "" {
+				label = "Unknown workflow"
+			}
+			workflows = append(workflows, subscriberPrefRow{WorkflowID: p.WorkflowID, Label: label, Channels: channels})
+		}
+	}
+
+	return subscriberPrefsView{
+		Global:    global,
+		Workflows: workflows,
+		HasData:   true,
+	}, nil
+}
+
+// handleSubscriberPreferencesPatch handles POST /console/subscribers/{subscriberId}/preferences.
+// Form fields: channel (the channel name), enabled ("true"/"false"), workflowId (empty = global).
+// Native form POST → 303 redirect back to the Preferences tab.
+func (c *Console) handleSubscriberPreferencesPatch(w http.ResponseWriter, r *http.Request) {
+	if w == nil {
+		panic("handleSubscriberPreferencesPatch: w is nil")
+	}
+	if r == nil {
+		panic("handleSubscriberPreferencesPatch: r is nil")
+	}
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
+		panic("handleSubscriberPreferencesPatch: no scope in context")
+	}
+	if c.deps.ReadOnly {
+		http.Error(w, "console is read-only", http.StatusForbidden)
+		return
+	}
+	if c.deps.Preferences == nil {
+		http.Error(w, "preferences service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := chi.URLParam(r, "subscriberId")
+	if id == "" {
+		http.Error(w, "missing subscriberId", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve the subscriber's external ID from the internal ULID id.
+	sub, err := c.deps.Audience.GetSubscriberByID(r.Context(), scope, id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			c.serveNotFound(w, r)
+			return
+		}
+		c.deps.Logger.Error("console: preferences patch: get subscriber", "err", err)
+		c.serveError(w, r)
+		return
+	}
+
+	channel := strings.TrimSpace(r.FormValue("channel"))
+	enabledStr := strings.TrimSpace(r.FormValue("enabled"))
+	workflowID := strings.TrimSpace(r.FormValue("workflowId"))
+	if channel == "" {
+		http.Error(w, "channel is required", http.StatusBadRequest)
+		return
+	}
+	enabled := enabledStr == "true" || enabledStr == "1"
+
+	if workflowID == "" {
+		// Global preference.
+		// Load current global to merge (avoid clobbering other channels).
+		existing, loadErr := c.deps.Preferences.GetForSubscriber(r.Context(), scope, sub.SubscriberID)
+		chanMap := make(map[string]bool)
+		for _, p := range existing {
+			if p.Type == "subscriberGlobal" {
+				if len(p.Channels) > 0 {
+					_ = json.Unmarshal(p.Channels, &chanMap)
+				}
+			}
+		}
+		_ = loadErr
+		chanMap[channel] = enabled
+		if err := c.deps.Preferences.SetGlobal(r.Context(), scope, sub.SubscriberID, chanMap); err != nil {
+			c.deps.Logger.Error("console: preferences patch: set global", "err", err)
+			c.serveError(w, r)
+			return
+		}
+	} else {
+		// Per-workflow preference.
+		existing, _ := c.deps.Preferences.GetForSubscriber(r.Context(), scope, sub.SubscriberID)
+		chanMap := make(map[string]bool)
+		for _, p := range existing {
+			if p.Type == "workflow" && p.WorkflowID == workflowID {
+				if len(p.Channels) > 0 {
+					_ = json.Unmarshal(p.Channels, &chanMap)
+				}
+			}
+		}
+		chanMap[channel] = enabled
+		if err := c.deps.Preferences.SetForWorkflow(r.Context(), scope, sub.SubscriberID, workflowID, chanMap); err != nil {
+			c.deps.Logger.Error("console: preferences patch: set workflow", "err", err)
+			c.serveError(w, r)
+			return
+		}
+	}
+
+	http.Redirect(w, r, "/console/subscribers/"+id+"?tab=preferences", http.StatusSeeOther)
 }
 
 // ─── mutation handlers ────────────────────────────────────────────────────────

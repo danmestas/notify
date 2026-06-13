@@ -5,26 +5,28 @@
 //
 // Test index:
 //
-//	TestSubscribers_PageRenderWithSeededData         — page renders rows from store
-//	TestSubscribers_PageEmptyState                   — empty store → empty-state copy
-//	TestSubscribers_UnauthenticatedRedirectsToLogin  — auth gate on list page
-//	TestSubscribers_NavEntryIsLive                   — nav link visible + active
-//	TestFragment_SubscribersList_SSEFraming          — fragment has SSE event marker
-//	TestFragment_SubscribersList_SeededRows          — fragment shows seeded subscriber
-//	TestFragment_SubscribersList_FilterByEmail       — email filter narrows results
-//	TestFragment_SubscribersList_FilterByName        — name filter narrows results
-//	TestFragment_SubscribersList_SoftDeletedExcluded — soft-deleted rows not in list
-//	TestSubscribers_DetailPage_Overview              — detail page overview tab
-//	TestSubscribers_DetailPage_ActivityTab           — activity tab renders notifications
-//	TestSubscribers_DetailPage_PreferencesTab        — preferences stub renders
-//	TestSubscribers_DetailPage_NotFound              — unknown id → 404
-//	TestSubscribers_Create_ReadOnlyBlocked           — POST create → 403 on read-only
-//	TestSubscribers_Update_ReadOnlyBlocked           — POST update → 403 on read-only
-//	TestSubscribers_Delete_ReadOnlyBlocked           — POST delete → 403 on read-only
-//	TestSubscribers_Create_Redirect                  — successful create → redirect to list
-//	TestSubscribers_Delete_Redirect                  — successful delete → redirect to list
-//	TestSubscribers_ScopeIsolation                   — alt-scope rows not visible
-//	TestSubscribers_RouteAuth                        — all new routes behind session gate
+//	TestSubscribers_PageRenderWithSeededData              — page renders rows from store
+//	TestSubscribers_PageEmptyState                        — empty store → empty-state copy
+//	TestSubscribers_UnauthenticatedRedirectsToLogin       — auth gate on list page
+//	TestSubscribers_NavEntryIsLive                        — nav link visible + active
+//	TestFragment_SubscribersList_SSEFraming               — fragment has SSE event marker
+//	TestFragment_SubscribersList_SeededRows               — fragment shows seeded subscriber
+//	TestFragment_SubscribersList_FilterByEmail            — email filter narrows results
+//	TestFragment_SubscribersList_FilterByName             — name filter narrows results
+//	TestFragment_SubscribersList_SoftDeletedExcluded      — soft-deleted rows not in list
+//	TestSubscribers_DetailPage_Overview                   — detail page overview tab
+//	TestSubscribers_DetailPage_ActivityTab                — activity tab renders notifications
+//	TestSubscribers_DetailPage_PreferencesTab             — preferences tab renders real toggles
+//	TestSubscribers_DetailPage_NotFound                   — unknown id → 404
+//	TestSubscribers_PreferencesPatch_Persists303          — PATCH persists + 303 redirect
+//	TestSubscribers_PreferencesPatch_ReadOnlyBlocked      — PATCH blocked on read-only console
+//	TestSubscribers_Create_ReadOnlyBlocked                — POST create → 403 on read-only
+//	TestSubscribers_Update_ReadOnlyBlocked                — POST update → 403 on read-only
+//	TestSubscribers_Delete_ReadOnlyBlocked                — POST delete → 403 on read-only
+//	TestSubscribers_Create_Redirect                       — successful create → redirect to list
+//	TestSubscribers_Delete_Redirect                       — successful delete → redirect to list
+//	TestSubscribers_ScopeIsolation                        — alt-scope rows not visible
+//	TestSubscribers_RouteAuth                             — all new routes behind session gate
 package console
 
 import (
@@ -311,9 +313,67 @@ func TestSubscribers_DetailPage_PreferencesTab(t *testing.T) {
 	if !strings.Contains(body, "Preferences") {
 		t.Errorf("preferences tab missing heading")
 	}
-	// Stub copy.
-	if !strings.Contains(body, "coming soon") {
-		t.Errorf("preferences tab missing stub copy 'coming soon'")
+	// Real UI — must show the channel toggle form action, not the old stub.
+	if !strings.Contains(body, "/preferences") {
+		t.Errorf("preferences tab missing toggle form action")
+	}
+	if strings.Contains(body, "coming soon") {
+		t.Errorf("preferences tab still shows stub copy 'coming soon'")
+	}
+}
+
+func TestSubscribers_PreferencesPatch_Persists303(t *testing.T) {
+	tc := newTestConsole(t)
+	sub := tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "prefs-patch-sub",
+	})
+	cookie, csrf := tc.login(t)
+
+	// POST a global preference: disable in_app for this subscriber.
+	rr := tc.postForm(t, "/console/subscribers/"+sub.ID+"/preferences",
+		url.Values{
+			"csrf_token": {csrf},
+			"channel":    {"in_app"},
+			"enabled":    {"false"},
+			"workflowId": {""},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("preferences PATCH: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Location"); !strings.Contains(got, "tab=preferences") {
+		t.Errorf("preferences PATCH: Location = %q, want ?tab=preferences", got)
+	}
+
+	// Verify the preference was persisted by loading the preferences tab.
+	rr2 := tc.get(t, "/console/subscribers/"+sub.ID+"?tab=preferences", cookie)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("GET after PATCH: status = %d, want 200", rr2.Code)
+	}
+	// The toggle now reflects the saved state (enabled=false → next POST sends true).
+	body := rr2.Body.String()
+	if !strings.Contains(body, `value="true"`) {
+		t.Errorf("after disabling in_app, toggle should offer value=true (re-enable), got: %s", body)
+	}
+}
+
+func TestSubscribers_PreferencesPatch_ReadOnlyBlocked(t *testing.T) {
+	tc := newReadOnlyTestConsole(t)
+	sub := tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "ro-prefs-sub",
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+sub.ID+"/preferences",
+		url.Values{
+			"csrf_token": {csrf},
+			"channel":    {"email"},
+			"enabled":    {"false"},
+			"workflowId": {""},
+		},
+		cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("read-only preferences PATCH: status = %d, want 403", rr.Code)
 	}
 }
 
@@ -601,6 +661,7 @@ func TestSubscribers_RouteAuth(t *testing.T) {
 		{http.MethodPost, "/console/subscribers"},
 		{http.MethodPost, "/console/subscribers/x"},
 		{http.MethodPost, "/console/subscribers/x/delete"},
+		{http.MethodPost, "/console/subscribers/x/preferences"},
 	}
 
 	for _, rt := range routes {

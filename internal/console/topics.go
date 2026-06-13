@@ -1,11 +1,11 @@
 package console
 
 // topics.go implements W2-C4 (topic list + detail with subscriber management)
-// for the operator console.
+// and W4-S2 (topic activity tab) for the operator console.
 //
-// All data access is in-process via Deps.Audience (*audience.Service). No
-// loopback HTTP hops. Every mutation handler is gated on Deps.ReadOnly
-// server-side.
+// All data access is in-process via Deps.Audience (*audience.Service) and
+// Deps.TopicTriggers (store.TopicTriggerRepo). No loopback HTTP hops. Every
+// mutation handler is gated on Deps.ReadOnly server-side.
 
 import (
 	"encoding/json"
@@ -67,15 +67,36 @@ type topicDetailView struct {
 	Topic       domain.Topic
 	Members     []subscriberRow // subscriber rows for the members tab
 	MemberCount int
+	Activity    topicActivityView // activity tab (W4-S2)
 	Signals     template.JS
 	ReadOnly    bool
-	ActiveTab   string // "overview" | "subscribers"
+	ActiveTab   string // "overview" | "subscribers" | "activity"
 	// ConfirmDelete renders the inline two-step topic-delete confirmation
 	// (?confirmDelete=true).
 	ConfirmDelete bool
 	// ConfirmRemove names the member subscriberId awaiting inline removal
 	// confirmation (?confirmRemove=<id>).
 	ConfirmRemove string
+}
+
+// topicActivityView is the Activity tab content for a topic.
+type topicActivityView struct {
+	Rows       []topicActivityRow
+	NextCursor string
+	// HasData is true when at least one row exists (even if Rows is empty after
+	// filtering).
+	HasData bool
+}
+
+// topicActivityRow is one row of topic broadcast activity.
+type topicActivityRow struct {
+	TransactionID string
+	Channel       string
+	Status        string
+	SubscriberID  string
+	WorkflowID    string
+	RunURL        string
+	CreatedAt     string
 }
 
 // ─── signal helpers ──────────────────────────────────────────────────────────
@@ -328,6 +349,16 @@ func (c *Console) serveTopicDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var activity topicActivityView
+	if tab == "activity" {
+		var actErr error
+		activity, actErr = c.buildTopicActivity(r, scope, key)
+		if actErr != nil {
+			c.deps.Logger.Error("console: topic activity", "err", actErr)
+			// non-fatal
+		}
+	}
+
 	header := pageHeader{
 		Title:    topic.Name,
 		Subtitle: topic.Key,
@@ -343,6 +374,7 @@ func (c *Console) serveTopicDetail(w http.ResponseWriter, r *http.Request) {
 		Topic:         topic.Topic,
 		Members:       members,
 		MemberCount:   topic.MemberCount,
+		Activity:      activity,
 		ReadOnly:      c.deps.ReadOnly,
 		Signals:       template.JS(sigs),
 		ActiveTab:     tab,
@@ -350,6 +382,36 @@ func (c *Console) serveTopicDetail(w http.ResponseWriter, r *http.Request) {
 		ConfirmRemove: r.URL.Query().Get("confirmRemove"),
 	}
 	c.renderPage(w, r, http.StatusOK, "topic-detail", topic.Name, view)
+}
+
+// buildTopicActivity fetches activity rows for the Topic Activity tab.
+func (c *Console) buildTopicActivity(r *http.Request, scope domain.Scope, topicKey string) (topicActivityView, error) {
+	if c.deps.TopicTriggers == nil {
+		return topicActivityView{}, nil
+	}
+	cursor := r.URL.Query().Get("cursor")
+	page, err := c.deps.TopicTriggers.ListByTopic(r.Context(), scope, topicKey, cursor, 25)
+	if err != nil {
+		return topicActivityView{}, err
+	}
+
+	rows := make([]topicActivityRow, 0, len(page.Items))
+	for _, item := range page.Items {
+		rows = append(rows, topicActivityRow{
+			TransactionID: item.TransactionID,
+			Channel:       item.Channel,
+			Status:        item.Status,
+			SubscriberID:  item.SubscriberID,
+			WorkflowID:    item.WorkflowID,
+			RunURL:        "",
+			CreatedAt:     item.CreatedAt,
+		})
+	}
+	return topicActivityView{
+		Rows:       rows,
+		NextCursor: page.NextCursor,
+		HasData:    len(rows) > 0 || cursor != "",
+	}, nil
 }
 
 // buildTopicMembers resolves subscriber rows for a topic's member list.

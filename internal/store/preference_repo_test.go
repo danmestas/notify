@@ -12,8 +12,8 @@ import (
 func TestMigrate_0003_AppliesPreferences(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 15 {
-		t.Fatalf("expected 15 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 16 {
+		t.Fatalf("expected 16 recorded migrations, got %d", n)
 	}
 
 	var name string
@@ -114,5 +114,55 @@ func TestPreferenceRepo_GetForWorkflow_Scoped(t *testing.T) {
 	// Unset (sub, wf) returns ErrNotFound.
 	if _, err := repo.GetForWorkflow(ctx, scope, "sub1", "wf-missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for unset workflow, got %v", err)
+	}
+}
+
+func TestPreferenceRepo_ListAllForSubscriber(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Preferences()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	// Insert global + per-workflow preferences for sub1.
+	if _, err := repo.Upsert(ctx, scope, domain.Preference{
+		Type:         "subscriberGlobal",
+		SubscriberID: "sub1",
+		Channels:     []byte(`{"in_app":true}`),
+	}); err != nil {
+		t.Fatalf("Upsert global: %v", err)
+	}
+	if _, err := repo.Upsert(ctx, scope, domain.Preference{
+		Type:         "workflow",
+		SubscriberID: "sub1",
+		WorkflowID:   "wf1",
+		Channels:     []byte(`{"email":false}`),
+	}); err != nil {
+		t.Fatalf("Upsert wf: %v", err)
+	}
+	// Different subscriber — must NOT appear.
+	if _, err := repo.Upsert(ctx, scope, domain.Preference{
+		Type:         "subscriberGlobal",
+		SubscriberID: "sub2",
+		Channels:     []byte(`{"email":true}`),
+	}); err != nil {
+		t.Fatalf("Upsert sub2: %v", err)
+	}
+
+	rows, err := repo.ListAllForSubscriber(ctx, scope, "sub1")
+	if err != nil {
+		t.Fatalf("ListAllForSubscriber: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+
+	// Scope isolation: other env sees nothing.
+	otherScope := domain.Scope{OrgID: "o1", EnvID: "e2"}
+	rowsOther, err := repo.ListAllForSubscriber(ctx, otherScope, "sub1")
+	if err != nil {
+		t.Fatalf("ListAllForSubscriber other scope: %v", err)
+	}
+	if len(rowsOther) != 0 {
+		t.Fatalf("scope isolation: expected 0 rows, got %d", len(rowsOther))
 	}
 }

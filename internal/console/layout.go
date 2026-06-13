@@ -152,6 +152,11 @@ func staticFuncMap() template.FuncMap {
 		// key (navEntry.Icon). Unknown keys fall back to a neutral dot so a
 		// new nav entry never renders a broken icon.
 		"navIcon": navIconSVG,
+		// mkDefaultChannels returns the ordered list of known channel names
+		// for the subscriber Preferences tab empty-state (W4-S1).
+		"mkDefaultChannels": func() []string {
+			return []string{"in_app", "email", "sms", "push"}
+		},
 	}
 }
 

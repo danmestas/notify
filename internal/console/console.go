@@ -21,6 +21,7 @@ import (
 	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inbounddomains"
+	"github.com/danmestas/notify/internal/preferences"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
@@ -124,6 +125,13 @@ type Deps struct {
 	// InboundDomains is the inbound domain management service (W4-D1, #53).
 	// Nil is allowed only when no domain routes are mounted.
 	InboundDomains *inbounddomains.Service
+	// Preferences is the preferences service used by the subscriber Preferences
+	// tab (W4-S1 #40). Nil is allowed only when no preferences routes are
+	// mounted; in practice the subscriber detail page renders a stub when nil.
+	Preferences *preferences.Service
+	// TopicTriggers provides the topic_triggers projection repo for the Topic
+	// Activity tab (W4-S2 #41). Nil renders an empty-state stub.
+	TopicTriggers store.TopicTriggerRepo
 	// Trigger is the trigger service used by the workflow test/trigger page
 	// (W2-A5). The console calls Ingest in-process — no loopback HTTP.
 	// Nil disables test-trigger POSTs (returns "service unavailable").
@@ -321,6 +329,8 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/subscribers/{subscriberId}", c.handleSubscriberUpdate)
 		pr.Post("/console/subscribers/{subscriberId}/delete", c.handleSubscriberDelete)
 		pr.Get("/console/api/fragments/subscribers-list", c.serveFragmentSubscribersList)
+		// W4-S1: subscriber preferences tab (BP-10)
+		pr.Post("/console/subscribers/{subscriberId}/preferences", c.handleSubscriberPreferencesPatch)
 		// W2-C4: topic management
 		pr.Get("/console/topics", c.serveTopicsPage)
 		pr.Get("/console/topics/new", c.serveTopicNew)

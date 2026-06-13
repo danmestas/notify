@@ -159,18 +159,102 @@
   </div>
   {{end}}
 
-  {{/* Preferences tab — Wave 4 stub (DS-2) */}}
+  {{/* Preferences tab — W4-S1 (#40) */}}
   {{if eq $page.ActiveTab "preferences"}}
   <div class="console-detail-grid">
     <section class="console-card" aria-labelledby="sub-prefs-heading">
       <h2 id="sub-prefs-heading" class="console-card-title">Preferences</h2>
-      <div class="console-empty-state" data-component="empty-state">
-        <h2 class="console-empty-state-title">Preferences coming soon</h2>
-        <p class="console-empty-state-description">
-          Per-subscriber preferences will appear here once the preferences HTTP
-          routes land (Wave 4 — BP-10).
-        </p>
+      {{if $page.Preferences.HasData}}
+
+      {{/* Global preference row */}}
+      <div class="console-prefs-group">
+        <h3 class="console-card-subtitle">Global</h3>
+        {{if $page.Preferences.Global.Channels}}
+        <div class="console-prefs-channels">
+          {{range $page.Preferences.Global.Channels}}
+          <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}/preferences"
+                class="console-pref-toggle-form" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <input type="hidden" name="channel" value="{{.Channel}}">
+            {{/* Toggle to the opposite state on submit */}}
+            <input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}">
+            <input type="hidden" name="workflowId" value="">
+            <button type="submit"
+                    class="console-pref-toggle{{if .Enabled}} is-enabled{{else}} is-disabled{{end}}"
+                    {{if $page.ReadOnly}}disabled{{end}}
+                    title="{{if .Enabled}}Disable{{else}}Enable{{end}} {{.Channel}}">
+              <span class="console-pref-channel">{{.Channel}}</span>
+              <span class="console-pref-state">{{if .Enabled}}On{{else}}Off{{end}}</span>
+            </button>
+          </form>
+          {{end}}
+        </div>
+        {{else}}
+        <p class="console-muted">No global preferences saved yet. Channels are enabled by default.</p>
+        {{end}}
       </div>
+
+      {{/* Per-workflow preference rows */}}
+      {{if $page.Preferences.Workflows}}
+      <div class="console-prefs-group" style="margin-top:var(--space-4)">
+        <h3 class="console-card-subtitle">Per-workflow overrides</h3>
+        {{range $wfRow := $page.Preferences.Workflows}}
+        <div class="console-prefs-workflow-row">
+          <span class="console-prefs-workflow-label"><code>{{$wfRow.Label}}</code></span>
+          <div class="console-prefs-channels">
+            {{range $wfRow.Channels}}
+            <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}/preferences"
+                  class="console-pref-toggle-form" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="channel" value="{{.Channel}}">
+              <input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}">
+              <input type="hidden" name="workflowId" value="{{$wfRow.WorkflowID}}">
+              <button type="submit"
+                      class="console-pref-toggle{{if .Enabled}} is-enabled{{else}} is-disabled{{end}}"
+                      {{if $page.ReadOnly}}disabled{{end}}
+                      title="{{if .Enabled}}Disable{{else}}Enable{{end}} {{.Channel}}">
+                <span class="console-pref-channel">{{.Channel}}</span>
+                <span class="console-pref-state">{{if .Enabled}}On{{else}}Off{{end}}</span>
+              </button>
+            </form>
+            {{end}}
+          </div>
+        </div>
+        {{end}}
+      </div>
+      {{end}}
+
+      {{else}}
+      {{/* No preferences stored yet — show empty-state with quick-disable forms */}}
+      <div class="console-prefs-group">
+        <p class="console-muted" style="margin-bottom:var(--space-3)">
+          No preferences saved yet. All channels are enabled by default.
+          Click a channel below to save an explicit override.
+        </p>
+        <div class="console-prefs-channels">
+          {{/* Render one "Disable" form per default-enabled channel */}}
+          {{$subID := $page.Sub.ID}}
+          {{$readOnly := $page.ReadOnly}}
+          {{$csrf := $.CSRF}}
+          {{range $ch := mkDefaultChannels}}
+          <form method="POST" action="/console/subscribers/{{$subID}}/preferences"
+                class="console-pref-toggle-form" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <input type="hidden" name="channel" value="{{$ch}}">
+            <input type="hidden" name="enabled" value="false">
+            <input type="hidden" name="workflowId" value="">
+            <button type="submit"
+                    class="console-pref-toggle is-enabled"
+                    {{if $readOnly}}disabled{{end}}
+                    title="Disable {{$ch}}">
+              <span class="console-pref-channel">{{$ch}}</span>
+              <span class="console-pref-state">On</span>
+            </button>
+          </form>
+          {{end}}
+        </div>
+      </div>
+      {{end}}
     </section>
   </div>
   {{end}}

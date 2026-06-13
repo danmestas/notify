@@ -33,6 +33,7 @@ import (
 	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inbounddomains"
+	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/webhooksout"
@@ -149,6 +150,8 @@ func newTestConsole(t *testing.T) *testConsole {
 		Agents:         ags,
 		Composer:       composer,
 		MasterKey:      masterKey,
+		Preferences:    preferences.New(st),
+		TopicTriggers:  st.TopicTriggers(),
 	}
 	c := New(deps)
 	return &testConsole{
