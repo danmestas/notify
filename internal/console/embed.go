@@ -66,7 +66,9 @@ var assetsFS embed.FS
 //go:embed templates/partials/analytics_charts.html
 //go:embed templates/partials/activity_tbody.html
 //go:embed templates/partials/activity_detail_panel.html
+//go:embed templates/partials/activity_row.html
 //go:embed templates/partials/workflow_activity_tbody.html
+//go:embed templates/partials/workflow_activity_row.html
 //go:embed templates/integrations.html
 //go:embed templates/partials/integrations_grid.html
 //go:embed templates/partials/integration_detail.html

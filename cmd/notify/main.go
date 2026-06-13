@@ -237,6 +237,9 @@ func runServe(args []string) error {
 		Preferences: prefs,
 		// W4-S2 #41: topic activity tab.
 		TopicTriggers: st.TopicTriggers(),
+		// W4-W2: SSE live-tail for the activity views. The event bus is the
+		// delivery-status publisher the live-tail subscribes through.
+		LiveTail: bus,
 	}).Routes()
 	root := http.NewServeMux()
 	root.Handle("/console", consoleRoutes)

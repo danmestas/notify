@@ -201,11 +201,16 @@ type workflowTestView struct {
 type workflowActivityTabView struct {
 	Header            pageHeader
 	TriggerIdentifier string
-	Name              string
-	Active            bool
-	Fragment          wfActivityListView
-	Signals           template.JS
-	ReadOnly          bool
+	// WorkflowID is the internal workflow id (not the slug). The SSE
+	// live-tail (W4-W2) filters on it because the notification store keys
+	// runs by internal id, so the delivered message's WorkflowID is the
+	// internal id too. Passed to the stream as ?workflow=<id>.
+	WorkflowID string
+	Name       string
+	Active     bool
+	Fragment   wfActivityListView
+	Signals    template.JS
+	ReadOnly   bool
 }
 
 // wfActivityListView is the workflow-activity-tbody fragment binding.
@@ -1563,6 +1568,7 @@ func (c *Console) serveWorkflowActivityPage(w http.ResponseWriter, r *http.Reque
 	view := workflowActivityTabView{
 		Header:            header,
 		TriggerIdentifier: wf.TriggerIdentifier,
+		WorkflowID:        wf.ID,
 		Name:              wf.Name,
 		Active:            wf.Active,
 		Fragment:          frag,

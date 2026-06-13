@@ -7,8 +7,14 @@
        so a filter value containing a double-quote cannot break out of this
        attribute and inject arbitrary signal keys. Do NOT reintroduce inlined
        per-field string literals here. */}}
+  {{/* W4-W2: SSE live-tail. data-init opens a long-lived stream that prepends
+       new notification rows into #activity-tbody in real time (dagnats
+       runs_list.html idiom). The connection lives on this wrapper, so the page
+       still works (page-load fragment + "Load more") if the stream is
+       unavailable or drops. openWhenHidden keeps it alive in background tabs. */}}
   <div class="activity-filter-bar"
-       data-signals="{{$page.Signals}}">
+       data-signals="{{$page.Signals}}"
+       data-init="@get('/console/api/stream/activity', {openWhenHidden: true})">
 
     <div class="activity-filter-pills">
       {{/* Time range */}}

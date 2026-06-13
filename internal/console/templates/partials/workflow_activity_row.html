@@ -1,0 +1,44 @@
+{{/*
+  workflow-activity-row — a single live-tail <tr> for one workflow's
+  Activity tab (#wf-activity-tbody). Rendered and prepended by the SSE
+  live-tail (live_tail.go) with the remove-then-prepend double-patch idiom.
+
+  The outer <tr> carries id="wf-activity-row-<ID>" so the remove patch can
+  target it by selector. Markup mirrors the row in
+  workflow_activity_tbody.html (no detail-panel click; a run deep-link
+  column instead of a workflow column).
+*/}}
+{{define "workflow-activity-row"}}
+<tr class="activity-row wf-activity-row wf-activity-row--live" id="wf-activity-row-{{.ID}}" data-id="{{.ID}}">
+  <td class="activity-col-status">
+    <span class="activity-status-chip activity-status-chip--{{.Status}} tile-tone-{{.StatusTone}}"
+          title="{{.Status}}">{{.Status}}</span>
+  </td>
+  <td class="activity-col-subscriber">
+    <code class="activity-monospace">{{.SubscriberID}}</code>
+  </td>
+  <td class="activity-col-transaction">
+    <code class="activity-monospace activity-truncate" title="{{.TransactionID}}">{{.TransactionIDShort}}</code>
+  </td>
+  <td class="activity-col-channel">
+    {{if .Channel}}
+    <span class="activity-channel-badge activity-channel-badge--{{.Channel}}">{{.Channel}}</span>
+    {{else}}
+    <span class="activity-channel-badge activity-channel-badge--unknown">—</span>
+    {{end}}
+  </td>
+  <td class="activity-col-created">
+    <time datetime="{{.CreatedAt}}" title="{{.CreatedAt}}">{{.RelativeTime}}</time>
+  </td>
+  <td class="activity-col-run">
+    {{if .RunURL}}
+    <a class="console-link activity-run-link" href="{{.RunURL}}"
+       target="_blank" rel="noopener" title="View run {{.RunID}} in dagnats">run ↗</a>
+    {{else if .RunID}}
+    <code class="activity-monospace activity-truncate" title="{{.RunID}}">{{.RunID}}</code>
+    {{else}}
+    <span class="console-muted">—</span>
+    {{end}}
+  </td>
+</tr>
+{{end}}

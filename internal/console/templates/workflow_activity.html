@@ -1,5 +1,11 @@
 {{define "content"}}{{$page := .Page}}
-<section class="console-section" data-signals="{{$page.Signals}}">
+{{/* W4-W2: SSE live-tail scoped to this workflow. data-init opens a long-lived
+     stream that prepends new rows into #wf-activity-tbody in real time. The
+     ?workflow=<internal id> filter keeps the stream to this workflow's runs;
+     ?target=wf selects the per-workflow tbody + row template. Same endpoint as
+     the global feed (gate 4.2: one slice, both consumers). */}}
+<section class="console-section" data-signals="{{$page.Signals}}"
+         data-init="@get('/console/api/stream/activity?target=wf&workflow={{$page.WorkflowID}}', {openWhenHidden: true})">
   {{template "page-header" $page.Header}}
 
   <div class="console-action-row">

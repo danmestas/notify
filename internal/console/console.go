@@ -154,6 +154,11 @@ type Deps struct {
 	// "https://notify.example.com"). Used by the API Keys page to show the
 	// "API URL" card. Empty string renders a placeholder.
 	HTTPAddr string
+	// LiveTail is the eventbus port the activity SSE live-tail subscribes
+	// through (W4-W2). The production wiring passes *eventbus.Bus; tests may
+	// supply a stub. Nil disables the live-tail: the stream endpoint answers
+	// 503 and the activity pages degrade to manual-refresh pagination.
+	LiveTail DeliverySubscriber
 }
 
 // Console is the operator-console handler factory. Construct with New;
@@ -255,6 +260,7 @@ func New(deps Deps) *Console {
 //	GET  /console/activity                              activity feed page (W1-6)
 //	GET  /console/api/fragments/activity-list           paginated feed fragment (PatchElements SSE)
 //	GET  /console/api/fragments/activity-detail         per-notification detail panel (PatchElements SSE)
+//	GET  /console/api/stream/activity                   SSE live-tail (W4-W2; prepends new rows)
 //	*                                                   layout-wrapped 404
 func (c *Console) Routes() http.Handler {
 	if c == nil {
@@ -313,6 +319,10 @@ func (c *Console) Routes() http.Handler {
 		pr.Get("/console/activity", c.serveActivityPage)
 		pr.Get("/console/api/fragments/activity-list", c.serveFragmentActivityList)
 		pr.Get("/console/api/fragments/activity-detail", c.serveFragmentActivityDetail)
+		// W4-W2: SSE live-tail — one endpoint, both activity consumers
+		// (global feed + per-workflow tab). ?target=wf&workflow=<id> scopes
+		// it to one workflow's tbody.
+		pr.Get("/console/api/stream/activity", c.serveActivityStream)
 		// W2: integrations store
 		pr.Get("/console/integrations", c.serveIntegrationsPage)
 		pr.Get("/console/integrations/{id}", c.serveIntegrationsPage)
