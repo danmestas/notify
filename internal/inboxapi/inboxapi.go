@@ -30,7 +30,13 @@ func (svc *Service) Routes(r chi.Router) {
 	r.Get("/v1/messages", svc.listMessages)
 }
 
-// listMessages handles GET /v1/messages?subscriberId=&channel=&transactionId=.
+// listMessages handles GET /v1/messages.
+//
+// When ?integrationId= is provided (Wave-4 #42), it returns up to 100 messages
+// for that integration (newest first). This is the "activity tab" filter.
+//
+// Otherwise, it acts as the existing in-app feed: filters by subscriberId,
+// channel, and transactionId.
 func (svc *Service) listMessages(w http.ResponseWriter, r *http.Request) {
 	scope, ok := domain.ScopeFromContext(r.Context())
 	if !ok {
@@ -39,6 +45,22 @@ func (svc *Service) listMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
+
+	// Wave-4 #42: integrationId filter takes priority.
+	if integrationID := q.Get("integrationId"); integrationID != "" {
+		msgs, err := svc.store.Messages().ListByIntegrationID(r.Context(), scope, integrationID, 0)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if msgs == nil {
+			msgs = []domain.Message{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(msgs)
+		return
+	}
+
 	subscriberID := q.Get("subscriberId")
 	channel := q.Get("channel")
 	transactionID := q.Get("transactionId")

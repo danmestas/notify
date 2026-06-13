@@ -320,6 +320,7 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/integrations/{id}/active", c.handleIntegrationToggleActive)
 		pr.Get("/console/api/fragments/integrations-grid", c.serveFragmentIntegrationsGrid)
 		pr.Get("/console/api/fragments/integration-detail", c.serveFragmentIntegrationDetail)
+		pr.Get("/console/api/fragments/integration-activity", c.serveFragmentIntegrationActivity)
 		pr.Get("/console/api/fragments/integration-provider-form", c.serveFragmentIntegrationProviderForm)
 		// W2-C3: subscriber management
 		pr.Get("/console/subscribers", c.serveSubscribersPage)

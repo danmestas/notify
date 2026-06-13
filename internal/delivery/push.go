@@ -14,11 +14,15 @@ import (
 	"github.com/danmestas/notify/internal/store"
 )
 
-// PushResolver resolves the active push provider (and its provider id) for a
-// scope. connectivity.Service satisfies this structurally (delivery does not
-// import connectivity).
+// PushResolver resolves the active push provider, provider ID, and integration
+// ID for a scope. connectivity.Service satisfies this structurally (delivery
+// does not import connectivity).
+//
+// Return order: (provider, providerID, integrationID, error).
+// integrationID is the row's primary key, used to populate
+// domain.Message.IntegrationID for Activity tab filtering (BP-13b).
 type PushResolver interface {
-	ResolvePush(ctx context.Context, scope domain.Scope) (providers.PushProvider, string, error)
+	ResolvePush(ctx context.Context, scope domain.Scope) (providers.PushProvider, string, string, error)
 }
 
 // PushHandler persists rendered push messages through the store, dispatching
@@ -80,6 +84,19 @@ func (h *PushHandler) publishDelivery(envID string, data []byte) {
 	}
 }
 
+// resolvePushIDs calls h.resolver.ResolvePush and returns the providerID and
+// integrationID strings only. Used on pre-send paths (skipped, throttled) where
+// we want the IDs for attribution but the provider itself is not needed. A
+// resolve failure returns empty strings; callers treat "" as "unknown" and
+// continue rather than blocking the persist.
+func (h *PushHandler) resolvePushIDs(ctx context.Context, scope domain.Scope) (providerID, integrationID string) {
+	_, pid, iid, err := h.resolver.ResolvePush(ctx, scope)
+	if err != nil {
+		return "", ""
+	}
+	return pid, iid
+}
+
 // HandlePush is registered via engine.Handle("send.push", h.HandlePush).
 // It unmarshals the run envelope, renders the title/body templates against the
 // {subscriber, payload} context, resolves the scope's push provider and the
@@ -97,24 +114,24 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 		// produced no output, so rebuild the envelope from the store by run id.
 		rebuilt, dk, err := rebuildEnvelope(ctx, h.store, t)
 		if err != nil {
-			return h.persistPushError(ctx, env, t, "ntfy", err)
+			return h.persistPushError(ctx, env, t, "ntfy", "", err)
 		}
 		env = rebuilt
 		digestKey = dk
 	} else if err := json.Unmarshal(t.Input, &env); err != nil {
-		return h.persistPushError(ctx, env, t, "ntfy", err)
+		return h.persistPushError(ctx, env, t, "ntfy", "", err)
 	}
 
 	subMap := map[string]any{}
 	if len(env.Subscriber) > 0 {
 		if err := json.Unmarshal(env.Subscriber, &subMap); err != nil {
-			return h.persistPushError(ctx, env, t, "ntfy", err)
+			return h.persistPushError(ctx, env, t, "ntfy", "", err)
 		}
 	}
 	payloadMap := map[string]any{}
 	if len(env.Payload) > 0 {
 		if err := json.Unmarshal(env.Payload, &payloadMap); err != nil {
-			return h.persistPushError(ctx, env, t, "ntfy", err)
+			return h.persistPushError(ctx, env, t, "ntfy", "", err)
 		}
 	}
 
@@ -152,9 +169,9 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 		}
 	}
 
-	provider, providerID, err := h.resolver.ResolvePush(ctx, scope)
+	provider, providerID, integrationID, err := h.resolver.ResolvePush(ctx, scope)
 	if err != nil {
-		return h.persistPushError(ctx, env, t, "ntfy", err)
+		return h.persistPushError(ctx, env, t, "ntfy", "", err)
 	}
 
 	// Per-subscriber addressing: the topic comes from the subscriber_channels
@@ -163,18 +180,18 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	// disagree with sent rows when another push provider is active.
 	ch, err := h.store.SubscriberChannels().GetByProvider(ctx, scope, env.SubscriberID, providerID)
 	if err != nil {
-		return h.persistPushError(ctx, env, t, providerID, fmt.Errorf("push: subscriber channel for %q/%q: %w", env.SubscriberID, providerID, err))
+		return h.persistPushError(ctx, env, t, providerID, integrationID, fmt.Errorf("push: subscriber channel for %q/%q: %w", env.SubscriberID, providerID, err))
 	}
 	var creds struct {
 		Topic string `json:"topic"`
 	}
 	if len(ch.Credentials) > 0 {
 		if err := json.Unmarshal(ch.Credentials, &creds); err != nil {
-			return h.persistPushError(ctx, env, t, providerID, fmt.Errorf("push: unmarshal channel credentials: %w", err))
+			return h.persistPushError(ctx, env, t, providerID, integrationID, fmt.Errorf("push: unmarshal channel credentials: %w", err))
 		}
 	}
 	if creds.Topic == "" {
-		return h.persistPushError(ctx, env, t, providerID, fmt.Errorf("push: subscriber %q has no topic for provider %q", env.SubscriberID, providerID))
+		return h.persistPushError(ctx, env, t, providerID, integrationID, fmt.Errorf("push: subscriber %q has no topic for provider %q", env.SubscriberID, providerID))
 	}
 
 	if _, err := provider.Send(ctx, providers.PushMessage{
@@ -190,7 +207,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 			// policy instead of recording a terminal failed message.
 			return nil, engine.NewRetryableError(err)
 		}
-		return h.persistPushError(ctx, env, t, providerID, err)
+		return h.persistPushError(ctx, env, t, providerID, integrationID, err)
 	}
 
 	msg := domain.Message{
@@ -204,6 +221,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 		SubscriberID:   env.SubscriberID,
 		Channel:        "push",
 		ProviderID:     providerID,
+		IntegrationID:  integrationID,
 		Content:        content,
 		Subject:        subject,
 		Status:         "sent",
@@ -216,7 +234,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 
 	saved, err := h.store.Messages().Create(ctx, scope, msg)
 	if err != nil {
-		return h.persistPushError(ctx, env, t, providerID, err)
+		return h.persistPushError(ctx, env, t, providerID, integrationID, err)
 	}
 	out, merr := json.Marshal(saved)
 	if merr != nil {
@@ -229,7 +247,12 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 // persistPushSkipped records a status:"skipped" push message (the channel is
 // disabled by subscriber preference) and returns its JSON with a nil error.
 // No push is sent; this mirrors the existing skipped/failed-message pattern.
+// resolve is attempted best-effort to populate providerID and integrationID.
 func (h *PushHandler) persistPushSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	providerID, integrationID := h.resolvePushIDs(ctx, scope)
+	if providerID == "" {
+		providerID = "ntfy"
+	}
 	msg := domain.Message{
 		ID:             store.NewULID(),
 		OrgID:          env.Scope.OrgID,
@@ -240,7 +263,8 @@ func (h *PushHandler) persistPushSkipped(ctx context.Context, env runenv.InAppEn
 		StepID:         env.Step.StepID,
 		SubscriberID:   env.SubscriberID,
 		Channel:        env.Step.Channel,
-		ProviderID:     "ntfy",
+		ProviderID:     providerID,
+		IntegrationID:  integrationID,
 		Content:        content,
 		Subject:        subject,
 		Status:         "skipped",
@@ -263,6 +287,10 @@ func (h *PushHandler) persistPushSkipped(ctx context.Context, env runenv.InAppEn
 // exceeded the step's per-(env,subscriber,workflow) rate limit) and returns its
 // JSON with a nil error. No push is sent; mirrors the persistPushSkipped pattern.
 func (h *PushHandler) persistPushThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	providerID, integrationID := h.resolvePushIDs(ctx, scope)
+	if providerID == "" {
+		providerID = "ntfy"
+	}
 	msg := domain.Message{
 		ID:             store.NewULID(),
 		OrgID:          env.Scope.OrgID,
@@ -273,7 +301,8 @@ func (h *PushHandler) persistPushThrottled(ctx context.Context, env runenv.InApp
 		StepID:         env.Step.StepID,
 		SubscriberID:   env.SubscriberID,
 		Channel:        env.Step.Channel,
-		ProviderID:     "ntfy",
+		ProviderID:     providerID,
+		IntegrationID:  integrationID,
 		Content:        content,
 		Subject:        subject,
 		Status:         "throttled",
@@ -296,8 +325,9 @@ func (h *PushHandler) persistPushThrottled(ctx context.Context, env runenv.InApp
 // returns its JSON with a nil error. Best-effort: if persistence itself fails,
 // the in-memory message is still marshalled and returned.
 // providerID is the resolved provider on post-resolve paths and the "ntfy"
-// default before resolution (mirroring email's hardcoded "smtp").
-func (h *PushHandler) persistPushError(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, providerID string, cause error) (json.RawMessage, error) {
+// default before resolution. integrationID is empty on pre-resolve paths and
+// carries the actual value on post-resolve paths (BP-13b).
+func (h *PushHandler) persistPushError(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, providerID, integrationID string, cause error) (json.RawMessage, error) {
 	msg := domain.Message{
 		ID:             store.NewULID(),
 		OrgID:          env.Scope.OrgID,
@@ -309,6 +339,7 @@ func (h *PushHandler) persistPushError(ctx context.Context, env runenv.InAppEnve
 		SubscriberID:   env.SubscriberID,
 		Channel:        "push",
 		ProviderID:     providerID,
+		IntegrationID:  integrationID,
 		Status:         "error",
 		ErrorText:      cause.Error(),
 		TransactionID:  env.TransactionID,

@@ -129,15 +129,20 @@ type Message struct {
 	SubscriberID   string `db:"subscriber_id"`
 	Channel        string `db:"channel"`
 	ProviderID     string `db:"provider_id"`
-	Content        string `db:"content"`
-	Subject        string `db:"subject"`
-	Status         string `db:"status"`
-	Seen           bool   `db:"seen"`
-	Read           bool   `db:"read"`
-	Archived       bool   `db:"archived"`
-	TransactionID  string `db:"transaction_id"`
-	ErrorText      string `db:"error_text"`
-	CreatedAt      string `db:"created_at"`
+	// IntegrationID is the ID of the integration row that dispatched this
+	// message (populated from Wave 4 / migration 0017 onward). Empty for
+	// rows written before the migration; those are excluded from
+	// integrationId-filtered queries.
+	IntegrationID string `db:"integration_id"`
+	Content       string `db:"content"`
+	Subject       string `db:"subject"`
+	Status        string `db:"status"`
+	Seen          bool   `db:"seen"`
+	Read          bool   `db:"read"`
+	Archived      bool   `db:"archived"`
+	TransactionID string `db:"transaction_id"`
+	ErrorText     string `db:"error_text"`
+	CreatedAt     string `db:"created_at"`
 }
 
 type Preference struct {

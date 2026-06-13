@@ -123,6 +123,21 @@ type integrationDetailView struct {
 	Empty         bool
 	ConfirmDelete bool
 	ReadOnly      bool
+	// ActiveTab is "settings" (default) or "activity" (W4-I2).
+	ActiveTab string
+	// ActivityMessages is populated when ActiveTab == "activity" (W4-I2).
+	ActivityMessages []integrationActivityRow
+}
+
+// integrationActivityRow is one row in the Activity tab of the detail drawer.
+type integrationActivityRow struct {
+	MessageID    string
+	Status       string
+	SubscriberID string
+	CreatedAt    string
+	// RunURL is the deep-link into the engine console for the run, or empty.
+	RunURL string
+	RunID  string
 }
 
 // integrationProviderFormView is what the integration-provider-form fragment
@@ -409,9 +424,96 @@ func (c *Console) serveFragmentIntegrationDetail(w http.ResponseWriter, r *http.
 		CredFields:    credFields,
 		ConfirmDelete: confirmDelete,
 		ReadOnly:      c.deps.ReadOnly,
+		ActiveTab:     "settings",
 	})
 	if err != nil {
 		c.deps.Logger.Error("console: render integration detail", "err", err)
+		http.Error(w, "render failed", http.StatusInternalServerError)
+		return
+	}
+	c.patchHTML(w, r, html)
+}
+
+// ─── fragment: integration activity tab ─────────────────────────────────────
+
+// serveFragmentIntegrationActivity answers
+// GET /console/api/fragments/integration-activity (W4-I2).
+// Returns the integration-detail fragment with ActiveTab="activity" populated
+// with up to 100 recent messages for that integration.
+func (c *Console) serveFragmentIntegrationActivity(w http.ResponseWriter, r *http.Request) {
+	if w == nil {
+		panic("serveFragmentIntegrationActivity: w is nil")
+	}
+	if r == nil {
+		panic("serveFragmentIntegrationActivity: r is nil")
+	}
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
+		panic("serveFragmentIntegrationActivity: no scope in context")
+	}
+
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		html, err := renderFragment(c.ts.base, "integration-detail", integrationDetailView{Empty: true})
+		if err != nil {
+			c.deps.Logger.Error("console: render empty integration activity", "err", err)
+			http.Error(w, "render failed", http.StatusInternalServerError)
+			return
+		}
+		c.patchHTML(w, r, html)
+		return
+	}
+
+	in, err := c.deps.Integrations.GetByID(r.Context(), scope, id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			html, rerr := renderFragment(c.ts.base, "integration-detail", integrationDetailView{Empty: true})
+			if rerr != nil {
+				c.deps.Logger.Error("console: render empty integration activity (not found)", "err", rerr)
+				http.Error(w, "render failed", http.StatusInternalServerError)
+				return
+			}
+			c.patchHTML(w, r, html)
+			return
+		}
+		c.deps.Logger.Error("console: integration activity get", "id", id, "err", err)
+		http.Error(w, "load integration failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Fetch messages for this integration (capped at 100, newest first).
+	var rows []integrationActivityRow
+	if c.deps.Messages != nil {
+		msgs, merr := c.deps.Messages.ListByIntegrationID(r.Context(), scope, id, 100)
+		if merr != nil {
+			c.deps.Logger.Error("console: list messages by integration", "id", id, "err", merr)
+			// Non-fatal: render empty activity rather than a 500.
+		} else {
+			rows = make([]integrationActivityRow, 0, len(msgs))
+			for _, m := range msgs {
+				row := integrationActivityRow{
+					MessageID:    m.ID,
+					Status:       m.Status,
+					SubscriberID: m.SubscriberID,
+					CreatedAt:    m.CreatedAt,
+					RunID:        m.RunID,
+				}
+				if c.deps.DagnatsConsoleURL != "" && m.RunID != "" {
+					row.RunURL = c.deps.DagnatsConsoleURL + "/runs/" + m.RunID
+				}
+				rows = append(rows, row)
+			}
+		}
+	}
+
+	html, err := renderFragment(c.ts.base, "integration-detail", integrationDetailView{
+		Integration:      integrationToRow(in),
+		ReadOnly:         c.deps.ReadOnly,
+		ActiveTab:        "activity",
+		ActivityMessages: rows,
+	})
+	if err != nil {
+		c.deps.Logger.Error("console: render integration activity", "err", err)
 		http.Error(w, "render failed", http.StatusInternalServerError)
 		return
 	}

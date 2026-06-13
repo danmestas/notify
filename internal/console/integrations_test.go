@@ -471,6 +471,122 @@ func TestIntegrations_ScopeIsolation(t *testing.T) {
 
 // ─── route auth ───────────────────────────────────────────────────────────────
 
+// ─── W4-I2: Activity tab ─────────────────────────────────────────────────────
+
+// TestFragment_IntegrationActivity_EmptyState verifies that the activity
+// fragment renders an empty-state when the integration has no messages.
+func TestFragment_IntegrationActivity_EmptyState(t *testing.T) {
+	tc := newTestConsole(t)
+	row := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "smtp-act-empty",
+		EncCredentials: []byte("fake"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.getWithQuery(t, "/console/api/fragments/integration-activity",
+		url.Values{"id": {row.ID}}.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("integration-activity fragment: status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "datastar-patch-elements") {
+		t.Errorf("activity fragment missing SSE event marker")
+	}
+	if !strings.Contains(body, `id="integration-detail"`) {
+		t.Errorf("activity fragment missing stable patch target id")
+	}
+	if !strings.Contains(body, "No messages yet") {
+		t.Errorf("activity fragment missing empty-state text %q; body: %s", "No messages yet", body)
+	}
+}
+
+// TestFragment_IntegrationActivity_RendersRows verifies that the activity
+// fragment renders message rows when the integration has messages.
+func TestFragment_IntegrationActivity_RendersRows(t *testing.T) {
+	tc := newTestConsole(t)
+	row := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "smtp-act-rows",
+		EncCredentials: []byte("fake"),
+	})
+
+	// Seed a message attributed to this integration.
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     "wf1",
+		NotificationID: "ntf1",
+		RunID:          "run1",
+		StepID:         "step1",
+		SubscriberID:   "sub-activity",
+		Channel:        "email",
+		ProviderID:     "smtp",
+		IntegrationID:  row.ID,
+		Status:         "sent",
+	})
+
+	cookie, _ := tc.login(t)
+
+	rr := tc.getWithQuery(t, "/console/api/fragments/integration-activity",
+		url.Values{"id": {row.ID}}.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("activity fragment with rows: status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "sub-activity") {
+		t.Errorf("activity fragment missing subscriber ID 'sub-activity'; body excerpt: %.500s", body)
+	}
+	if !strings.Contains(body, "sent") {
+		t.Errorf("activity fragment missing status 'sent'; body excerpt: %.500s", body)
+	}
+	if strings.Contains(body, "No messages yet") {
+		t.Errorf("activity fragment shows empty-state despite having a row")
+	}
+}
+
+// TestFragment_IntegrationActivity_AuthGuard verifies the new route sits
+// behind the session gate.
+func TestFragment_IntegrationActivity_AuthGuard(t *testing.T) {
+	tc := newTestConsole(t)
+
+	rr := tc.get(t, "/console/api/fragments/integration-activity", nil)
+	if rr.Code != http.StatusSeeOther {
+		t.Errorf("activity fragment without auth: status = %d, want 303", rr.Code)
+	}
+	if got := rr.Header().Get("Location"); got != "/console/login" {
+		t.Errorf("activity fragment Location = %q, want /console/login", got)
+	}
+}
+
+// TestFragment_IntegrationActivity_TabBarPresent verifies the Activity tab
+// button appears in the drawer when the activity tab is active.
+func TestFragment_IntegrationActivity_TabBarPresent(t *testing.T) {
+	tc := newTestConsole(t)
+	row := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "smtp-tab-check",
+		EncCredentials: []byte("fake"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.getWithQuery(t, "/console/api/fragments/integration-activity",
+		url.Values{"id": {row.ID}}.Encode(), cookie)
+	body := rr.Body.String()
+
+	// Both tab buttons must be present.
+	if !strings.Contains(body, "Settings") {
+		t.Errorf("activity tab missing Settings tab button")
+	}
+	if !strings.Contains(body, "Activity") {
+		t.Errorf("activity tab missing Activity tab button")
+	}
+}
+
 // TestIntegrations_RouteAuth verifies all new integrations routes redirect to
 // login when called without a session. handler_test.go chi.Walk covers the
 // full route table — this test is additional coverage for the specific paths.
@@ -484,6 +600,7 @@ func TestIntegrations_RouteAuth(t *testing.T) {
 		{http.MethodGet, "/console/integrations"},
 		{http.MethodGet, "/console/api/fragments/integrations-grid"},
 		{http.MethodGet, "/console/api/fragments/integration-detail"},
+		{http.MethodGet, "/console/api/fragments/integration-activity"},
 		{http.MethodGet, "/console/api/fragments/integration-provider-form"},
 		{http.MethodPost, "/console/integrations"},
 		{http.MethodPost, "/console/integrations/x"},

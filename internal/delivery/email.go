@@ -13,11 +13,17 @@ import (
 	"github.com/danmestas/notify/internal/store"
 )
 
-// EmailResolver resolves the active email provider and the From address for a
-// scope. connectivity.Service satisfies this structurally (delivery does not
-// import connectivity).
+// EmailResolver resolves the active email provider, the From address, the
+// provider ID, and the integration ID for a scope. connectivity.Service
+// satisfies this structurally (delivery does not import connectivity).
+//
+// Return order: (provider, from, providerID, integrationID, error).
+// providerID is the actual provider string from the integration row, fixing
+// the hardcoded "smtp" bug (issue #20).
+// integrationID is the row's primary key, used to populate
+// domain.Message.IntegrationID for Activity tab filtering (BP-13b).
 type EmailResolver interface {
-	ResolveEmail(ctx context.Context, scope domain.Scope) (providers.EmailProvider, string, error)
+	ResolveEmail(ctx context.Context, scope domain.Scope) (providers.EmailProvider, string, string, string, error)
 }
 
 // EmailHandler persists rendered email messages through the store, dispatching
@@ -78,6 +84,19 @@ func (h *EmailHandler) publishDelivery(envID string, data []byte) {
 	}
 }
 
+// resolveEmailIDs calls h.resolver.ResolveEmail and returns the providerID and
+// integrationID strings; ignores the provider and from returns. Used on
+// pre-send paths (skipped, throttled) where we want the IDs for attribution
+// but the provider itself is not needed. A resolve failure returns empty
+// strings; callers treat "" as "unknown" and continue rather than blocking.
+func (h *EmailHandler) resolveEmailIDs(ctx context.Context, scope domain.Scope) (providerID, integrationID string) {
+	_, _, pid, iid, err := h.resolver.ResolveEmail(ctx, scope)
+	if err != nil {
+		return "", ""
+	}
+	return pid, iid
+}
+
 // HandleEmail is registered via engine.Handle("send.email", h.HandleEmail).
 // It unmarshals the run envelope, renders the subject/body templates against the
 // {subscriber, payload} context, resolves the scope's email provider, sends the
@@ -92,24 +111,24 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 		// produced no output, so rebuild the envelope from the store by run id.
 		rebuilt, dk, err := rebuildEnvelope(ctx, h.store, t)
 		if err != nil {
-			return h.persistEmailError(ctx, env, t, err)
+			return h.persistEmailError(ctx, env, t, "", "", err)
 		}
 		env = rebuilt
 		digestKey = dk
 	} else if err := json.Unmarshal(t.Input, &env); err != nil {
-		return h.persistEmailError(ctx, env, t, err)
+		return h.persistEmailError(ctx, env, t, "", "", err)
 	}
 
 	subMap := map[string]any{}
 	if len(env.Subscriber) > 0 {
 		if err := json.Unmarshal(env.Subscriber, &subMap); err != nil {
-			return h.persistEmailError(ctx, env, t, err)
+			return h.persistEmailError(ctx, env, t, "", "", err)
 		}
 	}
 	payloadMap := map[string]any{}
 	if len(env.Payload) > 0 {
 		if err := json.Unmarshal(env.Payload, &payloadMap); err != nil {
-			return h.persistEmailError(ctx, env, t, err)
+			return h.persistEmailError(ctx, env, t, "", "", err)
 		}
 	}
 
@@ -149,9 +168,9 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 			return h.persistEmailSkipped(ctx, env, t, scope, subject, content)
 		}
 	}
-	provider, from, err := h.resolver.ResolveEmail(ctx, scope)
+	provider, from, providerID, integrationID, err := h.resolver.ResolveEmail(ctx, scope)
 	if err != nil {
-		return h.persistEmailError(ctx, env, t, err)
+		return h.persistEmailError(ctx, env, t, "", "", err)
 	}
 
 	if _, err := provider.Send(ctx, providers.EmailMessage{
@@ -160,7 +179,7 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 		Subject: subject,
 		Text:    content,
 	}); err != nil {
-		return h.persistEmailError(ctx, env, t, err)
+		return h.persistEmailError(ctx, env, t, providerID, integrationID, err)
 	}
 
 	msg := domain.Message{
@@ -173,7 +192,8 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 		StepID:         env.Step.StepID,
 		SubscriberID:   env.SubscriberID,
 		Channel:        "email",
-		ProviderID:     "smtp",
+		ProviderID:     providerID,
+		IntegrationID:  integrationID,
 		Content:        content,
 		Subject:        subject,
 		Status:         "sent",
@@ -186,7 +206,7 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 
 	saved, err := h.store.Messages().Create(ctx, scope, msg)
 	if err != nil {
-		return h.persistEmailError(ctx, env, t, err)
+		return h.persistEmailError(ctx, env, t, providerID, integrationID, err)
 	}
 	out, merr := json.Marshal(saved)
 	if merr != nil {
@@ -199,7 +219,12 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 // persistEmailSkipped records a status:"skipped" email message (the channel is
 // disabled by subscriber preference) and returns its JSON with a nil error.
 // No email is sent; this mirrors the existing skipped/failed-message pattern.
+// resolve is attempted best-effort to populate providerID and integrationID.
 func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	providerID, integrationID := h.resolveEmailIDs(ctx, scope)
+	if providerID == "" {
+		providerID = "smtp" // safe default; resolve failure must not block the record
+	}
 	msg := domain.Message{
 		ID:             store.NewULID(),
 		OrgID:          env.Scope.OrgID,
@@ -210,7 +235,8 @@ func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InApp
 		StepID:         env.Step.StepID,
 		SubscriberID:   env.SubscriberID,
 		Channel:        env.Step.Channel,
-		ProviderID:     "smtp",
+		ProviderID:     providerID,
+		IntegrationID:  integrationID,
 		Content:        content,
 		Subject:        subject,
 		Status:         "skipped",
@@ -233,6 +259,10 @@ func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InApp
 // exceeded the step's per-(env,subscriber,workflow) rate limit) and returns its
 // JSON with a nil error. No email is sent; mirrors the persistEmailSkipped pattern.
 func (h *EmailHandler) persistEmailThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	providerID, integrationID := h.resolveEmailIDs(ctx, scope)
+	if providerID == "" {
+		providerID = "smtp"
+	}
 	msg := domain.Message{
 		ID:             store.NewULID(),
 		OrgID:          env.Scope.OrgID,
@@ -243,7 +273,8 @@ func (h *EmailHandler) persistEmailThrottled(ctx context.Context, env runenv.InA
 		StepID:         env.Step.StepID,
 		SubscriberID:   env.SubscriberID,
 		Channel:        env.Step.Channel,
-		ProviderID:     "smtp",
+		ProviderID:     providerID,
+		IntegrationID:  integrationID,
 		Content:        content,
 		Subject:        subject,
 		Status:         "throttled",
@@ -265,7 +296,12 @@ func (h *EmailHandler) persistEmailThrottled(ctx context.Context, env runenv.InA
 // persistEmailError records a status:"error" email message carrying cause and
 // returns its JSON with a nil error. Best-effort: if persistence itself fails,
 // the in-memory message is still marshalled and returned.
-func (h *EmailHandler) persistEmailError(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, cause error) (json.RawMessage, error) {
+// providerID and integrationID are empty on pre-resolve paths and carry the
+// actual values on post-resolve paths (send failure, persist failure).
+func (h *EmailHandler) persistEmailError(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, providerID, integrationID string, cause error) (json.RawMessage, error) {
+	if providerID == "" {
+		providerID = "smtp" // safe default for pre-resolve error rows
+	}
 	msg := domain.Message{
 		ID:             store.NewULID(),
 		OrgID:          env.Scope.OrgID,
@@ -276,7 +312,8 @@ func (h *EmailHandler) persistEmailError(ctx context.Context, env runenv.InAppEn
 		StepID:         env.Step.StepID,
 		SubscriberID:   env.SubscriberID,
 		Channel:        "email",
-		ProviderID:     "smtp",
+		ProviderID:     providerID,
+		IntegrationID:  integrationID,
 		Status:         "error",
 		ErrorText:      cause.Error(),
 		TransactionID:  env.TransactionID,

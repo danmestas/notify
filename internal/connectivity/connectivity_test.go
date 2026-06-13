@@ -48,12 +48,18 @@ func TestCreateSMTP_ThenResolveEmail(t *testing.T) {
 		t.Fatalf("CreateSMTP: %v", err)
 	}
 
-	prov, from, err := svc.ResolveEmail(ctx, scope)
+	prov, from, providerID, integrationID, err := svc.ResolveEmail(ctx, scope)
 	if err != nil {
 		t.Fatalf("ResolveEmail: %v", err)
 	}
 	if from != cfg.From {
 		t.Fatalf("From = %q, want %q", from, cfg.From)
+	}
+	if providerID != "smtp" {
+		t.Errorf("providerID = %q, want smtp", providerID)
+	}
+	if integrationID == "" {
+		t.Error("integrationID must be non-empty after CreateSMTP")
 	}
 	smtp, ok := prov.(*providers.SMTP)
 	if !ok {
@@ -78,7 +84,7 @@ func TestResolveEmail_NoIntegration(t *testing.T) {
 	svc := New(openTemp(t), testKey())
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
 
-	if _, _, err := svc.ResolveEmail(ctx, scope); err == nil {
+	if _, _, _, _, err := svc.ResolveEmail(ctx, scope); err == nil {
 		t.Fatal("ResolveEmail with no integration: expected error, got nil")
 	}
 }
@@ -128,12 +134,18 @@ func TestCreateCloudflareEmail_ThenResolveEmail(t *testing.T) {
 		t.Errorf("Channel = %q, want email", in.Channel)
 	}
 
-	prov, from, err := svc.ResolveEmail(ctx, scope)
+	prov, from, providerID2, integrationID2, err := svc.ResolveEmail(ctx, scope)
 	if err != nil {
 		t.Fatalf("ResolveEmail: %v", err)
 	}
 	if from != cfg.From {
 		t.Errorf("From = %q, want %q", from, cfg.From)
+	}
+	if providerID2 != "cloudflare-email" {
+		t.Errorf("providerID = %q, want cloudflare-email", providerID2)
+	}
+	if integrationID2 == "" {
+		t.Error("integrationID must be non-empty after CreateCloudflareEmail")
 	}
 	cfClient, ok := prov.(*cloudflareemail.Client)
 	if !ok {
@@ -172,7 +184,7 @@ func TestResolveEmail_UnknownProviderFailsClosed(t *testing.T) {
 		t.Fatalf("Integrations().Create: %v", err)
 	}
 
-	_, _, err = svc.ResolveEmail(ctx, scope)
+	_, _, _, _, err = svc.ResolveEmail(ctx, scope)
 	if err == nil {
 		t.Fatal("ResolveEmail with unknown ProviderID: expected error, got nil")
 	}
@@ -236,7 +248,7 @@ func TestUpdate_SMTPCredentialMerge_SentinelKeepsStored(t *testing.T) {
 	}
 
 	// ResolveEmail must still work (password preserved).
-	prov, from, err := svc.ResolveEmail(ctx, scope)
+	prov, from, _, _, err := svc.ResolveEmail(ctx, scope)
 	if err != nil {
 		t.Fatalf("ResolveEmail after Update: %v", err)
 	}

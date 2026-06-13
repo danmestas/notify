@@ -5,8 +5,8 @@ import "testing"
 func TestMigrate_0010_AppliesAgents(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 16 {
-		t.Fatalf("expected 16 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 17 {
+		t.Fatalf("expected 17 recorded migrations, got %d", n)
 	}
 
 	for _, table := range []string{"agents", "agent_links", "conversations", "conversation_activities"} {

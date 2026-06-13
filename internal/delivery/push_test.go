@@ -16,13 +16,18 @@ import (
 // stubPushResolver is a fixed-answer PushResolver standing in for
 // connectivity.Service in the unit tests.
 type stubPushResolver struct {
-	p   providers.PushProvider
-	id  string
-	err error
+	p             providers.PushProvider
+	id            string // providerID
+	integrationID string // defaults to "integ-push-test" when empty
+	err           error
 }
 
-func (s stubPushResolver) ResolvePush(_ context.Context, _ domain.Scope) (providers.PushProvider, string, error) {
-	return s.p, s.id, s.err
+func (s stubPushResolver) ResolvePush(_ context.Context, _ domain.Scope) (providers.PushProvider, string, string, error) {
+	iid := s.integrationID
+	if iid == "" {
+		iid = "integ-push-test"
+	}
+	return s.p, s.id, iid, s.err
 }
 
 // failingPushProvider always fails with the configured error.

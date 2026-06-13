@@ -30,6 +30,23 @@
 
   <code class="integration-identifier">{{$in.Identifier}}</code>
 
+  {{/* Tab bar */}}
+  <nav class="integration-detail-tabs" aria-label="Integration detail tabs">
+    <button type="button"
+            class="integration-detail-tab{{if or (eq $.ActiveTab "settings") (eq $.ActiveTab "")}} is-active{{end}}"
+            data-on:click="@get('/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}})">
+      Settings
+    </button>
+    <button type="button"
+            class="integration-detail-tab{{if eq $.ActiveTab "activity"}} is-active{{end}}"
+            data-on:click="@get('/console/api/fragments/integration-activity?id='+{{$in.ID | jsEscape}})">
+      Activity
+    </button>
+  </nav>
+
+  {{/* Settings tab content */}}
+  {{if ne $.ActiveTab "activity"}}
+
   {{/* Active toggle */}}
   <div class="integration-detail-active">
     <span class="integration-detail-label">Status</span>
@@ -149,6 +166,56 @@
     {{end}}
   </div>
   {{end}}
+
+  {{/* Activity tab content (W4-I2) */}}
+  {{else}}
+  <section class="integration-activity-section" aria-labelledby="integration-activity-heading">
+    <h2 id="integration-activity-heading" class="integration-section-title">Recent messages</h2>
+    {{if $.ActivityMessages}}
+    <div class="console-table-wrap">
+      <table class="console-table" aria-label="Integration activity">
+        <thead>
+          <tr>
+            <th scope="col">Status</th>
+            <th scope="col">Subscriber</th>
+            <th scope="col">Created</th>
+            <th scope="col">Run</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range $.ActivityMessages}}
+          <tr>
+            <td>
+              <span class="activity-status-chip activity-status-chip--{{.Status}}">{{.Status}}</span>
+            </td>
+            <td><code class="activity-monospace">{{.SubscriberID}}</code></td>
+            <td><time datetime="{{.CreatedAt}}" title="{{.CreatedAt}}">{{.CreatedAt}}</time></td>
+            <td>
+              {{if .RunURL}}
+              <a href="{{.RunURL}}" target="_blank" rel="noopener noreferrer" class="subscriber-run-link">
+                <code>{{.RunID}}</code> ↗
+              </a>
+              {{else}}
+              <code class="console-muted">{{if .RunID}}{{.RunID}}{{else}}—{{end}}</code>
+              {{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <div class="console-empty-state" data-component="empty-state">
+      <span class="console-empty-state-icon" aria-hidden="true">&#9993;</span>
+      <h2 class="console-empty-state-title">No messages yet</h2>
+      <p class="console-empty-state-description">
+        Messages sent through this integration will appear here.
+      </p>
+    </div>
+    {{end}}
+  </section>
+  {{end}}
+
   {{end}}
 </div>
 {{end}}

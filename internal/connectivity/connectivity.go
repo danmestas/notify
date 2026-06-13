@@ -146,48 +146,59 @@ func (svc *Service) CreateCloudflareEmail(ctx context.Context, scope domain.Scop
 	})
 }
 
-// ResolveEmail returns the active email provider and From address for the Scope.
-// It loads the active email integration, decrypts its credentials, and builds
-// the appropriate provider based on the integration's ProviderID:
+// ResolveEmail returns the active email provider, From address, provider ID,
+// and integration ID for the Scope. It loads the active email integration,
+// decrypts its credentials, and builds the appropriate provider based on the
+// integration's ProviderID:
 //
 //   - "smtp"             → *providers.SMTP (existing path, unchanged)
 //   - "cloudflare-email" → *cloudflareemail.Client
-func (svc *Service) ResolveEmail(ctx context.Context, scope domain.Scope) (providers.EmailProvider, string, error) {
+//
+// Return order: (provider, from, providerID, integrationID, error).
+// The integration ID is the row's primary key; callers use it to populate
+// domain.Message.IntegrationID (BP-13b). The providerID is the actual provider
+// string from the integration row, fixing the hardcoded "smtp" bug (#20).
+func (svc *Service) ResolveEmail(ctx context.Context, scope domain.Scope) (providers.EmailProvider, string, string, string, error) {
 	in, err := svc.store.Integrations().GetActiveByChannel(ctx, scope, "email")
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", "", err
 	}
 	plaintext, err := svc.decrypt(in.EncCredentials)
 	if err != nil {
-		return nil, "", fmt.Errorf("connectivity: decrypt email config: %w", err)
+		return nil, "", "", "", fmt.Errorf("connectivity: decrypt email config: %w", err)
+	}
+
+	providerID := in.ProviderID
+	if providerID == "" {
+		providerID = "smtp" // normalise legacy rows that predate the field
 	}
 
 	switch in.ProviderID {
 	case "cloudflare-email":
 		var cfg CloudflareEmailConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", fmt.Errorf("connectivity: unmarshal cloudflare email config: %w", err)
+			return nil, "", "", "", fmt.Errorf("connectivity: unmarshal cloudflare email config: %w", err)
 		}
 		return &cloudflareemail.Client{
 			AccountID: cfg.AccountID,
 			APIToken:  cfg.APIToken,
 			From:      cfg.From,
-		}, cfg.From, nil
+		}, cfg.From, providerID, in.ID, nil
 	case "smtp", "": // empty ProviderID covers legacy rows created before the field was enforced.
 		var cfg SMTPConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", fmt.Errorf("connectivity: unmarshal smtp config: %w", err)
+			return nil, "", "", "", fmt.Errorf("connectivity: unmarshal smtp config: %w", err)
 		}
 		return &providers.SMTP{
 			Addr:     cfg.Addr,
 			Host:     cfg.Host,
 			Username: cfg.Username,
 			Password: cfg.Password,
-		}, cfg.From, nil
+		}, cfg.From, providerID, in.ID, nil
 	default:
 		// Fail closed: decoding unknown-provider credentials as SMTPConfig
 		// would surface as a confusing empty-Addr dial failure at send time.
-		return nil, "", fmt.Errorf("connectivity: unknown email provider %q", in.ProviderID)
+		return nil, "", "", "", fmt.Errorf("connectivity: unknown email provider %q", in.ProviderID)
 	}
 }
 
@@ -214,23 +225,25 @@ func (svc *Service) CreateNtfy(ctx context.Context, scope domain.Scope, identifi
 	})
 }
 
-// ResolvePush returns the active push provider and its provider id for the
-// Scope. It loads the active push integration, decrypts its credentials into
-// an NtfyConfig, and builds a *ntfy.Client from them.
-func (svc *Service) ResolvePush(ctx context.Context, scope domain.Scope) (providers.PushProvider, string, error) {
+// ResolvePush returns the active push provider, its provider id, and
+// integration ID for the Scope. It loads the active push integration,
+// decrypts its credentials into an NtfyConfig, and builds a *ntfy.Client.
+// The integration ID (third return) is used by delivery/push.go to populate
+// domain.Message.IntegrationID (BP-13b).
+func (svc *Service) ResolvePush(ctx context.Context, scope domain.Scope) (providers.PushProvider, string, string, error) {
 	in, err := svc.store.Integrations().GetActiveByChannel(ctx, scope, "push")
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	plaintext, err := svc.decrypt(in.EncCredentials)
 	if err != nil {
-		return nil, "", fmt.Errorf("connectivity: decrypt ntfy config: %w", err)
+		return nil, "", "", fmt.Errorf("connectivity: decrypt ntfy config: %w", err)
 	}
 	var cfg NtfyConfig
 	if err := json.Unmarshal(plaintext, &cfg); err != nil {
-		return nil, "", fmt.Errorf("connectivity: unmarshal ntfy config: %w", err)
+		return nil, "", "", fmt.Errorf("connectivity: unmarshal ntfy config: %w", err)
 	}
-	return &ntfy.Client{BaseURL: cfg.BaseURL, Token: cfg.Token}, in.ProviderID, nil
+	return &ntfy.Client{BaseURL: cfg.BaseURL, Token: cfg.Token}, in.ProviderID, in.ID, nil
 }
 
 // Store returns the underlying store.Store so callers (e.g. httpapi) can

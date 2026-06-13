@@ -108,6 +108,10 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 		if st != nil {
 			pr.Get("/v1/notifications", getNotifications(st))
 			pr.Get("/v1/notifications/{id}", getNotification(st))
+			// Wave-4 #43: messages per notification.
+			pr.Get("/v1/notifications/{id}/messages", getNotificationMessages(st))
+			// Wave-4 #42: GET /v1/messages?integrationId= is handled by inboxapi.Service.listMessages
+			// (extended in Wave-4 to support the integrationId filter param).
 			// Layouts management (W4-L1).
 			layouts := st.Layouts()
 			pr.Get("/v1/layouts", getLayouts(layouts))
@@ -901,6 +905,24 @@ func getNotification(st *store.Store) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, n)
+	}
+}
+
+// getNotificationMessages handles GET /v1/notifications/{id}/messages (#43).
+// Returns all messages for the notification in scope order (newest first).
+func getNotificationMessages(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		scope := identity.ScopeFrom(r.Context())
+		msgs, err := st.Messages().ListByNotificationID(r.Context(), scope, id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if msgs == nil {
+			msgs = []domain.Message{}
+		}
+		writeJSON(w, http.StatusOK, msgs)
 	}
 }
 

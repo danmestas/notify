@@ -32,8 +32,8 @@ type capResolver struct {
 	from string
 }
 
-func (r capResolver) ResolveEmail(_ context.Context, _ domain.Scope) (providers.EmailProvider, string, error) {
-	return r.c, r.from, nil
+func (r capResolver) ResolveEmail(_ context.Context, _ domain.Scope) (providers.EmailProvider, string, string, string, error) {
+	return r.c, r.from, "smtp", "", nil
 }
 
 // TestEmailParity_EndToEnd is the email slice parity proof: a real dagnats

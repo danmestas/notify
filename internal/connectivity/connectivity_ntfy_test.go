@@ -22,12 +22,15 @@ func TestCreateNtfy_ThenResolvePush(t *testing.T) {
 		t.Fatalf("CreateNtfy: %v", err)
 	}
 
-	provider, providerID, err := svc.ResolvePush(ctx, scope)
+	provider, providerID, integrationID, err := svc.ResolvePush(ctx, scope)
 	if err != nil {
 		t.Fatalf("ResolvePush: %v", err)
 	}
 	if providerID != "ntfy" {
 		t.Errorf("providerID = %q, want %q", providerID, "ntfy")
+	}
+	if integrationID == "" {
+		t.Error("integrationID must be non-empty after CreateNtfy")
 	}
 	client, ok := provider.(*ntfy.Client)
 	if !ok {
@@ -46,7 +49,7 @@ func TestResolvePush_NoIntegration(t *testing.T) {
 	svc := New(openTemp(t), testKey())
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
 
-	if _, _, err := svc.ResolvePush(ctx, scope); err == nil {
+	if _, _, _, err := svc.ResolvePush(ctx, scope); err == nil {
 		t.Fatal("ResolvePush with no integration: expected error, got nil")
 	}
 }

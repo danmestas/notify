@@ -14,13 +14,23 @@ import (
 
 // stubResolver returns a fixed provider and from address (or an error).
 type stubResolver struct {
-	provider providers.EmailProvider
-	from     string
-	err      error
+	provider      providers.EmailProvider
+	from          string
+	providerID    string // defaults to "smtp" when empty
+	integrationID string // defaults to "integ-test" when empty
+	err           error
 }
 
-func (s stubResolver) ResolveEmail(_ context.Context, _ domain.Scope) (providers.EmailProvider, string, error) {
-	return s.provider, s.from, s.err
+func (s stubResolver) ResolveEmail(_ context.Context, _ domain.Scope) (providers.EmailProvider, string, string, string, error) {
+	pid := s.providerID
+	if pid == "" {
+		pid = "smtp"
+	}
+	iid := s.integrationID
+	if iid == "" {
+		iid = "integ-test"
+	}
+	return s.provider, s.from, pid, iid, s.err
 }
 
 func emailEnvelope() runenv.InAppEnvelope {
