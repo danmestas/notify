@@ -94,6 +94,8 @@ func (s *Store) Layouts() LayoutRepo {
 	return &layoutRepo{w: s.writer, r: s.reader}
 }
 
+func (s *Store) Contexts() ContextRepo { return &contextRepo{w: s.writer, r: s.reader} }
+
 // Pools exposes the writer/reader pairs so sibling bounded-context stores
 // (internal/agents/store) run their Scope-enforced queries over the same
 // SQLite database and migration set instead of opening parallel pools.

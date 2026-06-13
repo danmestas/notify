@@ -28,6 +28,7 @@ import (
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
+	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/store"
@@ -132,6 +133,7 @@ func newTestConsole(t *testing.T) *testConsole {
 		Connectivity:  conn,
 		Audience:      audience.New(st),
 		Webhooks:      webhooksout.NewManagement(st),
+		Contexts:      contexts.New(st),
 		Trigger:       newStubTrigger(""),
 		Agents:        ags,
 		Composer:      composer,

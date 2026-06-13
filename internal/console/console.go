@@ -17,6 +17,7 @@ import (
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
+	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/identity"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -102,6 +103,9 @@ type Deps struct {
 	// Webhooks is the webhook management service for CRUD (W2-D2).
 	// Nil is allowed only when no webhook routes are mounted.
 	Webhooks *webhooksout.ManagementService
+	// Contexts is the context service for the contexts CRUD pages (W4-C1).
+	// Nil is allowed only when no contexts routes are mounted.
+	Contexts *contexts.Service
 	// Trigger is the trigger service used by the workflow test/trigger page
 	// (W2-A5). The console calls Ingest in-process — no loopback HTTP.
 	// Nil disables test-trigger POSTs (returns "service unavailable").
@@ -314,6 +318,16 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/api/webhooks/{id}/delete", c.handleWebhookDelete)
 		pr.Post("/console/api/webhooks/{id}", c.handleWebhookUpdate)
 		pr.Get("/console/api/fragments/webhooks-list", c.serveFragmentWebhooksList)
+		// W4-C2: contexts management
+		if c.deps.Contexts != nil {
+			pr.Get("/console/contexts", c.serveContextsPage)
+			pr.Get("/console/contexts/new", c.serveContextNew)
+			pr.Get("/console/contexts/{type}/{id}", c.serveContextDetail)
+			pr.Post("/console/contexts", c.handleContextCreate)
+			pr.Post("/console/api/contexts/{type}/{id}", c.handleContextUpdate)
+			pr.Post("/console/api/contexts/{type}/{id}/delete", c.handleContextDelete)
+			pr.Get("/console/api/fragments/contexts-list", c.serveFragmentContextsList)
+		}
 		// W3: agents management + conversation console. The literal `new`
 		// segment is registered before the {identifier} wildcard so chi never
 		// matches "new" as an identifier.

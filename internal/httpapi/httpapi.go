@@ -19,6 +19,7 @@ import (
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
+	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inbound"
@@ -48,6 +49,11 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 	var wh *webhooksout.ManagementService
 	if st != nil {
 		wh = webhooksout.NewManagement(st)
+	}
+	// Wire the contexts service when a store is present (#54).
+	var ctxSvc *contexts.Service
+	if st != nil {
+		ctxSvc = contexts.New(st)
 	}
 	r := chi.NewRouter()
 	// Liveness probe, mounted outside the auth group so container/orchestrator
@@ -103,6 +109,14 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 			pr.Get("/v1/webhooks/endpoints/{id}", getWebhookEndpoint(wh))
 			pr.Put("/v1/webhooks/endpoints/{id}", putWebhookEndpoint(wh))
 			pr.Delete("/v1/webhooks/endpoints/{id}", deleteWebhookEndpoint(wh))
+		}
+		// W4-C1 contexts management (#54).
+		if ctxSvc != nil {
+			pr.Get("/v1/contexts", getContexts(ctxSvc))
+			pr.Post("/v1/contexts", postContext(ctxSvc))
+			pr.Get("/v1/contexts/{type}/{id}", getContext(ctxSvc))
+			pr.Put("/v1/contexts/{type}/{id}", putContext(ctxSvc))
+			pr.Delete("/v1/contexts/{type}/{id}", deleteContext(ctxSvc))
 		}
 		inbox.Routes(pr)
 		if inb != nil {

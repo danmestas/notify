@@ -77,6 +77,9 @@ var assetsFS embed.FS
 //go:embed templates/partials/subscriber_autocomplete.html
 //go:embed templates/webhooks.html
 //go:embed templates/partials/webhooks_tbody.html
+//go:embed templates/contexts.html
+//go:embed templates/context_detail.html
+//go:embed templates/partials/contexts_tbody.html
 //go:embed templates/agents.html
 //go:embed templates/agent_detail.html
 //go:embed templates/agent_conversation.html

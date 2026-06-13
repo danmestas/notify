@@ -1,0 +1,54 @@
+{{/*
+  contexts-tbody — PatchElements fragment target for the contexts list.
+  Binds contextsListView.
+*/}}
+{{define "contexts-tbody"}}{{$v := .}}
+<div id="contexts-tbody" data-component="contexts-tbody">
+  {{if eq (len $v.Rows) 0}}
+  <p class="console-muted">No contexts found. Create one to get started.</p>
+  {{else}}
+  <table class="console-table">
+    <thead>
+      <tr>
+        <th>Type</th>
+        <th>Identifier</th>
+        <th>Updated</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range $v.Rows}}
+      {{if eq $v.ConfirmDelete .ID}}
+      <tr id="context-row-{{.ID}}" class="confirm-row">
+        <td colspan="3">
+          <span class="console-confirm-label">Delete <code>{{.Type}}/{{.ExternalID}}</code>? This cannot be undone.</span>
+        </td>
+        <td>
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/contexts-list')">Cancel</button>
+          <form method="POST" action="/console/api/contexts/{{.Type}}/{{.ExternalID}}/delete" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
+            <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr id="context-row-{{.ID}}">
+        <td><code class="chip chip-default">{{.Type}}</code></td>
+        <td><a href="/console/contexts/{{.Type}}/{{.ExternalID}}">{{.ExternalID}}</a></td>
+        <td class="console-muted">{{.UpdatedAt}}</td>
+        <td class="console-action-row">
+          {{if not $v.ReadOnly}}
+          <a class="btn btn-outline btn-sm" href="/console/contexts/{{.Type}}/{{.ExternalID}}">Edit</a>
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/contexts-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</div>
+{{end}}

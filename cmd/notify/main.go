@@ -25,6 +25,7 @@ import (
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/console"
+	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
@@ -212,6 +213,7 @@ func runServe(args []string) error {
 		Connectivity:      conn,
 		Audience:          aud,
 		Webhooks:          webhooksout.NewManagement(st),
+		Contexts:          contexts.New(st),
 		Trigger:           trg,
 		Agents:            ags,
 		Composer:          consoleComposer{ing},

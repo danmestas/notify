@@ -196,3 +196,14 @@ type Layout struct {
 	Name    string `db:"name"`
 	Content string `db:"content"`
 }
+
+type Context struct {
+	ID         string          `db:"id"`
+	OrgID      string          `db:"org_id"`
+	EnvID      string          `db:"environment_id"`
+	Type       string          `db:"type"`
+	ExternalID string          `db:"external_id"`
+	Data       json.RawMessage `db:"data"`
+	CreatedAt  string          `db:"created_at"`
+	UpdatedAt  string          `db:"updated_at"`
+}
