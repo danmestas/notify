@@ -273,10 +273,21 @@ type transcriptResponse struct {
 }
 
 // transcript serves the conversation read (RFC 0002 §7):
-// GET /v1/inbox/conversations/{agentIdentifier}?conversationId=<thread id>.
+// GET /v1/inbox/conversations/{agentIdentifier}?conversationId=<thread id>
+//
+// Optional pagination parameters:
+//
+//	limit  — max rows to return (default 50, max 200)
+//	before — ULID; returns up to limit rows older than this id
+//	after  — ULID; returns up to limit rows newer than this id
+//
+// When neither before nor after is supplied the most recent limit rows are
+// returned (useful for initial render and SSE catch-up). When before is
+// supplied it takes precedence over after.
 func (s *Service) transcript(w http.ResponseWriter, r *http.Request) {
 	scope := identity.ScopeFrom(r.Context())
-	threadID := r.URL.Query().Get("conversationId")
+	q := r.URL.Query()
+	threadID := q.Get("conversationId")
 	if threadID == "" {
 		http.Error(w, "conversationId is required", http.StatusBadRequest)
 		return
@@ -291,7 +302,19 @@ func (s *Service) transcript(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	acts, err := s.agents.Activities().History(r.Context(), scope, conv.ID, 0)
+
+	limit := parseActivityLimit(q.Get("limit"))
+	before := q.Get("before")
+	after := q.Get("after")
+
+	var acts []agentdomain.Activity
+	if before != "" || after != "" || q.Get("limit") != "" {
+		// Cursor / paginated path.
+		acts, err = s.agents.Activities().Page(r.Context(), scope, conv.ID, limit, before, after)
+	} else {
+		// Legacy full-transcript path: return everything oldest-first.
+		acts, err = s.agents.Activities().History(r.Context(), scope, conv.ID, 0)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -301,6 +324,22 @@ func (s *Service) transcript(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(transcriptResponse{Conversation: conv, Activities: acts})
+}
+
+// parseActivityLimit converts the raw limit query param to an int. Zero or
+// empty → 0 (the store layer applies its own default and cap).
+func parseActivityLimit(s string) int {
+	if s == "" {
+		return 0
+	}
+	v := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		v = v*10 + int(c-'0')
+	}
+	return v
 }
 
 // HandleTurn is the agent.turn.mesh task handler, registered via

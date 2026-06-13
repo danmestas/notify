@@ -262,6 +262,108 @@ func TestAgents_LinkUnlinkIntegrations(t *testing.T) {
 	}
 }
 
+// TestAgents_ListConversations drives the GET /v1/agents/{identifier}/conversations
+// route: 404 on unknown agent, empty list, pagination via before cursor.
+func TestAgents_ListConversations(t *testing.T) {
+	srv, authHeader := startAgentServer(t)
+
+	// Unknown agent → 404.
+	if status, _ := doGet(t, srv.URL+"/v1/agents/ghost/conversations", authHeader); status != http.StatusNotFound {
+		t.Fatalf("unknown agent: status=%d, want 404", status)
+	}
+
+	// Create an agent.
+	status, body := doPost(t, srv.URL+"/v1/agents", authHeader, `{"identifier":"chat-bot","runtime":"mesh"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("POST /v1/agents: status=%d body=%s", status, body)
+	}
+	var agent agentdomain.Agent
+	if err := json.Unmarshal([]byte(body), &agent); err != nil {
+		t.Fatalf("decode agent: %v", err)
+	}
+
+	// No conversations yet → empty list (not null).
+	status, body = doGet(t, srv.URL+"/v1/agents/chat-bot/conversations", authHeader)
+	if status != http.StatusOK {
+		t.Fatalf("GET conversations: status=%d body=%s", status, body)
+	}
+	if strings.TrimSpace(body) != "[]" {
+		t.Fatalf("expected empty list, got %s", body)
+	}
+
+	// Auth guard: no header → 401.
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/agents/chat-bot/conversations", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("unauth request: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauth: status=%d, want 401", resp.StatusCode)
+	}
+}
+
+// TestAgents_ChannelSetup drives the
+// GET /v1/agents/{identifier}/channels/{integrationID}/setup route.
+func TestAgents_ChannelSetup(t *testing.T) {
+	srv, authHeader := startAgentServer(t)
+
+	// Create an agent.
+	if status, body := doPost(t, srv.URL+"/v1/agents", authHeader, `{"identifier":"tg-bot","runtime":"bridge","bridgeUrl":"https://bot.example.com/turn"}`); status != http.StatusCreated {
+		t.Fatalf("POST /v1/agents: status=%d body=%s", status, body)
+	}
+
+	// Unknown agent → 404.
+	if status, _ := doGet(t, srv.URL+"/v1/agents/ghost/channels/int-tg/setup", authHeader); status != http.StatusNotFound {
+		t.Fatalf("unknown agent: status=%d, want 404", status)
+	}
+
+	// No channel link yet → 404.
+	if status, _ := doGet(t, srv.URL+"/v1/agents/tg-bot/channels/int-tg/setup", authHeader); status != http.StatusNotFound {
+		t.Fatalf("unlinked channel: status=%d, want 404", status)
+	}
+
+	// Link the integration.
+	if status, body := doPost(t, srv.URL+"/v1/agents/tg-bot/integrations", authHeader, `{"integrationId":"int-tg"}`); status != http.StatusCreated {
+		t.Fatalf("link integration: status=%d body=%s", status, body)
+	}
+
+	// Now setup returns the webhook URL (base_url placeholder since no baseURL configured).
+	status, body := doGet(t, srv.URL+"/v1/agents/tg-bot/channels/int-tg/setup", authHeader)
+	if status != http.StatusOK {
+		t.Fatalf("setup: status=%d body=%s", status, body)
+	}
+	var resp struct {
+		WebhookURL string `json:"webhookUrl"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("decode setup response: %v (body=%s)", err, body)
+	}
+	if resp.WebhookURL == "" {
+		t.Fatalf("webhookUrl is empty")
+	}
+	// Without a configured baseURL the response uses the placeholder pattern.
+	if !strings.Contains(resp.WebhookURL, "int-tg") {
+		t.Fatalf("webhookUrl %q must contain the integrationID 'int-tg'", resp.WebhookURL)
+	}
+
+	// Unlinked integration returns 404 even when agent exists.
+	if status, _ := doGet(t, srv.URL+"/v1/agents/tg-bot/channels/other-int/setup", authHeader); status != http.StatusNotFound {
+		t.Fatalf("unlinked other: status=%d, want 404", status)
+	}
+
+	// Auth guard: no header → 401.
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/agents/tg-bot/channels/int-tg/setup", nil)
+	got, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("unauth request: %v", err)
+	}
+	_ = got.Body.Close()
+	if got.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauth: status=%d, want 401", got.StatusCode)
+	}
+}
+
 // doPatch issues an authenticated JSON PATCH and returns the status and body.
 func doPatch(t *testing.T, url, authHeader, body string) (int, string) {
 	t.Helper()

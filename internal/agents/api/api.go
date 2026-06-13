@@ -23,12 +23,21 @@ const runtimeErrMsg = "runtime must be one of: mesh, bridge, managed"
 
 // Service exposes agent management over HTTP.
 type Service struct {
-	store *agentstore.Store
+	store   *agentstore.Store
+	baseURL string // optional; used by channelSetup to assemble inbound webhook URLs
 }
 
 // New builds a Service backed by the given agents store.
 func New(s *agentstore.Store) *Service {
 	return &Service{store: s}
+}
+
+// WithBaseURL sets the server's public base URL (e.g. "https://notify.example.com")
+// so that channelSetup can return a ready-to-use inbound webhook URL. When
+// omitted the endpoint returns a templated placeholder the operator fills in.
+func (svc *Service) WithBaseURL(u string) *Service {
+	svc.baseURL = strings.TrimRight(u, "/")
+	return svc
 }
 
 // Routes registers the agent endpoints on r. It expects to run behind
@@ -42,6 +51,9 @@ func (svc *Service) Routes(r chi.Router) {
 	r.Post("/v1/agents/{identifier}/integrations", svc.linkIntegration)
 	r.Get("/v1/agents/{identifier}/integrations", svc.listIntegrations)
 	r.Delete("/v1/agents/{identifier}/integrations/{integrationID}", svc.unlinkIntegration)
+	// Wave 3 additions.
+	r.Get("/v1/agents/{identifier}/conversations", svc.listConversations)
+	r.Get("/v1/agents/{identifier}/channels/{integrationID}/setup", svc.channelSetup)
 }
 
 // agentRequest is the POST /v1/agents body.
@@ -276,6 +288,98 @@ func (svc *Service) unlinkIntegration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// listConversations returns the agent's conversations ordered by
+// last_activity_at DESC with keyset pagination.
+//
+// GET /v1/agents/{identifier}/conversations?limit=50&before=<ulid>
+func (svc *Service) listConversations(w http.ResponseWriter, r *http.Request) {
+	scope := identity.ScopeFrom(r.Context())
+	agent, err := svc.store.Agents().GetByIdentifier(r.Context(), scope, chi.URLParam(r, "identifier"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	q := r.URL.Query()
+	limit := parseLimit(q.Get("limit"), 0)
+	before := q.Get("before")
+
+	convs, err := svc.store.Conversations().ListByAgent(r.Context(), scope, agent.ID, limit, before)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, convs)
+}
+
+// parseLimit converts a raw query string to an int. Returns fallback on any
+// parse error or when s is empty.
+func parseLimit(s string, fallback int) int {
+	if s == "" {
+		return fallback
+	}
+	v := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return fallback
+		}
+		v = v*10 + int(c-'0')
+	}
+	return v
+}
+
+// channelSetupResponse is the body of GET
+// /v1/agents/{identifier}/channels/{integrationID}/setup.
+type channelSetupResponse struct {
+	WebhookURL string `json:"webhookUrl"`
+}
+
+// channelSetup returns the inbound webhook URL the operator pastes into
+// BotFather (or any channel provider's webhook registration UI). The URL
+// pattern is: <baseURL>/v1/inbound/<integrationID>. When the service has no
+// baseURL configured (i.e. the operator hasn't set the public host), the
+// response contains a templated placeholder they can fill in.
+//
+// GET /v1/agents/{identifier}/channels/{integrationID}/setup
+func (svc *Service) channelSetup(w http.ResponseWriter, r *http.Request) {
+	scope := identity.ScopeFrom(r.Context())
+
+	// Resolve agent — yields 404 for unknowns or wrong scope.
+	agent, err := svc.store.Agents().GetByIdentifier(r.Context(), scope, chi.URLParam(r, "identifier"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	integrationID := chi.URLParam(r, "integrationID")
+
+	// Verify the agent-channel link exists within scope before returning the URL.
+	links, err := svc.store.Links().ListByAgent(r.Context(), scope, agent.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	found := false
+	for _, l := range links {
+		if l.IntegrationID == integrationID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	base := svc.baseURL
+	if base == "" {
+		base = "{base_url}"
+	}
+	writeJSON(w, http.StatusOK, channelSetupResponse{
+		WebhookURL: base + "/v1/inbound/" + integrationID,
+	})
 }
 
 // writeStoreError maps a repository error onto its HTTP status: ErrNotFound

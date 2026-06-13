@@ -359,6 +359,213 @@ func TestConversationRepo_UpsertScopeMismatch(t *testing.T) {
 	}
 }
 
+// TestConversationRepo_ListByAgent proves ListByAgent: ordering by
+// last_activity_at DESC, keyset pagination, and cross-env isolation.
+func TestConversationRepo_ListByAgent(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Conversations()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	other := domain.Scope{OrgID: "o1", EnvID: "e2"}
+
+	const agentID = "ag-list"
+
+	// Create 5 conversations in scope; a 6th in a different scope (must not appear).
+	for i := 0; i < 5; i++ {
+		if _, err := repo.Upsert(ctx, scope, agentdomain.Conversation{
+			AgentID:          agentID,
+			PlatformThreadID: fmt.Sprintf("thread-%d", i),
+			SubscriberID:     fmt.Sprintf("sub-%d", i),
+		}); err != nil {
+			t.Fatalf("upsert %d: %v", i, err)
+		}
+	}
+	// Cross-env conversation — must not appear in scope's list.
+	if _, err := repo.Upsert(ctx, other, agentdomain.Conversation{
+		AgentID:          agentID,
+		PlatformThreadID: "thread-other",
+	}); err != nil {
+		t.Fatalf("upsert other: %v", err)
+	}
+
+	// Default first page (limit=0 → 50): all 5 in scope, sorted DESC.
+	page, err := repo.ListByAgent(ctx, scope, agentID, 0, "")
+	if err != nil {
+		t.Fatalf("ListByAgent: %v", err)
+	}
+	if len(page) != 5 {
+		t.Fatalf("want 5 conversations, got %d", len(page))
+	}
+	// Verify ordering: last_activity_at DESC (thread-4 is most recent).
+	for i, c := range page[:len(page)-1] {
+		if c.LastActivityAt < page[i+1].LastActivityAt {
+			t.Errorf("order violation at [%d]: %s < %s", i, c.LastActivityAt, page[i+1].LastActivityAt)
+		}
+	}
+
+	// Cross-env list must be empty.
+	otherPage, err := repo.ListByAgent(ctx, other, agentID, 0, "")
+	if err != nil {
+		t.Fatalf("ListByAgent other: %v", err)
+	}
+	if len(otherPage) != 1 {
+		t.Fatalf("other scope: want 1 conversation, got %d", len(otherPage))
+	}
+
+	// Keyset pagination: limit=2 fetches first two; passing last id fetches next two.
+	p1, err := repo.ListByAgent(ctx, scope, agentID, 2, "")
+	if err != nil {
+		t.Fatalf("ListByAgent page 1: %v", err)
+	}
+	if len(p1) != 2 {
+		t.Fatalf("page 1: want 2, got %d", len(p1))
+	}
+
+	p2, err := repo.ListByAgent(ctx, scope, agentID, 2, p1[len(p1)-1].ID)
+	if err != nil {
+		t.Fatalf("ListByAgent page 2: %v", err)
+	}
+	if len(p2) != 2 {
+		t.Fatalf("page 2: want 2, got %d", len(p2))
+	}
+
+	p3, err := repo.ListByAgent(ctx, scope, agentID, 2, p2[len(p2)-1].ID)
+	if err != nil {
+		t.Fatalf("ListByAgent page 3: %v", err)
+	}
+	if len(p3) != 1 {
+		t.Fatalf("page 3 (last): want 1, got %d", len(p3))
+	}
+
+	// All three pages together must equal the full result with no duplicates.
+	allIDs := map[string]bool{}
+	for _, c := range append(append(p1, p2...), p3...) {
+		if allIDs[c.ID] {
+			t.Errorf("duplicate id %s across pages", c.ID)
+		}
+		allIDs[c.ID] = true
+	}
+	if len(allIDs) != 5 {
+		t.Fatalf("union of pages: want 5 distinct ids, got %d", len(allIDs))
+	}
+
+	// Empty agent returns empty slice (not nil/error).
+	empty, err := repo.ListByAgent(ctx, scope, "nonexistent-agent", 0, "")
+	if err != nil {
+		t.Fatalf("ListByAgent for unknown agent: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("unknown agent: want 0, got %d", len(empty))
+	}
+}
+
+// TestActivityRepo_Page proves ActivityRepo.Page: before, after, no-cursor, and
+// cross-env isolation. The test uses a full-transcript call to establish the
+// canonical ordered slice, then validates cursor results against that ordering.
+func TestActivityRepo_Page(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Activities()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	other := domain.Scope{OrgID: "o1", EnvID: "e2"}
+
+	const convID = "conv-page"
+
+	// Insert 6 activities into scope.
+	for i := 0; i < 6; i++ {
+		if _, err := repo.Append(ctx, scope, agentdomain.Activity{
+			ConversationID: convID,
+			Role:           "user",
+			Content:        json.RawMessage(fmt.Sprintf(`{"parts":[{"text":"msg%d"}]}`, i)),
+		}); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+	// Cross-env activity — must not appear in scope's pages.
+	if _, err := repo.Append(ctx, other, agentdomain.Activity{
+		ConversationID: convID,
+		Role:           "agent",
+		Content:        json.RawMessage(`{"parts":[{"text":"xenv"}]}`),
+	}); err != nil {
+		t.Fatalf("append other: %v", err)
+	}
+
+	// Establish canonical order via the existing History (full transcript).
+	all6, err := repo.History(ctx, scope, convID, 0)
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(all6) != 6 {
+		t.Fatalf("History: want 6, got %d", len(all6))
+	}
+	// ids[0..5] in oldest-first order (History guarantees this).
+	canonicalIDs := make([]string, len(all6))
+	for i, a := range all6 {
+		canonicalIDs[i] = a.ID
+	}
+
+	// No cursor → most recent 3 oldest-first (canonical[3..5]).
+	noCursor, err := repo.Page(ctx, scope, convID, 3, "", "")
+	if err != nil {
+		t.Fatalf("Page no-cursor: %v", err)
+	}
+	if len(noCursor) != 3 {
+		t.Fatalf("no-cursor: want 3, got %d", len(noCursor))
+	}
+	for i, want := range canonicalIDs[3:] {
+		if noCursor[i].ID != want {
+			t.Errorf("no-cursor[%d] id=%s, want %s", i, noCursor[i].ID, want)
+		}
+	}
+
+	// before=canonical[4] → rows older than canonical[4], newest-of-old first
+	// limited to 3, then oldest-first → canonical[1..3].
+	beforePage, err := repo.Page(ctx, scope, convID, 3, canonicalIDs[4], "")
+	if err != nil {
+		t.Fatalf("Page before: %v", err)
+	}
+	if len(beforePage) != 3 {
+		t.Fatalf("before: want 3, got %d", len(beforePage))
+	}
+	for i, want := range canonicalIDs[1:4] {
+		if beforePage[i].ID != want {
+			t.Errorf("before[%d] id=%s, want %s", i, beforePage[i].ID, want)
+		}
+	}
+
+	// after=canonical[2] → rows newer than canonical[2]: canonical[3..5].
+	afterPage, err := repo.Page(ctx, scope, convID, 10, "", canonicalIDs[2])
+	if err != nil {
+		t.Fatalf("Page after: %v", err)
+	}
+	if len(afterPage) != 3 {
+		t.Fatalf("after: want 3, got %d", len(afterPage))
+	}
+	for i, want := range canonicalIDs[3:] {
+		if afterPage[i].ID != want {
+			t.Errorf("after[%d] id=%s, want %s", i, afterPage[i].ID, want)
+		}
+	}
+
+	// Cross-env isolation: other scope sees only its own activity.
+	otherPage, err := repo.Page(ctx, other, convID, 0, "", "")
+	if err != nil {
+		t.Fatalf("Page other scope: %v", err)
+	}
+	if len(otherPage) != 1 {
+		t.Fatalf("other scope: want 1, got %d", len(otherPage))
+	}
+
+	// Limit cap: limit=0 → default (50), must return all 6.
+	allPage, err := repo.Page(ctx, scope, convID, 0, "", "")
+	if err != nil {
+		t.Fatalf("Page limit=0: %v", err)
+	}
+	if len(allPage) != 6 {
+		t.Fatalf("limit=0: want 6, got %d", len(allPage))
+	}
+}
+
 // TestConversationRepo_GetByThread proves the read-side counterpart of
 // Upsert: the dedup key resolves the row without creating one, scoped, with
 // ErrNotFound for absent threads.

@@ -6,6 +6,7 @@ package ingress_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -188,4 +189,102 @@ func TestTurnRetryLadder_E2E(t *testing.T) {
 	if !found {
 		t.Errorf("no replayed reply row joining run %s: %+v", out.RunID, msgs)
 	}
+}
+
+// TestTranscriptCursorPagination_E2E proves the before/after/limit query
+// parameters on GET /v1/inbox/conversations/{agentIdentifier}:
+//
+//   - limit= caps the returned window
+//   - before= fetches rows older than the given ULID
+//   - after=  fetches rows newer than the given ULID
+//
+// The test fires two compose turns via the real pipeline and waits for both
+// agent replies to appear in the in_app messages table (a stable store-poll
+// signal that the turn handler has fully committed), then exercises cursor
+// parameters on the transcript endpoint.
+func TestTranscriptCursorPagination_E2E(t *testing.T) {
+	h := newHarness(t)
+	h.startStub(t)
+
+	first := h.compose(t, "", "page turn 1")
+	// Wait for the first reply to land in the messages table: the turn
+	// handler fully commits before publishing the inbox event, so this is a
+	// safe signal that the singleton is released before we issue turn 2.
+	h.waitMessages(t, 1, 30*time.Second)
+
+	second := h.compose(t, first.ConversationID, "page turn 2")
+	// Two replies now expected.
+	h.waitMessages(t, 2, 30*time.Second)
+
+	// Full transcript (no cursor params): 4 activities (user, agent, user, agent).
+	fullActs, _ := h.transcriptOf(t, h.agent.Identifier, first.ConversationID)
+	if len(fullActs) != 4 {
+		t.Fatalf("full transcript: want 4 activities, got %d: %+v", len(fullActs), fullActs)
+	}
+
+	// limit=2 (no cursor): most-recent 2 activities oldest-first.
+	limited := getTranscript(t, h,
+		fmt.Sprintf("?conversationId=%s&limit=2", first.ConversationID))
+	if len(limited) != 2 {
+		t.Fatalf("limit=2: want 2 activities, got %d", len(limited))
+	}
+
+	// before=<third activity id>: rows older than the third activity (index 2).
+	// Expected: first two activities (user + agent from turn 1).
+	thirdID := fullActs[2].ID
+	beforePage := getTranscript(t, h,
+		fmt.Sprintf("?conversationId=%s&before=%s&limit=10", first.ConversationID, thirdID))
+	if len(beforePage) != 2 {
+		t.Fatalf("before: want 2 activities, got %d: %+v", len(beforePage), beforePage)
+	}
+	if beforePage[0].ID != fullActs[0].ID || beforePage[1].ID != fullActs[1].ID {
+		t.Errorf("before: ids=%v %v, want %v %v",
+			beforePage[0].ID, beforePage[1].ID, fullActs[0].ID, fullActs[1].ID)
+	}
+
+	// after=<second activity id>: rows newer than the second activity (index 1).
+	// Expected: activities at index 2 and 3.
+	secondID := fullActs[1].ID
+	afterPage := getTranscript(t, h,
+		fmt.Sprintf("?conversationId=%s&after=%s&limit=10", first.ConversationID, secondID))
+	if len(afterPage) != 2 {
+		t.Fatalf("after: want 2 activities, got %d: %+v", len(afterPage), afterPage)
+	}
+	if afterPage[0].ID != fullActs[2].ID || afterPage[1].ID != fullActs[3].ID {
+		t.Errorf("after: ids=%v %v, want %v %v",
+			afterPage[0].ID, afterPage[1].ID, fullActs[2].ID, fullActs[3].ID)
+	}
+
+	// missing conversationId → 400.
+	resp, err := http.Get(h.srv.URL + "/v1/inbox/conversations/" + h.agent.Identifier)
+	if err != nil {
+		t.Fatalf("GET no conversationId: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("missing conversationId: status=%d, want 400", resp.StatusCode)
+	}
+
+	_ = second // used to ensure two full turns completed
+}
+
+// getTranscript GETs the transcript with the given query suffix and returns the
+// decoded activity slice.
+func getTranscript(t *testing.T, h *harness, query string) []agentdomain.Activity {
+	t.Helper()
+	resp, err := http.Get(h.srv.URL + "/v1/inbox/conversations/" + h.agent.Identifier + query)
+	if err != nil {
+		t.Fatalf("GET transcript %s: %v", query, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("transcript %s: status=%d, want 200", query, resp.StatusCode)
+	}
+	var tr struct {
+		Activities []agentdomain.Activity `json:"activities"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+		t.Fatalf("decode transcript %s: %v", query, err)
+	}
+	return tr.Activities
 }
