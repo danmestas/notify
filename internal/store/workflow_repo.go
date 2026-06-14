@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"github.com/danmestas/notify/internal/domain"
 )
@@ -48,6 +49,12 @@ func (repo *workflowRepo) Create(ctx context.Context, scope domain.Scope, wf dom
 		[]byte(wf.Steps), []byte(wf.PayloadSchema), wf.CompiledDAGVer,
 	)
 	if err != nil {
+		// A duplicate (environment_id, trigger_identifier) trips the UNIQUE
+		// index; surface it as ErrConflict so callers can answer 409 rather
+		// than leaking a raw driver error as a 500 (mirrors layout_repo).
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return domain.Workflow{}, ErrConflict
+		}
 		return domain.Workflow{}, err
 	}
 	return wf, nil

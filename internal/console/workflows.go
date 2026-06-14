@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aymerick/raymond"
 	"github.com/go-chi/chi/v5"
@@ -59,6 +60,10 @@ type workflowRow struct {
 	Steps []domain.Step
 	// Href is the link to the detail page.
 	Href string
+	// UpdatedAt is the workflow's creation time, decoded from the ULID-embedded
+	// millisecond timestamp in wf.ID (the workflows table carries no
+	// created_at/updated_at column). Rendered by the relTime template helper.
+	UpdatedAt time.Time
 	// ReadOnly hides the row's mutation actions (Edit/Dup/Delete).
 	ReadOnly bool
 	// ConfirmDelete is true when this row is the one awaiting inline
@@ -275,9 +280,32 @@ func buildWorkflowRows(workflows []domain.Workflow, q, status string) []workflow
 			Active:            wf.Active,
 			Steps:             steps,
 			Href:              "/console/workflows/" + wf.TriggerIdentifier,
+			UpdatedAt:         ulidTime(wf.ID),
 		})
 	}
 	return rows
+}
+
+// ulidTime decodes the 48-bit millisecond timestamp encoded in the first 10
+// characters of a ULID (Crockford base32). Workflows carry no created_at
+// column, so the list's "Updated" column derives its value from the id minted
+// at create time. Returns the zero time for a malformed/short id so relTime
+// renders an em dash rather than a bogus epoch.
+func ulidTime(id string) time.Time {
+	const alpha = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+	if len(id) < 10 {
+		return time.Time{}
+	}
+	upper := strings.ToUpper(id[:10])
+	var ms uint64
+	for _, c := range upper {
+		idx := strings.IndexRune(alpha, c)
+		if idx < 0 {
+			return time.Time{}
+		}
+		ms = ms*32 + uint64(idx)
+	}
+	return time.UnixMilli(int64(ms))
 }
 
 // buildWorkflowsListView lists workflows for the current scope and applies the

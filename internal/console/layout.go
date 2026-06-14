@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 )
@@ -162,6 +163,39 @@ func staticFuncMap() template.FuncMap {
 		// for the subscriber Preferences tab empty-state (W4-S1).
 		"mkDefaultChannels": func() []string {
 			return []string{"in_app", "email", "sms", "push"}
+		},
+		// relTime renders a coarse "time ago" label for a timestamp. The
+		// workflows list derives the value from the ULID-embedded creation
+		// time (workflows carry no created_at column); a zero time renders
+		// an em dash rather than a bogus "55 years ago".
+		"relTime": func(t time.Time) string {
+			if t.IsZero() {
+				return "—"
+			}
+			d := time.Since(t)
+			switch {
+			case d < time.Hour:
+				m := int(d.Minutes())
+				if m <= 1 {
+					return "just now"
+				}
+				return fmt.Sprintf("%dm ago", m)
+			case d < 24*time.Hour:
+				h := int(d.Hours())
+				return fmt.Sprintf("%dh ago", h)
+			case d < 48*time.Hour:
+				return "yesterday"
+			case d < 7*24*time.Hour:
+				return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+			case d < 30*24*time.Hour:
+				return fmt.Sprintf("%dw ago", int(d.Hours()/(24*7)))
+			default:
+				mo := int(d.Hours() / (24 * 30))
+				if mo <= 1 {
+					return "1mo ago"
+				}
+				return fmt.Sprintf("%dmo ago", mo)
+			}
 		},
 	}
 }

@@ -29,7 +29,7 @@
         {{range $i, $step := $page.Steps}}
         <li class="wf-step-item" data-step-index="{{$i}}">
           <header class="wf-step-header">
-            <span class="chip chip-step wf-step-type-chip">{{$step.Type}}</span>
+            <span class="chip chip-step chip-step--{{$step.Type}} wf-step-type-chip">{{$step.Type}}</span>
             <span class="wf-step-id"><code>{{$step.StepID}}</code></span>
             {{if $step.Name}}<span class="wf-step-name">{{$step.Name}}</span>{{end}}
           </header>

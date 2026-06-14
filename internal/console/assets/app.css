@@ -1089,6 +1089,12 @@ a.activity-item-run { color: var(--accent); }
   font-family: var(--font-mono);
   font-size: 0.72rem;
 }
+.chip-step--in_app  { background: rgba(9,105,218,0.10); color: var(--status-info); border-color: rgba(9,105,218,0.25); }
+.chip-step--email   { background: rgba(26,127,55,0.10);  color: var(--status-success); border-color: rgba(26,127,55,0.25); }
+.chip-step--push    { background: rgba(154,103,0,0.10);  color: var(--status-warning); border-color: rgba(154,103,0,0.25); }
+.chip-step--sms     { background: rgba(207,34,46,0.10);  color: var(--status-danger); border-color: rgba(207,34,46,0.25); }
+.chip-step--delay   { background: rgba(180,83,9,0.10);   color: #b45309; border-color: rgba(180,83,9,0.25); }
+.chip-step--digest  { background: rgba(154,52,18,0.10);  color: #9a3412; border-color: rgba(154,52,18,0.25); }
 
 /* Step chip strip with arrow connectors */
 .chip-strip {
@@ -1127,9 +1133,43 @@ a.activity-item-run { color: var(--accent); }
 }
 
 /* Column widths */
-.wf-col-name   { width: 40%; }
-.wf-col-status { width: 15%; }
-.wf-col-steps  { width: 45%; }
+.wf-col-name    { width: 32%; }
+.wf-col-status  { width: 12%; }
+.wf-col-steps   { width: 36%; }
+.wf-col-updated { width: 12%; color: var(--text-secondary); font-size: 0.82rem; white-space: nowrap; }
+
+/* Actions column: compact kebab menu */
+.wf-col-actions { width: 48px; text-align: center; }
+.wf-kebab { position: relative; display: inline-block; }
+.wf-kebab-menu {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 10;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  min-width: 140px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.10);
+}
+.wf-kebab-menu.is-open { display: block; }
+.wf-kebab-item {
+  display: block;
+  padding: 8px 12px;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.wf-kebab-item:hover { background: var(--accent-soft); }
+.wf-kebab-item--danger { color: var(--status-danger); }
+
+/* Footer note under the workflows table */
+.wf-footer-note {
+  margin-top: var(--space-3);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
 
 /* Name cell: stacked name + trigger ID */
 .wf-name-link {

@@ -29,7 +29,7 @@
       <option value="inactive" {{if eq $frag.FilterStatus "inactive"}}selected{{end}}>Inactive</option>
     </select>
     {{if not $page.ReadOnly}}
-    <a class="btn btn-primary" href="/console/workflows/new">+ Create workflow</a>
+    <a class="btn btn-primary" href="/console/workflows/new">+ New workflow</a>
     {{end}}
   </div>
 
@@ -109,11 +109,13 @@
           <th scope="col">Name</th>
           <th scope="col">Status</th>
           <th scope="col">Steps</th>
+          <th scope="col">Updated</th>
           <th scope="col">Actions</th>
         </tr>
       </thead>
       {{template "workflows-tbody" $frag}}
     </table>
   </div>
+  <p class="wf-footer-note">{{len $frag.Rows}} of {{len $frag.Rows}} workflows · click a row to open the editor</p>
 </section>
 {{end}}

@@ -550,11 +550,18 @@ func postWorkflow(au *authoring.Service) http.HandlerFunc {
 			Steps:             steps,
 		})
 		if err != nil {
+			if errors.Is(err, store.ErrConflict) {
+				http.Error(w, "triggerIdentifier already exists", http.StatusConflict)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if err := au.Publish(r.Context(), scope, req.TriggerIdentifier); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			// Publish compiles the step DAG; the workflow row was just stored
+			// successfully, so any failure here is a step-config (compile)
+			// error — a client mistake, not infra. Answer 422.
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{

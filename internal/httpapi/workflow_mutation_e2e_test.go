@@ -391,3 +391,36 @@ func TestPostWorkflowDuplicate_404ForMissingSrc(t *testing.T) {
 		t.Fatalf("expected 404, got %d", status)
 	}
 }
+
+// TestPostWorkflow_409OnDuplicateTrigger verifies POST /v1/workflows returns
+// 409 when the triggerIdentifier already exists in this scope.
+func TestPostWorkflow_409OnDuplicateTrigger(t *testing.T) {
+	ctx := context.Background()
+	srv, authHeader, auth, scope := setupWorkflowSuite(t)
+
+	if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Existing",
+		TriggerIdentifier: "dup-trigger",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app"}},
+	}); err != nil {
+		t.Fatalf("seed workflow: %v", err)
+	}
+
+	body := `{"name":"Duplicate","triggerIdentifier":"dup-trigger","steps":[{"stepId":"S1","type":"in_app"}]}`
+	status, resp := doPost(t, srv.URL+"/v1/workflows", authHeader, body)
+	if status != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (body=%s)", status, resp)
+	}
+}
+
+// TestPostWorkflow_422OnInvalidDelayStep verifies POST /v1/workflows returns
+// 422 when a delay step has a non-positive amount.
+func TestPostWorkflow_422OnInvalidDelayStep(t *testing.T) {
+	srv, authHeader, _, _ := setupWorkflowSuite(t)
+
+	body := `{"name":"BadDelay","triggerIdentifier":"bad-delay-post","steps":[{"stepId":"d1","type":"delay","controlValues":{"amount":0,"unit":"seconds"}}]}`
+	status, resp := doPost(t, srv.URL+"/v1/workflows", authHeader, body)
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d (body=%s)", status, resp)
+	}
+}

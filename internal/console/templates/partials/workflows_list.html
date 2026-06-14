@@ -9,7 +9,7 @@
 {{define "workflows-tbody"}}
 <tbody id="workflows-tbody">
   {{if .Empty}}
-  <tr><td colspan="4">{{template "empty-state" .Empty}}</td></tr>
+  <tr><td colspan="5">{{template "empty-state" .Empty}}</td></tr>
   {{else}}
   {{range .Rows}}
   {{template "workflow-row" .}}
@@ -22,10 +22,10 @@
   workflow-row — one <tr> in the workflows table. Binds a workflowRow.
 */}}
 {{define "workflow-row"}}
-<tr class="console-table-row" data-component="workflow-row">
+<tr class="console-table-row" data-component="workflow-row" onclick="location.href='{{.Href}}'" style="cursor:pointer">
   <td class="wf-col-name">
     <a class="wf-name-link" href="{{.Href}}">{{.Name}}</a>
-    <span class="wf-trigger-id">
+    <span class="wf-trigger-id" onclick="event.stopPropagation()">
       <code class="wf-trigger-id-text">{{.TriggerIdentifier}}</code>
       <button type="button"
               class="btn-icon wf-copy-btn"
@@ -38,22 +38,23 @@
   </td>
   <td class="wf-col-status">
     {{if .Active}}
-    <span class="chip chip-success" aria-label="active">active</span>
+    <span class="chip chip-success" aria-label="active">Active</span>
     {{else}}
-    <span class="chip chip-warning" aria-label="inactive">inactive</span>
+    <span class="chip chip-warning" aria-label="inactive">Inactive</span>
     {{end}}
   </td>
   <td class="wf-col-steps">
     <span class="chip-strip" role="list" aria-label="steps">
       {{range .Steps}}
-      <span class="chip chip-step" role="listitem">{{.Type}}</span>
+      <span class="chip chip-step chip-step--{{.Type}}" role="listitem">{{.Type}}</span>
       {{end}}
       {{if eq (len .Steps) 0}}
       <span class="chip chip-default">—</span>
       {{end}}
     </span>
   </td>
-  <td class="wf-col-actions">
+  <td class="wf-col-updated">{{relTime .UpdatedAt}}</td>
+  <td class="wf-col-actions" onclick="event.stopPropagation()">
     {{if not .ReadOnly}}
     {{if .ConfirmDelete}}
     <span class="console-confirm-label">Delete?</span>
@@ -63,9 +64,13 @@
       <button type="submit" class="btn btn-danger btn-sm">Confirm</button>
     </form>
     {{else}}
-    <a class="btn btn-outline btn-sm" href="{{.Href}}">Edit</a>
-    <a class="btn btn-outline btn-sm" href="/console/workflows/{{.TriggerIdentifier}}/duplicate">Dup</a>
-    <a class="btn btn-danger btn-sm" href="/console/api/fragments/workflows-list?confirmDelete={{.TriggerIdentifier | urlquery}}">Delete</a>
+    <div class="wf-kebab">
+      <button type="button" class="btn-icon wf-kebab-btn" aria-label="Actions" onclick="this.nextElementSibling.classList.toggle('is-open')">⋯</button>
+      <div class="wf-kebab-menu">
+        <a class="wf-kebab-item" href="/console/workflows/{{.TriggerIdentifier}}/duplicate">Duplicate</a>
+        <a class="wf-kebab-item wf-kebab-item--danger" href="/console/api/fragments/workflows-list?confirmDelete={{.TriggerIdentifier | urlquery}}">Delete</a>
+      </div>
+    </div>
     {{end}}
     {{end}}
   </td>

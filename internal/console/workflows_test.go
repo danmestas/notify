@@ -54,9 +54,9 @@ func TestWorkflowsList_RendersSeededRows(t *testing.T) {
 	if !strings.Contains(body, `id="wf-status"`) {
 		t.Errorf("list page missing status select")
 	}
-	// Create workflow CTA present.
-	if !strings.Contains(body, "Create workflow") {
-		t.Errorf("list page missing Create workflow CTA")
+	// New workflow CTA present.
+	if !strings.Contains(body, "New workflow") {
+		t.Errorf("list page missing New workflow CTA")
 	}
 	// Nav: Workflows entry is active (Section == "workflows").
 	if !strings.Contains(body, `is-active`) {
