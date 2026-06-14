@@ -284,11 +284,16 @@ func (c *Console) Routes() http.Handler {
 
 	r.Get("/console/login", c.serveLoginPage)
 	r.Post("/console/login", c.serveLoginSubmit)
-	r.Get("/console/assets/datastar.js", serveGzAsset("datastar.js.gz",
+	// Asset routes use fingerprinted (content-hashed) URLs so that
+	// "Cache-Control: public, max-age=31536000, immutable" is safe: the URL
+	// changes whenever the content changes, so browsers always pick up new
+	// CSS/JS on deploy.  The fingerprinted path is computed at init from the
+	// sha256 of the embedded bytes (see assets_manifest.go).
+	r.Get(assetManifest["datastar.js"], serveGzAsset("datastar.js.gz",
 		"application/javascript; charset=utf-8"))
-	r.Get("/console/assets/app.css", servePlainAsset("app.css",
+	r.Get(assetManifest["app.css"], servePlainAsset("app.css",
 		"text/css; charset=utf-8"))
-	r.Get("/console/assets/theme.js", servePlainAsset("theme.js",
+	r.Get(assetManifest["theme.js"], servePlainAsset("theme.js",
 		"application/javascript; charset=utf-8"))
 
 	r.Group(func(pr chi.Router) {

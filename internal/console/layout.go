@@ -117,6 +117,10 @@ func staticFuncMap() template.FuncMap {
 		// loadTemplates parseable in isolation (template.Funcs must know
 		// every name before Parse).
 		"runURL": func(string) string { return "" },
+		// assetURL returns the fingerprinted URL for a logical asset name
+		// (e.g. "app.css" → "/console/assets/app.<hash>.css").  Templates
+		// use it so the HTML never hard-codes bare asset paths.
+		"assetURL": assetURL,
 		// actionArgs packs the action-button partial's inputs so callers
 		// (templates and Go views alike) bind the one actionButton shape.
 		"actionArgs": func(label, href string, readOnly bool) actionButton {

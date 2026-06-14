@@ -21,12 +21,14 @@ var paramRE = regexp.MustCompile(`\{[^}]+\}`)
 
 // authExempt enumerates the only routes allowed to answer without a
 // session. Everything else must 303 to /console/login.
+// Asset routes are fingerprinted (content-hashed URLs), so the exempt
+// keys must match what chi.Walk reports — the actual registered paths.
 var authExempt = map[string]bool{
-	"GET /console/login":              true,
-	"POST /console/login":             true,
-	"GET /console/assets/datastar.js": true,
-	"GET /console/assets/app.css":     true,
-	"GET /console/assets/theme.js":    true,
+	"GET /console/login":                  true,
+	"POST /console/login":                 true,
+	"GET " + assetManifest["datastar.js"]: true,
+	"GET " + assetManifest["app.css"]:     true,
+	"GET " + assetManifest["theme.js"]:    true,
 }
 
 func TestRouteTable_EverythingBehindAuthExceptLoginAndAssets(t *testing.T) {
@@ -76,7 +78,7 @@ func TestRouteTable_EverythingBehindAuthExceptLoginAndAssets(t *testing.T) {
 func TestRouteTable_AssetsServeWithoutSession(t *testing.T) {
 	tc := newTestConsole(t)
 
-	rr := tc.get(t, "/console/assets/app.css", nil)
+	rr := tc.get(t, assetManifest["app.css"], nil)
 	if rr.Code != http.StatusOK {
 		t.Errorf("app.css: status = %d, want 200", rr.Code)
 	}
@@ -84,7 +86,7 @@ func TestRouteTable_AssetsServeWithoutSession(t *testing.T) {
 		t.Errorf("app.css body missing the :root palette block")
 	}
 
-	rr = tc.get(t, "/console/assets/datastar.js", nil)
+	rr = tc.get(t, assetManifest["datastar.js"], nil)
 	if rr.Code != http.StatusOK {
 		t.Errorf("datastar.js: status = %d, want 200", rr.Code)
 	}

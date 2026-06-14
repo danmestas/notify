@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} — notify console</title>
-  <link rel="stylesheet" href="/console/assets/app.css">
+  <link rel="stylesheet" href="{{assetURL "app.css"}}">
   <script>
     // Apply the persisted theme before first paint to avoid the
     // light → dark flash. The attribute lives on <html> so the html
@@ -24,10 +24,10 @@
     // data-* plugin and schedules the engine's own deferred apply().
     // The namespace lands on window.datastar so the browser smoke test
     // can introspect bootstrap state (dagnats app.js idiom).
-    import * as datastar from "/console/assets/datastar.js";
+    import * as datastar from "{{assetURL "datastar.js"}}";
     window.datastar = datastar;
   </script>
-  <script src="/console/assets/theme.js" defer></script>
+  <script src="{{assetURL "theme.js"}}" defer></script>
 </head>
 <body class="console-shell">
   <aside class="console-sidebar">
