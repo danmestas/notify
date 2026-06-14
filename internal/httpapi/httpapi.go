@@ -554,6 +554,11 @@ func postWorkflow(au *authoring.Service) http.HandlerFunc {
 				http.Error(w, "triggerIdentifier already exists", http.StatusConflict)
 				return
 			}
+			var compileErr *authoring.ErrCompileFailure
+			if errors.As(err, &compileErr) {
+				http.Error(w, compileErr.Error(), http.StatusUnprocessableEntity)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

@@ -56,6 +56,12 @@ func (s *Service) Create(ctx context.Context, scope domain.Scope, in WorkflowInp
 		Active:            true,
 		Steps:             steps,
 	}
+	// Validate by compiling before any write — mirrors Update. An invalid step
+	// configuration (e.g. delay amount <= 0) must be rejected with an
+	// ErrCompileFailure (HTTP 422) and must NOT leak a persisted workflow row.
+	if _, err := Compile(wf); err != nil {
+		return domain.Workflow{}, &ErrCompileFailure{Cause: err}
+	}
 	return s.store.Workflows().Create(ctx, scope, wf)
 }
 

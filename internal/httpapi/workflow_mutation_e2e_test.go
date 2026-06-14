@@ -423,4 +423,11 @@ func TestPostWorkflow_422OnInvalidDelayStep(t *testing.T) {
 	if status != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422, got %d (body=%s)", status, resp)
 	}
+
+	// The invalid create must NOT leak a persisted workflow row: validation
+	// happens (via Compile) before any write. GET the workflow back → 404.
+	getStatus, getResp := doGet(t, srv.URL+"/v1/workflows/bad-delay-post", authHeader)
+	if getStatus != http.StatusNotFound {
+		t.Fatalf("invalid create leaked a workflow row: GET returned %d (body=%s), want 404", getStatus, getResp)
+	}
 }
