@@ -18,6 +18,11 @@ type EmailMessage struct {
 	Subject string
 	Text    string
 	HTML    string
+	// ReplyTo, when non-empty, sets the Reply-To header (a bare address). The
+	// email two-way loop uses it to carry a tokenized reply mailbox
+	// (reply+<token>@<inbound-domain>) so a recipient's reply routes back to
+	// the originating conversation.
+	ReplyTo string
 }
 
 // Result is the provider's send outcome (provider message id, etc.).
@@ -99,6 +104,9 @@ func BuildMIME(msg EmailMessage) []byte {
 	}
 	writeHeader("From", msg.From)
 	writeHeader("To", msg.To)
+	if msg.ReplyTo != "" {
+		writeHeader("Reply-To", msg.ReplyTo)
+	}
 	writeHeader("Subject", msg.Subject)
 	writeHeader("MIME-Version", "1.0")
 	writeHeader("Content-Type", contentType)

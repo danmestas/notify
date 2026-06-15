@@ -114,6 +114,12 @@ func (c *Client) Send(ctx context.Context, msg providers.EmailMessage) (provider
 	if msg.Text != "" {
 		body.Text = msg.Text
 	}
+	if msg.ReplyTo != "" {
+		// reply_to is a bare address string (same wire shape as from). The
+		// email two-way loop sets this to reply+<token>@<inbound-domain> so a
+		// recipient reply routes back into the originating conversation.
+		body.ReplyTo = msg.ReplyTo
+	}
 
 	payload, err := json.Marshal(body)
 	if err != nil {

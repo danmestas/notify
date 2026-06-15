@@ -105,6 +105,13 @@ func (s *Store) TopicTriggers() TopicTriggerRepo {
 	return &topicTriggerRepo{w: s.writer, r: s.reader}
 }
 
+// EmailThreads vends the email two-way loop's correlation repository, mapping
+// email-origin conversation threads to their recipient address and inbound
+// domain.
+func (s *Store) EmailThreads() EmailThreadRepo {
+	return &emailThreadRepo{w: s.writer, r: s.reader}
+}
+
 // Pools exposes the writer/reader pairs so sibling bounded-context stores
 // (internal/agents/store) run their Scope-enforced queries over the same
 // SQLite database and migration set instead of opening parallel pools.

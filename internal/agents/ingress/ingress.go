@@ -40,15 +40,24 @@ type EventPublisher interface {
 	PublishInbox(environmentID, subscriberID string, data []byte) error
 }
 
+// ReplyHook is an optional post-persist callback invoked after an agent reply
+// lands on a conversation. The email two-way loop uses it to mail the reply
+// back out on email-origin conversations (emailloop.Service.ReplyHook
+// satisfies it). It runs best-effort: a hook is never allowed to fail the turn,
+// since the reply is already durably persisted. conv is the conversation the
+// reply landed on; text is the concatenated reply body.
+type ReplyHook func(ctx context.Context, scope domain.Scope, conv agentdomain.Conversation, text string)
+
 // Service wires the compose endpoint, the transcript read, and the turn
 // worker around the agents store, the core store, and the engine.
 type Service struct {
-	agents   *agentstore.Store
-	core     *corestore.Store
-	eng      *engine.Engine
-	bus      EventPublisher
-	retry    *engine.RetryPolicy
-	runtimes map[string]agentdomain.Runtime
+	agents    *agentstore.Store
+	core      *corestore.Store
+	eng       *engine.Engine
+	bus       EventPublisher
+	replyHook ReplyHook
+	retry     *engine.RetryPolicy
+	runtimes  map[string]agentdomain.Runtime
 
 	mu         sync.Mutex
 	registered map[string]bool
@@ -92,6 +101,15 @@ func (s *Service) WithRuntime(name string, rt agentdomain.Runtime) *Service {
 // for chaining (tests use a fast policy to reach the DLQ quickly).
 func (s *Service) WithRetry(p *engine.RetryPolicy) *Service {
 	s.retry = p
+	return s
+}
+
+// WithReplyHook attaches an optional post-persist reply callback and returns
+// the service for chaining. The email two-way loop sets it so an agent reply on
+// an email-origin conversation is mailed back out. A nil hook (the default)
+// disables the callback.
+func (s *Service) WithReplyHook(h ReplyHook) *Service {
+	s.replyHook = h
 	return s
 }
 
@@ -527,6 +545,13 @@ func (s *Service) deliverReply(ctx context.Context, scope domain.Scope, conv age
 	// publish failure must not fail (and re-run) the turn.
 	if s.bus != nil && conv.SubscriberID != "" {
 		_ = s.bus.PublishInbox(scope.EnvID, conv.SubscriberID, out)
+	}
+	// Best-effort close-the-loop: on an email-origin conversation the hook
+	// mails the reply back out with the same tokenized Reply-To. Like the
+	// publish above it must never fail (and re-run) the turn — the reply is
+	// already persisted.
+	if s.replyHook != nil {
+		s.replyHook(ctx, scope, conv, text)
 	}
 	return out, nil
 }

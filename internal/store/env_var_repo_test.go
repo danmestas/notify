@@ -10,8 +10,8 @@ import (
 func TestMigrate_0013_AppliesEnvVars(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 17 {
-		t.Fatalf("expected 17 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 18 {
+		t.Fatalf("expected 18 recorded migrations, got %d", n)
 	}
 
 	for _, tbl := range []string{"env_vars", "env_var_values"} {

@@ -29,6 +29,7 @@ import (
 	"github.com/danmestas/notify/internal/credverify"
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/emailloop"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/eventbus"
@@ -178,6 +179,25 @@ func runServe(args []string) error {
 	defer meshClient.Close()
 	ags := agentstore.New(st)
 	ing := ingress.New(ags, st, eng, bus).WithRuntime(agentdomain.RuntimeMesh, meshClient)
+
+	// Email two-way loop: inbound email replies route back to the agent and the
+	// agent's reply mails back out. The responder defaults to the conversation's
+	// agent (ing.ComposeMessage); conn resolves the outbound provider. The reply
+	// hook closes the loop. NOTIFY_INBOUND_SECRET authenticates the mail
+	// forwarder's POST to /v1/inbound/email; an empty secret disables inbound.
+	emlCompose := func(ctx context.Context, scope domain.Scope, agentIdentifier, conversationID, subscriberID, text string) (string, error) {
+		res, err := ing.ComposeMessage(ctx, scope, agentIdentifier, conversationID, subscriberID, text)
+		if err != nil {
+			return "", err
+		}
+		return res.ConversationID, nil
+	}
+	eml := emailloop.New(
+		st, ags, emailloop.NewMinter(mk), conn,
+		emailloop.NewAgentResponder(emlCompose),
+		os.Getenv("NOTIFY_INBOUND_SECRET"), slog.Default(),
+	)
+	ing = ing.WithReplyHook(eml.ReplyHook)
 	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
 
 	eng.StartWorkers(ctx)
@@ -232,7 +252,7 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = anStop() }()
 
-	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag, ing, conn, st, ev, au)
+	handler := httpapi.New(id, aud, trg, inbox, rt, inb, an, ag, ing, conn, st, ev, eml, au)
 
 	// Operator console: same listener, mounted at /console ahead of the
 	// public API. All console reads go through the same Scope-carrying

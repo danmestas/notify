@@ -21,6 +21,7 @@ import (
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/emailloop"
 	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inbound"
@@ -39,7 +40,7 @@ import (
 // (GET /v1/notifications, GET /v1/notifications/{id}).
 // wh may be nil; when non-nil it enables webhook-endpoint management routes
 // (GET/POST /v1/webhooks/endpoints, GET/PUT/DELETE /v1/webhooks/endpoints/{id}).
-func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, inb *inbound.Service, an *analytics.Service, ag *agentsapi.Service, ing *ingress.Service, conn *connectivity.Service, st *store.Store, ev *envvars.Service, auth ...*authoring.Service) http.Handler {
+func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, inb *inbound.Service, an *analytics.Service, ag *agentsapi.Service, ing *ingress.Service, conn *connectivity.Service, st *store.Store, ev *envvars.Service, eml *emailloop.Service, auth ...*authoring.Service) http.Handler {
 	if len(auth) > 1 {
 		panic("httpapi.New: at most one *authoring.Service")
 	}
@@ -66,6 +67,14 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 	// Liveness probe, mounted outside the auth group so container/orchestrator
 	// health checks need no API key.
 	r.Get("/healthz", healthz)
+	// Inbound email parse webhook (the email two-way loop). Mounted OUTSIDE the
+	// API-key group: a mail forwarder (Cloudflare Email Worker / Resend inbound)
+	// has no API key, so the handler authenticates the X-Inbound-Secret shared
+	// secret itself. A nil service (no master key / store) leaves the route
+	// unmounted.
+	if eml != nil {
+		r.Post("/v1/inbound/email", eml.HandleInbound)
+	}
 	r.Group(func(pr chi.Router) {
 		pr.Use(id.Middleware)
 		pr.Post("/v1/subscribers", postSubscriber(aud))

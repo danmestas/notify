@@ -54,7 +54,7 @@ func setupWorkflowSuite(t *testing.T) (srv *httptest.Server, authHeader string, 
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	srv = httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, nil, nil, nil, nil, nil, nil, nil, auth))
+	srv = httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, nil, nil, nil, nil, nil, nil, nil, nil, auth))
 	t.Cleanup(srv.Close)
 
 	return srv, "ApiKey " + key, auth, scope
