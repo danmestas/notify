@@ -63,13 +63,113 @@ func pushEnvelope() runenv.InAppEnvelope {
 // seedTopic registers the subscriber's ntfy topic in subscriber_channels.
 func seedTopic(t *testing.T, s *store.Store, topic string) {
 	t.Helper()
+	seedPushAddress(t, s, "ntfy", topic)
+}
+
+// seedPushAddress registers the subscriber's push address (ntfy topic, Expo
+// push token, or FCM registration token) for providerID in subscriber_channels.
+// All push providers store the per-subscriber destination in the "topic" field,
+// keyed by the resolved provider id — HandlePush looks it up via GetByProvider.
+func seedPushAddress(t *testing.T, s *store.Store, providerID, address string) {
+	t.Helper()
 	if _, err := s.SubscriberChannels().Upsert(context.Background(), domain.Scope{OrgID: "org_1", EnvID: "env_1"}, domain.SubscriberChannel{
 		SubscriberID: "user_123",
-		ProviderID:   "ntfy",
+		ProviderID:   providerID,
 		Type:         "push",
-		Credentials:  json.RawMessage(`{"topic":"` + topic + `"}`),
+		Credentials:  json.RawMessage(`{"topic":"` + address + `"}`),
 	}); err != nil {
 		t.Fatalf("SubscriberChannels.Upsert: %v", err)
+	}
+}
+
+// TestHandlePush_RoutesToResolvedProvider proves HandlePush dispatches through
+// whatever provider the resolver returns (ntfy|expo|fcm), addresses it with the
+// subscriber_channels row keyed by that provider id, and stamps the message
+// with the resolved provider id.
+func TestHandlePush_RoutesToResolvedProvider(t *testing.T) {
+	cases := []struct {
+		providerID string
+		address    string
+	}{
+		{"ntfy", "agent-alerts"},
+		{"expo", "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"},
+		{"fcm", "fcm-registration-token-abc123"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.providerID, func(t *testing.T) {
+			ctx := context.Background()
+			s := newStore(t)
+			seedPushAddress(t, s, tc.providerID, tc.address)
+			capt := providers.NewCapturePush()
+			h := NewPush(s, stubPushResolver{p: capt, id: tc.providerID})
+
+			input, err := json.Marshal(pushEnvelope())
+			if err != nil {
+				t.Fatalf("marshal envelope: %v", err)
+			}
+			if _, err := h.HandlePush(ctx, engine.TaskPayload{RunID: "run_" + tc.providerID, StepID: "P1", Input: input}); err != nil {
+				t.Fatalf("HandlePush: %v", err)
+			}
+
+			msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "push")
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if len(msgs) != 1 {
+				t.Fatalf("expected exactly one message, got %d", len(msgs))
+			}
+			if msgs[0].Status != "sent" {
+				t.Errorf("Status = %q, want sent (err=%q)", msgs[0].Status, msgs[0].ErrorText)
+			}
+			if msgs[0].ProviderID != tc.providerID {
+				t.Errorf("ProviderID = %q, want %q", msgs[0].ProviderID, tc.providerID)
+			}
+
+			sent := capt.Sent()
+			if len(sent) != 1 {
+				t.Fatalf("capt.Sent() len = %d, want 1", len(sent))
+			}
+			if sent[0].Topic != tc.address {
+				t.Errorf("addressed Topic = %q, want device token %q", sent[0].Topic, tc.address)
+			}
+		})
+	}
+}
+
+// TestHandlePush_MissingTokenForProviderIsError proves a subscriber with no
+// push address for the resolved provider records a permanent "error" message
+// (not a crashed run), and never invokes the provider.
+func TestHandlePush_MissingTokenForProviderIsError(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	// Seed only an ntfy address; resolve to expo so the lookup misses.
+	seedPushAddress(t, s, "ntfy", "agent-alerts")
+	capt := providers.NewCapturePush()
+	h := NewPush(s, stubPushResolver{p: capt, id: "expo"})
+
+	input, err := json.Marshal(pushEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandlePush(ctx, engine.TaskPayload{RunID: "run_miss", StepID: "P1", Input: input}); err != nil {
+		t.Fatalf("HandlePush returned a non-nil error, want a persisted error message: %v", err)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "push")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	if msgs[0].Status != "error" {
+		t.Errorf("Status = %q, want error", msgs[0].Status)
+	}
+	if msgs[0].ProviderID != "expo" {
+		t.Errorf("ProviderID = %q, want expo (resolved provider on the error row)", msgs[0].ProviderID)
+	}
+	if got := len(capt.Sent()); got != 0 {
+		t.Errorf("provider invoked %d times on missing address, want 0", got)
 	}
 }
 

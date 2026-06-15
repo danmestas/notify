@@ -17,6 +17,8 @@ import (
 	"github.com/danmestas/notify/internal/providers"
 	"github.com/danmestas/notify/internal/providers/cloudflareemail"
 	"github.com/danmestas/notify/internal/providers/discord"
+	"github.com/danmestas/notify/internal/providers/expo"
+	"github.com/danmestas/notify/internal/providers/fcm"
 	"github.com/danmestas/notify/internal/providers/ntfy"
 	"github.com/danmestas/notify/internal/providers/signalwire"
 	"github.com/danmestas/notify/internal/providers/telegram"
@@ -69,6 +71,26 @@ type SMTPConfig struct {
 type NtfyConfig struct {
 	BaseURL string `json:"base_url"`
 	Token   string `json:"token"`
+}
+
+// ExpoConfig is the credential payload for an Expo push integration: the
+// optional Expo access token, JSON-encoded and AES-256-GCM-sealed into
+// Integration.EncCredentials. The per-subscriber device token (an
+// ExponentPushToken) lives in subscriber_channels, not here. An empty token is
+// valid — Expo accepts unauthenticated sends for projects without an enforced
+// access token.
+type ExpoConfig struct {
+	AccessToken string `json:"access_token"`
+}
+
+// FCMConfig is the credential payload for a Firebase Cloud Messaging push
+// integration: the service-account JSON (used to mint OAuth2 bearers for the
+// HTTP v1 API) and the Firebase project id, JSON-encoded and AES-256-GCM-sealed
+// into Integration.EncCredentials. The per-subscriber registration token lives
+// in subscriber_channels, not here.
+type FCMConfig struct {
+	ServiceAccount string `json:"service_account"`
+	ProjectID      string `json:"project_id"`
 }
 
 // CloudflareEmailConfig is the credential payload for a Cloudflare Email
@@ -268,11 +290,65 @@ func (svc *Service) CreateNtfy(ctx context.Context, scope domain.Scope, identifi
 	})
 }
 
+// CreateExpo stores an Expo push integration for the Scope: it AES-GCM-encrypts
+// the JSON-encoded cfg into EncCredentials, with ProviderID="expo" and
+// Channel="push". When primary is set the integration becomes the preferred
+// provider for the channel.
+func (svc *Service) CreateExpo(ctx context.Context, scope domain.Scope, identifier string, cfg ExpoConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal expo config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt expo config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "expo",
+		Channel:        "push",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
+// CreateFCM stores a Firebase Cloud Messaging push integration for the Scope:
+// it AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="fcm" and Channel="push". When primary is set the integration
+// becomes the preferred provider for the channel.
+func (svc *Service) CreateFCM(ctx context.Context, scope domain.Scope, identifier string, cfg FCMConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal fcm config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt fcm config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "fcm",
+		Channel:        "push",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
 // ResolvePush returns the active push provider, its provider id, and
-// integration ID for the Scope. It loads the active push integration,
-// decrypts its credentials into an NtfyConfig, and builds a *ntfy.Client.
-// The integration ID (third return) is used by delivery/push.go to populate
-// domain.Message.IntegrationID (BP-13b).
+// integration ID for the Scope. It loads the active push integration, decrypts
+// its credentials, and builds the appropriate provider based on the
+// integration's ProviderID:
+//
+//   - "ntfy" → *ntfy.Client (server base URL + token)
+//   - "expo" → *expo.Client (optional access token)
+//   - "fcm"  → *fcm.Client  (service-account JSON → OAuth2 bearer, project id)
+//
+// Return order: (provider, providerID, integrationID, error). The integration
+// ID is used by delivery/push.go to populate domain.Message.IntegrationID
+// (BP-13b). An unknown provider fails closed. An empty ProviderID is treated as
+// "ntfy" to normalise legacy rows created before push had multiple providers.
 func (svc *Service) ResolvePush(ctx context.Context, scope domain.Scope) (providers.PushProvider, string, string, error) {
 	in, err := svc.store.Integrations().GetActiveByChannel(ctx, scope, "push")
 	if err != nil {
@@ -280,13 +356,42 @@ func (svc *Service) ResolvePush(ctx context.Context, scope domain.Scope) (provid
 	}
 	plaintext, err := svc.decrypt(in.EncCredentials)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("connectivity: decrypt ntfy config: %w", err)
+		return nil, "", "", fmt.Errorf("connectivity: decrypt push config: %w", err)
 	}
-	var cfg NtfyConfig
-	if err := json.Unmarshal(plaintext, &cfg); err != nil {
-		return nil, "", "", fmt.Errorf("connectivity: unmarshal ntfy config: %w", err)
+
+	providerID := in.ProviderID
+	if providerID == "" {
+		providerID = "ntfy" // normalise legacy rows that predate the field
 	}
-	return &ntfy.Client{BaseURL: cfg.BaseURL, Token: cfg.Token}, in.ProviderID, in.ID, nil
+
+	switch providerID {
+	case "ntfy":
+		var cfg NtfyConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", fmt.Errorf("connectivity: unmarshal ntfy config: %w", err)
+		}
+		return &ntfy.Client{BaseURL: cfg.BaseURL, Token: cfg.Token}, providerID, in.ID, nil
+	case "expo":
+		var cfg ExpoConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", fmt.Errorf("connectivity: unmarshal expo config: %w", err)
+		}
+		return &expo.Client{AccessToken: cfg.AccessToken}, providerID, in.ID, nil
+	case "fcm":
+		var cfg FCMConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", fmt.Errorf("connectivity: unmarshal fcm config: %w", err)
+		}
+		client, err := fcm.NewClient(ctx, []byte(cfg.ServiceAccount), cfg.ProjectID)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("connectivity: build fcm client: %w", err)
+		}
+		return client, providerID, in.ID, nil
+	default:
+		// Fail closed: an unknown push provider must not be silently decoded as
+		// another provider's config.
+		return nil, "", "", fmt.Errorf("connectivity: unknown push provider %q", in.ProviderID)
+	}
 }
 
 // CreateDiscord stores a Discord chat integration for the Scope: it

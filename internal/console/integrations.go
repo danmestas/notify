@@ -43,6 +43,8 @@ var providerCatalog = []providerMeta{
 	{ID: "smtp", Label: "SMTP Email", Channel: "email"},
 	{ID: "cloudflare_email", Label: "Cloudflare Email", Channel: "email"},
 	{ID: "ntfy", Label: "ntfy Push", Channel: "push"},
+	{ID: "expo", Label: "Expo Push", Channel: "push"},
+	{ID: "fcm", Label: "Firebase (FCM)", Channel: "push"},
 	{ID: "discord", Label: "Discord", Channel: "chat"},
 	{ID: "telegram", Label: "Telegram", Channel: "chat"},
 	{ID: "twilio", Label: "Twilio SMS", Channel: "sms"},
@@ -246,6 +248,15 @@ func credentialFieldsForProvider(providerID string) []integrationCredentialField
 		return []integrationCredentialField{
 			{Key: "base_url", Label: "Server URL", Value: connectivity.CredentialMaskSentinel, Required: true},
 			{Key: "token", Label: "Access Token", Value: connectivity.CredentialMaskSentinel},
+		}
+	case "expo":
+		return []integrationCredentialField{
+			{Key: "access_token", Label: "Access Token (optional)", Value: connectivity.CredentialMaskSentinel},
+		}
+	case "fcm":
+		return []integrationCredentialField{
+			{Key: "service_account", Label: "Service Account JSON", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "project_id", Label: "Project ID", Value: connectivity.CredentialMaskSentinel, Required: true},
 		}
 	case "twilio":
 		return []integrationCredentialField{
@@ -700,6 +711,17 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			Token:   r.FormValue("token"),
 		}
 		_, createErr = c.deps.Connectivity.CreateNtfy(r.Context(), scope, identifier, cfg, primary)
+	case "expo":
+		cfg := connectivity.ExpoConfig{
+			AccessToken: r.FormValue("access_token"),
+		}
+		_, createErr = c.deps.Connectivity.CreateExpo(r.Context(), scope, identifier, cfg, primary)
+	case "fcm":
+		cfg := connectivity.FCMConfig{
+			ServiceAccount: r.FormValue("service_account"),
+			ProjectID:      r.FormValue("project_id"),
+		}
+		_, createErr = c.deps.Connectivity.CreateFCM(r.Context(), scope, identifier, cfg, primary)
 	case "cloudflare_email":
 		cfg := connectivity.CloudflareEmailConfig{
 			AccountID: r.FormValue("account_id"),

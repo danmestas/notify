@@ -260,17 +260,29 @@ func putSubscriberCredentials(aud *audience.Service) http.HandlerFunc {
 	}
 }
 
-// pushIntegrationRequest is the POST /v1/integrations/push body: the ntfy
-// server credentials sealed into the integration row.
+// pushIntegrationRequest is the POST /v1/integrations/push body. The "provider"
+// field selects the backend: "ntfy" (default) uses baseUrl/token; "expo" uses
+// the optional accessToken; "fcm" uses serviceAccount/projectId. token,
+// accessToken, and serviceAccount are secrets and are never echoed back. An
+// empty provider defaults to "ntfy" for backward compatibility.
 type pushIntegrationRequest struct {
 	Identifier string `json:"identifier"`
-	BaseURL    string `json:"baseUrl"`
-	Token      string `json:"token"`
+	Provider   string `json:"provider"` // "ntfy" (default), "expo", or "fcm"
 	Primary    bool   `json:"primary"`
+	// ntfy fields.
+	BaseURL string `json:"baseUrl"`
+	Token   string `json:"token"`
+	// expo field (optional).
+	AccessToken string `json:"accessToken"`
+	// fcm fields.
+	ServiceAccount string `json:"serviceAccount"`
+	ProjectID      string `json:"projectId"`
 }
 
-// postPushIntegration creates an ntfy push integration within the request
-// Scope and returns a slim DTO (no credential bytes) with 201.
+// postPushIntegration creates a push integration within the request Scope and
+// returns a slim DTO (no credential bytes) with 201. The "provider" field
+// selects ntfy (default), expo, or fcm; an unknown provider fails closed with
+// 400.
 func postPushIntegration(conn *connectivity.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req pushIntegrationRequest
@@ -278,19 +290,57 @@ func postPushIntegration(conn *connectivity.Service) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if req.BaseURL == "" {
-			http.Error(w, "baseUrl is required", http.StatusBadRequest)
-			return
-		}
 		scope := identity.ScopeFrom(r.Context())
-		in, err := conn.CreateNtfy(r.Context(), scope, req.Identifier, connectivity.NtfyConfig{
-			BaseURL: req.BaseURL,
-			Token:   req.Token,
-		}, req.Primary)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+
+		provider := req.Provider
+		if provider == "" {
+			provider = "ntfy"
+		}
+
+		var (
+			in  domain.Integration
+			err error
+		)
+		switch provider {
+		case "ntfy":
+			if req.BaseURL == "" {
+				http.Error(w, "baseUrl is required for ntfy", http.StatusBadRequest)
+				return
+			}
+			in, err = conn.CreateNtfy(r.Context(), scope, req.Identifier, connectivity.NtfyConfig{
+				BaseURL: req.BaseURL,
+				Token:   req.Token,
+			}, req.Primary)
+		case "expo":
+			// Expo's access token is optional; no required field beyond the
+			// per-subscriber device token, which lives in subscriber_channels.
+			in, err = conn.CreateExpo(r.Context(), scope, req.Identifier, connectivity.ExpoConfig{
+				AccessToken: req.AccessToken,
+			}, req.Primary)
+		case "fcm":
+			if req.ServiceAccount == "" {
+				http.Error(w, "serviceAccount is required for fcm", http.StatusBadRequest)
+				return
+			}
+			if req.ProjectID == "" {
+				http.Error(w, "projectId is required for fcm", http.StatusBadRequest)
+				return
+			}
+			in, err = conn.CreateFCM(r.Context(), scope, req.Identifier, connectivity.FCMConfig{
+				ServiceAccount: req.ServiceAccount,
+				ProjectID:      req.ProjectID,
+			}, req.Primary)
+		default:
+			http.Error(w, "unknown provider "+req.Provider+"; allowed: ntfy, expo, fcm", http.StatusBadRequest)
 			return
 		}
+		if err != nil {
+			// Never surface the underlying error: wrapped marshal/encrypt/store
+			// detail could carry credential-bearing config fields.
+			http.Error(w, "failed to create push integration", http.StatusInternalServerError)
+			return
+		}
+		// Sensitive fields (token, accessToken, serviceAccount) are never echoed.
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"id":         in.ID,
 			"providerId": in.ProviderID,
@@ -1117,6 +1167,8 @@ var integrationSecretFields = map[string]map[string]bool{
 	"smtp":             {"password": true},
 	"cloudflare-email": {"api_token": true},
 	"ntfy":             {"token": true},
+	"expo":             {"access_token": true},
+	"fcm":              {"service_account": true},
 	"discord":          {"webhook_url": true},
 	"telegram":         {"bot_token": true},
 	"twilio":           {"auth_token": true},
@@ -1276,6 +1328,15 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 				BaseURL: req.Credentials["base_url"],
 				Token:   req.Credentials["token"],
 			}, req.Primary)
+		case "expo":
+			in, err = conn.CreateExpo(r.Context(), scope, req.Identifier, connectivity.ExpoConfig{
+				AccessToken: req.Credentials["access_token"],
+			}, req.Primary)
+		case "fcm":
+			in, err = conn.CreateFCM(r.Context(), scope, req.Identifier, connectivity.FCMConfig{
+				ServiceAccount: req.Credentials["service_account"],
+				ProjectID:      req.Credentials["project_id"],
+			}, req.Primary)
 		case "discord":
 			in, err = conn.CreateDiscord(r.Context(), scope, req.Identifier, connectivity.DiscordConfig{
 				WebhookURL: req.Credentials["webhook_url"],
@@ -1298,7 +1359,7 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 				From:      req.Credentials["from"],
 			}, req.Primary)
 		default:
-			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, ntfy, discord, telegram, twilio, signalwire", http.StatusBadRequest)
+			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, ntfy, expo, fcm, discord, telegram, twilio, signalwire", http.StatusBadRequest)
 			return
 		}
 		if err != nil {
