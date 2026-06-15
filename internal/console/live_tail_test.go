@@ -435,7 +435,16 @@ func TestServeActivityStream_LivePrependEndToEnd(t *testing.T) {
 		WorkflowID: wf.ID, SubscriberID: "sub-1", Channel: "in_app",
 		Status: "sent", CreatedAt: "2026-06-13T00:00:00Z",
 	}))
-	rec.waitForBody(t, "activity-row-live-1")
+	// Wait for the prepend patch's rendered HTML, not the remove patch. The
+	// handler emits two SSE events: (1) a remove patch keyed on the row id, then
+	// (2) a prepend patch whose body contains the resolved workflow name.
+	// Waiting on "activity-row-live-1" races: that string appears in the remove
+	// patch, so cancel() can fire before the prepend patch is flushed, causing
+	// the "Welcome" assertion below to fail non-deterministically under -race.
+	// Waiting on "Welcome" (the rendered workflow name) is the correct sentinel:
+	// it only appears in the prepend patch, so cancel() only fires after both
+	// patches have been written.
+	rec.waitForBody(t, "Welcome")
 
 	cancel()
 	<-done
