@@ -47,10 +47,15 @@ func stubServer(t *testing.T, status int, respBody string) (*httptest.Server, *c
 
 // TestClient_Send_Wire pins the exact Cloudflare Email Sending API wire:
 // POST .../accounts/{id}/email/sending/send, Authorization Bearer,
-// Content-Type application/json, from.address (not from.email), both html+text,
-// reply_to snake_case.
+// Content-Type application/json, from as a PLAIN STRING address (NOT an
+// {"address":...} object — that object-without-name form is what the live API
+// rejected with HTTP 400 / code 10001 invalid_request_schema), both html+text,
+// reply_to snake_case. It also pins that result.message_id is surfaced as the
+// ProviderMessageID.
 func TestClient_Send_Wire(t *testing.T) {
-	const respBody = `{"success":true,"result":{"delivered":["alice@example.com"],"permanent_bounces":[],"queued":[]},"errors":[]}`
+	const wantMsgID = "<abc123@craftdesign.group>"
+	respBody := `{"success":true,"result":{"message_id":"` + wantMsgID +
+		`","delivered":["alice@example.com"],"permanent_bounces":[],"queued":[]},"errors":[]}`
 	srv, got := stubServer(t, http.StatusOK, respBody)
 
 	c := &Client{
@@ -68,8 +73,9 @@ func TestClient_Send_Wire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if res.ProviderMessageID != "cf-email:alice@example.com" {
-		t.Errorf("ProviderMessageID = %q, want %q", res.ProviderMessageID, "cf-email:alice@example.com")
+	// The real Message-ID from result.message_id is surfaced.
+	if res.ProviderMessageID != wantMsgID {
+		t.Errorf("ProviderMessageID = %q, want %q", res.ProviderMessageID, wantMsgID)
 	}
 
 	// Method and path.
@@ -88,9 +94,20 @@ func TestClient_Send_Wire(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", h)
 	}
 
-	// from must use "address" not "email".
-	if got.parsedBody.From.Address != "notify@example.com" {
-		t.Errorf("from.address = %q, want notify@example.com", got.parsedBody.From.Address)
+	// from must be a plain string, parsed straight from the typed body.
+	if got.parsedBody.From != "notify@example.com" {
+		t.Errorf("from = %q, want notify@example.com", got.parsedBody.From)
+	}
+
+	// Wire-level guard against the 10001 regression: the raw JSON must carry
+	// from as a string (`"from":"notify@example.com"`), NOT an object
+	// (`"from":{`). The object-without-name shape is exactly what the live
+	// endpoint rejected with invalid_request_schema.
+	if !strings.Contains(got.body, `"from":"notify@example.com"`) {
+		t.Errorf("body must send from as a plain string, got: %s", got.body)
+	}
+	if strings.Contains(got.body, `"from":{`) {
+		t.Errorf("body must NOT send from as an object (10001 regression), got: %s", got.body)
 	}
 
 	// Both html and text sent.

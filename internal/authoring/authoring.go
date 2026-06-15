@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -174,6 +175,46 @@ func (s *Service) Publish(ctx context.Context, scope domain.Scope, triggerIdenti
 		return nil
 	}
 	return s.eng.RegisterWorkflow(ctx, def)
+}
+
+// RepublishAll re-registers every persisted workflow with the engine. It is
+// called once at boot: the dagnats engine holds its workflow registry in
+// memory and loses it on restart, so a workflow that was only registered at
+// create/update time silently stops firing (the engine runs it with
+// task_count=0) until the row is saved again. RepublishAll closes that gap by
+// compiling and re-registering each stored workflow on startup.
+//
+// It is resilient by design: a workflow that fails to compile (e.g. a
+// malformed delay step persisted by an older version) is logged and skipped
+// rather than aborting boot. The count of successfully re-registered workflows
+// is returned for the caller to log. A nil engine (store-only wiring) makes
+// this a no-op returning 0.
+func (s *Service) RepublishAll(ctx context.Context) (int, error) {
+	wfs, err := s.store.Workflows().ListAll(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("authoring: list all workflows: %w", err)
+	}
+	if s.eng == nil {
+		return 0, nil
+	}
+	registered := 0
+	for _, wf := range wfs {
+		def, cErr := Compile(wf)
+		if cErr != nil {
+			slog.Default().Error("authoring: republish skip (compile failed)",
+				"workflow_id", wf.ID, "trigger_identifier", wf.TriggerIdentifier,
+				"org_id", wf.OrgID, "env_id", wf.EnvID, "err", cErr)
+			continue
+		}
+		if rErr := s.eng.RegisterWorkflow(ctx, def); rErr != nil {
+			slog.Default().Error("authoring: republish skip (register failed)",
+				"workflow_id", wf.ID, "trigger_identifier", wf.TriggerIdentifier,
+				"org_id", wf.OrgID, "env_id", wf.EnvID, "err", rErr)
+			continue
+		}
+		registered++
+	}
+	return registered, nil
 }
 
 // UpdateInput carries the mutable fields for an Update call.

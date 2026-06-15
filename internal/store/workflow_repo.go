@@ -16,6 +16,12 @@ type WorkflowRepo interface {
 	GetByTriggerIdentifier(ctx context.Context, scope domain.Scope, triggerID string) (domain.Workflow, error)
 	GetByID(ctx context.Context, scope domain.Scope, id string) (domain.Workflow, error)
 	List(ctx context.Context, scope domain.Scope) ([]domain.Workflow, error)
+	// ListAll returns every workflow row across all orgs/envs, ordered by
+	// rowid. It exists for boot-time re-registration (RepublishAll): the
+	// engine loses its in-memory workflow registry on restart, and main.go
+	// must re-register every persisted workflow without knowing the set of
+	// scopes ahead of time. It is intentionally NOT scope-filtered.
+	ListAll(ctx context.Context) ([]domain.Workflow, error)
 	// Update replaces the mutable fields (name, steps, payload_schema) of the
 	// workflow identified by wf.ID within the scope. Returns ErrNotFound when
 	// no matching row exists in this scope.
@@ -112,6 +118,36 @@ func (repo *workflowRepo) List(ctx context.Context, scope domain.Scope) ([]domai
 		`SELECT id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version
 		 FROM workflows WHERE org_id = ? AND environment_id = ? ORDER BY rowid`,
 		scope.OrgID, scope.EnvID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var wfs []domain.Workflow
+	for rows.Next() {
+		var (
+			wf            domain.Workflow
+			steps, schema []byte
+		)
+		if err := rows.Scan(&wf.ID, &wf.OrgID, &wf.EnvID, &wf.Name, &wf.TriggerIdentifier, &wf.Active, &wf.Origin,
+			&steps, &schema, &wf.CompiledDAGVer); err != nil {
+			return nil, err
+		}
+		wf.Steps = steps
+		wf.PayloadSchema = schema
+		wfs = append(wfs, wf)
+	}
+	return wfs, rows.Err()
+}
+
+// ListAll returns every workflow across all scopes, ordered by rowid. Used by
+// authoring.Service.RepublishAll at boot to re-register each persisted workflow
+// with a freshly-restarted engine.
+func (repo *workflowRepo) ListAll(ctx context.Context) ([]domain.Workflow, error) {
+	rows, err := repo.r.QueryContext(
+		ctx,
+		`SELECT id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version
+		 FROM workflows ORDER BY rowid`,
 	)
 	if err != nil {
 		return nil, err

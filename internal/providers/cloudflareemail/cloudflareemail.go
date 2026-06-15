@@ -5,7 +5,16 @@
 //
 // Authorization: Bearer <token>. Both html and text bodies are sent when
 // available. reply_to uses snake_case per the Cloudflare wire format.
-// from is sent as an object with address/name, not a flat string.
+//
+// WIRE SHAPE: from/reply_to are sent as a PLAIN STRING (the bare address),
+// not an object. The live endpoint rejects the object form when it carries
+// only {"address": ...} with no "name": such a body returns HTTP 400
+// {"code":10001,"message":"email.sending.error.invalid_request_schema"}.
+// notify's sender is address-only (no display name), so the string form is
+// both correct and the documented "simple send" shape. Confirmed against the
+// live API: `{"from":"notify@craftdesign.group", ...}` → 200; the
+// `{"from":{"address":"notify@craftdesign.group"}, ...}` object-without-name
+// form → 400/10001. The object form is only accepted when a name is present.
 //
 // Retry classification per 0001 §10:
 //
@@ -44,25 +53,27 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
-// cfFromAddress is the from/reply_to object shape the Cloudflare API requires.
-// Cloudflare uses "address" NOT "email" for the sender address field.
-type cfFromAddress struct {
-	Address string `json:"address"`
-	Name    string `json:"name,omitempty"`
-}
-
 // cfSendRequest is the JSON body for POST …/email/sending/send.
+//
+// from and reply_to are plain-string addresses. The Cloudflare endpoint
+// accepts either a bare string or an object {address, name}, but rejects an
+// object that has address-only and no name (HTTP 400 / code 10001). Since
+// notify sends an address with no display name, the string form is the
+// schema-valid choice.
 type cfSendRequest struct {
-	To      string         `json:"to"`
-	From    cfFromAddress  `json:"from"`
-	Subject string         `json:"subject"`
-	HTML    string         `json:"html,omitempty"`
-	Text    string         `json:"text,omitempty"`
-	ReplyTo *cfFromAddress `json:"reply_to,omitempty"`
+	To      string `json:"to"`
+	From    string `json:"from"`
+	Subject string `json:"subject"`
+	HTML    string `json:"html,omitempty"`
+	Text    string `json:"text,omitempty"`
+	ReplyTo string `json:"reply_to,omitempty"`
 }
 
 // cfSendResult is the result sub-object of the Cloudflare send response.
+// MessageID is the RFC-5322 Message-ID the endpoint assigns to the send;
+// the live API returns it at result.message_id on a 200.
 type cfSendResult struct {
+	MessageID        string   `json:"message_id"`
 	Delivered        []string `json:"delivered"`
 	PermanentBounces []string `json:"permanent_bounces"`
 	Queued           []string `json:"queued"`
@@ -94,7 +105,7 @@ func (c *Client) Send(ctx context.Context, msg providers.EmailMessage) (provider
 
 	body := cfSendRequest{
 		To:      msg.To,
-		From:    cfFromAddress{Address: c.From},
+		From:    c.From,
 		Subject: msg.Subject,
 	}
 	if msg.HTML != "" {
@@ -177,7 +188,11 @@ func (c *Client) Send(ctx context.Context, msg providers.EmailMessage) (provider
 			strings.Join(codes, "; "))
 	}
 
-	// Treat "delivered" and "queued" as success; return a synthetic message id
-	// built from the recipient address since the API does not return a message id.
+	// Success: prefer the real RFC-5322 Message-ID the API returns at
+	// result.message_id. Older/edge responses may omit it (e.g. delivered/
+	// queued only), so fall back to a synthetic id built from the recipient.
+	if cfResp.Result.MessageID != "" {
+		return providers.Result{ProviderMessageID: cfResp.Result.MessageID}, nil
+	}
 	return providers.Result{ProviderMessageID: "cf-email:" + msg.To}, nil
 }

@@ -196,6 +196,18 @@ func runServe(args []string) error {
 	id := identity.New(st, mk)
 	aud := audience.New(st)
 	au := authoring.New(st, eng)
+
+	// Re-register every persisted workflow with the freshly-started engine.
+	// dagnats holds its workflow registry in memory and loses it on restart;
+	// without this, existing workflows silently stop firing (the engine runs
+	// them with task_count=0) until each is re-saved. Resilient by design: a
+	// workflow that fails to compile is logged and skipped, never aborting boot.
+	if n, err := au.RepublishAll(ctx); err != nil {
+		slog.Default().Error("authoring: republish all workflows", "err", err)
+	} else {
+		slog.Default().Info("authoring: re-registered persisted workflows", "count", n)
+	}
+
 	trg := trigger.New(aud, st, eng).WithDigester(bus)
 	inbox := inboxapi.New(st)
 	rt := realtime.New(bus)

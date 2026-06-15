@@ -235,6 +235,139 @@ func mustSteps(t *testing.T, steps []domain.Step) json.RawMessage {
 	return b
 }
 
+// TestRepublishAll_RegistersAllStoredWorkflows seeds workflows across two
+// scopes and asserts RepublishAll re-registers every one of them with the
+// engine. This is the boot-time path that survives an engine restart: without
+// it, persisted workflows fire with task_count=0 until re-saved.
+func TestRepublishAll_RegistersAllStoredWorkflows(t *testing.T) {
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	defer eng.Stop()
+
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, eng)
+
+	// Two scopes, three workflows total — proves ListAll spans org/env.
+	scopeA := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+	scopeB := domain.Scope{OrgID: "org_2", EnvID: "env_2"}
+	seed := func(scope domain.Scope, name, slug string) {
+		t.Helper()
+		if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+			Name:              name,
+			TriggerIdentifier: slug,
+			Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}},
+		}); err != nil {
+			t.Fatalf("Create %s: %v", slug, err)
+		}
+	}
+	seed(scopeA, "Welcome", "welcome")
+	seed(scopeA, "Reminder", "reminder")
+	seed(scopeB, "Invite", "invite")
+
+	// A fresh engine has no in-memory registry: RepublishAll must re-register
+	// all three. Create persists rows; it does not depend on the engine
+	// retaining them, so this models the post-restart state.
+	n, err := svc.RepublishAll(ctx)
+	if err != nil {
+		t.Fatalf("RepublishAll: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("RepublishAll registered %d workflows, want 3", n)
+	}
+}
+
+// TestRepublishAll_SkipsUncompilableWorkflow proves resilience: a stored
+// workflow with steps that fail Compile (malformed delay) is logged-and-skipped
+// rather than aborting the whole re-registration. The valid workflow still gets
+// registered. The bad row is written directly through the store to bypass
+// Create's compile-on-write validation (which would reject it up front).
+func TestRepublishAll_SkipsUncompilableWorkflow(t *testing.T) {
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	defer eng.Stop()
+
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, eng)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	// One valid workflow via the normal path.
+	if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}},
+	}); err != nil {
+		t.Fatalf("Create valid: %v", err)
+	}
+
+	// One INVALID workflow written straight to the store (delay amount <= 0
+	// fails Compile). Create would reject this, so go through the repo directly.
+	bad := domain.Workflow{
+		Name:              "Broken",
+		TriggerIdentifier: "broken",
+		Active:            true,
+		Steps:             mustSteps(t, []domain.Step{{StepID: "D1", Type: "delay", ControlValues: json.RawMessage(`{"amount":0,"unit":"seconds"}`)}}),
+	}
+	if _, err := st.Workflows().Create(ctx, scope, bad); err != nil {
+		t.Fatalf("seed bad workflow: %v", err)
+	}
+
+	// RepublishAll must not abort on the bad one; it registers the good one.
+	n, err := svc.RepublishAll(ctx)
+	if err != nil {
+		t.Fatalf("RepublishAll: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("RepublishAll registered %d workflows, want 1 (bad one skipped)", n)
+	}
+}
+
+// TestRepublishAll_NilEngineNoop verifies that a store-only service (nil
+// engine) returns 0 without error — mirrors Publish/Update's nil-engine guard.
+func TestRepublishAll_NilEngineNoop(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, nil)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+	if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	n, err := svc.RepublishAll(ctx)
+	if err != nil {
+		t.Fatalf("RepublishAll (nil engine): %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("RepublishAll with nil engine returned %d, want 0", n)
+	}
+}
+
 func TestUpdate_RecompilesAndReregisters(t *testing.T) {
 	natsURL, bridgeURL := dagtest.StartSidecar(t)
 	eng, err := engine.New(natsURL, bridgeURL)
