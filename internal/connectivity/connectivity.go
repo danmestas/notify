@@ -18,7 +18,9 @@ import (
 	"github.com/danmestas/notify/internal/providers/cloudflareemail"
 	"github.com/danmestas/notify/internal/providers/discord"
 	"github.com/danmestas/notify/internal/providers/ntfy"
+	"github.com/danmestas/notify/internal/providers/signalwire"
 	"github.com/danmestas/notify/internal/providers/telegram"
+	"github.com/danmestas/notify/internal/providers/twilio"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -93,6 +95,28 @@ type DiscordConfig struct {
 // subscriber_channels, not here.
 type TelegramConfig struct {
 	BotToken string `json:"bot_token"`
+}
+
+// TwilioConfig is the credential payload for a Twilio SMS integration: the
+// account SID, auth token, and sender number, JSON-encoded and AES-256-GCM-sealed
+// into Integration.EncCredentials. The per-subscriber recipient is the
+// subscriber model's phone number, not stored here.
+type TwilioConfig struct {
+	AccountSID string `json:"account_sid"`
+	AuthToken  string `json:"auth_token"`
+	From       string `json:"from"`
+}
+
+// SignalWireConfig is the credential payload for a SignalWire SMS integration:
+// the project id, API token, Space host, and sender number, JSON-encoded and
+// AES-256-GCM-sealed into Integration.EncCredentials. SignalWire is
+// Twilio-LaML-compatible; the per-subscriber recipient is the subscriber
+// model's phone number, not stored here.
+type SignalWireConfig struct {
+	ProjectID string `json:"project_id"`
+	Token     string `json:"token"`
+	SpaceURL  string `json:"space_url"`
+	From      string `json:"from"`
 }
 
 // Service stores integrations and resolves active providers per Scope.
@@ -348,6 +372,101 @@ func (svc *Service) ResolveChat(ctx context.Context, scope domain.Scope) (provid
 		// Fail closed: an unknown chat provider must not be silently decoded as
 		// another provider's config.
 		return nil, "", "", fmt.Errorf("connectivity: unknown chat provider %q", in.ProviderID)
+	}
+}
+
+// CreateTwilio stores a Twilio SMS integration for the Scope: it
+// AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="twilio" and Channel="sms". When primary is set the integration
+// becomes the preferred provider for the channel.
+func (svc *Service) CreateTwilio(ctx context.Context, scope domain.Scope, identifier string, cfg TwilioConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal twilio config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt twilio config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "twilio",
+		Channel:        "sms",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
+// CreateSignalWire stores a SignalWire SMS integration for the Scope: it
+// AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="signalwire" and Channel="sms". When primary is set the integration
+// becomes the preferred provider for the channel.
+func (svc *Service) CreateSignalWire(ctx context.Context, scope domain.Scope, identifier string, cfg SignalWireConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal signalwire config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt signalwire config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "signalwire",
+		Channel:        "sms",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
+// ResolveSMS returns the active SMS provider, its provider id, and integration
+// ID for the Scope. It loads the active sms integration, decrypts its
+// credentials, and builds the appropriate provider based on the integration's
+// ProviderID:
+//
+//   - "twilio"     → *twilio.Client (Twilio Programmable Messaging)
+//   - "signalwire" → *signalwire.Client (Twilio-LaML-compatible)
+//
+// Return order: (provider, providerID, integrationID, error). The integration
+// ID is the row's primary key; delivery/sms.go uses it to populate
+// domain.Message.IntegrationID. An unknown provider fails closed.
+func (svc *Service) ResolveSMS(ctx context.Context, scope domain.Scope) (providers.SMSProvider, string, string, error) {
+	in, err := svc.store.Integrations().GetActiveByChannel(ctx, scope, "sms")
+	if err != nil {
+		return nil, "", "", err
+	}
+	plaintext, err := svc.decrypt(in.EncCredentials)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("connectivity: decrypt sms config: %w", err)
+	}
+	switch in.ProviderID {
+	case "twilio":
+		var cfg TwilioConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", fmt.Errorf("connectivity: unmarshal twilio config: %w", err)
+		}
+		return &twilio.Client{
+			AccountSID: cfg.AccountSID,
+			AuthToken:  cfg.AuthToken,
+			From:       cfg.From,
+		}, in.ProviderID, in.ID, nil
+	case "signalwire":
+		var cfg SignalWireConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", fmt.Errorf("connectivity: unmarshal signalwire config: %w", err)
+		}
+		return &signalwire.Client{
+			ProjectID: cfg.ProjectID,
+			Token:     cfg.Token,
+			SpaceURL:  cfg.SpaceURL,
+			From:      cfg.From,
+		}, in.ProviderID, in.ID, nil
+	default:
+		// Fail closed: an unknown sms provider must not be silently decoded as
+		// another provider's config.
+		return nil, "", "", fmt.Errorf("connectivity: unknown sms provider %q", in.ProviderID)
 	}
 }
 

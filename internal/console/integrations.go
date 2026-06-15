@@ -45,6 +45,8 @@ var providerCatalog = []providerMeta{
 	{ID: "ntfy", Label: "ntfy Push", Channel: "push"},
 	{ID: "discord", Label: "Discord", Channel: "chat"},
 	{ID: "telegram", Label: "Telegram", Channel: "chat"},
+	{ID: "twilio", Label: "Twilio SMS", Channel: "sms"},
+	{ID: "signalwire", Label: "SignalWire SMS", Channel: "sms"},
 }
 
 // providerLabel returns the human label for providerID from the catalog.
@@ -244,6 +246,19 @@ func credentialFieldsForProvider(providerID string) []integrationCredentialField
 		return []integrationCredentialField{
 			{Key: "base_url", Label: "Server URL", Value: connectivity.CredentialMaskSentinel, Required: true},
 			{Key: "token", Label: "Access Token", Value: connectivity.CredentialMaskSentinel},
+		}
+	case "twilio":
+		return []integrationCredentialField{
+			{Key: "account_sid", Label: "Account SID", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "auth_token", Label: "Auth Token", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "from", Label: "From number", Value: connectivity.CredentialMaskSentinel, Required: true},
+		}
+	case "signalwire":
+		return []integrationCredentialField{
+			{Key: "project_id", Label: "Project ID", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "token", Label: "API Token", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "space_url", Label: "Space URL", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "from", Label: "From number", Value: connectivity.CredentialMaskSentinel, Required: true},
 		}
 	}
 	return nil
@@ -692,6 +707,21 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			From:      r.FormValue("from"),
 		}
 		_, createErr = c.deps.Connectivity.CreateCloudflareEmail(r.Context(), scope, identifier, cfg, primary)
+	case "twilio":
+		cfg := connectivity.TwilioConfig{
+			AccountSID: r.FormValue("account_sid"),
+			AuthToken:  r.FormValue("auth_token"),
+			From:       r.FormValue("from"),
+		}
+		_, createErr = c.deps.Connectivity.CreateTwilio(r.Context(), scope, identifier, cfg, primary)
+	case "signalwire":
+		cfg := connectivity.SignalWireConfig{
+			ProjectID: r.FormValue("project_id"),
+			Token:     r.FormValue("token"),
+			SpaceURL:  r.FormValue("space_url"),
+			From:      r.FormValue("from"),
+		}
+		_, createErr = c.deps.Connectivity.CreateSignalWire(r.Context(), scope, identifier, cfg, primary)
 	default:
 		http.Error(w, fmt.Sprintf("unknown provider: %s", providerID), http.StatusBadRequest)
 		return

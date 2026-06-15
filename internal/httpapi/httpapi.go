@@ -89,6 +89,7 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 			pr.Post("/v1/integrations/push", postPushIntegration(conn))
 			pr.Post("/v1/integrations/email", postEmailIntegration(conn))
 			pr.Post("/v1/integrations/chat", postChatIntegration(conn))
+			pr.Post("/v1/integrations/sms", postSMSIntegration(conn))
 			// CRUD + unified create (Wave 2).
 			pr.Get("/v1/integrations", getIntegrations(conn))
 			pr.Post("/v1/integrations", postIntegration(conn))
@@ -559,8 +560,103 @@ func postChatIntegration(conn *connectivity.Service) http.HandlerFunc {
 	}
 }
 
+// smsIntegrationRequest is the POST /v1/integrations/sms body. The "provider"
+// field selects the backend: "twilio" uses accountSid/authToken; "signalwire"
+// uses projectId/token/spaceUrl. Both use "from" as the sender number.
+// authToken and token are secrets and are never echoed back.
+type smsIntegrationRequest struct {
+	Identifier string `json:"identifier"`
+	Provider   string `json:"provider"` // "twilio" or "signalwire"
+	From       string `json:"from"`
+	Primary    bool   `json:"primary"`
+	// Twilio fields.
+	AccountSID string `json:"accountSid"`
+	AuthToken  string `json:"authToken"`
+	// SignalWire fields.
+	ProjectID string `json:"projectId"`
+	Token     string `json:"token"`
+	SpaceURL  string `json:"spaceUrl"`
+}
+
+// postSMSIntegration creates an SMS integration within the request Scope and
+// returns a slim DTO (no credential bytes) with 201. Mirrors
+// postChatIntegration; the "provider" field selects twilio vs signalwire and an
+// unknown provider fails closed with 400.
+func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req smsIntegrationRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.From == "" {
+			http.Error(w, "from is required", http.StatusBadRequest)
+			return
+		}
+		scope := identity.ScopeFrom(r.Context())
+
+		var (
+			in  domain.Integration
+			err error
+		)
+		switch req.Provider {
+		case "twilio":
+			if req.AccountSID == "" {
+				http.Error(w, "accountSid is required for twilio", http.StatusBadRequest)
+				return
+			}
+			if req.AuthToken == "" {
+				http.Error(w, "authToken is required for twilio", http.StatusBadRequest)
+				return
+			}
+			in, err = conn.CreateTwilio(r.Context(), scope, req.Identifier, connectivity.TwilioConfig{
+				AccountSID: req.AccountSID,
+				AuthToken:  req.AuthToken,
+				From:       req.From,
+			}, req.Primary)
+		case "signalwire":
+			if req.ProjectID == "" {
+				http.Error(w, "projectId is required for signalwire", http.StatusBadRequest)
+				return
+			}
+			if req.Token == "" {
+				http.Error(w, "token is required for signalwire", http.StatusBadRequest)
+				return
+			}
+			if req.SpaceURL == "" {
+				http.Error(w, "spaceUrl is required for signalwire", http.StatusBadRequest)
+				return
+			}
+			in, err = conn.CreateSignalWire(r.Context(), scope, req.Identifier, connectivity.SignalWireConfig{
+				ProjectID: req.ProjectID,
+				Token:     req.Token,
+				SpaceURL:  req.SpaceURL,
+				From:      req.From,
+			}, req.Primary)
+		default:
+			http.Error(w, "unknown provider "+req.Provider+"; allowed: twilio, signalwire", http.StatusBadRequest)
+			return
+		}
+		if err != nil {
+			// Never surface the underlying error: wrapped marshal/encrypt/store
+			// detail could carry credential-bearing config fields.
+			http.Error(w, "failed to create sms integration", http.StatusInternalServerError)
+			return
+		}
+		// Sensitive fields (authToken, token) are never echoed.
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"id":         in.ID,
+			"providerId": in.ProviderID,
+			"channel":    in.Channel,
+			"identifier": in.Identifier,
+			"active":     in.Active,
+			"primary":    in.Primary,
+		})
+	}
+}
+
 // allowedStepTypes enumerates the step types the authoring layer understands.
-var allowedStepTypes = []string{"in_app", "email", "push", "chat", "delay", "digest"}
+var allowedStepTypes = []string{"in_app", "email", "push", "chat", "sms", "delay", "digest"}
 
 // workflowStepRequest is one element of the POST /v1/workflows steps array.
 type workflowStepRequest struct {
@@ -1023,6 +1119,8 @@ var integrationSecretFields = map[string]map[string]bool{
 	"ntfy":             {"token": true},
 	"discord":          {"webhook_url": true},
 	"telegram":         {"bot_token": true},
+	"twilio":           {"auth_token": true},
+	"signalwire":       {"token": true},
 }
 
 // maskCredentials replaces secret credential fields with the mask sentinel.
@@ -1186,8 +1284,21 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 			in, err = conn.CreateTelegram(r.Context(), scope, req.Identifier, connectivity.TelegramConfig{
 				BotToken: req.Credentials["bot_token"],
 			}, req.Primary)
+		case "twilio":
+			in, err = conn.CreateTwilio(r.Context(), scope, req.Identifier, connectivity.TwilioConfig{
+				AccountSID: req.Credentials["account_sid"],
+				AuthToken:  req.Credentials["auth_token"],
+				From:       req.Credentials["from"],
+			}, req.Primary)
+		case "signalwire":
+			in, err = conn.CreateSignalWire(r.Context(), scope, req.Identifier, connectivity.SignalWireConfig{
+				ProjectID: req.Credentials["project_id"],
+				Token:     req.Credentials["token"],
+				SpaceURL:  req.Credentials["space_url"],
+				From:      req.Credentials["from"],
+			}, req.Primary)
 		default:
-			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, ntfy, discord, telegram", http.StatusBadRequest)
+			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, ntfy, discord, telegram, twilio, signalwire", http.StatusBadRequest)
 			return
 		}
 		if err != nil {

@@ -24,7 +24,7 @@ func TestMaskCredentials_FailsClosedForUnknownProvider(t *testing.T) {
 // TestMaskCredentials_EveryProviderHasSecretFields enforces that every provider
 // the create switch accepts has an integrationSecretFields entry.
 func TestMaskCredentials_EveryProviderHasSecretFields(t *testing.T) {
-	for _, p := range []string{"smtp", "cloudflare-email", "ntfy"} {
+	for _, p := range []string{"smtp", "cloudflare-email", "ntfy", "discord", "telegram", "twilio", "signalwire"} {
 		if _, ok := integrationSecretFields[p]; !ok {
 			t.Errorf("provider %q accepted by create but has no integrationSecretFields entry", p)
 		}

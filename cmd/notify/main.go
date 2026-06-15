@@ -159,6 +159,7 @@ func runServe(args []string) error {
 	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).WithThrottle(bus).WithDigester(bus).HandleEmail)
 	eng.Handle("send.push", delivery.NewPush(st, conn).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandlePush)
 	eng.Handle("send.chat", delivery.NewChat(st, conn).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandleChat)
+	eng.Handle("send.sms", delivery.NewSMS(st, conn).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandleSMS)
 
 	// W4 ADR-013 (#55): durable credential-verify action. The verify task runs
 	// in this worker pool (registered before StartWorkers); the workflow is
