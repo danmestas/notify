@@ -43,6 +43,8 @@ var providerCatalog = []providerMeta{
 	{ID: "smtp", Label: "SMTP Email", Channel: "email"},
 	{ID: "cloudflare_email", Label: "Cloudflare Email", Channel: "email"},
 	{ID: "ntfy", Label: "ntfy Push", Channel: "push"},
+	{ID: "discord", Label: "Discord", Channel: "chat"},
+	{ID: "telegram", Label: "Telegram", Channel: "chat"},
 }
 
 // providerLabel returns the human label for providerID from the catalog.

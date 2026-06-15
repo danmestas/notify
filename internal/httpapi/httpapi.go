@@ -88,6 +88,7 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 			// Legacy channel-specific create endpoints (API back-compat).
 			pr.Post("/v1/integrations/push", postPushIntegration(conn))
 			pr.Post("/v1/integrations/email", postEmailIntegration(conn))
+			pr.Post("/v1/integrations/chat", postChatIntegration(conn))
 			// CRUD + unified create (Wave 2).
 			pr.Get("/v1/integrations", getIntegrations(conn))
 			pr.Post("/v1/integrations", postIntegration(conn))
@@ -489,8 +490,77 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 	}
 }
 
+// chatIntegrationRequest is the POST /v1/integrations/chat body. The "provider"
+// field selects the backend: "discord" uses webhookUrl; "telegram" uses
+// botToken. webhookUrl and botToken are secrets and are never echoed back.
+type chatIntegrationRequest struct {
+	Identifier string `json:"identifier"`
+	Provider   string `json:"provider"` // "discord" or "telegram"
+	Primary    bool   `json:"primary"`
+	// Discord field.
+	WebhookURL string `json:"webhookUrl"`
+	// Telegram field.
+	BotToken string `json:"botToken"`
+}
+
+// postChatIntegration creates a chat integration within the request Scope and
+// returns a slim DTO (no credential bytes) with 201. Mirrors
+// postPushIntegration; the "provider" field selects discord vs telegram and an
+// unknown provider fails closed with 400.
+func postChatIntegration(conn *connectivity.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req chatIntegrationRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		scope := identity.ScopeFrom(r.Context())
+
+		var (
+			in  domain.Integration
+			err error
+		)
+		switch req.Provider {
+		case "discord":
+			if req.WebhookURL == "" {
+				http.Error(w, "webhookUrl is required for discord", http.StatusBadRequest)
+				return
+			}
+			in, err = conn.CreateDiscord(r.Context(), scope, req.Identifier, connectivity.DiscordConfig{
+				WebhookURL: req.WebhookURL,
+			}, req.Primary)
+		case "telegram":
+			if req.BotToken == "" {
+				http.Error(w, "botToken is required for telegram", http.StatusBadRequest)
+				return
+			}
+			in, err = conn.CreateTelegram(r.Context(), scope, req.Identifier, connectivity.TelegramConfig{
+				BotToken: req.BotToken,
+			}, req.Primary)
+		default:
+			http.Error(w, "unknown provider "+req.Provider+"; allowed: discord, telegram", http.StatusBadRequest)
+			return
+		}
+		if err != nil {
+			// Never surface the underlying error: wrapped marshal/encrypt/store
+			// detail could carry credential-bearing config fields.
+			http.Error(w, "failed to create chat integration", http.StatusInternalServerError)
+			return
+		}
+		// Sensitive fields (webhookUrl, botToken) are never echoed.
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"id":         in.ID,
+			"providerId": in.ProviderID,
+			"channel":    in.Channel,
+			"identifier": in.Identifier,
+			"active":     in.Active,
+			"primary":    in.Primary,
+		})
+	}
+}
+
 // allowedStepTypes enumerates the step types the authoring layer understands.
-var allowedStepTypes = []string{"in_app", "email", "push", "delay", "digest"}
+var allowedStepTypes = []string{"in_app", "email", "push", "chat", "delay", "digest"}
 
 // workflowStepRequest is one element of the POST /v1/workflows steps array.
 type workflowStepRequest struct {
@@ -951,6 +1021,8 @@ var integrationSecretFields = map[string]map[string]bool{
 	"smtp":             {"password": true},
 	"cloudflare-email": {"api_token": true},
 	"ntfy":             {"token": true},
+	"discord":          {"webhook_url": true},
+	"telegram":         {"bot_token": true},
 }
 
 // maskCredentials replaces secret credential fields with the mask sentinel.
@@ -1106,8 +1178,16 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 				BaseURL: req.Credentials["base_url"],
 				Token:   req.Credentials["token"],
 			}, req.Primary)
+		case "discord":
+			in, err = conn.CreateDiscord(r.Context(), scope, req.Identifier, connectivity.DiscordConfig{
+				WebhookURL: req.Credentials["webhook_url"],
+			}, req.Primary)
+		case "telegram":
+			in, err = conn.CreateTelegram(r.Context(), scope, req.Identifier, connectivity.TelegramConfig{
+				BotToken: req.Credentials["bot_token"],
+			}, req.Primary)
 		default:
-			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, ntfy", http.StatusBadRequest)
+			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, ntfy, discord, telegram", http.StatusBadRequest)
 			return
 		}
 		if err != nil {

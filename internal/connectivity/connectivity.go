@@ -16,7 +16,9 @@ import (
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/providers"
 	"github.com/danmestas/notify/internal/providers/cloudflareemail"
+	"github.com/danmestas/notify/internal/providers/discord"
 	"github.com/danmestas/notify/internal/providers/ntfy"
+	"github.com/danmestas/notify/internal/providers/telegram"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -74,6 +76,23 @@ type CloudflareEmailConfig struct {
 	AccountID string `json:"account_id"`
 	APIToken  string `json:"api_token"`
 	From      string `json:"from"`
+}
+
+// DiscordConfig is the credential payload for a Discord chat integration: the
+// incoming-webhook URL, JSON-encoded and AES-256-GCM-sealed into
+// Integration.EncCredentials. The webhook URL is both the secret and the
+// destination — Discord webhooks need no per-subscriber address, so the
+// subscriber_channels row (if any) only overrides the destination.
+type DiscordConfig struct {
+	WebhookURL string `json:"webhook_url"`
+}
+
+// TelegramConfig is the credential payload for a Telegram chat integration: the
+// bot token, JSON-encoded and AES-256-GCM-sealed into
+// Integration.EncCredentials. The per-subscriber chat_id lives in
+// subscriber_channels, not here.
+type TelegramConfig struct {
+	BotToken string `json:"bot_token"`
 }
 
 // Service stores integrations and resolves active providers per Scope.
@@ -244,6 +263,92 @@ func (svc *Service) ResolvePush(ctx context.Context, scope domain.Scope) (provid
 		return nil, "", "", fmt.Errorf("connectivity: unmarshal ntfy config: %w", err)
 	}
 	return &ntfy.Client{BaseURL: cfg.BaseURL, Token: cfg.Token}, in.ProviderID, in.ID, nil
+}
+
+// CreateDiscord stores a Discord chat integration for the Scope: it
+// AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="discord" and Channel="chat". When primary is set the integration
+// becomes the preferred provider for the channel.
+func (svc *Service) CreateDiscord(ctx context.Context, scope domain.Scope, identifier string, cfg DiscordConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal discord config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt discord config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "discord",
+		Channel:        "chat",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
+// CreateTelegram stores a Telegram chat integration for the Scope: it
+// AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="telegram" and Channel="chat". When primary is set the integration
+// becomes the preferred provider for the channel.
+func (svc *Service) CreateTelegram(ctx context.Context, scope domain.Scope, identifier string, cfg TelegramConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal telegram config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt telegram config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "telegram",
+		Channel:        "chat",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
+// ResolveChat returns the active chat provider, its provider id, and integration
+// ID for the Scope. It loads the active chat integration, decrypts its
+// credentials, and builds the appropriate provider based on the integration's
+// ProviderID:
+//
+//   - "discord"  → *discord.Client (webhook URL is the destination)
+//   - "telegram" → *telegram.Client (per-subscriber chat_id from delivery)
+//
+// Return order: (provider, providerID, integrationID, error). The integration
+// ID is the row's primary key; delivery/chat.go uses it to populate
+// domain.Message.IntegrationID. An unknown provider fails closed.
+func (svc *Service) ResolveChat(ctx context.Context, scope domain.Scope) (providers.ChatProvider, string, string, error) {
+	in, err := svc.store.Integrations().GetActiveByChannel(ctx, scope, "chat")
+	if err != nil {
+		return nil, "", "", err
+	}
+	plaintext, err := svc.decrypt(in.EncCredentials)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("connectivity: decrypt chat config: %w", err)
+	}
+	switch in.ProviderID {
+	case "discord":
+		var cfg DiscordConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", fmt.Errorf("connectivity: unmarshal discord config: %w", err)
+		}
+		return &discord.Client{WebhookURL: cfg.WebhookURL}, in.ProviderID, in.ID, nil
+	case "telegram":
+		var cfg TelegramConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", fmt.Errorf("connectivity: unmarshal telegram config: %w", err)
+		}
+		return &telegram.Client{BotToken: cfg.BotToken}, in.ProviderID, in.ID, nil
+	default:
+		// Fail closed: an unknown chat provider must not be silently decoded as
+		// another provider's config.
+		return nil, "", "", fmt.Errorf("connectivity: unknown chat provider %q", in.ProviderID)
+	}
 }
 
 // Store returns the underlying store.Store so callers (e.g. httpapi) can

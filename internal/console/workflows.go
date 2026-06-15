@@ -46,7 +46,7 @@ import (
 
 // workflowStepTypes is the closed set of step types the editor offers as
 // "add step" buttons. delay/digest are sleep-compiled; the rest are channels.
-var workflowStepTypes = []string{"in_app", "email", "push", "sms", "delay", "digest"}
+var workflowStepTypes = []string{"in_app", "email", "push", "chat", "sms", "delay", "digest"}
 
 // workflowRow is one row in the workflows-list table.
 type workflowRow struct {

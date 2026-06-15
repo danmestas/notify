@@ -1,0 +1,234 @@
+package delivery
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+
+	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/providers"
+	"github.com/danmestas/notify/internal/runenv"
+	"github.com/danmestas/notify/internal/store"
+)
+
+// stubChatResolver is a fixed-answer ChatResolver standing in for
+// connectivity.Service in the unit tests.
+type stubChatResolver struct {
+	p             providers.ChatProvider
+	id            string // providerID
+	integrationID string // defaults to "integ-chat-test" when empty
+	err           error
+}
+
+func (s stubChatResolver) ResolveChat(_ context.Context, _ domain.Scope) (providers.ChatProvider, string, string, error) {
+	iid := s.integrationID
+	if iid == "" {
+		iid = "integ-chat-test"
+	}
+	return s.p, s.id, iid, s.err
+}
+
+// chatEnvelope mirrors inAppEnvelope for the chat channel.
+func chatEnvelope() runenv.InAppEnvelope {
+	return runenv.InAppEnvelope{
+		Scope:          runenv.Scope{OrgID: "org_1", EnvID: "env_1"},
+		TransactionID:  "txn_chat",
+		WorkflowID:     "wf_1",
+		NotificationID: "ntf_1",
+		SubscriberID:   "user_123",
+		Subscriber:     json.RawMessage(`{"subscriberId":"user_123","firstName":"Ada"}`),
+		Payload:        json.RawMessage(`{"itemCount":3}`),
+		Step: runenv.Step{
+			StepID:          "C1",
+			Channel:         "chat",
+			SubjectTemplate: "Hi {{subscriber.firstName}}",
+			BodyTemplate:    "You have {{payload.itemCount}} items",
+		},
+	}
+}
+
+// seedChatAddress registers the subscriber's chat address (telegram chat_id or
+// a discord webhook override) in subscriber_channels for providerID.
+func seedChatAddress(t *testing.T, s *store.Store, providerID, address string) {
+	t.Helper()
+	if _, err := s.SubscriberChannels().Upsert(context.Background(), domain.Scope{OrgID: "org_1", EnvID: "env_1"}, domain.SubscriberChannel{
+		SubscriberID: "user_123",
+		ProviderID:   providerID,
+		Type:         "chat",
+		Credentials:  json.RawMessage(`{"address":"` + address + `"}`),
+	}); err != nil {
+		t.Fatalf("SubscriberChannels.Upsert: %v", err)
+	}
+}
+
+func TestHandleChat_Telegram_RendersSendsPersists(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	seedChatAddress(t, s, "telegram", "987654321")
+	capt := providers.NewCaptureChat()
+	h := NewChat(s, stubChatResolver{p: capt, id: "telegram"})
+
+	input, err := json.Marshal(chatEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleChat(ctx, engine.TaskPayload{RunID: "run_c1", StepID: "C1", Input: input}); err != nil {
+		t.Fatalf("HandleChat: %v", err)
+	}
+
+	// --- persisted message oracle ---
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "chat")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	m := msgs[0]
+	if m.Channel != "chat" {
+		t.Errorf("Channel = %q, want chat", m.Channel)
+	}
+	if m.ProviderID != "telegram" {
+		t.Errorf("ProviderID = %q, want telegram", m.ProviderID)
+	}
+	if m.IntegrationID != "integ-chat-test" {
+		t.Errorf("IntegrationID = %q, want integ-chat-test", m.IntegrationID)
+	}
+	if m.Status != "sent" {
+		t.Errorf("Status = %q, want sent", m.Status)
+	}
+	if m.Content != "You have 3 items" {
+		t.Errorf("Content = %q, want %q", m.Content, "You have 3 items")
+	}
+
+	// --- capture oracle: address from subscriber_channels, rendered content ---
+	sent := capt.Sent()
+	if len(sent) != 1 {
+		t.Fatalf("capt.Sent() len = %d, want 1", len(sent))
+	}
+	if sent[0].Address != "987654321" {
+		t.Errorf("Address = %q, want %q", sent[0].Address, "987654321")
+	}
+	if sent[0].Content != "You have 3 items" {
+		t.Errorf("Content = %q, want %q", sent[0].Content, "You have 3 items")
+	}
+}
+
+// TestHandleChat_Discord_FallsBackToIntegrationWebhook: Discord needs no
+// per-subscriber address, so an absent subscriber_channels row yields an empty
+// ChatMessage.Address (the provider then uses its configured webhook) and the
+// send still persists a sent message.
+func TestHandleChat_Discord_FallsBackToIntegrationWebhook(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	capt := providers.NewCaptureChat()
+	h := NewChat(s, stubChatResolver{p: capt, id: "discord"})
+
+	input, err := json.Marshal(chatEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleChat(ctx, engine.TaskPayload{RunID: "run_c2", StepID: "C1", Input: input}); err != nil {
+		t.Fatalf("HandleChat: %v", err)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "chat")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Status != "sent" {
+		t.Fatalf("expected one sent message, got %+v", msgs)
+	}
+	sent := capt.Sent()
+	if len(sent) != 1 {
+		t.Fatalf("capt.Sent() len = %d, want 1", len(sent))
+	}
+	if sent[0].Address != "" {
+		t.Errorf("Address = %q, want empty (webhook fallback)", sent[0].Address)
+	}
+}
+
+// TestHandleChat_Telegram_MissingChatIDIsError: a telegram subscriber with no
+// chat_id is a permanent fault — an "error" message is recorded and the
+// provider is never invoked.
+func TestHandleChat_Telegram_MissingChatIDIsError(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	capt := providers.NewCaptureChat()
+	h := NewChat(s, stubChatResolver{p: capt, id: "telegram"})
+
+	input, err := json.Marshal(chatEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleChat(ctx, engine.TaskPayload{RunID: "run_c3", StepID: "C1", Input: input}); err != nil {
+		t.Fatalf("HandleChat: %v", err)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "chat")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Status != "error" {
+		t.Fatalf("expected one error message, got %+v", msgs)
+	}
+	if msgs[0].ErrorText == "" {
+		t.Error("ErrorText empty, want a missing-chat_id explanation")
+	}
+	if got := len(capt.Sent()); got != 0 {
+		t.Errorf("provider invoked %d times with no chat_id, want 0", got)
+	}
+}
+
+func TestHandleChat_SkipsWhenChannelDisabled(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	seedChatAddress(t, s, "telegram", "987654321")
+	capt := providers.NewCaptureChat()
+	h := NewChat(s, stubChatResolver{p: capt, id: "telegram"}).WithPreferences(stubChecker{enabled: false})
+
+	input, err := json.Marshal(chatEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleChat(ctx, engine.TaskPayload{RunID: "run_c4", StepID: "C1", Input: input}); err != nil {
+		t.Fatalf("HandleChat: %v", err)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "chat")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Status != "skipped" {
+		t.Fatalf("expected one skipped message, got %+v", msgs)
+	}
+	if got := len(capt.Sent()); got != 0 {
+		t.Errorf("provider invoked %d times on skip, want 0", got)
+	}
+}
+
+// TestHandleChat_ScopeIsolation: a chat sent in env_1 is invisible to env_2.
+func TestHandleChat_ScopeIsolation(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	seedChatAddress(t, s, "telegram", "987654321")
+	capt := providers.NewCaptureChat()
+	h := NewChat(s, stubChatResolver{p: capt, id: "telegram"})
+
+	input, err := json.Marshal(chatEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleChat(ctx, engine.TaskPayload{RunID: "run_c5", StepID: "C1", Input: input}); err != nil {
+		t.Fatalf("HandleChat: %v", err)
+	}
+
+	other, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_2"}, "user_123", "chat")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(other) != 0 {
+		t.Fatalf("env_2 sees %d messages from env_1, want 0", len(other))
+	}
+}

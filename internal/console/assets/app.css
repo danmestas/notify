@@ -1092,6 +1092,7 @@ a.activity-item-run { color: var(--accent); }
 .chip-step--in_app  { background: rgba(9,105,218,0.10); color: var(--status-info); border-color: rgba(9,105,218,0.25); }
 .chip-step--email   { background: rgba(26,127,55,0.10);  color: var(--status-success); border-color: rgba(26,127,55,0.25); }
 .chip-step--push    { background: rgba(154,103,0,0.10);  color: var(--status-warning); border-color: rgba(154,103,0,0.25); }
+.chip-step--chat    { background: rgba(99,102,241,0.10); color: #4f46e5; border-color: rgba(99,102,241,0.25); }
 .chip-step--sms     { background: rgba(207,34,46,0.10);  color: var(--status-danger); border-color: rgba(207,34,46,0.25); }
 .chip-step--delay   { background: rgba(180,83,9,0.10);   color: #b45309; border-color: rgba(180,83,9,0.25); }
 .chip-step--digest  { background: rgba(154,52,18,0.10);  color: #9a3412; border-color: rgba(154,52,18,0.25); }
