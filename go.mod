@@ -4,6 +4,7 @@ go 1.26.3
 
 require (
 	github.com/aymerick/raymond v2.0.2+incompatible
+	github.com/coder/websocket v1.8.15
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/nats-io/nats.go v1.50.0
 	github.com/starfederation/datastar-go v1.2.1

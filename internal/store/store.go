@@ -112,6 +112,13 @@ func (s *Store) EmailThreads() EmailThreadRepo {
 	return &emailThreadRepo{w: s.writer, r: s.reader}
 }
 
+// ChatThreads vends the chat two-way loop's correlation repository, mapping
+// chat-origin conversation threads to the provider and chat_id (Telegram
+// chat_id / Discord channel_id) the user messaged from.
+func (s *Store) ChatThreads() ChatThreadRepo {
+	return &chatThreadRepo{w: s.writer, r: s.reader}
+}
+
 // Pools exposes the writer/reader pairs so sibling bounded-context stores
 // (internal/agents/store) run their Scope-enforced queries over the same
 // SQLite database and migration set instead of opening parallel pools.

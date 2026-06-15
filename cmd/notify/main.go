@@ -23,6 +23,7 @@ import (
 	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
+	"github.com/danmestas/notify/internal/chatloop"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/console"
 	"github.com/danmestas/notify/internal/contexts"
@@ -40,6 +41,7 @@ import (
 	"github.com/danmestas/notify/internal/inboxapi"
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/realtime"
+	"github.com/danmestas/notify/internal/replyhook"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/version"
@@ -197,10 +199,47 @@ func runServe(args []string) error {
 		emailloop.NewAgentResponder(emlCompose),
 		os.Getenv("NOTIFY_INBOUND_SECRET"), slog.Default(),
 	)
-	ing = ing.WithReplyHook(eml.ReplyHook)
+
+	// Chat two-way loop: inbound Telegram (getUpdates long-poll) and Discord
+	// (gateway WS) messages route to the agent and the agent's reply is sent
+	// back into the originating chat. Inbound dials OUT (no public tunnel). The
+	// compose primitive mirrors email's, threading a returned conversation id.
+	// Cold inbound (a chat with no binding) routes to NOTIFY_CHAT_DEFAULT_AGENT
+	// in scope (NOTIFY_CHAT_DEFAULT_ORG, NOTIFY_CHAT_DEFAULT_ENV); an empty bot
+	// token disables that platform's poller, and an empty default agent drops
+	// cold inbound.
+	chatCompose := func(ctx context.Context, scope domain.Scope, agentIdentifier, conversationID, subscriberID, text string) (string, error) {
+		res, err := ing.ComposeMessage(ctx, scope, agentIdentifier, conversationID, subscriberID, text)
+		if err != nil {
+			return "", err
+		}
+		return res.ConversationID, nil
+	}
+	chat := chatloop.New(
+		st,
+		chatloop.NewAgentResponder(chatCompose),
+		os.Getenv("TELEGRAM_BOT_TOKEN"),
+		os.Getenv("DISCORD_BOT_TOKEN"),
+		os.Getenv("NOTIFY_CHAT_DEFAULT_AGENT"),
+		slog.Default(),
+	)
+	chatScope := domain.Scope{
+		OrgID: os.Getenv("NOTIFY_CHAT_DEFAULT_ORG"),
+		EnvID: os.Getenv("NOTIFY_CHAT_DEFAULT_ENV"),
+	}
+
+	// ingress has a single reply-hook slot but both two-way loops need to act on
+	// an agent reply, so compose them: each loop's hook no-ops when the
+	// conversation is not its binding, and a panic in one is recovered so it
+	// never fails the turn or blocks the other.
+	ing = ing.WithReplyHook(replyhook.Combine(slog.Default(), eml.ReplyHook, chat.ReplyHook))
 	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
 
 	eng.StartWorkers(ctx)
+
+	// Launch the chat inbound pollers now that the engine worker pool is live.
+	// Each poller no-ops when its bot token is unset.
+	chat.Start(ctx, chatScope)
 
 	// Register the credential-verify workflow now that the engine is live.
 	// A failure here is non-fatal: the console renders the Verify button
