@@ -70,6 +70,8 @@ var pageContentFiles = map[string]string{
 	"agent-conversation": "templates/agent_conversation.html",
 	// W4-A5: global conversations list.
 	"conversations": "templates/conversations.html",
+	// #106: read-only chat inbound status.
+	"chat": "templates/chat.html",
 	// W4-E1/E2: environments + API keys.
 	"environments": "templates/environments.html",
 	"api-keys":     "templates/api_keys.html",
@@ -217,6 +219,7 @@ func navIconSVG(key string) template.HTML {
 		"webhooks":      `<path d="M18 16.98a4 4 0 1 0-2.5-7.4M6.5 9.5A4 4 0 1 0 9 16.98M12 8v4l3 3"/>`,
 		"agents":        `<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 2v4M9 13h.01M15 13h.01M2 14h2M20 14h2"/>`,
 		"conversations": `<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`,
+		"chat":          `<path d="M14 9a2 2 0 0 1-2 2H6l-4 3V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v10l-4-3h-6a2 2 0 0 1-2-2"/>`,
 		"analytics":     `<path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6"/><rect x="13" y="7" width="3" height="10"/>`,
 		"variables":     `<path d="M4 7V4h16v3M9 20h6M12 4v16"/>`,
 		"contexts":      `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/>`,
@@ -321,6 +324,7 @@ var navGroups = []navGroup{
 	{Label: "AGENTS", Entries: []navEntry{
 		{Label: "Agents", Href: "/console/agents", Section: "agents", Icon: "agents", BadgeKey: "agents"},
 		{Label: "Conversations", Href: "/console/conversations", Section: "conversations", Icon: "conversations"},
+		{Label: "Chat Inbound", Href: "/console/chat", Section: "chat", Icon: "chat"},
 	}},
 	{Label: "SYSTEM", Entries: []navEntry{
 		{Label: "Analytics", Href: "/console/analytics", Section: "analytics", Icon: "analytics"},

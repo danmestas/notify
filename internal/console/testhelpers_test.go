@@ -27,6 +27,7 @@ import (
 	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
+	"github.com/danmestas/notify/internal/chatloop"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/domain"
@@ -103,6 +104,38 @@ func (s *stubComposer) ComposeMessage(_ context.Context, _ domain.Scope, agentId
 	return conversationID, nil
 }
 
+// telegramToken is a non-empty bot-token placeholder used by chat-status tests
+// to mark a provider as configured.
+const telegramToken = "tg-token"
+
+// stubChatStatus is a console.ChatStatusProvider stub for the chat inbound
+// status page tests (#106). It builds a real chatloop snapshot from the
+// configured tokens + default agent against the test's live agents store, so
+// the default-agent resolution (active / unresolved) is exercised end-to-end.
+type stubChatStatus struct {
+	core         *store.Store
+	telegram     string
+	discord      string
+	defaultAgent string
+}
+
+func (s *stubChatStatus) Status(ctx context.Context, scope domain.Scope) chatloop.Snapshot {
+	svc := chatloop.New(s.core, chatloop.NewAgentResponder(
+		func(context.Context, domain.Scope, string, string, string, string) (string, error) { return "", nil },
+	), s.telegram, s.discord, s.defaultAgent, nil)
+	return svc.Status(ctx, scope)
+}
+
+// setChatStatus reconfigures the harness's chat status provider and re-mounts
+// the console so the chat page reflects the new tokens / default agent.
+func (tc *testConsole) setChatStatus(telegram, discord, defaultAgent string) {
+	st, _ := tc.deps.ChatStatus.(*stubChatStatus)
+	st.telegram = telegram
+	st.discord = discord
+	st.defaultAgent = defaultAgent
+	tc.rebuild()
+}
+
 // newTestConsole boots a fresh tenant on a temp SQLite store and mounts
 // the console over it.
 func newTestConsole(t *testing.T) *testConsole {
@@ -152,6 +185,7 @@ func newTestConsole(t *testing.T) *testConsole {
 		MasterKey:      masterKey,
 		Preferences:    preferences.New(st),
 		TopicTriggers:  st.TopicTriggers(),
+		ChatStatus:     &stubChatStatus{core: st},
 	}
 	c := New(deps)
 	return &testConsole{

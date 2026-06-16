@@ -64,6 +64,19 @@ func (c consoleComposer) ComposeMessage(
 	return res.ConversationID, nil
 }
 
+// chatStatus adapts *chatloop.Service to console.ChatStatusProvider, pinning
+// the chat default scope (NOTIFY_CHAT_DEFAULT_ORG/ENV) the loop resolves its
+// default agent in — the console operator's request scope is irrelevant to the
+// env-driven chat config (#106).
+type chatStatus struct {
+	chat  *chatloop.Service
+	scope domain.Scope
+}
+
+func (c chatStatus) Status(ctx context.Context, _ domain.Scope) chatloop.Snapshot {
+	return c.chat.Status(ctx, c.scope)
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Printf("notify %s\n", version.Version)
@@ -297,26 +310,30 @@ func runServe(args []string) error {
 	// public API. All console reads go through the same Scope-carrying
 	// services in-process.
 	consoleRoutes := console.New(console.Deps{
-		Logger:            slog.Default(),
-		Identity:          id,
-		Authoring:         au,
-		Analytics:         an,
-		Notifications:     st.Notifications(),
-		Messages:          st.Messages(),
-		Integrations:      st.Integrations(),
-		Connectivity:      conn,
-		Audience:          aud,
-		Webhooks:          webhooksout.NewManagement(st),
-		Contexts:          contexts.New(st),
-		Layouts:           st.Layouts(),
-		Translations:      st.Translations(),
-		Environments:      st.Environments(),
-		EnvVars:           ev,
-		InboundDomains:    inbounddomains.New(st),
-		Trigger:           trg,
-		CredVerifier:      credVerify,
-		Agents:            ags,
-		Composer:          consoleComposer{ing},
+		Logger:         slog.Default(),
+		Identity:       id,
+		Authoring:      au,
+		Analytics:      an,
+		Notifications:  st.Notifications(),
+		Messages:       st.Messages(),
+		Integrations:   st.Integrations(),
+		Connectivity:   conn,
+		Audience:       aud,
+		Webhooks:       webhooksout.NewManagement(st),
+		Contexts:       contexts.New(st),
+		Layouts:        st.Layouts(),
+		Translations:   st.Translations(),
+		Environments:   st.Environments(),
+		EnvVars:        ev,
+		InboundDomains: inbounddomains.New(st),
+		Trigger:        trg,
+		CredVerifier:   credVerify,
+		Agents:         ags,
+		Composer:       consoleComposer{ing},
+		// #106: read-only chat inbound status page. The loop resolves its
+		// default agent in the chat default scope (NOTIFY_CHAT_DEFAULT_ORG/ENV),
+		// not the console operator's scope, so pin chatScope here.
+		ChatStatus:        chatStatus{chat: chat, scope: chatScope},
 		MasterKey:         mk,
 		DagnatsConsoleURL: os.Getenv("NOTIFY_DAGNATS_CONSOLE_URL"),
 		ReadOnly:          os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",

@@ -16,6 +16,7 @@ import (
 	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
+	"github.com/danmestas/notify/internal/chatloop"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/envvars"
@@ -43,6 +44,14 @@ type TriggerIngester interface {
 // the compose box (the form renders a "service unavailable" notice instead).
 type ConversationComposer interface {
 	ComposeMessage(ctx context.Context, scope domain.Scope, agentIdentifier, conversationID, subscriberID, text string) (string, error)
+}
+
+// ChatStatusProvider is the read-only port the /console/chat status page reads
+// (#106). *chatloop.Service satisfies it structurally; the console renders the
+// returned snapshot — it never reaches into chatloop internals. Nil leaves the
+// chat status route unmounted (no nav entry surfaced via the live-route check).
+type ChatStatusProvider interface {
+	Status(ctx context.Context, scope domain.Scope) chatloop.Snapshot
 }
 
 // CredentialVerifier is the durable credential-verify port the integration
@@ -158,6 +167,10 @@ type Deps struct {
 	// Composer relays the conversation view's send-message form through the
 	// ingress compose path in-process (Wave 3). Nil disables the compose box.
 	Composer ConversationComposer
+	// ChatStatus exposes the chat two-way loop's read-only config snapshot for
+	// the /console/chat status page (#106). The production wiring passes the
+	// *chatloop.Service; tests pass a stub. Nil leaves the chat route unmounted.
+	ChatStatus ChatStatusProvider
 	// PublicBaseURL is the server's public origin (e.g.
 	// "https://notify.example.com"). The agent channels tab uses it to render a
 	// ready-to-register inbound webhook URL for each linked chat integration,
@@ -461,6 +474,11 @@ func (c *Console) Routes() http.Handler {
 			pr.Post("/console/api/domains/{name}/verify", c.handleDomainVerify)
 			pr.Post("/console/api/domains/{name}/delete", c.handleDomainDelete)
 			pr.Get("/console/api/fragments/domains-list", c.serveFragmentDomainsList)
+		}
+		// #106: read-only chat inbound status page (Telegram long-poll / Discord
+		// gateway). Env-driven config — no mutation routes.
+		if c.deps.ChatStatus != nil {
+			pr.Get("/console/chat", c.serveChatPage)
 		}
 		// W3: agents management + conversation console. The literal `new`
 		// segment is registered before the {identifier} wildcard so chi never

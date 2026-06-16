@@ -1,0 +1,77 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section">
+  {{template "page-header" $page.Header}}
+
+  {{/* Default responder card — the agent cold inbound routes to. */}}
+  <div class="console-card">
+    <h2 class="console-card-title">Default responder</h2>
+    {{if $page.DefaultAgent}}
+      {{if $page.DefaultAgentActive}}
+      <p>
+        Cold inbound on an unbound chat is answered by
+        <code>{{$page.DefaultAgent}}</code>
+        <span class="chip chip-success">Active</span>
+      </p>
+      {{else if $page.DefaultAgentResolved}}
+      <p>
+        <code>{{$page.DefaultAgent}}</code>
+        <span class="chip chip-warning">Inactive</span>
+      </p>
+      <p class="console-muted">
+        The configured default agent exists but is not active — cold inbound is dropped until it is activated.
+      </p>
+      {{else}}
+      <p>
+        <code>{{$page.DefaultAgent}}</code>
+        <span class="chip chip-danger">Not found</span>
+      </p>
+      <p class="console-muted">
+        NOTIFY_CHAT_DEFAULT_AGENT names an agent that does not exist in the default scope — cold inbound is dropped.
+      </p>
+      {{end}}
+    {{else}}
+      <p>
+        <span class="chip chip-danger">No default agent configured</span>
+      </p>
+      <p class="console-muted">
+        NOTIFY_CHAT_DEFAULT_AGENT is unset, so cold inbound on an unbound chat is dropped.
+        Set it (plus NOTIFY_CHAT_DEFAULT_ORG / NOTIFY_CHAT_DEFAULT_ENV) to answer new conversations.
+      </p>
+    {{end}}
+  </div>
+
+  {{/* Per-provider status. */}}
+  {{range $page.Rows}}
+  <div class="console-card">
+    <h2 class="console-card-title">{{.Name}}</h2>
+    <table class="console-table">
+      <tbody>
+        <tr>
+          <td>Status</td>
+          <td>
+            {{if .Enabled}}
+            <span class="chip chip-success">Enabled</span>
+            {{else}}
+            <span class="chip chip-default">Disabled</span>
+            {{end}}
+          </td>
+        </tr>
+        <tr>
+          <td>Inbound transport</td>
+          <td>{{.Transport}}</td>
+        </tr>
+        <tr>
+          <td>Registration</td>
+          <td>{{.Guidance}}</td>
+        </tr>
+      </tbody>
+    </table>
+    {{if not .Enabled}}
+    <p class="console-muted">
+      No bot token configured for this provider — its inbound poller is disabled.
+    </p>
+    {{end}}
+  </div>
+  {{end}}
+</section>
+{{end}}

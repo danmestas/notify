@@ -108,4 +108,5 @@ var assetsFS embed.FS
 //go:embed templates/partials/environments_tbody.html
 //go:embed templates/conversations.html
 //go:embed templates/partials/global_conversations_tbody.html
+//go:embed templates/chat.html
 var templatesFS embed.FS
