@@ -143,6 +143,28 @@ func TestClient_Send_5xxIsTransient(t *testing.T) {
 	}
 }
 
+// TestClient_Send_TransportErrorHidesWebhookToken: a transport fault returns a
+// *url.Error embedding the request URL, which carries the webhook token in the
+// path (/api/webhooks/{id}/{token}). The returned (transient) error must NOT
+// leak the token. The *url.Error layer is unwrapped before wrapping.
+func TestClient_Send_TransportErrorHidesWebhookToken(t *testing.T) {
+	const token = "supersecretwebhooktoken0123456789abcdef"
+	c := &Client{
+		WebhookURL: "http://127.0.0.1:0/api/webhooks/123/" + token,
+		HTTPClient: &http.Client{Timeout: 1 * time.Second},
+	}
+	_, err := c.Send(context.Background(), providers.ChatMessage{Content: "hi"})
+	if err == nil {
+		t.Fatal("Send on transport fault: expected error, got nil")
+	}
+	if !providers.IsTransient(err) {
+		t.Errorf("transport fault classified permanent, want transient: %v", err)
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Errorf("error leaks webhook token: %q", err.Error())
+	}
+}
+
 // TestClient_Send_TimeoutIsTransient: a client-side timeout is transient.
 func TestClient_Send_TimeoutIsTransient(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

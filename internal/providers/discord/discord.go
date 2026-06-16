@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -70,7 +71,14 @@ func (c *Client) Send(ctx context.Context, msg providers.ChatMessage) (providers
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		// Transport fault or timeout: retry-safe.
+		// Transport fault or timeout: retry-safe. Unwrap the *url.Error layer
+		// so the webhook URL (which carries the secret token in its path,
+		// /api/webhooks/{id}/{token}) does not leak into error text persisted
+		// as Message.ErrorText or logged.
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
 		return providers.Result{}, providers.NewTransientError(fmt.Errorf("discord: post webhook: %w", err))
 	}
 	defer func() { _ = resp.Body.Close() }()
