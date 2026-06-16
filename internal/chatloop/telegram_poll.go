@@ -3,6 +3,7 @@ package chatloop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -105,7 +106,10 @@ func (s *Service) telegramGetUpdates(ctx context.Context, hc *http.Client, base 
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("telegram: getUpdates: %w", err)
+		// hc.Do returns a *url.Error embedding the request URL, which carries
+		// the inline bot token (/bot<token>/getUpdates). Redact before wrapping
+		// so neither the returned error nor anything logging it leaks the token.
+		return nil, redactToken(fmt.Errorf("telegram: getUpdates: %w", err), s.telegramToken)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -117,6 +121,26 @@ func (s *Service) telegramGetUpdates(ctx context.Context, hc *http.Client, base 
 		return nil, fmt.Errorf("telegram: decode getUpdates: %w", err)
 	}
 	return out.Result, nil
+}
+
+// redactToken returns an error whose message has every occurrence of token
+// replaced with "<redacted>", so a leaked URL segment "/bot<token>/..." becomes
+// "/bot<redacted>/...". It is the single error boundary for the Telegram bot
+// token: net/http embeds the request URL (with the inline token) in the
+// *url.Error it returns on transport faults, and that error is both returned and
+// logged verbatim upstream. Applying this once at each hc.Do boundary keeps the
+// token out of every downstream error string and log line. An empty token (no
+// credential configured) is a no-op so we never redact the empty string.
+func redactToken(err error, token string) error {
+	if err == nil || token == "" {
+		return err
+	}
+	msg := err.Error()
+	clean := strings.ReplaceAll(msg, token, "<redacted>")
+	if clean == msg {
+		return err
+	}
+	return errors.New(clean)
 }
 
 // sleepCtx sleeps for d or returns false if ctx is cancelled first.

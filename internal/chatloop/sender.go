@@ -44,7 +44,10 @@ func (s *telegramSender) send(ctx context.Context, chatID, text string) error {
 	if err != nil {
 		return fmt.Errorf("telegram: marshal body: %w", err)
 	}
-	return doSend(ctx, s.hc, endpoint, nil, body, "telegram")
+	// The sendMessage URL embeds the inline bot token (/bot<token>/sendMessage),
+	// so a transport fault wraps a *url.Error carrying it. Redact at this
+	// boundary so the reply path never returns or logs the token.
+	return redactToken(doSend(ctx, s.hc, endpoint, nil, body, "telegram"), s.token)
 }
 
 // discordSender posts a reply via the Discord Bot REST API
