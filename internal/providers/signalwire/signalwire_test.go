@@ -177,6 +177,32 @@ func TestClient_Send_TimeoutIsTransient(t *testing.T) {
 	}
 }
 
+// TestClient_Send_TransportErrorHidesProjectID: a transport fault returns a
+// *url.Error embedding the request URL, which carries the ProjectID in the
+// path (/Accounts/{ProjectID}/Messages.json). The returned (transient) error
+// must NOT leak the ProjectID. The *url.Error layer is unwrapped before
+// wrapping.
+func TestClient_Send_TransportErrorHidesProjectID(t *testing.T) {
+	const projectID = "secret-project-id-0123456789abcdef"
+	c := &Client{
+		ProjectID:  projectID,
+		Token:      "tok",
+		SpaceURL:   "http://127.0.0.1:0",
+		From:       "+15550000000",
+		HTTPClient: &http.Client{Timeout: 1 * time.Second},
+	}
+	_, err := c.Send(context.Background(), providers.SMSMessage{To: "+15551112222", Body: "hi"})
+	if err == nil {
+		t.Fatal("Send on transport fault: expected error, got nil")
+	}
+	if !providers.IsTransient(err) {
+		t.Errorf("transport fault classified permanent, want transient: %v", err)
+	}
+	if strings.Contains(err.Error(), projectID) {
+		t.Errorf("error leaks ProjectID: %q", err.Error())
+	}
+}
+
 // parseBasicAuth decodes an "Authorization: Basic ..." header into user/pass.
 func parseBasicAuth(h string) (user, pass string, ok bool) {
 	req := &http.Request{Header: http.Header{"Authorization": []string{h}}}

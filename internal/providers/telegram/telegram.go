@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -77,8 +78,13 @@ func (c *Client) Send(ctx context.Context, msg providers.ChatMessage) (providers
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		// Transport fault or timeout: retry-safe.
-		return providers.Result{}, providers.NewTransientError(fmt.Errorf("telegram: post sendMessage: %w", err))
+		// Transport fault or timeout: retry-safe. hc.Do returns a *url.Error
+		// embedding the request URL, which carries the inline bot token
+		// (/bot<token>/sendMessage). Redact before wrapping so neither the
+		// returned error nor anything logging it leaks the token (twin of #102).
+		return providers.Result{}, providers.NewTransientError(
+			redactToken(fmt.Errorf("telegram: post sendMessage: %w", err), c.BotToken),
+		)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
@@ -101,4 +107,24 @@ func (c *Client) Send(ctx context.Context, msg providers.ChatMessage) (providers
 		// 4xx (bad token, bad chat_id, payload): permanent.
 		return providers.Result{}, fmt.Errorf("telegram: status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
+}
+
+// redactToken returns an error whose message has every occurrence of token
+// replaced with "<redacted>", so a leaked URL segment "/bot<token>/sendMessage"
+// becomes "/bot<redacted>/sendMessage". net/http embeds the request URL (with
+// the inline bot token) in the *url.Error it returns on transport faults, and
+// that error is both returned and logged verbatim upstream. Applying this once
+// at the hc.Do boundary keeps the token out of every downstream error string
+// and log line. An empty token (no credential configured) is a no-op so we
+// never redact the empty string. Mirrors chatloop.redactToken (#102).
+func redactToken(err error, token string) error {
+	if err == nil || token == "" {
+		return err
+	}
+	msg := err.Error()
+	clean := strings.ReplaceAll(msg, token, "<redacted>")
+	if clean == msg {
+		return err
+	}
+	return errors.New(clean)
 }

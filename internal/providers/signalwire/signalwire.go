@@ -12,6 +12,7 @@ package signalwire
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -81,7 +82,13 @@ func (c *Client) Send(ctx context.Context, msg providers.SMSMessage) (providers.
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		// Transport fault or timeout: retry-safe.
+		// Transport fault or timeout: retry-safe. Unwrap the *url.Error layer
+		// so the endpoint URL (which carries the ProjectID in its path) does
+		// not leak into error text persisted as Message.ErrorText or logged.
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
 		return providers.Result{}, providers.NewTransientError(fmt.Errorf("signalwire: post messages: %w", err))
 	}
 	defer func() { _ = resp.Body.Close() }()

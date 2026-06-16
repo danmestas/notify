@@ -95,6 +95,34 @@ func TestClient_Send_TokenInURL(t *testing.T) {
 	}
 }
 
+// TestClient_Send_TransportErrorRedactsToken: a transport fault returns a
+// *url.Error embedding the request URL, which carries the inline bot token
+// (/bot<token>/sendMessage). The returned (transient) error must NOT leak the
+// token and must carry the redaction marker. Twin of the chatloop fix (#102).
+func TestClient_Send_TransportErrorRedactsToken(t *testing.T) {
+	const token = "secret-bot-token-987:ABCdef"
+	// Point at an unroutable address so hc.Do fails at the transport layer
+	// before any server is contacted; the *url.Error then embeds the full URL.
+	c := &Client{
+		BotToken:   token,
+		BaseURL:    "http://127.0.0.1:0",
+		HTTPClient: &http.Client{Timeout: 1 * time.Second},
+	}
+	_, err := c.Send(context.Background(), providers.ChatMessage{Address: "1", Content: "b"})
+	if err == nil {
+		t.Fatal("Send on transport fault: expected error, got nil")
+	}
+	if !providers.IsTransient(err) {
+		t.Errorf("transport fault classified permanent, want transient: %v", err)
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Errorf("error leaks bot token: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "<redacted>") {
+		t.Errorf("error missing redaction marker: %q", err.Error())
+	}
+}
+
 // TestClient_Send_EmptyChatIDIsPermanent: no address fails closed (permanent).
 func TestClient_Send_EmptyChatIDIsPermanent(t *testing.T) {
 	c := &Client{BotToken: "t"}
