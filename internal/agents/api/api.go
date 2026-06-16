@@ -17,9 +17,13 @@ import (
 	"github.com/danmestas/notify/internal/identity"
 )
 
-// runtimeErrMsg deliberately enumerates the allowed runtime values: an empty
-// enum list in a 422 is a misdiagnosis trap .
-const runtimeErrMsg = "runtime must be one of: mesh, bridge, managed"
+// runtimeErrMsg enumerates the runtimes a caller may actually create — those
+// with a registered executor (agentdomain.SupportedRuntimes). bridge/managed
+// are valid constants but unimplemented, so accepting them would mint an agent
+// that dead-letters every turn (#113 tightens this from ValidRuntime). The list
+// is derived from SupportedRuntimes so it never drifts; an empty enum list in a
+// 422 is a misdiagnosis trap .
+var runtimeErrMsg = "runtime must be one of: " + strings.Join(agentdomain.SupportedRuntimes, ", ")
 
 // Service exposes agent management over HTTP.
 type Service struct {
@@ -84,7 +88,9 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "identifier is required", http.StatusUnprocessableEntity)
 		return
 	}
-	if !agentdomain.ValidRuntime(req.Runtime) {
+	// Enforce supported-on-creation: only runtimes with a registered executor
+	// may be minted, otherwise the API can create a dead agent (#113 Part A).
+	if !agentdomain.IsSupportedRuntime(req.Runtime) {
 		http.Error(w, runtimeErrMsg, http.StatusUnprocessableEntity)
 		return
 	}
@@ -166,14 +172,18 @@ func (svc *Service) patchAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if req.Runtime != nil && !agentdomain.ValidRuntime(*req.Runtime) {
-		http.Error(w, runtimeErrMsg, http.StatusUnprocessableEntity)
-		return
-	}
 	scope := identity.ScopeFrom(r.Context())
 	agent, err := svc.store.Agents().GetByIdentifier(r.Context(), scope, chi.URLParam(r, "identifier"))
 	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	// Enforce supported-only-on-change: a runtime switch must target a runtime
+	// with a registered executor, but a no-op runtime field (or one that equals
+	// the stored value) leaves a legacy unsupported agent patchable on its other
+	// fields (#113 — mirrors the relaxed console save guard).
+	if req.Runtime != nil && *req.Runtime != agent.Runtime && !agentdomain.IsSupportedRuntime(*req.Runtime) {
+		http.Error(w, runtimeErrMsg, http.StatusUnprocessableEntity)
 		return
 	}
 	if req.Name != nil {

@@ -144,7 +144,7 @@ func TestAgents_CRUDLifecycle(t *testing.T) {
 		t.Fatalf("expected [support-bot], got %+v", list)
 	}
 
-	patchBody := `{"name":"Support Bot v2","runtime":"bridge","bridgeUrl":"https://bot.example.com/turn","active":false}`
+	patchBody := `{"name":"Support Bot v2","bridgeUrl":"https://bot.example.com/turn","active":false}`
 	status, body = doPatch(t, srv.URL+"/v1/agents/support-bot", authHeader, patchBody)
 	if status != http.StatusOK {
 		t.Fatalf("PATCH /v1/agents/support-bot: status=%d body=%s", status, body)
@@ -153,7 +153,7 @@ func TestAgents_CRUDLifecycle(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &patched); err != nil {
 		t.Fatalf("decode patched agent: %v", err)
 	}
-	if patched.Name != "Support Bot v2" || patched.Runtime != "bridge" || patched.BridgeURL != "https://bot.example.com/turn" || patched.Active {
+	if patched.Name != "Support Bot v2" || patched.Runtime != "mesh" || patched.BridgeURL != "https://bot.example.com/turn" || patched.Active {
 		t.Fatalf("patch not applied: %+v", patched)
 	}
 	if patched.MeshSubject != "agents.support.prompt" {
@@ -175,12 +175,14 @@ func TestAgents_CRUDLifecycle(t *testing.T) {
 	}
 }
 
-// TestAgents_RuntimeEnumMessage pins the 422 contract: an invalid runtime must
-// enumerate the allowed values in the error message, on create and on patch.
+// TestAgents_RuntimeEnumMessage pins the 422 contract: a runtime without a
+// registered executor must be rejected on create and on patch, with the error
+// enumerating the supported values (#113 tightened this from ValidRuntime to
+// SupportedRuntimes — bridge/managed are valid constants but unimplemented).
 func TestAgents_RuntimeEnumMessage(t *testing.T) {
 	srv, authHeader := startAgentServer(t)
 
-	const wantMsg = "runtime must be one of: mesh, bridge, managed"
+	const wantMsg = "runtime must be one of: mesh"
 
 	status, body := doPost(t, srv.URL+"/v1/agents", authHeader, `{"identifier":"bad-bot","runtime":"warp"}`)
 	if status != http.StatusUnprocessableEntity {
@@ -196,15 +198,30 @@ func TestAgents_RuntimeEnumMessage(t *testing.T) {
 		t.Fatalf("POST without runtime: status=%d body=%q, want 422 %q", status, strings.TrimSpace(body), wantMsg)
 	}
 
-	if status, body = doPost(t, srv.URL+"/v1/agents", authHeader, `{"identifier":"good-bot","runtime":"managed"}`); status != http.StatusCreated {
+	// bridge and managed are defined-but-unimplemented: the API must refuse to
+	// mint a dead agent and persist nothing (#113 Part A).
+	for _, rt := range []string{"bridge", "managed"} {
+		status, body = doPost(t, srv.URL+"/v1/agents", authHeader, `{"identifier":"dead-`+rt+`","runtime":"`+rt+`"}`)
+		if status != http.StatusUnprocessableEntity || strings.TrimSpace(body) != wantMsg {
+			t.Fatalf("POST runtime=%s: status=%d body=%q, want 422 %q", rt, status, strings.TrimSpace(body), wantMsg)
+		}
+		if s, _ := doGet(t, srv.URL+"/v1/agents/dead-"+rt, authHeader); s != http.StatusNotFound {
+			t.Fatalf("agent with unsupported runtime %q was persisted (GET status=%d)", rt, s)
+		}
+	}
+
+	if status, body = doPost(t, srv.URL+"/v1/agents", authHeader, `{"identifier":"good-bot","runtime":"mesh"}`); status != http.StatusCreated {
 		t.Fatalf("POST valid agent: status=%d body=%s", status, body)
 	}
-	status, body = doPatch(t, srv.URL+"/v1/agents/good-bot", authHeader, `{"runtime":"warp"}`)
-	if status != http.StatusUnprocessableEntity {
-		t.Fatalf("PATCH with bad runtime: status=%d body=%s, want 422", status, body)
-	}
-	if strings.TrimSpace(body) != wantMsg {
-		t.Fatalf("PATCH 422 body = %q, want %q", strings.TrimSpace(body), wantMsg)
+	// Switching an existing agent's runtime to an unsupported value is rejected.
+	for _, rt := range []string{"warp", "bridge", "managed"} {
+		status, body = doPatch(t, srv.URL+"/v1/agents/good-bot", authHeader, `{"runtime":"`+rt+`"}`)
+		if status != http.StatusUnprocessableEntity {
+			t.Fatalf("PATCH runtime=%s: status=%d body=%s, want 422", rt, status, body)
+		}
+		if strings.TrimSpace(body) != wantMsg {
+			t.Fatalf("PATCH runtime=%s 422 body = %q, want %q", rt, strings.TrimSpace(body), wantMsg)
+		}
 	}
 }
 
@@ -309,7 +326,7 @@ func TestAgents_ChannelSetup(t *testing.T) {
 	srv, authHeader := startAgentServer(t)
 
 	// Create an agent.
-	if status, body := doPost(t, srv.URL+"/v1/agents", authHeader, `{"identifier":"tg-bot","runtime":"bridge","bridgeUrl":"https://bot.example.com/turn"}`); status != http.StatusCreated {
+	if status, body := doPost(t, srv.URL+"/v1/agents", authHeader, `{"identifier":"tg-bot","runtime":"mesh"}`); status != http.StatusCreated {
 		t.Fatalf("POST /v1/agents: status=%d body=%s", status, body)
 	}
 

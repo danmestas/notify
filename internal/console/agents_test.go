@@ -198,36 +198,79 @@ func TestAgents_Create_UnsupportedRuntimeRejected(t *testing.T) {
 	}
 }
 
-// TestAgents_Save_UnsupportedRuntimeRejected guards the save handler: an agent
-// whose stored runtime is unsupported (a row created before the guard, or via a
-// crafted POST) must not be re-saved through the edit form (#103).
-func TestAgents_Save_UnsupportedRuntimeRejected(t *testing.T) {
+// TestAgents_Save_LegacyUnsupportedRuntimeEditable asserts an agent whose
+// stored runtime is unsupported (a row predating the create guard, e.g. the
+// seeded managed `ember`) remains editable through the console: the save guard
+// only blocks switching TO an unsupported runtime, not editing the other fields
+// of a pre-existing one (#113 Part B relaxes #103's blanket save guard). The
+// edit form has no runtime selector, so name/welcome edits leave runtime intact.
+func TestAgents_Save_LegacyUnsupportedRuntimeEditable(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, csrf := tc.login(t)
 	// Seed directly through the store, bypassing the create guard, to simulate
-	// a legacy dead agent.
+	// a legacy managed agent that predates the runtime guards.
 	tc.seedAgent(t, agentdomain.Agent{
-		Identifier: "legacy-bridge",
+		Identifier: "legacy-managed",
 		Name:       "Legacy",
-		Runtime:    agentdomain.RuntimeBridge,
+		Runtime:    agentdomain.RuntimeManaged,
 		Active:     true,
-		BridgeURL:  "https://x.example.com/dispatch",
 	})
 
-	form := url.Values{"csrf_token": {csrf}, "name": {"Renamed"}}
-	rr := tc.postForm(t, "/console/agents/legacy-bridge/save", form, cookie)
+	form := url.Values{
+		"csrf_token":     {csrf},
+		"name":           {"Renamed"},
+		"welcomeMessage": {"hello"},
+	}
+	rr := tc.postForm(t, "/console/agents/legacy-managed/save", form, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); strings.Contains(loc, "error=") {
+		t.Errorf("Location = %q, want non-error redirect (legacy runtime edit must succeed)", loc)
+	}
+	got, err := tc.agentStore.Agents().GetByIdentifier(testBackground(), tc.scope, "legacy-managed")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Name != "Renamed" || got.WelcomeMessage != "hello" {
+		t.Errorf("legacy-runtime edit not persisted: %+v", got)
+	}
+	if got.Runtime != agentdomain.RuntimeManaged {
+		t.Errorf("save changed stored runtime: got %q, want %q", got.Runtime, agentdomain.RuntimeManaged)
+	}
+}
+
+// TestAgents_Save_SwitchToUnsupportedRuntimeRejected asserts the save guard
+// still rejects CHANGING a supported agent's runtime to an unsupported one (a
+// crafted POST, since the form exposes no runtime selector). Nothing persists.
+func TestAgents_Save_SwitchToUnsupportedRuntimeRejected(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+	tc.seedAgent(t, agentdomain.Agent{
+		Identifier: "mesh-bot",
+		Name:       "Mesh Bot",
+		Runtime:    agentdomain.RuntimeMesh,
+		Active:     true,
+	})
+
+	form := url.Values{
+		"csrf_token": {csrf},
+		"name":       {"Renamed"},
+		"runtime":    {agentdomain.RuntimeManaged},
+	}
+	rr := tc.postForm(t, "/console/agents/mesh-bot/save", form, cookie)
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", rr.Code)
 	}
 	if loc := rr.Header().Get("Location"); !strings.Contains(loc, "error=") {
 		t.Errorf("Location = %q, want error redirect", loc)
 	}
-	got, err := tc.agentStore.Agents().GetByIdentifier(testBackground(), tc.scope, "legacy-bridge")
+	got, err := tc.agentStore.Agents().GetByIdentifier(testBackground(), tc.scope, "mesh-bot")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Name == "Renamed" {
-		t.Errorf("save persisted despite unsupported runtime")
+	if got.Name == "Renamed" || got.Runtime != agentdomain.RuntimeMesh {
+		t.Errorf("runtime-switch save persisted despite unsupported target: %+v", got)
 	}
 }
 

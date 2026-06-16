@@ -698,10 +698,14 @@ func (c *Console) handleAgentSave(w http.ResponseWriter, r *http.Request) {
 		c.serveError(w, r)
 		return
 	}
-	// Refuse to re-save an agent stranded on an unimplemented runtime (a row
-	// predating the create guard, or a crafted POST). The form never exposes a
-	// runtime change, so we guard the stored value (#103).
-	if !agentdomain.IsSupportedRuntime(agent.Runtime) {
+	// Enforce supported-only-on-change: block switching TO an unimplemented
+	// runtime, but leave a pre-existing unsupported agent (a row predating the
+	// create guard, e.g. the seeded managed `ember`) editable on its other
+	// fields. The edit form exposes no runtime selector, so a normal save sends
+	// no "runtime" value and the stored runtime is left untouched; only a
+	// crafted POST that changes runtime to an unsupported value is rejected
+	// (#113 Part B relaxes #103's blanket stored-runtime guard).
+	if rt := strings.TrimSpace(r.FormValue("runtime")); rt != "" && rt != agent.Runtime && !agentdomain.IsSupportedRuntime(rt) {
 		http.Redirect(w, r, "/console/agents/"+url.PathEscape(identifier)+"?error="+url.QueryEscape("Unsupported runtime."), http.StatusSeeOther)
 		return
 	}
