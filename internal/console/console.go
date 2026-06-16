@@ -158,6 +158,12 @@ type Deps struct {
 	// Composer relays the conversation view's send-message form through the
 	// ingress compose path in-process (Wave 3). Nil disables the compose box.
 	Composer ConversationComposer
+	// PublicBaseURL is the server's public origin (e.g.
+	// "https://notify.example.com"). The agent channels tab uses it to render a
+	// ready-to-register inbound webhook URL for each linked chat integration,
+	// mirroring the /v1 agents API's channelSetup contract. Empty string falls
+	// back to the "{base_url}" placeholder the operator fills in.
+	PublicBaseURL string
 	// ReadOnly disables every mutation button via the actionButton
 	// template helper and renders the read-only banner. The chassis has
 	// no mutations beyond login/logout (which stay enabled — an operator
@@ -470,6 +476,11 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/agents/{identifier}/save", c.handleAgentSave)
 		pr.Post("/console/agents/{identifier}/delete", c.handleAgentDelete)
 		pr.Post("/console/agents/{identifier}/activate", c.handleAgentToggleActive)
+		// #104: link/unlink channel integrations from the console (native form
+		// POST → 303 back to the channels tab). Thin wrappers over the agents
+		// store Links service the /v1 API also uses.
+		pr.Post("/console/agents/{identifier}/channels", c.handleAgentChannelLink)
+		pr.Post("/console/agents/{identifier}/channels/{integrationID}/unlink", c.handleAgentChannelUnlink)
 		pr.Post("/console/agents/{identifier}/conversations/{id}/compose", c.handleConversationCompose)
 		pr.Get("/console/api/fragments/agents-list", c.serveFragmentAgentsList)
 		pr.Get("/console/api/fragments/agent-conversations", c.serveFragmentAgentConversations)

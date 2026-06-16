@@ -20,6 +20,7 @@ import (
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/store"
 )
 
 // ─── signal keys ──────────────────────────────────────────────────────────────
@@ -76,14 +77,31 @@ type agentDetailView struct {
 	ReadOnly      bool
 	ConfirmDelete bool
 	FormError     string
-	Links         []agentLinkRow     // channels tab
-	ConvsFragment agentConvsListView // conversations tab
+	Links         []agentLinkRow             // channels tab
+	Linkable      []agentLinkableIntegration // channels tab: integrations not yet linked
+	ShowLink      bool                       // channels tab: render the link picker (?link=true)
+	ConvsFragment agentConvsListView         // conversations tab
 	CSRF          string
 }
 
+// agentLinkRow is one linked channel integration shown on the channels tab.
 type agentLinkRow struct {
 	IntegrationID string
+	Identifier    string // integration identifier (human handle), "" when the row is gone
+	ProviderLabel string // human provider name, e.g. "Telegram"
+	ChannelLabel  string // human channel name, e.g. "Chat"
+	IsChat        bool   // chat integrations expose an inbound webhook URL
+	SetupURL      string // inbound webhook URL the operator registers with the provider
 	ConnectedAt   string
+}
+
+// agentLinkableIntegration is one pickable integration in the "Link channel"
+// form — the scope's integrations not yet linked to this agent.
+type agentLinkableIntegration struct {
+	ID            string
+	Identifier    string
+	ProviderLabel string
+	ChannelLabel  string
 }
 
 type agentConvsListView struct {
@@ -287,22 +305,16 @@ func (c *Console) serveAgentDetailPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var links []agentLinkRow
+	var linkable []agentLinkableIntegration
 	var convsFragment agentConvsListView
 
 	switch activeTab {
 	case "channels":
-		rawLinks, err := c.deps.Agents.Links().ListByAgent(r.Context(), scope, agent.ID)
+		links, linkable, err = c.buildAgentChannelsView(r, scope, agent.ID)
 		if err != nil {
 			c.deps.Logger.Error("console: list agent links", "identifier", identifier, "err", err)
 			c.serveError(w, r)
 			return
-		}
-		links = make([]agentLinkRow, 0, len(rawLinks))
-		for _, l := range rawLinks {
-			links = append(links, agentLinkRow{
-				IntegrationID: l.IntegrationID,
-				ConnectedAt:   l.ConnectedAt,
-			})
 		}
 	case "conversations":
 		before := r.URL.Query().Get("before")
@@ -319,10 +331,83 @@ func (c *Console) serveAgentDetailPage(w http.ResponseWriter, r *http.Request) {
 		ConfirmDelete: r.URL.Query().Get("confirmDelete") == "true",
 		FormError:     r.URL.Query().Get("error"),
 		Links:         links,
+		Linkable:      linkable,
+		ShowLink:      !c.deps.ReadOnly && r.URL.Query().Get("link") == "true",
 		ConvsFragment: convsFragment,
 		CSRF:          s.CSRF,
 	}
 	c.renderPage(w, r, http.StatusOK, "agent-detail", agentTitle(agent), pd)
+}
+
+// buildAgentChannelsView assembles the channels tab: the linked-integration
+// rows (enriched with provider/channel labels and, for chat integrations, the
+// inbound setup URL) plus the set of scope integrations not yet linked (the
+// link picker's options). Both reads are scope-guarded — an integration the
+// scope cannot see is neither rendered as a link detail nor offered to link.
+func (c *Console) buildAgentChannelsView(r *http.Request, scope domain.Scope, agentID string) ([]agentLinkRow, []agentLinkableIntegration, error) {
+	rawLinks, err := c.deps.Agents.Links().ListByAgent(r.Context(), scope, agentID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Resolve integration metadata from the scope's integration list so the
+	// channels tab shows provider/channel names instead of opaque IDs, and so
+	// the picker only ever offers integrations within this tenant.
+	integrations, err := c.deps.Integrations.List(r.Context(), scope)
+	if err != nil {
+		return nil, nil, err
+	}
+	byID := make(map[string]domain.Integration, len(integrations))
+	for _, in := range integrations {
+		byID[in.ID] = in
+	}
+
+	linked := make(map[string]struct{}, len(rawLinks))
+	links := make([]agentLinkRow, 0, len(rawLinks))
+	for _, l := range rawLinks {
+		linked[l.IntegrationID] = struct{}{}
+		row := agentLinkRow{
+			IntegrationID: l.IntegrationID,
+			ConnectedAt:   l.ConnectedAt,
+		}
+		if in, ok := byID[l.IntegrationID]; ok {
+			row.Identifier = in.Identifier
+			row.ProviderLabel = providerLabel(in.ProviderID)
+			row.ChannelLabel = channelLabel(in.Channel)
+			row.IsChat = in.Channel == "chat"
+			if row.IsChat {
+				row.SetupURL = c.channelSetupURL(l.IntegrationID)
+			}
+		}
+		links = append(links, row)
+	}
+
+	linkable := make([]agentLinkableIntegration, 0, len(integrations))
+	for _, in := range integrations {
+		if _, ok := linked[in.ID]; ok {
+			continue
+		}
+		linkable = append(linkable, agentLinkableIntegration{
+			ID:            in.ID,
+			Identifier:    in.Identifier,
+			ProviderLabel: providerLabel(in.ProviderID),
+			ChannelLabel:  channelLabel(in.Channel),
+		})
+	}
+	return links, linkable, nil
+}
+
+// channelSetupURL returns the inbound webhook URL the operator registers with a
+// chat provider (e.g. BotFather setWebhook). It mirrors the /v1 API's
+// channelSetup contract exactly: <baseURL>/v1/inbound/<integrationID>, falling
+// back to the "{base_url}" placeholder when the console has no public base URL
+// configured (the acceptably-degraded path from Spec 08 Gap 2).
+func (c *Console) channelSetupURL(integrationID string) string {
+	base := strings.TrimRight(c.deps.PublicBaseURL, "/")
+	if base == "" {
+		base = "{base_url}"
+	}
+	return base + "/v1/inbound/" + integrationID
 }
 
 // buildAgentConvsView assembles the conversations-tab fragment for one agent.
@@ -681,6 +766,109 @@ func (c *Console) handleAgentToggleActive(w http.ResponseWriter, r *http.Request
 		return
 	}
 	http.Redirect(w, r, "/console/agents/"+url.PathEscape(identifier), http.StatusSeeOther)
+}
+
+// channelsTabURL is the 303 target both channel mutations redirect to. msg,
+// when non-empty, is surfaced as a ?error= banner on the tab.
+func channelsTabURL(identifier, msg string) string {
+	u := "/console/agents/" + url.PathEscape(identifier) + "/tabs/channels"
+	if msg != "" {
+		u += "?error=" + url.QueryEscape(msg)
+	}
+	return u
+}
+
+// handleAgentChannelLink links the chosen channel integration to the agent and
+// 303-redirects back to the channels tab. It is a thin wrapper over the same
+// agents-store Links().Link the /v1 API uses: it resolves the agent in scope
+// (404 on unknown), verifies the integration is visible in the same scope (so a
+// foreign-tenant id cannot be linked), then upserts the link.
+func (c *Console) handleAgentChannelLink(w http.ResponseWriter, r *http.Request) {
+	if c.deps.ReadOnly {
+		http.Error(w, "console is read-only", http.StatusForbidden)
+		return
+	}
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
+		panic("handleAgentChannelLink: no scope in context")
+	}
+	identifier := chi.URLParam(r, "identifier")
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	agent, err := c.deps.Agents.Agents().GetByIdentifier(r.Context(), scope, identifier)
+	if err != nil {
+		if errors.Is(err, agentstore.ErrNotFound) {
+			c.serveNotFound(w, r)
+			return
+		}
+		c.deps.Logger.Error("console: link channel get agent", "identifier", identifier, "err", err)
+		c.serveError(w, r)
+		return
+	}
+	integrationID := strings.TrimSpace(r.FormValue("integrationId"))
+	if integrationID == "" {
+		http.Redirect(w, r, channelsTabURL(identifier, "Choose an integration to link."), http.StatusSeeOther)
+		return
+	}
+	// Scope guard: only an integration visible in this tenant may be linked.
+	// This rejects both unknown ids and cross-tenant ids without panicking.
+	if _, err := c.deps.Integrations.GetByID(r.Context(), scope, integrationID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Redirect(w, r, channelsTabURL(identifier, "That integration was not found."), http.StatusSeeOther)
+			return
+		}
+		c.deps.Logger.Error("console: link channel get integration", "id", integrationID, "err", err)
+		c.serveError(w, r)
+		return
+	}
+	if _, err := c.deps.Agents.Links().Link(r.Context(), scope, agentdomain.AgentLink{
+		AgentID:       agent.ID,
+		IntegrationID: integrationID,
+	}); err != nil {
+		c.deps.Logger.Error("console: link channel", "identifier", identifier, "integration", integrationID, "err", err)
+		http.Redirect(w, r, channelsTabURL(identifier, "Link failed."), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, channelsTabURL(identifier, ""), http.StatusSeeOther)
+}
+
+// handleAgentChannelUnlink removes the agent↔integration link and 303-redirects
+// back to the channels tab. Thin wrapper over Links().Unlink; the store call is
+// scope-guarded so a foreign-tenant link can never be removed here.
+func (c *Console) handleAgentChannelUnlink(w http.ResponseWriter, r *http.Request) {
+	if c.deps.ReadOnly {
+		http.Error(w, "console is read-only", http.StatusForbidden)
+		return
+	}
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
+		panic("handleAgentChannelUnlink: no scope in context")
+	}
+	identifier := chi.URLParam(r, "identifier")
+	integrationID := chi.URLParam(r, "integrationID")
+	agent, err := c.deps.Agents.Agents().GetByIdentifier(r.Context(), scope, identifier)
+	if err != nil {
+		if errors.Is(err, agentstore.ErrNotFound) {
+			c.serveNotFound(w, r)
+			return
+		}
+		c.deps.Logger.Error("console: unlink channel get agent", "identifier", identifier, "err", err)
+		c.serveError(w, r)
+		return
+	}
+	if err := c.deps.Agents.Links().Unlink(r.Context(), scope, agent.ID, integrationID); err != nil {
+		if errors.Is(err, agentstore.ErrNotFound) {
+			// Already gone (or never in scope) — converge on the tab quietly.
+			http.Redirect(w, r, channelsTabURL(identifier, ""), http.StatusSeeOther)
+			return
+		}
+		c.deps.Logger.Error("console: unlink channel", "identifier", identifier, "integration", integrationID, "err", err)
+		http.Redirect(w, r, channelsTabURL(identifier, "Unlink failed."), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, channelsTabURL(identifier, ""), http.StatusSeeOther)
 }
 
 // handleConversationCompose relays the conversation view's send-message form

@@ -321,6 +321,10 @@ func runServe(args []string) error {
 		DagnatsConsoleURL: os.Getenv("NOTIFY_DAGNATS_CONSOLE_URL"),
 		ReadOnly:          os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",
 		HTTPAddr:          *addr,
+		// #104: public origin used to render ready-to-register inbound webhook
+		// URLs on the agent channels tab. Empty falls back to a "{base_url}"
+		// placeholder the operator fills in.
+		PublicBaseURL: os.Getenv("NOTIFY_PUBLIC_BASE_URL"),
 		// W4-S1 #40: subscriber preferences tab.
 		Preferences: prefs,
 		// W4-S2 #41: topic activity tab.
