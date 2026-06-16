@@ -795,3 +795,213 @@ func TestActivityRepo_ListConversations(t *testing.T) {
 		t.Fatalf("empty scope: want 0, got %d", len(empty))
 	}
 }
+
+// seedChatThread inserts a chat_threads row keyed on agent_identifier.
+func seedChatThread(t *testing.T, s *Store, scope domain.Scope, agentIdentifier, chatID string) {
+	t.Helper()
+	_, err := s.w.ExecContext(context.Background(),
+		`INSERT INTO chat_threads (id, org_id, environment_id, agent_identifier,
+		   platform_thread_id, subscriber_id, provider, chat_id, created_at, last_activity_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		corestore.NewULID(), scope.OrgID, scope.EnvID, agentIdentifier,
+		"thread-"+chatID, "tg:"+chatID, "telegram", chatID, "now", "now")
+	if err != nil {
+		t.Fatalf("seed chat_thread: %v", err)
+	}
+}
+
+// seedEmailThread inserts an email_threads row keyed on agent_identifier.
+func seedEmailThread(t *testing.T, s *Store, scope domain.Scope, agentIdentifier, threadID string) {
+	t.Helper()
+	_, err := s.w.ExecContext(context.Background(),
+		`INSERT INTO email_threads (id, org_id, environment_id, agent_identifier,
+		   platform_thread_id, subscriber_id, subscriber_email, inbound_domain, created_at, last_activity_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		corestore.NewULID(), scope.OrgID, scope.EnvID, agentIdentifier,
+		threadID, "sub:"+threadID, "a@b.com", "b.com", "now", "now")
+	if err != nil {
+		t.Fatalf("seed email_thread: %v", err)
+	}
+}
+
+// countRows returns the number of rows matching a (org, env, col)=val filter.
+func countRows(t *testing.T, s *Store, table, col string, scope domain.Scope, val string) int {
+	t.Helper()
+	var n int
+	q := "SELECT COUNT(*) FROM " + table + " WHERE org_id = ? AND environment_id = ? AND " + col + " = ?"
+	if err := s.r.QueryRowContext(context.Background(), q, scope.OrgID, scope.EnvID, val).Scan(&n); err != nil {
+		t.Fatalf("count %s: %v", table, err)
+	}
+	return n
+}
+
+// seedAgentWithChildren creates an agent and one row in every related table
+// bound to it, returning the agent. It asserts the children landed.
+func seedAgentWithChildren(t *testing.T, s *Store, scope domain.Scope, identifier string) agentdomain.Agent {
+	t.Helper()
+	ctx := context.Background()
+
+	agent, err := s.Agents().Create(ctx, scope, agentdomain.Agent{
+		Identifier: identifier,
+		Name:       identifier,
+		Runtime:    agentdomain.RuntimeMesh,
+		Active:     true,
+	})
+	if err != nil {
+		t.Fatalf("create agent %s: %v", identifier, err)
+	}
+
+	if _, err := s.Links().Link(ctx, scope, agentdomain.AgentLink{
+		AgentID:       agent.ID,
+		IntegrationID: "intg-" + identifier,
+		Config:        json.RawMessage(`{}`),
+	}); err != nil {
+		t.Fatalf("link agent %s: %v", identifier, err)
+	}
+
+	conv, err := s.Conversations().Upsert(ctx, scope, agentdomain.Conversation{
+		AgentID:          agent.ID,
+		IntegrationID:    "intg-" + identifier,
+		PlatformThreadID: "pt-" + identifier,
+		SubscriberID:     "sub-" + identifier,
+	})
+	if err != nil {
+		t.Fatalf("upsert conversation %s: %v", identifier, err)
+	}
+
+	if _, err := s.Activities().Append(ctx, scope, agentdomain.Activity{
+		ConversationID: conv.ID,
+		Role:           "user",
+		Content:        json.RawMessage(`{"parts":[{"text":"hi"}]}`),
+	}); err != nil {
+		t.Fatalf("append activity %s: %v", identifier, err)
+	}
+
+	seedChatThread(t, s, scope, identifier, "chat-"+identifier)
+	seedEmailThread(t, s, scope, identifier, "pt-"+identifier)
+
+	return agent
+}
+
+// assertChildCounts asserts the per-table row counts for an agent's children.
+func assertChildCounts(t *testing.T, s *Store, scope domain.Scope, agent agentdomain.Agent, want int) {
+	t.Helper()
+	if got := countRows(t, s, "agent_links", "agent_id", scope, agent.ID); got != want {
+		t.Fatalf("agent_links count for %s: want %d, got %d", agent.Identifier, want, got)
+	}
+	if got := countRows(t, s, "conversations", "agent_id", scope, agent.ID); got != want {
+		t.Fatalf("conversations count for %s: want %d, got %d", agent.Identifier, want, got)
+	}
+	if got := countRows(t, s, "chat_threads", "agent_identifier", scope, agent.Identifier); got != want {
+		t.Fatalf("chat_threads count for %s: want %d, got %d", agent.Identifier, want, got)
+	}
+	if got := countRows(t, s, "email_threads", "agent_identifier", scope, agent.Identifier); got != want {
+		t.Fatalf("email_threads count for %s: want %d, got %d", agent.Identifier, want, got)
+	}
+	// conversation_activities key on conversation_id, not agent; count via join.
+	var acts int
+	if err := s.r.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM conversation_activities
+		 WHERE conversation_id IN (
+		   SELECT id FROM conversations WHERE org_id = ? AND environment_id = ? AND agent_id = ?)`,
+		scope.OrgID, scope.EnvID, agent.ID).Scan(&acts); err != nil {
+		t.Fatalf("count conversation_activities for %s: %v", agent.Identifier, err)
+	}
+	if acts != want {
+		t.Fatalf("conversation_activities count for %s: want %d, got %d", agent.Identifier, want, acts)
+	}
+}
+
+// TestAgentRepo_DeleteCascade proves Delete is a transactional cascade: every
+// related row (agent_links, conversations, conversation_activities,
+// chat_threads, email_threads) bound to the agent is removed alongside it.
+func TestAgentRepo_DeleteCascade(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	agent := seedAgentWithChildren(t, s, scope, "support-bot")
+	assertChildCounts(t, s, scope, agent, 1)
+
+	if err := s.Agents().Delete(ctx, scope, "support-bot"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	if _, err := s.Agents().GetByIdentifier(ctx, scope, "support-bot"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("agent must be gone after delete, got %v", err)
+	}
+	assertChildCounts(t, s, scope, agent, 0)
+}
+
+// TestAgentRepo_DeleteCascade_TenantIsolation proves the cascade never reaches
+// across (org, env): a second agent in a different scope with the SAME
+// identifier and its own children survives the first agent's deletion intact.
+func TestAgentRepo_DeleteCascade_TenantIsolation(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	other := domain.Scope{OrgID: "o2", EnvID: "e2"}
+
+	first := seedAgentWithChildren(t, s, scope, "shared-id")
+	second := seedAgentWithChildren(t, s, other, "shared-id")
+
+	if err := s.Agents().Delete(ctx, scope, "shared-id"); err != nil {
+		t.Fatalf("delete first: %v", err)
+	}
+
+	// First scope's agent and all its children are gone.
+	if _, err := s.Agents().GetByIdentifier(ctx, scope, "shared-id"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("first agent must be gone, got %v", err)
+	}
+	assertChildCounts(t, s, scope, first, 0)
+
+	// Second scope's agent and all its children are fully intact.
+	if _, err := s.Agents().GetByIdentifier(ctx, other, "shared-id"); err != nil {
+		t.Fatalf("second agent must survive: %v", err)
+	}
+	assertChildCounts(t, s, other, second, 1)
+}
+
+// TestAgentRepo_DeleteCascade_RecreateNoOrphans proves that after delete +
+// recreate with the same identifier, no stale child rows surface in the new
+// agent's queries.
+func TestAgentRepo_DeleteCascade_RecreateNoOrphans(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	old := seedAgentWithChildren(t, s, scope, "support-bot")
+	if err := s.Agents().Delete(ctx, scope, "support-bot"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	fresh, err := s.Agents().Create(ctx, scope, agentdomain.Agent{
+		Identifier: "support-bot",
+		Name:       "fresh",
+		Runtime:    agentdomain.RuntimeMesh,
+		Active:     true,
+	})
+	if err != nil {
+		t.Fatalf("recreate: %v", err)
+	}
+	if fresh.ID == old.ID {
+		t.Fatalf("recreated agent should mint a new id, got reused %s", fresh.ID)
+	}
+
+	// The chat/email threads key on identifier and WOULD leak into the fresh
+	// agent's lookups if the prior delete had orphaned them.
+	if got := countRows(t, s, "chat_threads", "agent_identifier", scope, "support-bot"); got != 0 {
+		t.Fatalf("orphan chat_threads for recreated identifier: got %d", got)
+	}
+	if got := countRows(t, s, "email_threads", "agent_identifier", scope, "support-bot"); got != 0 {
+		t.Fatalf("orphan email_threads for recreated identifier: got %d", got)
+	}
+	// Conversations key on the old internal id; a leaked row would surface here.
+	convs, err := s.Conversations().ListByAgent(ctx, scope, old.ID, 0, "")
+	if err != nil {
+		t.Fatalf("list old conversations: %v", err)
+	}
+	if len(convs) != 0 {
+		t.Fatalf("orphan conversations bound to old agent id: got %d", len(convs))
+	}
+}

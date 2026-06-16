@@ -117,25 +117,90 @@ func (repo *agentRepo) Update(ctx context.Context, scope domain.Scope, a agentdo
 	return repo.GetByIdentifier(ctx, scope, a.Identifier)
 }
 
-// Delete removes the agent addressed by (scope, identifier). A missing
-// identifier surfaces ErrNotFound.
+// Delete removes the agent addressed by (scope, identifier) along with every
+// row that hangs off it — agent_links, conversations, conversation_activities,
+// chat_threads, and email_threads — as one transactional cascade. SQLite does
+// not enforce foreign keys here, so the children would otherwise be orphaned and
+// a same-identifier recreate could collide with stale data. A missing identifier
+// surfaces ErrNotFound. Every statement is scope-guarded by (org_id,
+// environment_id) so the cascade never reaches across tenants. agent_links and
+// conversations key on the agent's internal ULID id; chat_threads and
+// email_threads key on the identifier string.
 func (repo *agentRepo) Delete(ctx context.Context, scope domain.Scope, identifier string) error {
-	res, err := repo.w.ExecContext(
+	tx, err := repo.w.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Resolve the agent's internal id within the transaction; a missing row is
+	// ErrNotFound, matching the prior single-statement semantics.
+	var agentID string
+	err = tx.QueryRowContext(
+		ctx,
+		`SELECT id FROM agents WHERE org_id = ? AND environment_id = ? AND identifier = ?`,
+		scope.OrgID, scope.EnvID, identifier,
+	).Scan(&agentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	// Children keyed on the internal id. conversation_activities go first
+	// (they reference conversations.id), then conversations, then agent_links.
+	if _, err = tx.ExecContext(
+		ctx,
+		`DELETE FROM conversation_activities
+		 WHERE conversation_id IN (
+		   SELECT id FROM conversations
+		   WHERE org_id = ? AND environment_id = ? AND agent_id = ?)`,
+		scope.OrgID, scope.EnvID, agentID,
+	); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(
+		ctx,
+		`DELETE FROM conversations WHERE org_id = ? AND environment_id = ? AND agent_id = ?`,
+		scope.OrgID, scope.EnvID, agentID,
+	); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(
+		ctx,
+		`DELETE FROM agent_links WHERE org_id = ? AND environment_id = ? AND agent_id = ?`,
+		scope.OrgID, scope.EnvID, agentID,
+	); err != nil {
+		return err
+	}
+
+	// Children keyed on the identifier string.
+	if _, err = tx.ExecContext(
+		ctx,
+		`DELETE FROM chat_threads WHERE org_id = ? AND environment_id = ? AND agent_identifier = ?`,
+		scope.OrgID, scope.EnvID, identifier,
+	); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(
+		ctx,
+		`DELETE FROM email_threads WHERE org_id = ? AND environment_id = ? AND agent_identifier = ?`,
+		scope.OrgID, scope.EnvID, identifier,
+	); err != nil {
+		return err
+	}
+
+	// Finally the agent row itself.
+	if _, err = tx.ExecContext(
 		ctx,
 		`DELETE FROM agents WHERE org_id = ? AND environment_id = ? AND identifier = ?`,
 		scope.OrgID, scope.EnvID, identifier,
-	)
-	if err != nil {
+	); err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
+
+	return tx.Commit()
 }
 
 // rowScanner is the shared surface of *sql.Row and *sql.Rows.
