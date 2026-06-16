@@ -41,8 +41,9 @@ type agentsPageView struct {
 	Fragment   agentsListView
 	Signals    template.JS
 	ReadOnly   bool
-	ShowCreate bool   // true on /console/agents/new (renders the create slide-over)
-	FormError  string // surfaced from ?error= after a failed create
+	ShowCreate bool     // true on /console/agents/new (renders the create slide-over)
+	FormError  string   // surfaced from ?error= after a failed create
+	Runtimes   []string // runtime <option> values; only implemented runtimes (domain.SupportedRuntimes, #103)
 	CSRF       string
 }
 
@@ -227,6 +228,7 @@ func (c *Console) serveAgentNew(w http.ResponseWriter, r *http.Request) {
 		ReadOnly:   c.deps.ReadOnly,
 		ShowCreate: !c.deps.ReadOnly,
 		FormError:  r.URL.Query().Get("error"),
+		Runtimes:   agentdomain.SupportedRuntimes,
 		CSRF:       s.CSRF,
 	}
 	c.renderPage(w, r, http.StatusOK, "agents", "New agent", pd)
@@ -554,8 +556,12 @@ func (c *Console) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runtime := strings.TrimSpace(r.FormValue("runtime"))
-	if !agentdomain.ValidRuntime(runtime) {
-		redirectAgentNewErr(w, r, "Invalid runtime.")
+	// Reject runtimes without a registered executor — bridge/managed are
+	// defined constants but unimplemented, so an agent saved with them would
+	// dead-letter every turn (#103). Defense in depth behind the form, which
+	// only offers domain.SupportedRuntimes.
+	if !agentdomain.IsSupportedRuntime(runtime) {
+		redirectAgentNewErr(w, r, "Unsupported runtime.")
 		return
 	}
 	agent, err := c.deps.Agents.Agents().Create(r.Context(), scope, agentdomain.Agent{
@@ -605,6 +611,13 @@ func (c *Console) handleAgentSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.serveError(w, r)
+		return
+	}
+	// Refuse to re-save an agent stranded on an unimplemented runtime (a row
+	// predating the create guard, or a crafted POST). The form never exposes a
+	// runtime change, so we guard the stored value (#103).
+	if !agentdomain.IsSupportedRuntime(agent.Runtime) {
+		http.Redirect(w, r, "/console/agents/"+url.PathEscape(identifier)+"?error="+url.QueryEscape("Unsupported runtime."), http.StatusSeeOther)
 		return
 	}
 	agent.Name = strings.TrimSpace(r.FormValue("name"))

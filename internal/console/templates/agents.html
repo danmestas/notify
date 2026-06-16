@@ -58,9 +58,9 @@
           <select class="console-input" id="new-runtime" name="runtime" required
                   data-bind="agentRuntime">
             <option value="">Select runtime…</option>
-            <option value="mesh">mesh</option>
-            <option value="bridge">bridge</option>
-            <option value="managed">managed</option>
+            {{/* Only runtimes with a registered executor — domain.SupportedRuntimes (#103). */}}
+            {{range $page.Runtimes}}<option value="{{.}}">{{.}}</option>
+            {{end}}
           </select>
         </div>
         <div class="form-row" data-show="$agentRuntime === 'mesh'">

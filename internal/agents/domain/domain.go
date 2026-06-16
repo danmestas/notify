@@ -28,6 +28,28 @@ func ValidRuntime(r string) bool {
 	return false
 }
 
+// SupportedRuntimes lists the runtimes that actually have a registered executor
+// and can therefore execute turns without dead-lettering. It is the single
+// source of truth the console renders its runtime <option> list from and guards
+// create/save against. Keep it in lockstep with the WithRuntime(...) calls in
+// cmd/notify/main.go: a runtime constant exists here (RuntimeBridge,
+// RuntimeManaged) before its executor does, so offering it in the UI would
+// silently dead-letter every turn (see issue #103). Add an entry here only when
+// the matching WithRuntime registration lands.
+var SupportedRuntimes = []string{RuntimeMesh}
+
+// IsSupportedRuntime reports whether r has a registered executor (i.e. appears
+// in SupportedRuntimes). Unlike ValidRuntime, it rejects runtimes that are
+// defined but not yet implemented.
+func IsSupportedRuntime(r string) bool {
+	for _, s := range SupportedRuntimes {
+		if r == s {
+			return true
+		}
+	}
+	return false
+}
+
 // Agent is a conversational endpoint registered with the platform, uniquely
 // identified by (environment_id, identifier). Exactly one of MeshSubject,
 // BridgeURL, or Managed is meaningful, selected by Runtime.

@@ -152,6 +152,85 @@ func TestAgents_Create_InvalidRuntimeRedirectsWithError(t *testing.T) {
 	}
 }
 
+// TestAgents_CreateFormRuntimeOptions_OnlySupported asserts the create form's
+// runtime <select> offers exactly SupportedRuntimes — no unimplemented
+// bridge/managed options that would silently dead-letter every turn (#103).
+func TestAgents_CreateFormRuntimeOptions_OnlySupported(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+	rr := tc.get(t, "/console/agents/new", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `<option value="mesh">mesh</option>`) {
+		t.Errorf("create form missing supported mesh option; body:\n%s", body)
+	}
+	if strings.Contains(body, `<option value="bridge">`) {
+		t.Errorf("create form must NOT offer unimplemented bridge runtime")
+	}
+	if strings.Contains(body, `<option value="managed">`) {
+		t.Errorf("create form must NOT offer unimplemented managed runtime")
+	}
+}
+
+// TestAgents_Create_UnsupportedRuntimeRejected asserts a direct POST with a
+// defined-but-unimplemented runtime (bridge/managed) is rejected with an inline
+// error and persists nothing — defense in depth behind the form (#103).
+func TestAgents_Create_UnsupportedRuntimeRejected(t *testing.T) {
+	for _, runtime := range []string{"bridge", "managed"} {
+		t.Run(runtime, func(t *testing.T) {
+			tc := newTestConsole(t)
+			cookie, csrf := tc.login(t)
+
+			form := url.Values{"csrf_token": {csrf}, "identifier": {"dead-" + runtime}, "runtime": {runtime}}
+			rr := tc.postForm(t, "/console/agents", form, cookie)
+			if rr.Code != http.StatusSeeOther {
+				t.Fatalf("status = %d, want 303", rr.Code)
+			}
+			if loc := rr.Header().Get("Location"); !strings.Contains(loc, "error=") {
+				t.Errorf("Location = %q, want error redirect", loc)
+			}
+			if _, err := tc.agentStore.Agents().GetByIdentifier(testBackground(), tc.scope, "dead-"+runtime); err == nil {
+				t.Errorf("agent with unsupported runtime %q was persisted", runtime)
+			}
+		})
+	}
+}
+
+// TestAgents_Save_UnsupportedRuntimeRejected guards the save handler: an agent
+// whose stored runtime is unsupported (a row created before the guard, or via a
+// crafted POST) must not be re-saved through the edit form (#103).
+func TestAgents_Save_UnsupportedRuntimeRejected(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+	// Seed directly through the store, bypassing the create guard, to simulate
+	// a legacy dead agent.
+	tc.seedAgent(t, agentdomain.Agent{
+		Identifier: "legacy-bridge",
+		Name:       "Legacy",
+		Runtime:    agentdomain.RuntimeBridge,
+		Active:     true,
+		BridgeURL:  "https://x.example.com/dispatch",
+	})
+
+	form := url.Values{"csrf_token": {csrf}, "name": {"Renamed"}}
+	rr := tc.postForm(t, "/console/agents/legacy-bridge/save", form, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); !strings.Contains(loc, "error=") {
+		t.Errorf("Location = %q, want error redirect", loc)
+	}
+	got, err := tc.agentStore.Agents().GetByIdentifier(testBackground(), tc.scope, "legacy-bridge")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Name == "Renamed" {
+		t.Errorf("save persisted despite unsupported runtime")
+	}
+}
+
 func TestAgents_Detail_Overview(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)
