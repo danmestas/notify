@@ -40,6 +40,22 @@ VOLUME ["/data"]
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/notify"]
 CMD ["serve"]
 
+# ---- notify hub ----------------------------------------------------------
+# Public-facing variant of `notify`: identical static binary + alpine runtime,
+# but fronted by deploy/notify-prelude.sh (env normalization, file-secret
+# materialization, provider summary) instead of running notify directly.
+# Built by deploy/compose.hub.yml (`--target hub`). Reuses the `notify` stage
+# wholesale — no rebuild of the Go binary.
+FROM notify AS hub
+USER root
+COPY deploy/notify-prelude.sh /usr/local/bin/notify-prelude.sh
+RUN chmod 0755 /usr/local/bin/notify-prelude.sh
+USER notify
+# tini (PID 1) reaps zombies + forwards signals; the prelude exec's notify so
+# SIGTERM reaches the server for a clean SQLite close.
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/notify-prelude.sh"]
+CMD []
+
 # ---- dagnats runtime -----------------------------------------------------
 FROM alpine:3.20 AS dagnats
 RUN apk add --no-cache ca-certificates tini && \

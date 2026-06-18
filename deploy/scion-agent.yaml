@@ -1,0 +1,57 @@
+schema_version: "1"
+description: "notify comms hub — long-lived A2A delivery service (API + workers + engine sidecar)"
+
+# notify is a service, not a turn-based agent: it runs until stopped rather than
+# completing a bounded task. Detached + a long max_duration reflect that.
+default_harness_config: notify
+image: local/notify-hub:latest   # built from Dockerfile `--target hub`
+detached: true
+max_duration: "720h"             # ~30d; restart policy keeps it alive between
+
+# Consolidated topology: ONE dagnats is notify's engine NATS, notify's mesh, AND
+# the sesh agents' hub. It runs as a leaf node dialing OUT to a secured root hub.
+# NOTIFY_MESH_NATS_URL is left EMPTY so notify reuses NOTIFY_NATS_URL for mesh
+# dispatch (cmd/notify/main.go:173). DAGNATS_LEAF_REMOTES (SESH_ROOT_LEAF_URL,
+# e.g. tls://root.example:7422) + DAGNATS_LEAF_CREDENTIALS (the mini_leaf_creds
+# file-type secret at /run/secrets/mini-leaf.creds) flip dagnats into leaf mode,
+# which binds 0.0.0.0:4222 for the agents. Leave SESH_ROOT_LEAF_URL unset for a
+# standalone (localhost-only) single-box phase.
+env:
+  NOTIFY_NATS_URL: "nats://127.0.0.1:4222"        # engine + mesh + agent hub
+  NOTIFY_BRIDGE_URL: "http://127.0.0.1:8080"      # engine HTTP bridge
+  NOTIFY_ADDR: "0.0.0.0:3000"
+  NOTIFY_DB: "/data/notify.db"
+  NOTIFY_MESH_NATS_URL: ""                          # empty → reuse engine NATS
+  DAGNATS_LEAF_REMOTES: "${SESH_ROOT_LEAF_URL}"     # root hub leaf listener
+  DAGNATS_LEAF_CREDENTIALS: "/run/secrets/mini-leaf.creds"
+  NOTIFY_PUBLIC_BASE_URL: "${NOTIFY_PUBLIC_BASE_URL}"
+  NOTIFY_CHAT_DEFAULT_AGENT: "${NOTIFY_CHAT_DEFAULT_AGENT}"
+  NOTIFY_CHAT_DEFAULT_ORG: "${NOTIFY_CHAT_DEFAULT_ORG}"
+  NOTIFY_CHAT_DEFAULT_ENV: "${NOTIFY_CHAT_DEFAULT_ENV}"
+
+# NOTE: DAGNATS_LEAF_REMOTES / DAGNATS_LEAF_CREDENTIALS above are consumed by the
+# dagnats SIDECAR, not by notify. Under scion, set them on the dagnats agent
+# spec; they are listed here as the canonical wiring for the consolidated hub.
+
+# Secrets flow through scion's hub secret store, NOT a volumes: block. Stage
+# them with deploy/stage-creds.sh, which pushes each as a hub secret the broker
+# projects into the container (env-type → env var; file-type → mounted file):
+#
+#   deploy/stage-creds.sh
+#
+# Staged env secrets (consumed by the prelude / notify serve):
+#   NOTIFY_MASTER_KEY_HEX        32-byte hex; encryption-at-rest master key
+#   NOTIFY_INBOUND_SECRET        authenticates the inbound-email POST
+#   SESH_ROOT_LEAF_URL           root hub leaf listener (tls://root.example:7422)
+#   TELEGRAM_BOT_TOKEN           chat inbound (telegram)
+#   TELEGRAM_CHAT_ID             default telegram chat
+#   DISCORD_BOT_TOKEN            chat inbound (discord)
+#   RESEND_API_KEY               email provider
+#   CF_EMAIL_FROM / CF_API_TOKEN cloudflare email
+#   TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN        sms/voice
+#   SIGNALWIRE_PROJECT_ID / SIGNALWIRE_API_TOKEN / SIGNALWIRE_SPACE_URL
+#   FIREBASE_SERVICE_ACCOUNT_B64 / FIREBASE_PROJECT_ID    push (fcm)
+#   TUNNEL_TOKEN                 cloudflared ingress (if fronting via tunnel)
+#
+# Staged file-type secret:
+#   mini_leaf_creds → /run/secrets/mini-leaf.creds   nsc-issued leaf .creds (JWT)

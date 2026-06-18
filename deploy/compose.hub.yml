@@ -1,0 +1,181 @@
+name: notify-hub
+
+# notify hub — full public-facing deployment.
+#
+# Topology (ONE dagnats = engine NATS + mesh + the sesh agents' hub; it dials
+# OUT as a leaf node into a secured root hub):
+#
+#                       root hub (mesh anchor, public, TLS+auth)
+#                                       ▲
+#                                       │  leaf (tls://…:7422, .creds auth)
+#                                       │  Mini dials OUT — no inbound port
+#   ┌─────────────────────── shared netns ───────────────────────┐
+#   │  cloudflared ──► 127.0.0.1:3000  notify (API + workers)     │
+#   │  dagnats (NATS :4222 — leaf mode binds 0.0.0.0 + bridge :8080)
+#   │       owns the netns + published :3000 and :4222 host ports │
+#   └────────────────────────────┬───────────────────────────────┘
+#                                 ▼
+#                     /data (dagnats-data volume)
+#
+# This dagnats is BOTH notify's engine NATS AND the local hub that the sesh
+# agents dial via SESH_HUB_URL. When DAGNATS_LEAF_REMOTES is set, dagnats runs
+# in leaf mode and binds 0.0.0.0:4222 (verified in dagnats/server/nats.go), so
+# we publish :4222 for host-run sesh agents and other containers. notify and
+# cloudflared still share dagnats' netns to reach it (and notify's :3000) over
+# loopback. Because engine and mesh are now the SAME local dagnats,
+# NOTIFY_MESH_NATS_URL is left EMPTY — notify reuses -nats-url for mesh
+# dispatch (cmd/notify/main.go:173: meshHub falls back to natsURL when empty).
+#
+# SESH_HUB_URL for the agents (sesh is a pure NATS client dialing this hub):
+#   * host-run agents      → nats://127.0.0.1:4222   (published host port)
+#   * container agents      → nats://dagnats:4222     (compose network DNS)
+#
+# Secrets: prefer scion-injected env (deploy/stage-creds.sh pushes each secret
+# into scion's hub store; the broker projects them as container env). For a raw
+# `docker compose` run, the ${VAR} references below are resolved from the
+# process environment — drive it with Doppler:
+#
+#   doppler run -p notify -c dev -- docker compose -f deploy/compose.hub.yml up -d
+#
+# NEVER hardcode a secret value in this file.
+
+services:
+  # ---- engine NATS sidecar (dagnats) -------------------------------------
+  dagnats:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: dagnats
+    restart: unless-stopped
+    environment:
+      DAGNATS_HTTP_ADDR: 0.0.0.0:8080
+      DAGNATS_DATA_DIR: /data
+      # --- leaf node into the secured root hub ---
+      # Setting DAGNATS_LEAF_REMOTES flips dagnats into leaf mode, which makes
+      # it bind 0.0.0.0:4222 (so host agents + other containers can reach it)
+      # and dial OUT to the root. The Mini never exposes an inbound public
+      # port. SESH_ROOT_LEAF_URL is e.g. tls://root.example:7422 (TLS required
+      # by the root's leafnode listener). The .creds file authenticates this
+      # leaf (nsc-issued JWT); see deploy/root-hub/ and stage-creds.sh.
+      DAGNATS_LEAF_REMOTES: ${SESH_ROOT_LEAF_URL:-}
+      DAGNATS_LEAF_CREDENTIALS: /run/secrets/mini-leaf.creds
+    ports:
+      # notify's API; notify shares this network namespace, so the host port
+      # for notify is published on the namespace owner (dagnats). Bound to
+      # loopback because cloudflared fronts the public path — drop the
+      # 127.0.0.1 prefix only if you intend to expose :3000 on the host.
+      - "127.0.0.1:3000:3000"
+      # NATS client port. dagnats binds 0.0.0.0:4222 in leaf mode; publish it
+      # so host-run sesh agents (SESH_HUB_URL=nats://127.0.0.1:4222) and other
+      # containers can reach the hub. Bound to loopback by default — drop the
+      # 127.0.0.1 prefix only if remote hosts must reach it directly (prefer
+      # leafing them into the root hub instead). The bridge/console (:8080/
+      # :8081) stay internal.
+      - "127.0.0.1:4222:4222"
+    volumes:
+      - dagnats-data:/data
+      # Leaf credentials (nsc-issued .creds, JWT). Provide the host path via
+      # MINI_LEAF_CREDS_HOST_FILE (a local nsc-generated file, or the path the
+      # scion broker materializes the mini_leaf_creds file-type secret to).
+      # Defaults to /dev/null so the stack still boots standalone (empty
+      # DAGNATS_LEAF_REMOTES → dagnats stays in localhost-only standalone mode
+      # and the unused creds mount is harmless).
+      - ${MINI_LEAF_CREDS_HOST_FILE:-/dev/null}:/run/secrets/mini-leaf.creds:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+  # ---- notify API + delivery workers -------------------------------------
+  notify:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: hub        # FROM notify + deploy/notify-prelude.sh entrypoint
+    restart: unless-stopped
+    # Share dagnats' netns so the loopback-only engine NATS is reachable.
+    network_mode: "service:dagnats"
+    depends_on:
+      dagnats:
+        condition: service_healthy
+    environment:
+      # --- engine (in-pod dagnats) ---
+      NOTIFY_NATS_URL: nats://127.0.0.1:4222
+      NOTIFY_BRIDGE_URL: http://127.0.0.1:8080
+      NOTIFY_ADDR: 0.0.0.0:3000
+      NOTIFY_DB: /data/notify.db
+      NOTIFY_DAGNATS_CONSOLE_URL: ${NOTIFY_DAGNATS_CONSOLE_URL:-http://localhost:8081}
+      # --- mesh (now the SAME local dagnats) ---
+      # Consolidated topology: the local dagnats IS the sesh agents' hub, so
+      # mesh dispatch and the engine share one endpoint. Leaving this EMPTY
+      # makes notify reuse -nats-url (NOTIFY_NATS_URL) for mesh dispatch
+      # (cmd/notify/main.go:173). The agents reach the SAME hub leafed into the
+      # root, so cross-machine routing happens at the NATS leaf layer, not via
+      # a separate mesh URL. Override only if agents truly live elsewhere.
+      NOTIFY_MESH_NATS_URL: ${NOTIFY_MESH_NATS_URL:-}
+      NOTIFY_MESH_ALLOW: ${NOTIFY_MESH_ALLOW:-}
+      # --- chat default scope (cold inbound routing) ---
+      NOTIFY_CHAT_DEFAULT_AGENT: ${NOTIFY_CHAT_DEFAULT_AGENT:-}
+      NOTIFY_CHAT_DEFAULT_ORG: ${NOTIFY_CHAT_DEFAULT_ORG:-}
+      NOTIFY_CHAT_DEFAULT_ENV: ${NOTIFY_CHAT_DEFAULT_ENV:-}
+      # --- public origin (rendered inbound webhook URLs) ---
+      NOTIFY_PUBLIC_BASE_URL: ${NOTIFY_PUBLIC_BASE_URL:-}
+      NOTIFY_INBOUND_MX_HOST: ${NOTIFY_INBOUND_MX_HOST:-}
+      # --- secrets (scion-injected, or ${VAR} from `doppler run`) ---
+      NOTIFY_MASTER_KEY_HEX: ${NOTIFY_MASTER_KEY_HEX:-}
+      NOTIFY_INBOUND_SECRET: ${NOTIFY_INBOUND_SECRET:-}
+      # Boot-time chat bot tokens (read by notify serve directly).
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      # Per-tenant provider creds (used via the connectivity API / prelude,
+      # not consumed at boot). Passed through so operators/tenants can wire them.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      SIGNALWIRE_PROJECT_ID: ${SIGNALWIRE_PROJECT_ID:-}
+      SIGNALWIRE_API_TOKEN: ${SIGNALWIRE_API_TOKEN:-}
+      SIGNALWIRE_SPACE_URL: ${SIGNALWIRE_SPACE_URL:-}
+      CF_EMAIL_FROM: ${CF_EMAIL_FROM:-}
+      CF_API_TOKEN: ${CF_API_TOKEN:-}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      # Either pass the base64 directly, or mount the JSON file (below) and let
+      # the prelude derive FIREBASE_SERVICE_ACCOUNT_B64 from it.
+      FIREBASE_SERVICE_ACCOUNT_B64: ${FIREBASE_SERVICE_ACCOUNT_B64:-}
+      FIREBASE_SERVICE_ACCOUNT_FILE: /run/secrets/firebase-service-account.json
+    volumes:
+      # Named volume (NOT /tmp): SQLite is single-writer and file-backed, so the
+      # data must survive container restarts. Back this volume up regularly.
+      - notify-data:/data
+      # Optional Firebase service-account JSON. Provide the host path via
+      # FIREBASE_SERVICE_ACCOUNT_HOST_FILE; defaults to /dev/null (no-op) so the
+      # stack still boots when push is not configured.
+      - ${FIREBASE_SERVICE_ACCOUNT_HOST_FILE:-/dev/null}:/run/secrets/firebase-service-account.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000/healthz"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+
+  # ---- public ingress (Cloudflare Tunnel) --------------------------------
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    # Share the same netns so the tunnel reaches notify on 127.0.0.1:3000.
+    network_mode: "service:dagnats"
+    depends_on:
+      notify:
+        condition: service_healthy
+    environment:
+      # Named tunnel token (scion-injected or ${VAR} from `doppler run`).
+      # Configure the tunnel's public hostname -> http://127.0.0.1:3000 in the
+      # Cloudflare Zero Trust dashboard (or a mounted config.yml).
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+
+volumes:
+  dagnats-data:
+  notify-data:

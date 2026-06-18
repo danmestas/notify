@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+#
+# Dockerfile.hub — standalone build of the notify hub image.
+#
+# Preferred path: the root Dockerfile already carries a `hub` stage that does
+# exactly this (FROM notify + prelude entrypoint), so compose.hub.yml builds
+# `dockerfile: Dockerfile, target: hub` and never touches this file. This file
+# exists for operators who want a one-shot `docker build` against deploy/ alone
+# without remembering the root `--target hub` invocation.
+#
+# It reuses the root Dockerfile's `notify` stage as a build context named
+# `notify_base`, so the Go binary is NOT rebuilt here — it is imported from the
+# already-built notify runtime image. Build it with:
+#
+#   # 1. build the base once (static Go binary + alpine runtime)
+#   docker build --target notify -t notify:base .
+#   # 2. layer the prelude on top, importing the base as a context
+#   docker build -f deploy/Dockerfile.hub \
+#     --build-context notify_base=docker-image://notify:base \
+#     -t notify-hub:latest .
+#
+FROM notify_base AS hub
+
+USER root
+COPY deploy/notify-prelude.sh /usr/local/bin/notify-prelude.sh
+RUN chmod 0755 /usr/local/bin/notify-prelude.sh
+USER notify
+
+# tini (PID 1, inherited from the base) reaps zombies and forwards signals; the
+# prelude exec's notify so SIGTERM reaches the server for a clean SQLite close.
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/notify-prelude.sh"]
+CMD []
