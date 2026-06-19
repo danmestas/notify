@@ -1,0 +1,36 @@
+# =============================================================================
+# sesh-nats-root.service — Tailscale-private root NATS (the mesh anchor)
+# =============================================================================
+# Install to /etc/systemd/system/sesh-nats-root.service on the Hetzner VPS.
+#
+# Reads /etc/nats/sesh-root.conf (committed, secret-free) and
+#       /etc/nats/sesh-root.env  (NOT committed — holds SESH_LEAF_LISTEN and
+#                                 SESH_LEAF_PASSWORD; chmod 640; see README.md).
+#
+# The leafnode listener is bound to the Tailscale IP, so the unit waits on
+# tailscaled coming up before it starts (After=…tailscaled.service) — otherwise
+# the bind would fail before the tailnet interface exists.
+# =============================================================================
+
+[Unit]
+Description=sesh root NATS (Tailscale-private mesh anchor)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/nats/sesh-root.env
+ExecStart=/usr/local/bin/nats-server -c /etc/nats/sesh-root.conf
+Restart=always
+RestartSec=2
+
+# --- hardening ---------------------------------------------------------------
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/etc/nats
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

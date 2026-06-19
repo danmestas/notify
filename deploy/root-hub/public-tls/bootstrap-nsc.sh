@@ -31,7 +31,7 @@ OUT_DIR="${OUT_DIR:-$(pwd)/nsc-out}"
 CREDS_OUT="${CREDS_OUT:-${OUT_DIR}/mini-leaf.creds}"
 # auth.conf is the REQUIRED include that makes nats-server.conf fail-closed. It
 # must land NEXT TO nats-server.conf so `include "auth.conf"` resolves. Defaults
-# to this script's own directory (deploy/root-hub/). Override AUTH_OUT to write
+# to this script's own directory (deploy/root-hub/public-tls/). Override AUTH_OUT to write
 # it elsewhere (e.g. /etc/nats/ on the deployed host).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AUTH_OUT="${AUTH_OUT:-${SCRIPT_DIR}/auth.conf}"

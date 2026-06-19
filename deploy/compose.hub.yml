@@ -5,10 +5,10 @@ name: notify-hub
 # Topology (ONE dagnats = engine NATS + mesh + the sesh agents' hub; it dials
 # OUT as a leaf node into a secured root hub):
 #
-#                       root hub (mesh anchor, public, TLS+auth)
+#               root hub (mesh anchor — deployed: Tailscale-private)
 #                                       ▲
-#                                       │  leaf (tls://…:7422, .creds auth)
-#                                       │  Mini dials OUT — no inbound port
+#                                       │  leaf (nats://sesh-leaf:<pw>@<tailnet-ip>:7422)
+#                                       │  over Tailscale — Mini dials OUT, no inbound port
 #   ┌─────────────────────── shared netns ───────────────────────┐
 #   │  cloudflared ──► 127.0.0.1:3000  notify (API + workers)     │
 #   │  dagnats (NATS :4222 — leaf mode binds 0.0.0.0 + bridge :8080)
@@ -53,10 +53,18 @@ services:
       # --- leaf node into the secured root hub ---
       # Setting DAGNATS_LEAF_REMOTES flips dagnats into leaf mode, which makes
       # it bind 0.0.0.0:4222 (so host agents + other containers can reach it)
-      # and dial OUT to the root. The Mini never exposes an inbound public
-      # port. SESH_ROOT_LEAF_URL is e.g. tls://root.example:7422 (TLS required
-      # by the root's leafnode listener). The .creds file authenticates this
-      # leaf (nsc-issued JWT); see deploy/root-hub/ and stage-creds.sh.
+      # and dial OUT to the root. The Mini never exposes an inbound public port.
+      #
+      # The DEPLOYED root is Tailscale-private (deploy/root-hub/tailscale/):
+      # SESH_ROOT_LEAF_URL is nats://sesh-leaf:<pw>@<tailnet-ip>:7422 and the
+      # password in that URL is the auth — no .creds file needed.
+      #   NOTE: a container is NOT on the tailnet by default. To reach the
+      #   tailnet root from a container you need host networking, Tailscale in
+      #   the container, or to run dagnats on the host. The Mac's host-run
+      #   dagnats reaches it natively.
+      # For the public-TLS + nsc alternative (deploy/root-hub/public-tls/),
+      # SESH_ROOT_LEAF_URL is tls://root.example:7422 and the leaf authenticates
+      # with the nsc-issued .creds mounted below (see stage-creds.sh).
       DAGNATS_LEAF_REMOTES: ${SESH_ROOT_LEAF_URL:-}
       DAGNATS_LEAF_CREDENTIALS: /run/secrets/mini-leaf.creds
     ports:
