@@ -56,6 +56,13 @@ type Service struct {
 	telegramToken string
 	discordToken  string
 
+	// discordRespondAll, when true, makes the Discord gateway respond to every
+	// message in a guild channel instead of only when the bot is @-mentioned.
+	// Set from NOTIFY_DISCORD_RESPOND_ALL for a dedicated single-purpose channel;
+	// default (false) requires a direct mention in guild channels. DMs always
+	// route regardless of this flag.
+	discordRespondAll bool
+
 	// Overridable in tests. Empty values fall back to the public hosts.
 	telegramBaseURL string
 	discordAPIBase  string
@@ -100,6 +107,13 @@ func (s *Service) withTelegramBaseURL(u string) *Service { s.telegramBaseURL = u
 // withDiscordAPIBase overrides the Discord REST host (reply send + gateway
 // bootstrap). Test seam.
 func (s *Service) withDiscordAPIBase(u string) *Service { s.discordAPIBase = u; return s }
+
+// SetDiscordRespondAll toggles guild respond-to-all (true) vs mention-required
+// (false, the default). Production sets this from NOTIFY_DISCORD_RESPOND_ALL.
+func (s *Service) SetDiscordRespondAll(v bool) { s.discordRespondAll = v }
+
+// withDiscordRespondAll is the chained test seam over SetDiscordRespondAll.
+func (s *Service) withDiscordRespondAll(v bool) *Service { s.SetDiscordRespondAll(v); return s }
 
 // withHTTPClient overrides the HTTP client used by pollers and senders. Test
 // seam.

@@ -236,6 +236,14 @@ func runServe(args []string) error {
 		os.Getenv("NOTIFY_CHAT_DEFAULT_AGENT"),
 		slog.Default(),
 	)
+	// NOTIFY_DISCORD_RESPOND_ALL=1/true makes the Discord gateway reply to every
+	// message in a guild channel (for a dedicated single-purpose channel).
+	// Default (unset) requires the bot to be @-mentioned in guild channels; DMs
+	// always route. See chatloop.Service.discordRespondAll.
+	switch os.Getenv("NOTIFY_DISCORD_RESPOND_ALL") {
+	case "1", "true":
+		chat.SetDiscordRespondAll(true)
+	}
 	chatScope := domain.Scope{
 		OrgID: os.Getenv("NOTIFY_CHAT_DEFAULT_ORG"),
 		EnvID: os.Getenv("NOTIFY_CHAT_DEFAULT_ENV"),

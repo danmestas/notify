@@ -85,14 +85,24 @@ type dcReady struct {
 	} `json:"user"`
 }
 
-// dcMessageCreate is the MESSAGE_CREATE dispatch data.
+// dcMessageCreate is the MESSAGE_CREATE dispatch data. GuildID is absent for
+// DMs (Discord omits it). Mentions lists the users explicitly @-mentioned in
+// the message; we use it to gate guild messages to direct mentions of the bot.
 type dcMessageCreate struct {
 	ChannelID string `json:"channel_id"`
 	Content   string `json:"content"`
+	GuildID   string `json:"guild_id"`
 	Author    struct {
 		ID  string `json:"id"`
 		Bot bool   `json:"bot"`
 	} `json:"author"`
+	Mentions []dcMention `json:"mentions"`
+}
+
+// dcMention is one entry in a MESSAGE_CREATE mentions array (a user object; we
+// only need the id to detect a mention of the bot).
+type dcMention struct {
+	ID string `json:"id"`
 }
 
 // runDiscordGateway connects the gateway and processes events until ctx is
@@ -208,8 +218,23 @@ func (s *Service) discordGatewaySession(ctx context.Context, scope domain.Scope)
 			if m.Content == "" {
 				continue
 			}
+			// Gate guild-channel messages to direct @-mentions of the bot so the
+			// loop does not reply to every line in a shared channel. DMs (no
+			// guild_id) are a direct conversation with the bot, so they always
+			// route. NOTIFY_DISCORD_RESPOND_ALL restores respond-to-all for a
+			// dedicated single-purpose channel.
+			text := m.Content
+			if m.GuildID != "" && !s.discordRespondAll {
+				if !discordMentionsBot(m.Mentions, botUserID) {
+					continue
+				}
+				text = stripDiscordMention(text, botUserID)
+			}
+			if text == "" {
+				continue
+			}
 			subscriberID := "dc:" + m.Author.ID
-			s.handleInbound(sessCtx, scope, providerDiscord, m.ChannelID, subscriberID, m.Content)
+			s.handleInbound(sessCtx, scope, providerDiscord, m.ChannelID, subscriberID, text)
 		}
 	}
 }
@@ -275,6 +300,35 @@ func (s *Service) discordHeartbeat(ctx context.Context, conn gatewayConn, interv
 			}
 		}
 	}
+}
+
+// discordMentionsBot reports whether the bot's user id appears in the message's
+// mentions array. botUserID == "" (READY not yet seen) means we cannot confirm
+// a mention, so it returns false (the guild message is dropped).
+func discordMentionsBot(mentions []dcMention, botUserID string) bool {
+	if botUserID == "" {
+		return false
+	}
+	for _, mn := range mentions {
+		if mn.ID == botUserID {
+			return true
+		}
+	}
+	return false
+}
+
+// stripDiscordMention removes the bot's mention token from content. Discord
+// renders a user mention as "<@ID>" or, for a nickname, "<@!ID>". Both forms
+// are stripped and surrounding whitespace trimmed; other mentions are left
+// intact so the agent receives the clean message.
+func stripDiscordMention(content, botUserID string) string {
+	if botUserID == "" {
+		return content
+	}
+	out := content
+	out = strings.ReplaceAll(out, "<@!"+botUserID+">", "")
+	out = strings.ReplaceAll(out, "<@"+botUserID+">", "")
+	return strings.TrimSpace(out)
 }
 
 // seqHolder is a tiny concurrency-safe holder for the last dispatch sequence.
