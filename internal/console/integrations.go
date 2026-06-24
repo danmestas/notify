@@ -40,13 +40,16 @@ type providerMeta struct {
 // providerCatalog is the static set of providers the console knows about.
 // The ID must match the ProviderID stored in the integrations table.
 var providerCatalog = []providerMeta{
-	{ID: "smtp", Label: "SMTP Email", Channel: "email"},
+	{ID: "smtp", Label: "Custom SMTP", Channel: "email"},
 	{ID: "cloudflare_email", Label: "Cloudflare Email", Channel: "email"},
+	{ID: "resend", Label: "Resend", Channel: "email"},
 	{ID: "ntfy", Label: "ntfy Push", Channel: "push"},
 	{ID: "expo", Label: "Expo Push", Channel: "push"},
 	{ID: "fcm", Label: "Firebase (FCM)", Channel: "push"},
 	{ID: "discord", Label: "Discord", Channel: "chat"},
 	{ID: "telegram", Label: "Telegram", Channel: "chat"},
+	{ID: "slack", Label: "Slack", Channel: "chat"},
+	{ID: "whatsapp", Label: "WhatsApp", Channel: "chat"},
 	{ID: "twilio", Label: "Twilio SMS", Channel: "sms"},
 	{ID: "signalwire", Label: "SignalWire SMS", Channel: "sms"},
 	{ID: "email-webhook", Label: "Email Webhook", Channel: "email"},
@@ -277,6 +280,11 @@ func credentialFieldsForProvider(providerID string) []integrationCredentialField
 			{Key: "space_url", Label: "Space URL", Value: connectivity.CredentialMaskSentinel, Required: true},
 			{Key: "from", Label: "From number", Value: connectivity.CredentialMaskSentinel, Required: true},
 		}
+	case "resend":
+		return []integrationCredentialField{
+			{Key: "api_key", Label: "API Key", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "from", Label: "From address", Value: connectivity.CredentialMaskSentinel, Required: true},
+		}
 	case "discord":
 		return []integrationCredentialField{
 			{Key: "webhook_url", Label: "Webhook URL", Value: connectivity.CredentialMaskSentinel, Required: true},
@@ -284,6 +292,15 @@ func credentialFieldsForProvider(providerID string) []integrationCredentialField
 	case "telegram":
 		return []integrationCredentialField{
 			{Key: "bot_token", Label: "Bot Token", Value: connectivity.CredentialMaskSentinel, Required: true},
+		}
+	case "slack":
+		return []integrationCredentialField{
+			{Key: "bot_token", Label: "Bot Token", Value: connectivity.CredentialMaskSentinel, Required: true},
+		}
+	case "whatsapp":
+		return []integrationCredentialField{
+			{Key: "access_token", Label: "Access Token", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "phone_number_id", Label: "Phone Number ID", Value: connectivity.CredentialMaskSentinel, Required: true},
 		}
 	case "email-webhook", "push-webhook", "chat-webhook":
 		return []integrationCredentialField{
@@ -749,6 +766,12 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			From:      r.FormValue("from"),
 		}
 		_, createErr = c.deps.Connectivity.CreateCloudflareEmail(r.Context(), scope, identifier, cfg, primary)
+	case "resend":
+		cfg := connectivity.ResendConfig{
+			APIKey: r.FormValue("api_key"),
+			From:   r.FormValue("from"),
+		}
+		_, createErr = c.deps.Connectivity.CreateResend(r.Context(), scope, identifier, cfg, primary)
 	case "twilio":
 		cfg := connectivity.TwilioConfig{
 			AccountSID: r.FormValue("account_sid"),
@@ -774,6 +797,17 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			BotToken: r.FormValue("bot_token"),
 		}
 		_, createErr = c.deps.Connectivity.CreateTelegram(r.Context(), scope, identifier, cfg, primary)
+	case "slack":
+		cfg := connectivity.SlackConfig{
+			BotToken: r.FormValue("bot_token"),
+		}
+		_, createErr = c.deps.Connectivity.CreateSlack(r.Context(), scope, identifier, cfg, primary)
+	case "whatsapp":
+		cfg := connectivity.WhatsAppConfig{
+			AccessToken:   r.FormValue("access_token"),
+			PhoneNumberID: r.FormValue("phone_number_id"),
+		}
+		_, createErr = c.deps.Connectivity.CreateWhatsApp(r.Context(), scope, identifier, cfg, primary)
 	case "email-webhook":
 		cfg := connectivity.EmailWebhookConfig{
 			WebhookURL: r.FormValue("webhook_url"),

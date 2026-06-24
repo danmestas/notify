@@ -46,7 +46,7 @@
         <label class="console-form-label" for="create-{{.Key}}">
           {{.Label}}{{if .Required}} <span aria-hidden="true">*</span>{{end}}
         </label>
-        <input type="{{if or (eq .Key "password") (eq .Key "token") (eq .Key "api_token")}}password{{else}}text{{end}}"
+        <input type="{{if or (eq .Key "password") (eq .Key "token") (eq .Key "api_token") (eq .Key "api_key") (eq .Key "bot_token") (eq .Key "access_token") (eq .Key "secret_access_key")}}password{{else}}text{{end}}"
                id="create-{{.Key}}"
                name="{{.Key}}"
                class="console-input"

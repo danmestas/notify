@@ -467,6 +467,8 @@ type emailIntegrationRequest struct {
 	// Cloudflare Email fields.
 	AccountID string `json:"accountId"`
 	APIToken  string `json:"apiToken"`
+	// Resend field.
+	APIKey string `json:"apiKey"`
 }
 
 // postEmailIntegration creates an email integration within the request Scope
@@ -507,6 +509,15 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 				APIToken:  req.APIToken,
 				From:      req.From,
 			}, req.Primary)
+		case "resend":
+			if req.APIKey == "" {
+				http.Error(w, "apiKey is required for resend", http.StatusBadRequest)
+				return
+			}
+			in, err = conn.CreateResend(r.Context(), scope, req.Identifier, connectivity.ResendConfig{
+				APIKey: req.APIKey,
+				From:   req.From,
+			}, req.Primary)
 		case "smtp", "": // empty provider defaults to smtp for backward compatibility.
 			if req.Host == "" {
 				http.Error(w, "host is required", http.StatusBadRequest)
@@ -527,7 +538,7 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 		default:
 			// Fail closed on unknown providers rather than silently storing
 			// them as SMTP rows with empty credentials.
-			http.Error(w, "unknown provider "+req.Provider+"; allowed: smtp, cloudflare-email", http.StatusBadRequest)
+			http.Error(w, "unknown provider "+req.Provider+"; allowed: smtp, cloudflare-email, resend", http.StatusBadRequest)
 			return
 		}
 
@@ -559,8 +570,11 @@ type chatIntegrationRequest struct {
 	Primary    bool   `json:"primary"`
 	// Discord field.
 	WebhookURL string `json:"webhookUrl"`
-	// Telegram field.
+	// Telegram and Slack field.
 	BotToken string `json:"botToken"`
+	// WhatsApp fields.
+	AccessToken   string `json:"accessToken"`
+	PhoneNumberID string `json:"phoneNumberId"`
 }
 
 // postChatIntegration creates a chat integration within the request Scope and
@@ -597,8 +611,29 @@ func postChatIntegration(conn *connectivity.Service) http.HandlerFunc {
 			in, err = conn.CreateTelegram(r.Context(), scope, req.Identifier, connectivity.TelegramConfig{
 				BotToken: req.BotToken,
 			}, req.Primary)
+		case "slack":
+			if req.BotToken == "" {
+				http.Error(w, "botToken is required for slack", http.StatusBadRequest)
+				return
+			}
+			in, err = conn.CreateSlack(r.Context(), scope, req.Identifier, connectivity.SlackConfig{
+				BotToken: req.BotToken,
+			}, req.Primary)
+		case "whatsapp":
+			if req.AccessToken == "" {
+				http.Error(w, "accessToken is required for whatsapp", http.StatusBadRequest)
+				return
+			}
+			if req.PhoneNumberID == "" {
+				http.Error(w, "phoneNumberId is required for whatsapp", http.StatusBadRequest)
+				return
+			}
+			in, err = conn.CreateWhatsApp(r.Context(), scope, req.Identifier, connectivity.WhatsAppConfig{
+				AccessToken:   req.AccessToken,
+				PhoneNumberID: req.PhoneNumberID,
+			}, req.Primary)
 		default:
-			http.Error(w, "unknown provider "+req.Provider+"; allowed: discord, telegram", http.StatusBadRequest)
+			http.Error(w, "unknown provider "+req.Provider+"; allowed: discord, telegram, slack, whatsapp", http.StatusBadRequest)
 			return
 		}
 		if err != nil {
@@ -1182,6 +1217,9 @@ var integrationSecretFields = map[string]map[string]bool{
 	"telegram":         {"bot_token": true},
 	"twilio":           {"auth_token": true},
 	"signalwire":       {"token": true},
+	"resend":           {"api_key": true},
+	"slack":            {"bot_token": true},
+	"whatsapp":         {"access_token": true},
 	"email-webhook":    {"hmac_secret": true},
 	"push-webhook":     {"hmac_secret": true},
 	"chat-webhook":     {"hmac_secret": true},
@@ -1385,8 +1423,22 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 				WebhookURL: req.Credentials["webhook_url"],
 				HMACSecret: req.Credentials["hmac_secret"],
 			}, req.Primary)
+		case "resend":
+			in, err = conn.CreateResend(r.Context(), scope, req.Identifier, connectivity.ResendConfig{
+				APIKey: req.Credentials["api_key"],
+				From:   req.Credentials["from"],
+			}, req.Primary)
+		case "slack":
+			in, err = conn.CreateSlack(r.Context(), scope, req.Identifier, connectivity.SlackConfig{
+				BotToken: req.Credentials["bot_token"],
+			}, req.Primary)
+		case "whatsapp":
+			in, err = conn.CreateWhatsApp(r.Context(), scope, req.Identifier, connectivity.WhatsAppConfig{
+				AccessToken:   req.Credentials["access_token"],
+				PhoneNumberID: req.Credentials["phone_number_id"],
+			}, req.Primary)
 		default:
-			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, ntfy, expo, fcm, discord, telegram, twilio, signalwire, email-webhook, push-webhook, chat-webhook", http.StatusBadRequest)
+			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, resend, ntfy, expo, fcm, discord, telegram, slack, whatsapp, twilio, signalwire, email-webhook, push-webhook, chat-webhook", http.StatusBadRequest)
 			return
 		}
 		if err != nil {

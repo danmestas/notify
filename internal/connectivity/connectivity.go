@@ -20,10 +20,13 @@ import (
 	"github.com/danmestas/notify/internal/providers/expo"
 	"github.com/danmestas/notify/internal/providers/fcm"
 	"github.com/danmestas/notify/internal/providers/ntfy"
+	"github.com/danmestas/notify/internal/providers/resend"
 	"github.com/danmestas/notify/internal/providers/signalwire"
+	"github.com/danmestas/notify/internal/providers/slack"
 	"github.com/danmestas/notify/internal/providers/telegram"
 	"github.com/danmestas/notify/internal/providers/twilio"
 	"github.com/danmestas/notify/internal/providers/webhook"
+	"github.com/danmestas/notify/internal/providers/whatsapp"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -103,6 +106,14 @@ type CloudflareEmailConfig struct {
 	From      string `json:"from"`
 }
 
+// ResendConfig is the credential payload for a Resend email integration: the
+// API key (Bearer auth) and the default sender address. JSON-encoded and
+// AES-256-GCM-sealed into Integration.EncCredentials.
+type ResendConfig struct {
+	APIKey string `json:"api_key"`
+	From   string `json:"from"`
+}
+
 // EmailWebhookConfig is the credential payload for a generic email-webhook
 // integration: the destination URL the rendered email is POSTed to as JSON, and
 // an optional HMAC secret used to sign the body. JSON-encoded and
@@ -145,6 +156,24 @@ type DiscordConfig struct {
 // subscriber_channels, not here.
 type TelegramConfig struct {
 	BotToken string `json:"bot_token"`
+}
+
+// SlackConfig is the credential payload for a Slack chat integration: the bot
+// token (Bearer auth), JSON-encoded and AES-256-GCM-sealed into
+// Integration.EncCredentials. The per-subscriber channel/user id is the chat
+// Address carried in the rendered ChatMessage, not stored here.
+type SlackConfig struct {
+	BotToken string `json:"bot_token"`
+}
+
+// WhatsAppConfig is the credential payload for a WhatsApp Business (Meta Cloud)
+// chat integration: the access token (Bearer auth) and the sending phone
+// number id, JSON-encoded and AES-256-GCM-sealed into
+// Integration.EncCredentials. The per-recipient MSISDN is the chat Address
+// carried in the rendered ChatMessage, not stored here.
+type WhatsAppConfig struct {
+	AccessToken   string `json:"access_token"`
+	PhoneNumberID string `json:"phone_number_id"`
 }
 
 // TwilioConfig is the credential payload for a Twilio SMS integration: the
@@ -262,6 +291,29 @@ func (svc *Service) CreateEmailWebhook(ctx context.Context, scope domain.Scope, 
 	})
 }
 
+// CreateResend stores a Resend email integration for the Scope: it
+// AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="resend" and Channel="email". When primary is set the integration
+// becomes the preferred provider for the channel.
+func (svc *Service) CreateResend(ctx context.Context, scope domain.Scope, identifier string, cfg ResendConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal resend config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt resend config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "resend",
+		Channel:        "email",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
 // ResolveEmail returns the active email provider, From address, provider ID,
 // and integration ID for the Scope. It loads the active email integration,
 // decrypts its credentials, and builds the appropriate provider based on the
@@ -299,6 +351,15 @@ func (svc *Service) ResolveEmail(ctx context.Context, scope domain.Scope) (provi
 			AccountID: cfg.AccountID,
 			APIToken:  cfg.APIToken,
 			From:      cfg.From,
+		}, cfg.From, providerID, in.ID, nil
+	case "resend":
+		var cfg ResendConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", "", fmt.Errorf("connectivity: unmarshal resend config: %w", err)
+		}
+		return &resend.Client{
+			APIKey: cfg.APIKey,
+			From:   cfg.From,
 		}, cfg.From, providerID, in.ID, nil
 	case "email-webhook":
 		var cfg EmailWebhookConfig
@@ -552,6 +613,52 @@ func (svc *Service) CreateChatWebhook(ctx context.Context, scope domain.Scope, i
 	})
 }
 
+// CreateSlack stores a Slack chat integration for the Scope: it
+// AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="slack" and Channel="chat". When primary is set the integration
+// becomes the preferred provider for the channel.
+func (svc *Service) CreateSlack(ctx context.Context, scope domain.Scope, identifier string, cfg SlackConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal slack config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt slack config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "slack",
+		Channel:        "chat",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
+// CreateWhatsApp stores a WhatsApp Business chat integration for the Scope: it
+// AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="whatsapp" and Channel="chat". When primary is set the integration
+// becomes the preferred provider for the channel.
+func (svc *Service) CreateWhatsApp(ctx context.Context, scope domain.Scope, identifier string, cfg WhatsAppConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal whatsapp config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt whatsapp config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "whatsapp",
+		Channel:        "chat",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
 // ResolveChat returns the active chat provider, its provider id, and integration
 // ID for the Scope. It loads the active chat integration, decrypts its
 // credentials, and builds the appropriate provider based on the integration's
@@ -585,6 +692,21 @@ func (svc *Service) ResolveChat(ctx context.Context, scope domain.Scope) (provid
 			return nil, "", "", fmt.Errorf("connectivity: unmarshal telegram config: %w", err)
 		}
 		return &telegram.Client{BotToken: cfg.BotToken}, in.ProviderID, in.ID, nil
+	case "slack":
+		var cfg SlackConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", fmt.Errorf("connectivity: unmarshal slack config: %w", err)
+		}
+		return &slack.Client{BotToken: cfg.BotToken}, in.ProviderID, in.ID, nil
+	case "whatsapp":
+		var cfg WhatsAppConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", fmt.Errorf("connectivity: unmarshal whatsapp config: %w", err)
+		}
+		return &whatsapp.Client{
+			AccessToken:   cfg.AccessToken,
+			PhoneNumberID: cfg.PhoneNumberID,
+		}, in.ProviderID, in.ID, nil
 	case "chat-webhook":
 		var cfg ChatWebhookConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {

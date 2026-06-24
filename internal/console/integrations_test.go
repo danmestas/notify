@@ -141,6 +141,10 @@ func TestFragment_IntegrationProviderForm_ChatCredFields(t *testing.T) {
 	for _, tt := range []struct{ provider, field string }{
 		{"discord", "webhook_url"},
 		{"telegram", "bot_token"},
+		{"slack", "bot_token"},
+		{"whatsapp", "access_token"},
+		{"whatsapp", "phone_number_id"},
+		{"resend", "api_key"},
 	} {
 		rr := tc.getWithQuery(t, "/console/api/fragments/integration-provider-form",
 			url.Values{"provider": {tt.provider}}.Encode(), cookie)
@@ -149,6 +153,39 @@ func TestFragment_IntegrationProviderForm_ChatCredFields(t *testing.T) {
 		}
 		if !strings.Contains(rr.Body.String(), `name="`+tt.field+`"`) {
 			t.Errorf("%s form missing credential field %q", tt.provider, tt.field)
+		}
+	}
+}
+
+// TestFragment_IntegrationProviderForm_SecretFieldsMasked verifies the new
+// secret credential fields (api_key, bot_token, access_token) render as
+// password inputs so the browser never shows the typed secret.
+func TestFragment_IntegrationProviderForm_SecretFieldsMasked(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	for _, tt := range []struct{ provider, field string }{
+		{"resend", "api_key"},
+		{"slack", "bot_token"},
+		{"whatsapp", "access_token"},
+	} {
+		rr := tc.getWithQuery(t, "/console/api/fragments/integration-provider-form",
+			url.Values{"provider": {tt.provider}}.Encode(), cookie)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s form: status = %d, want 200", tt.provider, rr.Code)
+		}
+		body := rr.Body.String()
+		// The password input and its name attribute share the same <input> tag,
+		// so require type="password" followed by the secret field's name.
+		marker := `type="password"`
+		idx := strings.Index(body, `name="`+tt.field+`"`)
+		if idx < 0 {
+			t.Fatalf("%s form missing credential field %q", tt.provider, tt.field)
+		}
+		// Find the <input ...> opening tag containing this name attribute.
+		start := strings.LastIndex(body[:idx], "<input")
+		if start < 0 || !strings.Contains(body[start:idx], marker) {
+			t.Errorf("%s field %q is not rendered as a password input", tt.provider, tt.field)
 		}
 	}
 }
@@ -233,12 +270,41 @@ func TestIntegrations_Create_ChatProviders(t *testing.T) {
 			"bot_token":  {"123456:ABC-DEF"},
 			"csrf_token": {csrf},
 		}},
+		{"slack", url.Values{
+			"provider_id": {"slack"}, "identifier": {"slack-1"},
+			"bot_token":  {"xoxb-abc"},
+			"csrf_token": {csrf},
+		}},
+		{"whatsapp", url.Values{
+			"provider_id": {"whatsapp"}, "identifier": {"wa-1"},
+			"access_token":    {"EAAG-abc"},
+			"phone_number_id": {"109999"},
+			"csrf_token":      {csrf},
+		}},
 	} {
 		rr := tc.postForm(t, "/console/integrations", tt.form, cookie)
 		if rr.Code != http.StatusSeeOther {
 			t.Errorf("create %s: status = %d, want 303 (body: %s)",
 				tt.provider, rr.Code, rr.Body.String())
 		}
+	}
+}
+
+// TestIntegrations_Create_Resend exercises the console create path for the
+// resend email provider end-to-end. A successful create redirects (303).
+func TestIntegrations_Create_Resend(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	form := url.Values{
+		"provider_id": {"resend"}, "identifier": {"resend-1"},
+		"api_key":    {"re_abc"},
+		"from":       {"no-reply@example.com"},
+		"csrf_token": {csrf},
+	}
+	rr := tc.postForm(t, "/console/integrations", form, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Errorf("create resend: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
 	}
 }
 

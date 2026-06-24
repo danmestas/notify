@@ -109,6 +109,53 @@ func TestPostIntegration_UnifiedCreate_Ntfy(t *testing.T) {
 	}
 }
 
+// TestPostIntegration_UnifiedCreate_Wave2Providers verifies the unified
+// endpoint accepts resend/slack/whatsapp (previously only reachable via the
+// per-channel endpoints) and never echoes their secrets back.
+func TestPostIntegration_UnifiedCreate_Wave2Providers(t *testing.T) {
+	for _, tt := range []struct {
+		providerID, channel, body, secret string
+	}{
+		{
+			"resend", "email",
+			`{"providerId":"resend","identifier":"resend-unified","credentials":{"api_key":"re_secret_key","from":"noreply@example.com"}}`,
+			"re_secret_key",
+		},
+		{
+			"slack", "chat",
+			`{"providerId":"slack","identifier":"slack-unified","credentials":{"bot_token":"xoxb-secret-token"}}`,
+			"xoxb-secret-token",
+		},
+		{
+			"whatsapp", "chat",
+			`{"providerId":"whatsapp","identifier":"wa-unified","credentials":{"access_token":"wa_secret_token","phone_number_id":"123456"}}`,
+			"wa_secret_token",
+		},
+	} {
+		t.Run(tt.providerID, func(t *testing.T) {
+			srv, authHeader, _ := startOperatorServer(t)
+
+			status, respBody := doPost(t, srv.URL+"/v1/integrations", authHeader, tt.body)
+			if status != http.StatusCreated {
+				t.Fatalf("POST /v1/integrations (%s): status=%d body=%s", tt.providerID, status, respBody)
+			}
+			var got map[string]any
+			if err := json.Unmarshal([]byte(respBody), &got); err != nil {
+				t.Fatalf("decode: %v (body=%s)", err, respBody)
+			}
+			if got["providerId"] != tt.providerID {
+				t.Errorf("providerId = %v, want %s", got["providerId"], tt.providerID)
+			}
+			if got["channel"] != tt.channel {
+				t.Errorf("channel = %v, want %s", got["channel"], tt.channel)
+			}
+			if strings.Contains(respBody, tt.secret) {
+				t.Errorf("response leaks %s secret: %s", tt.providerID, respBody)
+			}
+		})
+	}
+}
+
 // TestPostIntegration_UnifiedCreate_UnknownProvider returns 400 for an unknown
 // providerId.
 func TestPostIntegration_UnifiedCreate_UnknownProvider(t *testing.T) {
