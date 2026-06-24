@@ -333,10 +333,13 @@ func integrationsSignalsJSON(channel, detailID string) string {
 		"integrationChannel":    channel,
 		"integrationDetailId":   detailID,
 		"integrationDetailOpen": detailID != "",
+		// connectChannel drives the connect-integration drawer's channel tabs;
+		// it filters the provider list client-side. Defaults to email.
+		"connectChannel": "email",
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
-		return `{"integrationChannel":"","integrationDetailId":"","integrationDetailOpen":false}`
+		return `{"integrationChannel":"","integrationDetailId":"","integrationDetailOpen":false,"connectChannel":"email"}`
 	}
 	return string(b)
 }

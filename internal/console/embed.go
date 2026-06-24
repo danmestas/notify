@@ -38,6 +38,14 @@ import "embed"
 //go:embed assets/theme.js
 var assetsFS embed.FS
 
+// iconFS holds the vendored, single-path brand SVGs for the provider catalog
+// (one per providerCatalog ID). They are inlined into the connect-integration
+// drawer via the providerIcon template helper. Our own trusted markup — no
+// user input — so inlining as template.HTML is safe.
+//
+//go:embed assets/icons/*.svg
+var iconFS embed.FS
+
 // templatesFS carries every Go html/template file the console renders.
 // The layout and shared partials form the base tree; each page file owns
 // one `content` overlay (see loadTemplates in layout.go).

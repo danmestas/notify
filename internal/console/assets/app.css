@@ -19,7 +19,9 @@
   /* -- palette (light, DEFAULT) ----------------------------------- */
   --bg:               #FFFFFF;
   --surface:          #F6F8FA;
+  --surface-2:        #FFFFFF;
   --border:           #D0D7DE;
+  --border-subtle:    #E4E9ED;
   --text-primary:     #1F2328;
   --text-secondary:   #59636E;
   --accent:           #8250DF;
@@ -66,7 +68,9 @@
   :root:not([data-theme="light"]) {
     --bg:             #0B0D10;
     --surface:        #14181D;
+    --surface-2:      #1B2027;
     --border:         #232A33;
+    --border-subtle:  #20262E;
     --text-primary:   #E6EDF3;
     --text-secondary: #8B949E;
     --accent:         #A371F7;
@@ -86,7 +90,9 @@
 html[data-theme="dark"] {
   --bg:             #0B0D10;
   --surface:        #14181D;
+  --surface-2:      #1B2027;
   --border:         #232A33;
+  --border-subtle:  #20262E;
   --text-primary:   #E6EDF3;
   --text-secondary: #8B949E;
   --accent:         #A371F7;
@@ -1174,40 +1180,67 @@ a.activity-item-run { color: var(--accent); }
   font-weight: 600;
 }
 
-/* ===== connect-a-provider panel + catalog ========================== */
-.integration-provider-panel {
-  margin-top: var(--space-5);
-  padding: var(--space-5);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
+/* ===== connect-integration drawer (content) ============= */
+/* The drawer chrome (panel/header/close) reuses the shared .console-slideover
+   pattern; only the connect-specific inner content is styled here. The body
+   swaps between step-1 (channel tabs + provider list) and step-2 (cred form)
+   in place via the #integration-provider-form PatchElements target. */
+.integration-connect-heading { display: grid; gap: var(--space-1); }
+.integration-connect-subtitle {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
 }
+
 .integration-provider-form-inner {
   display: grid;
   gap: var(--space-4);
 }
-.integration-provider-form-header {
+
+/* Step-1 channel tabs — underline-active tab row. */
+.integration-connect-tabs {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--border);
 }
-.integration-provider-form-title {
-  margin: 0;
-  font-size: 1.1rem;
+.integration-connect-tab {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: var(--space-2) 0;
+  margin-bottom: -1px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.integration-connect-tab:hover { color: var(--text-primary); }
+.integration-connect-tab:focus-visible {
+  outline: none;
+  color: var(--text-primary);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-radius: 4px;
+}
+.integration-connect-tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
 }
 
-/* Responsive grid of provider tiles */
-.integration-provider-catalog {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: var(--space-3);
-}
-.integration-provider-tile {
+/* Step-1 vertical provider list — full-width rows with a brand-icon chip. */
+.integration-provider-list {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
+}
+.integration-provider-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-tile);
   background: var(--bg);
@@ -1217,18 +1250,87 @@ a.activity-item-run { color: var(--accent); }
   cursor: pointer;
   transition: border-color 0.12s ease, background 0.12s ease;
 }
-.integration-provider-tile:hover {
+.integration-provider-row:hover {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
-.integration-provider-tile:focus-visible {
+.integration-provider-row:focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.integration-provider-tile-label {
+.integration-provider-row-label {
+  flex: 1 1 auto;
   font-weight: 600;
   font-size: 0.9rem;
+}
+.integration-provider-row-chevron {
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+/* Brand-icon chip — a light, rounded square so brand colours stay legible
+   regardless of theme. The embedded SVG carries its own fill colour. */
+.integration-provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #FFFFFF;
+  border: 1px solid var(--border);
+}
+.integration-provider-icon svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+.integration-provider-icon--sm {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+.integration-provider-icon--sm svg { width: 15px; height: 15px; }
+.integration-provider-icon-fallback {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--surface);
+}
+.integration-provider-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Step-1 → step-2 header + Back control. */
+.integration-provider-form-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.integration-provider-form-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.integration-provider-back {
+  justify-self: start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.integration-provider-back:hover { text-decoration: underline; }
+.integration-provider-back:focus-visible {
+  outline: none;
+  text-decoration: underline;
 }
 
 /* Step-2 credential form */
@@ -1239,6 +1341,9 @@ a.activity-item-run { color: var(--accent); }
   padding: var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-tile);
+  /* A faint fill keeps the credential group legible as a panel even where the
+     border is low-contrast (notably dark theme). */
+  background: var(--surface);
 }
 .integration-cred-legend {
   padding: 0 var(--space-2);
@@ -2086,7 +2191,23 @@ a.activity-item-run { color: var(--accent); }
   margin-bottom: var(--space-4);
 }
 .console-slideover-header .console-card-title { margin: 0; }
-.console-slideover-close { text-decoration: none; }
+/* The drawer close button must always be visible — .btn-icon defaults to
+   opacity:0 (it only reveals on table-row hover), which would hide the × on
+   every slide-over. Force it visible with a real affordance. */
+.console-slideover-close {
+  opacity: 1;
+  text-decoration: none;
+  font-size: 1rem;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-secondary);
+  align-self: flex-start;
+}
+.console-slideover-close:hover {
+  opacity: 1 !important;
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
 .console-slideover-actions {
   display: flex;
   align-items: center;

@@ -1,15 +1,28 @@
 {{/*
-  integration-provider-form — step-2 create flow: per-provider credential
-  form. Binds integrationProviderFormView. Shown when the operator selects
-  a provider tile from the provider catalog.
+  integration-provider-form — the connect-integration drawer body. Binds
+  integrationProviderFormView. The outer element keeps the stable id
+  #integration-provider-form so the PatchElements fragment swaps in place
+  inside the drawer.
+
+  Step 1 (.ProviderID empty): channel tabs + a vertical, channel-filtered
+  provider list with brand icons.
+  Step 2 (.ProviderID set): the per-provider credential form.
 */}}
 {{define "integration-provider-form"}}
 <div id="integration-provider-form" class="integration-provider-form-inner">
   {{if .ProviderID}}
+  {{/* Step 2: credential form for the chosen provider. */}}
   <div class="integration-provider-form-header">
-    <h2 class="integration-provider-form-title">Connect {{.Label}}</h2>
+    <span class="integration-provider-icon">{{providerIcon .ProviderID}}</span>
+    <h3 class="integration-provider-form-title">Connect {{.Label}}</h3>
     <span class="activity-channel-badge activity-channel-badge--{{.Channel}}">{{.Channel}}</span>
   </div>
+
+  <button type="button"
+          class="integration-provider-back"
+          data-on:click="@get('/console/api/fragments/integration-provider-form')">
+    ← Back
+  </button>
 
   {{if $.ReadOnly}}
   <p class="console-lede">Console is read-only; mutations are disabled.</p>
@@ -68,24 +81,42 @@
   </form>
   {{end}}
   {{else}}
-  {{/* Step 1: provider catalog selection */}}
-  <h2 class="integration-provider-form-title">Connect a Provider</h2>
-  <div class="integration-provider-catalog">
+  {{/* Step 1: channel tabs + vertical provider list. */}}
+  <nav class="integration-connect-tabs" role="group" aria-label="Filter providers by channel">
+    <button type="button"
+            class="integration-connect-tab is-active"
+            data-class-is-active="$connectChannel === 'email'"
+            data-attr:aria-pressed="$connectChannel === 'email'"
+            data-on:click="$connectChannel='email'"><span>E-Mail</span></button>
+    <button type="button"
+            class="integration-connect-tab"
+            data-class-is-active="$connectChannel === 'sms'"
+            data-attr:aria-pressed="$connectChannel === 'sms'"
+            data-on:click="$connectChannel='sms'"><span>SMS</span></button>
+    <button type="button"
+            class="integration-connect-tab"
+            data-class-is-active="$connectChannel === 'push'"
+            data-attr:aria-pressed="$connectChannel === 'push'"
+            data-on:click="$connectChannel='push'"><span>Push</span></button>
+    <button type="button"
+            class="integration-connect-tab"
+            data-class-is-active="$connectChannel === 'chat'"
+            data-attr:aria-pressed="$connectChannel === 'chat'"
+            data-on:click="$connectChannel='chat'"><span>Chat</span></button>
+  </nav>
+
+  <div class="integration-provider-list" role="list">
     {{range .Catalog}}
     <button type="button"
-            class="integration-provider-tile"
+            class="integration-provider-row"
+            role="listitem"
+            data-show="$connectChannel === '{{.Channel}}'"
             data-on:click="@get('/console/api/fragments/integration-provider-form?provider={{.ID}}')">
-      <span class="integration-provider-tile-label">{{.Label}}</span>
-      <span class="activity-channel-badge activity-channel-badge--{{.Channel}}">{{.Channel}}</span>
+      <span class="integration-provider-icon">{{providerIcon .ID}}</span>
+      <span class="integration-provider-row-label">{{.Label}}</span>
+      <span class="integration-provider-row-chevron" aria-hidden="true">›</span>
     </button>
     {{end}}
-  </div>
-  <div class="integration-form-actions">
-    <button type="button"
-            class="btn btn-outline"
-            data-on:click="$integrationProviderFormOpen=false">
-      Cancel
-    </button>
   </div>
   {{end}}
 </div>

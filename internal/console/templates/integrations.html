@@ -60,13 +60,15 @@
       {{template "integrations-grid" $page}}
     </div>
 
-    {{/* Detail drawer — visible when integrationDetailOpen is true */}}
-    <aside id="integration-detail"
-           class="integration-detail-drawer"
+    {{/* Detail drawer — the shared .console-slideover slide-over, gated on
+         integrationDetailOpen. The inner #integration-detail is swapped by the
+         detail fragment (it carries its own header + close control). */}}
+    <aside class="console-slideover integration-detail-drawer"
            data-show="$integrationDetailOpen"
+           role="dialog"
            aria-label="Integration detail">
       <div id="integration-detail-inner">
-        <div class="integration-detail-inner">
+        <div id="integration-detail" class="integration-detail-inner">
           <div class="integration-detail-empty">
             <p class="console-lede">Select an integration to configure it.</p>
           </div>
@@ -75,13 +77,28 @@
     </aside>
   </div>
 
-  {{/* Provider form panel — visible when integrationProviderFormOpen */}}
-  <div id="integration-provider-form"
-       class="integration-provider-panel"
-       data-show="$integrationProviderFormOpen">
-    <div class="integration-provider-form-inner">
+  {{/* Connect-integration drawer — the shared .console-slideover slide-over,
+       gated on $integrationProviderFormOpen. Closes via the × or the inner
+       Cancel. The inner #integration-provider-form is swapped by the fragment
+       endpoint (step-1 catalog ⇄ step-2 cred form). */}}
+  <aside class="console-slideover integration-connect-drawer"
+         data-show="$integrationProviderFormOpen"
+         role="dialog"
+         aria-labelledby="connect-drawer-heading"
+         aria-label="Connect integration">
+    <div class="console-slideover-header">
+      <div class="integration-connect-heading">
+        <h2 id="connect-drawer-heading" class="console-card-title">Connect Integration</h2>
+        <p class="integration-connect-subtitle">Select an integration to connect with your hub.</p>
+      </div>
+      <button type="button"
+              class="btn-icon console-slideover-close"
+              aria-label="Close"
+              data-on:click="$integrationProviderFormOpen=false">✕</button>
+    </div>
+    <div id="integration-provider-form" class="integration-provider-form-inner">
       <p class="console-lede">Choose a provider to connect.</p>
     </div>
-  </div>
+  </aside>
 </section>
 {{end}}

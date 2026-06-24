@@ -41,7 +41,10 @@
     data-on:click="$integrationDetailId={{.ID | jsEscape}};$integrationDetailOpen=true;@get('/console/api/fragments/integration-detail?id='+$integrationDetailId)"
     data-component="integration-row">
   <td class="integration-col-provider">
-    <span class="integration-provider-label">{{.ProviderLabel}}</span>
+    <span class="integration-provider-cell">
+      <span class="integration-provider-icon integration-provider-icon--sm">{{providerIcon .ProviderID}}</span>
+      <span class="integration-provider-label">{{.ProviderLabel}}</span>
+    </span>
   </td>
   <td class="integration-col-channel">
     <span class="activity-channel-badge activity-channel-badge--{{.Channel}}">{{.ChannelLabel}}</span>

@@ -14,6 +14,7 @@
   {{$in := .Integration}}
   <div class="integration-detail-header">
     <div class="integration-detail-title">
+      <span class="integration-provider-icon integration-provider-icon--sm">{{providerIcon $in.ProviderID}}</span>
       <span class="integration-provider-label">{{$in.ProviderLabel}}</span>
       <span class="activity-channel-badge activity-channel-badge--{{$in.Channel}}">{{$in.ChannelLabel}}</span>
       {{if $in.Primary}}

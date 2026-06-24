@@ -250,6 +250,122 @@ func TestFragment_IntegrationProviderForm_WebhookCredFields(t *testing.T) {
 	}
 }
 
+// TestFragment_IntegrationProviderForm_ChannelTabs verifies the // drawer renders the channel-tab bar that filters the provider list
+// client-side: the four channel tab labels plus the $connectChannel signal
+// that drives their active state and per-row visibility.
+func TestFragment_IntegrationProviderForm_ChannelTabs(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/integration-provider-form", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("provider form fragment: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	for _, label := range []string{"E-Mail", "SMS", "Push", "Chat"} {
+		if !strings.Contains(body, ">"+label+"<") {
+			t.Errorf("channel-tab bar missing tab label %q", label)
+		}
+	}
+	if !strings.Contains(body, "$connectChannel") {
+		t.Error("channel-tab bar must drive the $connectChannel signal")
+	}
+}
+
+// TestFragment_IntegrationProviderForm_RowsHaveIcons verifies the step-1 list
+// renders every catalog provider as a row carrying both its label and an
+// inlined brand SVG, gated by channel via the $connectChannel signal.
+func TestFragment_IntegrationProviderForm_RowsHaveIcons(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/integration-provider-form", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("provider form fragment: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// Every catalog entry renders a row with a select link + label.
+	for _, p := range providerCatalog {
+		if !strings.Contains(body, "provider="+p.ID) {
+			t.Errorf("provider list missing select link for id=%s", p.ID)
+		}
+		if !strings.Contains(body, ">"+p.Label+"<") {
+			t.Errorf("provider list missing label %q (id=%s)", p.Label, p.ID)
+		}
+	}
+
+	// Rows are gated by channel client-side (no refetch on tab switch).
+	if !strings.Contains(body, "$connectChannel === 'email'") {
+		t.Error("provider rows must gate visibility on $connectChannel by channel")
+	}
+
+	// Each provider row inlines its brand SVG. Require at least one <svg per
+	// row (one per catalog entry) and verify a sample provider's icon shows up.
+	svgCount := strings.Count(body, "<svg")
+	if svgCount < len(providerCatalog) {
+		t.Errorf("provider list rendered %d <svg, want >= %d (one per provider)",
+			svgCount, len(providerCatalog))
+	}
+}
+
+// TestIntegrations_ConnectChannelSignalSeeded verifies the page seeds the
+// connectChannel signal (default "email") so the drawer's channel tabs work
+// before any interaction.
+func TestIntegrations_ConnectChannelSignalSeeded(t *testing.T) {
+	if !strings.Contains(integrationsSignalsJSON("", ""), `"connectChannel":"email"`) {
+		t.Errorf("integrationsSignalsJSON must seed connectChannel=email; got %s",
+			integrationsSignalsJSON("", ""))
+	}
+
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+	rr := tc.get(t, "/console/integrations", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations: status = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), `connectChannel`) {
+		t.Error("integrations page data-signals missing connectChannel")
+	}
+}
+
+// TestIntegrations_DrawersUseSharedSlideover verifies both integration drawers
+// (connect + detail) reuse the canonical .console-slideover chrome rather than
+// any bespoke drawer classes, so every drawer in the app shares one pattern.
+func TestIntegrations_DrawersUseSharedSlideover(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/integrations", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// Two drawers, both on the shared slide-over chrome.
+	if got := strings.Count(body, "console-slideover "); got < 2 {
+		t.Errorf("integrations page has %d .console-slideover panels, want >= 2 (connect + detail)", got)
+	}
+	// The connect drawer's close uses the canonical close control.
+	if !strings.Contains(body, "console-slideover-close") {
+		t.Error("connect drawer must use the canonical .console-slideover-close control")
+	}
+	// Connect drawer title is present.
+	if !strings.Contains(body, ">Connect Integration<") {
+		t.Error("connect drawer missing 'Connect Integration' title")
+	}
+
+	// The bespoke chrome classes must be fully retired (CSS rules removed).
+	if strings.Contains(body, "integration-connect-backdrop") {
+		t.Error("bespoke integration-connect-backdrop must be removed (no backdrop; consistency with shared drawers)")
+	}
+	if strings.Contains(body, "integration-connect-drawer-header") ||
+		strings.Contains(body, "integration-connect-drawer-close") {
+		t.Error("bespoke integration-connect-drawer chrome classes must be retired in favour of .console-slideover")
+	}
+}
+
 // TestIntegrations_Create_WebhookProviders exercises the console create path for
 // the three generic-webhook providers end-to-end. A successful create redirects
 // (303).
