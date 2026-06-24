@@ -43,6 +43,7 @@ var providerCatalog = []providerMeta{
 	{ID: "smtp", Label: "Custom SMTP", Channel: "email"},
 	{ID: "cloudflare_email", Label: "Cloudflare Email", Channel: "email"},
 	{ID: "resend", Label: "Resend", Channel: "email"},
+	{ID: "ses", Label: "Amazon SES", Channel: "email"},
 	{ID: "ntfy", Label: "ntfy Push", Channel: "push"},
 	{ID: "expo", Label: "Expo Push", Channel: "push"},
 	{ID: "fcm", Label: "Firebase (FCM)", Channel: "push"},
@@ -52,6 +53,7 @@ var providerCatalog = []providerMeta{
 	{ID: "whatsapp", Label: "WhatsApp", Channel: "chat"},
 	{ID: "twilio", Label: "Twilio SMS", Channel: "sms"},
 	{ID: "signalwire", Label: "SignalWire SMS", Channel: "sms"},
+	{ID: "sns", Label: "Amazon SNS", Channel: "sms"},
 	{ID: "email-webhook", Label: "Email Webhook", Channel: "email"},
 	{ID: "push-webhook", Label: "Push Webhook", Channel: "push"},
 	{ID: "chat-webhook", Label: "Chat Webhook", Channel: "chat"},
@@ -284,6 +286,19 @@ func credentialFieldsForProvider(providerID string) []integrationCredentialField
 		return []integrationCredentialField{
 			{Key: "api_key", Label: "API Key", Value: connectivity.CredentialMaskSentinel, Required: true},
 			{Key: "from", Label: "From address", Value: connectivity.CredentialMaskSentinel, Required: true},
+		}
+	case "ses":
+		return []integrationCredentialField{
+			{Key: "access_key_id", Label: "Access Key ID", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "secret_access_key", Label: "Secret Access Key", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "region", Label: "Region", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "from", Label: "From address", Value: connectivity.CredentialMaskSentinel, Required: true},
+		}
+	case "sns":
+		return []integrationCredentialField{
+			{Key: "access_key_id", Label: "Access Key ID", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "secret_access_key", Label: "Secret Access Key", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "region", Label: "Region", Value: connectivity.CredentialMaskSentinel, Required: true},
 		}
 	case "discord":
 		return []integrationCredentialField{
@@ -772,6 +787,14 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			From:   r.FormValue("from"),
 		}
 		_, createErr = c.deps.Connectivity.CreateResend(r.Context(), scope, identifier, cfg, primary)
+	case "ses":
+		cfg := connectivity.SESConfig{
+			AccessKeyID:     r.FormValue("access_key_id"),
+			SecretAccessKey: r.FormValue("secret_access_key"),
+			Region:          r.FormValue("region"),
+			From:            r.FormValue("from"),
+		}
+		_, createErr = c.deps.Connectivity.CreateSES(r.Context(), scope, identifier, cfg, primary)
 	case "twilio":
 		cfg := connectivity.TwilioConfig{
 			AccountSID: r.FormValue("account_sid"),
@@ -787,6 +810,13 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			From:      r.FormValue("from"),
 		}
 		_, createErr = c.deps.Connectivity.CreateSignalWire(r.Context(), scope, identifier, cfg, primary)
+	case "sns":
+		cfg := connectivity.SNSConfig{
+			AccessKeyID:     r.FormValue("access_key_id"),
+			SecretAccessKey: r.FormValue("secret_access_key"),
+			Region:          r.FormValue("region"),
+		}
+		_, createErr = c.deps.Connectivity.CreateSNS(r.Context(), scope, identifier, cfg, primary)
 	case "discord":
 		cfg := connectivity.DiscordConfig{
 			WebhookURL: r.FormValue("webhook_url"),

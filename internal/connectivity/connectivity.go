@@ -21,8 +21,10 @@ import (
 	"github.com/danmestas/notify/internal/providers/fcm"
 	"github.com/danmestas/notify/internal/providers/ntfy"
 	"github.com/danmestas/notify/internal/providers/resend"
+	"github.com/danmestas/notify/internal/providers/ses"
 	"github.com/danmestas/notify/internal/providers/signalwire"
 	"github.com/danmestas/notify/internal/providers/slack"
+	"github.com/danmestas/notify/internal/providers/sns"
 	"github.com/danmestas/notify/internal/providers/telegram"
 	"github.com/danmestas/notify/internal/providers/twilio"
 	"github.com/danmestas/notify/internal/providers/webhook"
@@ -112,6 +114,26 @@ type CloudflareEmailConfig struct {
 type ResendConfig struct {
 	APIKey string `json:"api_key"`
 	From   string `json:"from"`
+}
+
+// SESConfig is the credential payload for an Amazon SES email integration: the
+// IAM access key id and secret access key (SigV4 signing), the AWS region, and
+// the default sender address. JSON-encoded and AES-256-GCM-sealed into
+// Integration.EncCredentials.
+type SESConfig struct {
+	AccessKeyID     string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
+	Region          string `json:"region"`
+	From            string `json:"from"`
+}
+
+// SNSConfig is the credential payload for an Amazon SNS SMS integration: the
+// IAM access key id and secret access key (SigV4 signing) and the AWS region.
+// JSON-encoded and AES-256-GCM-sealed into Integration.EncCredentials.
+type SNSConfig struct {
+	AccessKeyID     string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
+	Region          string `json:"region"`
 }
 
 // EmailWebhookConfig is the credential payload for a generic email-webhook
@@ -314,6 +336,29 @@ func (svc *Service) CreateResend(ctx context.Context, scope domain.Scope, identi
 	})
 }
 
+// CreateSES stores an Amazon SES email integration for the Scope: it
+// AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="ses" and Channel="email". When primary is set the integration
+// becomes the preferred provider for the channel.
+func (svc *Service) CreateSES(ctx context.Context, scope domain.Scope, identifier string, cfg SESConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal ses config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt ses config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "ses",
+		Channel:        "email",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
 // ResolveEmail returns the active email provider, From address, provider ID,
 // and integration ID for the Scope. It loads the active email integration,
 // decrypts its credentials, and builds the appropriate provider based on the
@@ -360,6 +405,17 @@ func (svc *Service) ResolveEmail(ctx context.Context, scope domain.Scope) (provi
 		return &resend.Client{
 			APIKey: cfg.APIKey,
 			From:   cfg.From,
+		}, cfg.From, providerID, in.ID, nil
+	case "ses":
+		var cfg SESConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", "", fmt.Errorf("connectivity: unmarshal ses config: %w", err)
+		}
+		return &ses.Client{
+			AccessKeyID:     cfg.AccessKeyID,
+			SecretAccessKey: cfg.SecretAccessKey,
+			Region:          cfg.Region,
+			From:            cfg.From,
 		}, cfg.From, providerID, in.ID, nil
 	case "email-webhook":
 		var cfg EmailWebhookConfig
@@ -766,6 +822,29 @@ func (svc *Service) CreateSignalWire(ctx context.Context, scope domain.Scope, id
 	})
 }
 
+// CreateSNS stores an Amazon SNS SMS integration for the Scope: it
+// AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="sns" and Channel="sms". When primary is set the integration
+// becomes the preferred provider for the channel.
+func (svc *Service) CreateSNS(ctx context.Context, scope domain.Scope, identifier string, cfg SNSConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal sns config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt sns config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "sns",
+		Channel:        "sms",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
 // ResolveSMS returns the active SMS provider, its provider id, and integration
 // ID for the Scope. It loads the active sms integration, decrypts its
 // credentials, and builds the appropriate provider based on the integration's
@@ -807,6 +886,16 @@ func (svc *Service) ResolveSMS(ctx context.Context, scope domain.Scope) (provide
 			Token:     cfg.Token,
 			SpaceURL:  cfg.SpaceURL,
 			From:      cfg.From,
+		}, in.ProviderID, in.ID, nil
+	case "sns":
+		var cfg SNSConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", fmt.Errorf("connectivity: unmarshal sns config: %w", err)
+		}
+		return &sns.Client{
+			AccessKeyID:     cfg.AccessKeyID,
+			SecretAccessKey: cfg.SecretAccessKey,
+			Region:          cfg.Region,
 		}, in.ProviderID, in.ID, nil
 	default:
 		// Fail closed: an unknown sms provider must not be silently decoded as

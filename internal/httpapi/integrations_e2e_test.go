@@ -131,6 +131,16 @@ func TestPostIntegration_UnifiedCreate_Wave2Providers(t *testing.T) {
 			`{"providerId":"whatsapp","identifier":"wa-unified","credentials":{"access_token":"wa_secret_token","phone_number_id":"123456"}}`,
 			"wa_secret_token",
 		},
+		{
+			"ses", "email",
+			`{"providerId":"ses","identifier":"ses-unified","credentials":{"access_key_id":"AKIDEXAMPLE","secret_access_key":"ses_secret_signing_key","region":"us-east-1","from":"noreply@example.com"}}`,
+			"ses_secret_signing_key",
+		},
+		{
+			"sns", "sms",
+			`{"providerId":"sns","identifier":"sns-unified","credentials":{"access_key_id":"AKIDEXAMPLE","secret_access_key":"sns_secret_signing_key","region":"us-east-1"}}`,
+			"sns_secret_signing_key",
+		},
 	} {
 		t.Run(tt.providerID, func(t *testing.T) {
 			srv, authHeader, _ := startOperatorServer(t)

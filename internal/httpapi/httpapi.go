@@ -469,6 +469,10 @@ type emailIntegrationRequest struct {
 	APIToken  string `json:"apiToken"`
 	// Resend field.
 	APIKey string `json:"apiKey"`
+	// SES fields. secretAccessKey is a secret and is never echoed back.
+	AccessKeyID     string `json:"accessKeyId"`
+	SecretAccessKey string `json:"secretAccessKey"`
+	Region          string `json:"region"`
 }
 
 // postEmailIntegration creates an email integration within the request Scope
@@ -518,6 +522,25 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 				APIKey: req.APIKey,
 				From:   req.From,
 			}, req.Primary)
+		case "ses":
+			if req.AccessKeyID == "" {
+				http.Error(w, "accessKeyId is required for ses", http.StatusBadRequest)
+				return
+			}
+			if req.SecretAccessKey == "" {
+				http.Error(w, "secretAccessKey is required for ses", http.StatusBadRequest)
+				return
+			}
+			if req.Region == "" {
+				http.Error(w, "region is required for ses", http.StatusBadRequest)
+				return
+			}
+			in, err = conn.CreateSES(r.Context(), scope, req.Identifier, connectivity.SESConfig{
+				AccessKeyID:     req.AccessKeyID,
+				SecretAccessKey: req.SecretAccessKey,
+				Region:          req.Region,
+				From:            req.From,
+			}, req.Primary)
 		case "smtp", "": // empty provider defaults to smtp for backward compatibility.
 			if req.Host == "" {
 				http.Error(w, "host is required", http.StatusBadRequest)
@@ -538,7 +561,7 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 		default:
 			// Fail closed on unknown providers rather than silently storing
 			// them as SMTP rows with empty credentials.
-			http.Error(w, "unknown provider "+req.Provider+"; allowed: smtp, cloudflare-email, resend", http.StatusBadRequest)
+			http.Error(w, "unknown provider "+req.Provider+"; allowed: smtp, cloudflare-email, resend, ses", http.StatusBadRequest)
 			return
 		}
 
@@ -670,6 +693,11 @@ type smsIntegrationRequest struct {
 	ProjectID string `json:"projectId"`
 	Token     string `json:"token"`
 	SpaceURL  string `json:"spaceUrl"`
+	// SNS fields. secretAccessKey is a secret and is never echoed back. SNS
+	// publishes directly to the recipient number and has no "from".
+	AccessKeyID     string `json:"accessKeyId"`
+	SecretAccessKey string `json:"secretAccessKey"`
+	Region          string `json:"region"`
 }
 
 // postSMSIntegration creates an SMS integration within the request Scope and
@@ -683,7 +711,9 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if req.From == "" {
+		// SNS publishes directly to the recipient number and carries no sender,
+		// so it is exempt from the "from" requirement the LaML providers need.
+		if req.From == "" && req.Provider != "sns" {
 			http.Error(w, "from is required", http.StatusBadRequest)
 			return
 		}
@@ -727,8 +757,26 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 				SpaceURL:  req.SpaceURL,
 				From:      req.From,
 			}, req.Primary)
+		case "sns":
+			if req.AccessKeyID == "" {
+				http.Error(w, "accessKeyId is required for sns", http.StatusBadRequest)
+				return
+			}
+			if req.SecretAccessKey == "" {
+				http.Error(w, "secretAccessKey is required for sns", http.StatusBadRequest)
+				return
+			}
+			if req.Region == "" {
+				http.Error(w, "region is required for sns", http.StatusBadRequest)
+				return
+			}
+			in, err = conn.CreateSNS(r.Context(), scope, req.Identifier, connectivity.SNSConfig{
+				AccessKeyID:     req.AccessKeyID,
+				SecretAccessKey: req.SecretAccessKey,
+				Region:          req.Region,
+			}, req.Primary)
 		default:
-			http.Error(w, "unknown provider "+req.Provider+"; allowed: twilio, signalwire", http.StatusBadRequest)
+			http.Error(w, "unknown provider "+req.Provider+"; allowed: twilio, signalwire, sns", http.StatusBadRequest)
 			return
 		}
 		if err != nil {
@@ -1218,8 +1266,10 @@ var integrationSecretFields = map[string]map[string]bool{
 	"twilio":           {"auth_token": true},
 	"signalwire":       {"token": true},
 	"resend":           {"api_key": true},
+	"ses":              {"secret_access_key": true},
 	"slack":            {"bot_token": true},
 	"whatsapp":         {"access_token": true},
+	"sns":              {"secret_access_key": true},
 	"email-webhook":    {"hmac_secret": true},
 	"push-webhook":     {"hmac_secret": true},
 	"chat-webhook":     {"hmac_secret": true},
@@ -1408,6 +1458,12 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 				SpaceURL:  req.Credentials["space_url"],
 				From:      req.Credentials["from"],
 			}, req.Primary)
+		case "sns":
+			in, err = conn.CreateSNS(r.Context(), scope, req.Identifier, connectivity.SNSConfig{
+				AccessKeyID:     req.Credentials["access_key_id"],
+				SecretAccessKey: req.Credentials["secret_access_key"],
+				Region:          req.Credentials["region"],
+			}, req.Primary)
 		case "email-webhook":
 			in, err = conn.CreateEmailWebhook(r.Context(), scope, req.Identifier, connectivity.EmailWebhookConfig{
 				WebhookURL: req.Credentials["webhook_url"],
@@ -1428,6 +1484,13 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 				APIKey: req.Credentials["api_key"],
 				From:   req.Credentials["from"],
 			}, req.Primary)
+		case "ses":
+			in, err = conn.CreateSES(r.Context(), scope, req.Identifier, connectivity.SESConfig{
+				AccessKeyID:     req.Credentials["access_key_id"],
+				SecretAccessKey: req.Credentials["secret_access_key"],
+				Region:          req.Credentials["region"],
+				From:            req.Credentials["from"],
+			}, req.Primary)
 		case "slack":
 			in, err = conn.CreateSlack(r.Context(), scope, req.Identifier, connectivity.SlackConfig{
 				BotToken: req.Credentials["bot_token"],
@@ -1438,7 +1501,7 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 				PhoneNumberID: req.Credentials["phone_number_id"],
 			}, req.Primary)
 		default:
-			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, resend, ntfy, expo, fcm, discord, telegram, slack, whatsapp, twilio, signalwire, email-webhook, push-webhook, chat-webhook", http.StatusBadRequest)
+			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, resend, ses, ntfy, expo, fcm, discord, telegram, slack, whatsapp, twilio, signalwire, sns, email-webhook, push-webhook, chat-webhook", http.StatusBadRequest)
 			return
 		}
 		if err != nil {

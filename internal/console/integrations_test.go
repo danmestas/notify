@@ -190,6 +190,44 @@ func TestFragment_IntegrationProviderForm_SecretFieldsMasked(t *testing.T) {
 	}
 }
 
+// TestFragment_IntegrationProviderForm_AWSCredFields verifies the Amazon SES
+// and SNS provider forms render their credential inputs and that
+// secret_access_key is masked as a password input so the browser never shows
+// the typed signing secret.
+func TestFragment_IntegrationProviderForm_AWSCredFields(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	for _, tt := range []struct {
+		provider string
+		fields   []string
+	}{
+		{"ses", []string{"access_key_id", "secret_access_key", "region", "from"}},
+		{"sns", []string{"access_key_id", "secret_access_key", "region"}},
+	} {
+		rr := tc.getWithQuery(t, "/console/api/fragments/integration-provider-form",
+			url.Values{"provider": {tt.provider}}.Encode(), cookie)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s form: status = %d, want 200", tt.provider, rr.Code)
+		}
+		body := rr.Body.String()
+		for _, f := range tt.fields {
+			if !strings.Contains(body, `name="`+f+`"`) {
+				t.Errorf("%s form missing credential field %q", tt.provider, f)
+			}
+		}
+		// secret_access_key must render as a password input.
+		idx := strings.Index(body, `name="secret_access_key"`)
+		if idx < 0 {
+			t.Fatalf("%s form missing secret_access_key", tt.provider)
+		}
+		start := strings.LastIndex(body[:idx], "<input")
+		if start < 0 || !strings.Contains(body[start:idx], `type="password"`) {
+			t.Errorf("%s secret_access_key is not rendered as a password input", tt.provider)
+		}
+	}
+}
+
 // TestFragment_IntegrationProviderForm_WebhookCredFields verifies the three
 // generic-webhook providers render their webhook_url + hmac_secret credential
 // inputs so they can be connected from the UI.
