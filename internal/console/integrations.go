@@ -168,7 +168,10 @@ type integrationProviderFormView struct {
 	Label      string
 	Channel    string
 	CredFields []integrationCredentialField
-	ReadOnly   bool
+	// Catalog is the full set of selectable providers, rendered as the
+	// step-1 tile grid when ProviderID is empty.
+	Catalog  []providerMeta
+	ReadOnly bool
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -270,6 +273,14 @@ func credentialFieldsForProvider(providerID string) []integrationCredentialField
 			{Key: "token", Label: "API Token", Value: connectivity.CredentialMaskSentinel, Required: true},
 			{Key: "space_url", Label: "Space URL", Value: connectivity.CredentialMaskSentinel, Required: true},
 			{Key: "from", Label: "From number", Value: connectivity.CredentialMaskSentinel, Required: true},
+		}
+	case "discord":
+		return []integrationCredentialField{
+			{Key: "webhook_url", Label: "Webhook URL", Value: connectivity.CredentialMaskSentinel, Required: true},
+		}
+	case "telegram":
+		return []integrationCredentialField{
+			{Key: "bot_token", Label: "Bot Token", Value: connectivity.CredentialMaskSentinel, Required: true},
 		}
 	}
 	return nil
@@ -652,6 +663,7 @@ func (c *Console) serveFragmentIntegrationProviderForm(w http.ResponseWriter, r 
 		Label:      meta.Label,
 		Channel:    meta.Channel,
 		CredFields: credentialFieldsForProvider(meta.ID),
+		Catalog:    providerCatalog,
 		ReadOnly:   c.deps.ReadOnly,
 	}
 	html, err := renderFragment(c.ts.base, "integration-provider-form", fv)
@@ -744,6 +756,16 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			From:      r.FormValue("from"),
 		}
 		_, createErr = c.deps.Connectivity.CreateSignalWire(r.Context(), scope, identifier, cfg, primary)
+	case "discord":
+		cfg := connectivity.DiscordConfig{
+			WebhookURL: r.FormValue("webhook_url"),
+		}
+		_, createErr = c.deps.Connectivity.CreateDiscord(r.Context(), scope, identifier, cfg, primary)
+	case "telegram":
+		cfg := connectivity.TelegramConfig{
+			BotToken: r.FormValue("bot_token"),
+		}
+		_, createErr = c.deps.Connectivity.CreateTelegram(r.Context(), scope, identifier, cfg, primary)
 	default:
 		http.Error(w, fmt.Sprintf("unknown provider: %s", providerID), http.StatusBadRequest)
 		return

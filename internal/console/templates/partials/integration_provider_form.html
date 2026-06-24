@@ -63,7 +63,7 @@
               data-on:click="$integrationProviderFormOpen=false">
         Cancel
       </button>
-      <button type="submit" class="btn btn-outline">Connect</button>
+      <button type="submit" class="btn btn-primary">Connect</button>
     </div>
   </form>
   {{end}}
@@ -71,24 +71,14 @@
   {{/* Step 1: provider catalog selection */}}
   <h2 class="integration-provider-form-title">Connect a Provider</h2>
   <div class="integration-provider-catalog">
+    {{range .Catalog}}
     <button type="button"
             class="integration-provider-tile"
-            data-on:click="@get('/console/api/fragments/integration-provider-form?provider=smtp')">
-      <span class="integration-provider-tile-label">SMTP Email</span>
-      <span class="activity-channel-badge activity-channel-badge--email">email</span>
+            data-on:click="@get('/console/api/fragments/integration-provider-form?provider={{.ID}}')">
+      <span class="integration-provider-tile-label">{{.Label}}</span>
+      <span class="activity-channel-badge activity-channel-badge--{{.Channel}}">{{.Channel}}</span>
     </button>
-    <button type="button"
-            class="integration-provider-tile"
-            data-on:click="@get('/console/api/fragments/integration-provider-form?provider=cloudflare_email')">
-      <span class="integration-provider-tile-label">Cloudflare Email</span>
-      <span class="activity-channel-badge activity-channel-badge--email">email</span>
-    </button>
-    <button type="button"
-            class="integration-provider-tile"
-            data-on:click="@get('/console/api/fragments/integration-provider-form?provider=ntfy')">
-      <span class="integration-provider-tile-label">ntfy Push</span>
-      <span class="activity-channel-badge activity-channel-badge--push">push</span>
-    </button>
+    {{end}}
   </div>
   <div class="integration-form-actions">
     <button type="button"

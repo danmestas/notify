@@ -106,6 +106,83 @@ func TestIntegrations_ToolbarUsesDesignSystem(t *testing.T) {
 	}
 }
 
+// TestFragment_IntegrationProviderForm_ListsFullCatalog guards against the
+// picker regressing to a hardcoded subset. The step-1 provider grid must be
+// driven by providerCatalog, so every supported provider — including the ones
+// that were previously missing from the UI (Expo, FCM, Discord, Telegram,
+// Twilio, SignalWire) — renders a selectable tile.
+func TestFragment_IntegrationProviderForm_ListsFullCatalog(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/integration-provider-form", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("provider form fragment: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	for _, p := range providerCatalog {
+		if !strings.Contains(body, ">"+p.Label+"<") {
+			t.Errorf("provider picker missing catalog entry %q (id=%s)", p.Label, p.ID)
+		}
+		if !strings.Contains(body, "provider="+p.ID) {
+			t.Errorf("provider picker missing select link for id=%s", p.ID)
+		}
+	}
+}
+
+// TestFragment_IntegrationProviderForm_ChatCredFields verifies the two chat
+// providers that previously had no console form now render their credential
+// inputs, so they can actually be connected from the UI.
+func TestFragment_IntegrationProviderForm_ChatCredFields(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	for _, tt := range []struct{ provider, field string }{
+		{"discord", "webhook_url"},
+		{"telegram", "bot_token"},
+	} {
+		rr := tc.getWithQuery(t, "/console/api/fragments/integration-provider-form",
+			url.Values{"provider": {tt.provider}}.Encode(), cookie)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s form: status = %d, want 200", tt.provider, rr.Code)
+		}
+		if !strings.Contains(rr.Body.String(), `name="`+tt.field+`"`) {
+			t.Errorf("%s form missing credential field %q", tt.provider, tt.field)
+		}
+	}
+}
+
+// TestIntegrations_Create_ChatProviders exercises the console create path for
+// discord and telegram end-to-end — they used to fall through to the "unknown
+// provider" default and 400. A successful create redirects (303).
+func TestIntegrations_Create_ChatProviders(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	for _, tt := range []struct {
+		provider string
+		form     url.Values
+	}{
+		{"discord", url.Values{
+			"provider_id": {"discord"}, "identifier": {"disc-1"},
+			"webhook_url": {"https://discord.com/api/webhooks/1/abc"},
+			"csrf_token":  {csrf},
+		}},
+		{"telegram", url.Values{
+			"provider_id": {"telegram"}, "identifier": {"tg-1"},
+			"bot_token":  {"123456:ABC-DEF"},
+			"csrf_token": {csrf},
+		}},
+	} {
+		rr := tc.postForm(t, "/console/integrations", tt.form, cookie)
+		if rr.Code != http.StatusSeeOther {
+			t.Errorf("create %s: status = %d, want 303 (body: %s)",
+				tt.provider, rr.Code, rr.Body.String())
+		}
+	}
+}
+
 func TestIntegrations_PageEmptyState(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)

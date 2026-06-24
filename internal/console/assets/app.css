@@ -1174,6 +1174,86 @@ a.activity-item-run { color: var(--accent); }
   font-weight: 600;
 }
 
+/* ===== connect-a-provider panel + catalog ========================== */
+.integration-provider-panel {
+  margin-top: var(--space-5);
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.integration-provider-form-inner {
+  display: grid;
+  gap: var(--space-4);
+}
+.integration-provider-form-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.integration-provider-form-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/* Responsive grid of provider tiles */
+.integration-provider-catalog {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-3);
+}
+.integration-provider-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--bg);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.integration-provider-tile:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.integration-provider-tile:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.integration-provider-tile-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+/* Step-2 credential form */
+.integration-cred-fieldset {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+}
+.integration-cred-legend {
+  padding: 0 var(--space-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+.integration-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
 /* Workflows table wrapper */
 .console-table-wrap {
   border: 1px solid var(--border);
