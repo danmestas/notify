@@ -1182,6 +1182,9 @@ var integrationSecretFields = map[string]map[string]bool{
 	"telegram":         {"bot_token": true},
 	"twilio":           {"auth_token": true},
 	"signalwire":       {"token": true},
+	"email-webhook":    {"hmac_secret": true},
+	"push-webhook":     {"hmac_secret": true},
+	"chat-webhook":     {"hmac_secret": true},
 }
 
 // maskCredentials replaces secret credential fields with the mask sentinel.
@@ -1367,8 +1370,23 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 				SpaceURL:  req.Credentials["space_url"],
 				From:      req.Credentials["from"],
 			}, req.Primary)
+		case "email-webhook":
+			in, err = conn.CreateEmailWebhook(r.Context(), scope, req.Identifier, connectivity.EmailWebhookConfig{
+				WebhookURL: req.Credentials["webhook_url"],
+				HMACSecret: req.Credentials["hmac_secret"],
+			}, req.Primary)
+		case "push-webhook":
+			in, err = conn.CreatePushWebhook(r.Context(), scope, req.Identifier, connectivity.PushWebhookConfig{
+				WebhookURL: req.Credentials["webhook_url"],
+				HMACSecret: req.Credentials["hmac_secret"],
+			}, req.Primary)
+		case "chat-webhook":
+			in, err = conn.CreateChatWebhook(r.Context(), scope, req.Identifier, connectivity.ChatWebhookConfig{
+				WebhookURL: req.Credentials["webhook_url"],
+				HMACSecret: req.Credentials["hmac_secret"],
+			}, req.Primary)
 		default:
-			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, ntfy, expo, fcm, discord, telegram, twilio, signalwire", http.StatusBadRequest)
+			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, ntfy, expo, fcm, discord, telegram, twilio, signalwire, email-webhook, push-webhook, chat-webhook", http.StatusBadRequest)
 			return
 		}
 		if err != nil {

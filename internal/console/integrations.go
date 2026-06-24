@@ -49,6 +49,9 @@ var providerCatalog = []providerMeta{
 	{ID: "telegram", Label: "Telegram", Channel: "chat"},
 	{ID: "twilio", Label: "Twilio SMS", Channel: "sms"},
 	{ID: "signalwire", Label: "SignalWire SMS", Channel: "sms"},
+	{ID: "email-webhook", Label: "Email Webhook", Channel: "email"},
+	{ID: "push-webhook", Label: "Push Webhook", Channel: "push"},
+	{ID: "chat-webhook", Label: "Chat Webhook", Channel: "chat"},
 }
 
 // providerLabel returns the human label for providerID from the catalog.
@@ -281,6 +284,11 @@ func credentialFieldsForProvider(providerID string) []integrationCredentialField
 	case "telegram":
 		return []integrationCredentialField{
 			{Key: "bot_token", Label: "Bot Token", Value: connectivity.CredentialMaskSentinel, Required: true},
+		}
+	case "email-webhook", "push-webhook", "chat-webhook":
+		return []integrationCredentialField{
+			{Key: "webhook_url", Label: "Webhook URL", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "hmac_secret", Label: "HMAC Secret (optional)", Value: connectivity.CredentialMaskSentinel},
 		}
 	}
 	return nil
@@ -766,6 +774,24 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			BotToken: r.FormValue("bot_token"),
 		}
 		_, createErr = c.deps.Connectivity.CreateTelegram(r.Context(), scope, identifier, cfg, primary)
+	case "email-webhook":
+		cfg := connectivity.EmailWebhookConfig{
+			WebhookURL: r.FormValue("webhook_url"),
+			HMACSecret: r.FormValue("hmac_secret"),
+		}
+		_, createErr = c.deps.Connectivity.CreateEmailWebhook(r.Context(), scope, identifier, cfg, primary)
+	case "push-webhook":
+		cfg := connectivity.PushWebhookConfig{
+			WebhookURL: r.FormValue("webhook_url"),
+			HMACSecret: r.FormValue("hmac_secret"),
+		}
+		_, createErr = c.deps.Connectivity.CreatePushWebhook(r.Context(), scope, identifier, cfg, primary)
+	case "chat-webhook":
+		cfg := connectivity.ChatWebhookConfig{
+			WebhookURL: r.FormValue("webhook_url"),
+			HMACSecret: r.FormValue("hmac_secret"),
+		}
+		_, createErr = c.deps.Connectivity.CreateChatWebhook(r.Context(), scope, identifier, cfg, primary)
 	default:
 		http.Error(w, fmt.Sprintf("unknown provider: %s", providerID), http.StatusBadRequest)
 		return

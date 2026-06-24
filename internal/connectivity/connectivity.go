@@ -23,6 +23,7 @@ import (
 	"github.com/danmestas/notify/internal/providers/signalwire"
 	"github.com/danmestas/notify/internal/providers/telegram"
 	"github.com/danmestas/notify/internal/providers/twilio"
+	"github.com/danmestas/notify/internal/providers/webhook"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -100,6 +101,33 @@ type CloudflareEmailConfig struct {
 	AccountID string `json:"account_id"`
 	APIToken  string `json:"api_token"`
 	From      string `json:"from"`
+}
+
+// EmailWebhookConfig is the credential payload for a generic email-webhook
+// integration: the destination URL the rendered email is POSTed to as JSON, and
+// an optional HMAC secret used to sign the body. JSON-encoded and
+// AES-256-GCM-sealed into Integration.EncCredentials.
+type EmailWebhookConfig struct {
+	WebhookURL string `json:"webhook_url"`
+	HMACSecret string `json:"hmac_secret"`
+}
+
+// PushWebhookConfig is the credential payload for a generic push-webhook
+// integration: the destination URL the rendered push is POSTed to as JSON, and
+// an optional HMAC secret used to sign the body. JSON-encoded and
+// AES-256-GCM-sealed into Integration.EncCredentials.
+type PushWebhookConfig struct {
+	WebhookURL string `json:"webhook_url"`
+	HMACSecret string `json:"hmac_secret"`
+}
+
+// ChatWebhookConfig is the credential payload for a generic chat-webhook
+// integration: the destination URL the rendered chat message is POSTed to as
+// JSON, and an optional HMAC secret used to sign the body. JSON-encoded and
+// AES-256-GCM-sealed into Integration.EncCredentials.
+type ChatWebhookConfig struct {
+	WebhookURL string `json:"webhook_url"`
+	HMACSecret string `json:"hmac_secret"`
 }
 
 // DiscordConfig is the credential payload for a Discord chat integration: the
@@ -211,6 +239,29 @@ func (svc *Service) CreateCloudflareEmail(ctx context.Context, scope domain.Scop
 	})
 }
 
+// CreateEmailWebhook stores a generic email-webhook integration for the Scope:
+// it AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="email-webhook" and Channel="email". When primary is set the
+// integration becomes the preferred provider for the channel.
+func (svc *Service) CreateEmailWebhook(ctx context.Context, scope domain.Scope, identifier string, cfg EmailWebhookConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal email-webhook config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt email-webhook config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "email-webhook",
+		Channel:        "email",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
 // ResolveEmail returns the active email provider, From address, provider ID,
 // and integration ID for the Scope. It loads the active email integration,
 // decrypts its credentials, and builds the appropriate provider based on the
@@ -249,6 +300,15 @@ func (svc *Service) ResolveEmail(ctx context.Context, scope domain.Scope) (provi
 			APIToken:  cfg.APIToken,
 			From:      cfg.From,
 		}, cfg.From, providerID, in.ID, nil
+	case "email-webhook":
+		var cfg EmailWebhookConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", "", fmt.Errorf("connectivity: unmarshal email-webhook config: %w", err)
+		}
+		// A webhook has no configured sender; the From travels in the rendered
+		// EmailMessage and is serialised into the JSON body unchanged. Return ""
+		// so the caller's From default stays whatever the message carried.
+		return &webhook.EmailClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret}, "", providerID, in.ID, nil
 	case "smtp", "": // empty ProviderID covers legacy rows created before the field was enforced.
 		var cfg SMTPConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
@@ -336,6 +396,29 @@ func (svc *Service) CreateFCM(ctx context.Context, scope domain.Scope, identifie
 	})
 }
 
+// CreatePushWebhook stores a generic push-webhook integration for the Scope: it
+// AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="push-webhook" and Channel="push". When primary is set the
+// integration becomes the preferred provider for the channel.
+func (svc *Service) CreatePushWebhook(ctx context.Context, scope domain.Scope, identifier string, cfg PushWebhookConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal push-webhook config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt push-webhook config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "push-webhook",
+		Channel:        "push",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
 // ResolvePush returns the active push provider, its provider id, and
 // integration ID for the Scope. It loads the active push integration, decrypts
 // its credentials, and builds the appropriate provider based on the
@@ -387,6 +470,12 @@ func (svc *Service) ResolvePush(ctx context.Context, scope domain.Scope) (provid
 			return nil, "", "", fmt.Errorf("connectivity: build fcm client: %w", err)
 		}
 		return client, providerID, in.ID, nil
+	case "push-webhook":
+		var cfg PushWebhookConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", fmt.Errorf("connectivity: unmarshal push-webhook config: %w", err)
+		}
+		return &webhook.PushClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret}, providerID, in.ID, nil
 	default:
 		// Fail closed: an unknown push provider must not be silently decoded as
 		// another provider's config.
@@ -440,6 +529,29 @@ func (svc *Service) CreateTelegram(ctx context.Context, scope domain.Scope, iden
 	})
 }
 
+// CreateChatWebhook stores a generic chat-webhook integration for the Scope: it
+// AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="chat-webhook" and Channel="chat". When primary is set the
+// integration becomes the preferred provider for the channel.
+func (svc *Service) CreateChatWebhook(ctx context.Context, scope domain.Scope, identifier string, cfg ChatWebhookConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal chat-webhook config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt chat-webhook config: %w", err)
+	}
+	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+		ProviderID:     "chat-webhook",
+		Channel:        "chat",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
 // ResolveChat returns the active chat provider, its provider id, and integration
 // ID for the Scope. It loads the active chat integration, decrypts its
 // credentials, and builds the appropriate provider based on the integration's
@@ -473,6 +585,12 @@ func (svc *Service) ResolveChat(ctx context.Context, scope domain.Scope) (provid
 			return nil, "", "", fmt.Errorf("connectivity: unmarshal telegram config: %w", err)
 		}
 		return &telegram.Client{BotToken: cfg.BotToken}, in.ProviderID, in.ID, nil
+	case "chat-webhook":
+		var cfg ChatWebhookConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", "", fmt.Errorf("connectivity: unmarshal chat-webhook config: %w", err)
+		}
+		return &webhook.ChatClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret}, in.ProviderID, in.ID, nil
 	default:
 		// Fail closed: an unknown chat provider must not be silently decoded as
 		// another provider's config.

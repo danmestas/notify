@@ -153,6 +153,65 @@ func TestFragment_IntegrationProviderForm_ChatCredFields(t *testing.T) {
 	}
 }
 
+// TestFragment_IntegrationProviderForm_WebhookCredFields verifies the three
+// generic-webhook providers render their webhook_url + hmac_secret credential
+// inputs so they can be connected from the UI.
+func TestFragment_IntegrationProviderForm_WebhookCredFields(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	for _, provider := range []string{"email-webhook", "push-webhook", "chat-webhook"} {
+		rr := tc.getWithQuery(t, "/console/api/fragments/integration-provider-form",
+			url.Values{"provider": {provider}}.Encode(), cookie)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s form: status = %d, want 200", provider, rr.Code)
+		}
+		body := rr.Body.String()
+		for _, field := range []string{"webhook_url", "hmac_secret"} {
+			if !strings.Contains(body, `name="`+field+`"`) {
+				t.Errorf("%s form missing credential field %q", provider, field)
+			}
+		}
+	}
+}
+
+// TestIntegrations_Create_WebhookProviders exercises the console create path for
+// the three generic-webhook providers end-to-end. A successful create redirects
+// (303).
+func TestIntegrations_Create_WebhookProviders(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	for _, tt := range []struct {
+		provider string
+		form     url.Values
+	}{
+		{"email-webhook", url.Values{
+			"provider_id": {"email-webhook"}, "identifier": {"ewh-1"},
+			"webhook_url": {"https://hooks.example.com/email"},
+			"hmac_secret": {"s1"},
+			"csrf_token":  {csrf},
+		}},
+		{"push-webhook", url.Values{
+			"provider_id": {"push-webhook"}, "identifier": {"pwh-1"},
+			"webhook_url": {"https://hooks.example.com/push"},
+			"csrf_token":  {csrf},
+		}},
+		{"chat-webhook", url.Values{
+			"provider_id": {"chat-webhook"}, "identifier": {"cwh-1"},
+			"webhook_url": {"https://hooks.example.com/chat"},
+			"hmac_secret": {"s3"},
+			"csrf_token":  {csrf},
+		}},
+	} {
+		rr := tc.postForm(t, "/console/integrations", tt.form, cookie)
+		if rr.Code != http.StatusSeeOther {
+			t.Errorf("create %s: status = %d, want 303 (body: %s)",
+				tt.provider, rr.Code, rr.Body.String())
+		}
+	}
+}
+
 // TestIntegrations_Create_ChatProviders exercises the console create path for
 // discord and telegram end-to-end — they used to fall through to the "unknown
 // provider" default and 400. A successful create redirects (303).
