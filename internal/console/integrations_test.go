@@ -75,6 +75,37 @@ func TestIntegrations_PageRenderWithSeededIntegrations(t *testing.T) {
 	}
 }
 
+// TestIntegrations_ToolbarUsesDesignSystem guards the integration toolbar
+// against regressing to the unstyled raw controls it shipped with: the channel
+// filters must render as a styled segmented group (.integration-channel-tabs >
+// .integration-tab, with aria-pressed reflecting the active channel signal),
+// and the create action must be the design-system primary button living in the
+// toolbar's right-aligned action slot — matching the "+ New" CTA on every other
+// list page — not a bare btn-outline wedged beneath the filters.
+func TestIntegrations_ToolbarUsesDesignSystem(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/integrations", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations: status = %d, want 200 (body: %s)",
+			rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	// Segmented filter group present, with the active state exposed to AT.
+	if !strings.Contains(body, `class="integration-channel-tabs"`) {
+		t.Error("integrations toolbar missing segmented filter group .integration-channel-tabs")
+	}
+	if !strings.Contains(body, `data-attr:aria-pressed`) {
+		t.Error("channel filter tabs must bind aria-pressed to reflect the active channel")
+	}
+	// Connect Provider must be the primary button in the relocated action slot.
+	if !strings.Contains(body, `class="btn btn-primary integration-toolbar-action"`) {
+		t.Error("Connect Provider must use the design-system primary button in the toolbar action slot (btn btn-primary integration-toolbar-action)")
+	}
+}
+
 func TestIntegrations_PageEmptyState(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)

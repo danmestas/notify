@@ -10,37 +10,43 @@
   {{template "page-header" $page.Header}}
 
   <div class="integration-toolbar">
-    {{/* Channel filter tabs */}}
-    <nav class="integration-channel-tabs" id="integration-channel-tabs" aria-label="Filter by channel">
+    {{/* Channel filter — segmented button group */}}
+    <nav class="integration-channel-tabs" role="group" id="integration-channel-tabs" aria-label="Filter by channel">
       <button type="button"
               class="integration-tab"
               data-class-is-active="$integrationChannel === ''"
+              data-attr:aria-pressed="$integrationChannel === ''"
               data-on:click="$integrationChannel='';@get('/console/api/fragments/integrations-grid')">
         All
       </button>
       <button type="button"
               class="integration-tab"
               data-class-is-active="$integrationChannel === 'email'"
+              data-attr:aria-pressed="$integrationChannel === 'email'"
               data-on:click="$integrationChannel='email';@get('/console/api/fragments/integrations-grid')">
         Email
       </button>
       <button type="button"
               class="integration-tab"
               data-class-is-active="$integrationChannel === 'push'"
+              data-attr:aria-pressed="$integrationChannel === 'push'"
               data-on:click="$integrationChannel='push';@get('/console/api/fragments/integrations-grid')">
         Push
       </button>
       <button type="button"
               class="integration-tab"
               data-class-is-active="$integrationChannel === 'in_app'"
+              data-attr:aria-pressed="$integrationChannel === 'in_app'"
               data-on:click="$integrationChannel='in_app';@get('/console/api/fragments/integrations-grid')">
         In-app
       </button>
     </nav>
 
     {{if not $page.ReadOnly}}
+    {{/* Primary create action — sits in the toolbar's action slot, right-aligned,
+         matching the "+ New" CTA on the other list pages. */}}
     <button type="button"
-            class="btn btn-outline"
+            class="btn btn-primary integration-toolbar-action"
             data-on:click="$integrationProviderFormOpen=true;@get('/console/api/fragments/integration-provider-form')">
       + Connect Provider
     </button>
