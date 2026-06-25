@@ -20,7 +20,8 @@
   native required on the hidden input, and we do NOT pre-select an option.
 */}}
 {{define "ui-select"}}
-<div class="ui-select" id="{{.ID}}" data-signals="{{.SignalsAttr}}">
+<div class="ui-select" id="{{.ID}}" data-signals="{{.SignalsAttr}}"
+     data-on:click__outside="{{.OutsideExpr}}">
 
   {{if .Name}}
   <input type="hidden" name="{{.Name}}" data-attr:value="{{.HiddenValueExpr}}">
@@ -35,9 +36,12 @@
     <span class="ui-select-trigger-chevron" aria-hidden="true">{{ uiIcon "chevron-down" }}</span>
   </button>
 
+  {{/* click__outside lives on the root .ui-select (which wraps both trigger and
+       popover) — NOT here. On the popover it fires for the trigger click that
+       opens it (the trigger is outside the popover), toggling it shut in the
+       same event so it never visibly opens. */}}
   <div class="ui-select-popover" id="{{.ID}}-popover" role="listbox"
-       data-show="{{.ShowExpr}}"
-       data-on:click__outside="{{.OutsideExpr}}">
+       data-show="{{.ShowExpr}}">
 
     {{if .Searchable}}
     <div class="ui-select-search-wrap">

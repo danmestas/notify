@@ -52,6 +52,31 @@ func TestUISelect_RendersTriggerPopoverOptions(t *testing.T) {
 	}
 }
 
+// TestUISelect_ClickOutsideOnRootNotPopover guards the open/close fix: the
+// click__outside handler MUST be on the root .ui-select (which wraps both the
+// trigger and the popover), NOT on the popover. On the popover it fires for the
+// trigger click that opens it (the trigger is outside the popover), closing it
+// in the same event so it never visibly opens.
+func TestUISelect_ClickOutsideOnRootNotPopover(t *testing.T) {
+	s := newUISelect("co-sel", "", "sig",
+		uiSelectOptions("", "All", "a", "A"), "All", "", false)
+	body := renderUISelect(t, s)
+
+	if !strings.Contains(body, "click__outside") {
+		t.Fatal("ui-select missing click__outside handler entirely")
+	}
+	// The root .ui-select is rendered before the popover; the single
+	// click__outside must appear before .ui-select-popover (i.e. on the root).
+	outsideIdx := strings.Index(body, "click__outside")
+	popoverIdx := strings.Index(body, "ui-select-popover")
+	if outsideIdx > popoverIdx {
+		t.Error("click__outside is on the popover (or after it) — must be on the root .ui-select, else the trigger click that opens it immediately closes it")
+	}
+	if strings.Count(body, "click__outside") != 1 {
+		t.Errorf("expected exactly one click__outside handler, got %d", strings.Count(body, "click__outside"))
+	}
+}
+
 // TestUISelect_SelectedCheckBindsToSignal asserts the selected-option check is
 // rendered and gated on a value match against the bound signal, so the check
 // shows next to the currently-selected row.
