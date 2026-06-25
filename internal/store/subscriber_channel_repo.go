@@ -14,6 +14,7 @@ import (
 type SubscriberChannelRepo interface {
 	Upsert(ctx context.Context, scope domain.Scope, ch domain.SubscriberChannel) (domain.SubscriberChannel, error)
 	GetByProvider(ctx context.Context, scope domain.Scope, subscriberID, providerID string) (domain.SubscriberChannel, error)
+	ListBySubscriber(ctx context.Context, scope domain.Scope, subscriberID string) ([]domain.SubscriberChannel, error)
 }
 
 type subscriberChannelRepo struct {
@@ -65,4 +66,36 @@ func (repo *subscriberChannelRepo) GetByProvider(ctx context.Context, scope doma
 	}
 	ch.Credentials = creds
 	return ch, nil
+}
+
+func (repo *subscriberChannelRepo) ListBySubscriber(ctx context.Context, scope domain.Scope, subscriberID string) ([]domain.SubscriberChannel, error) {
+	rows, err := repo.r.QueryContext(
+		ctx,
+		`SELECT id, org_id, environment_id, subscriber_id, provider_id, type, credentials
+		 FROM subscriber_channels
+		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ?
+		 ORDER BY provider_id`,
+		scope.OrgID, scope.EnvID, subscriberID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.SubscriberChannel
+	for rows.Next() {
+		var (
+			ch    domain.SubscriberChannel
+			creds []byte
+		)
+		if err := rows.Scan(&ch.ID, &ch.OrgID, &ch.EnvID, &ch.SubscriberID, &ch.ProviderID, &ch.Type, &creds); err != nil {
+			return nil, err
+		}
+		ch.Credentials = creds
+		out = append(out, ch)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

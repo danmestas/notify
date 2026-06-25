@@ -70,6 +70,13 @@ func (svc *Service) SetCredentials(ctx context.Context, scope domain.Scope, subs
 	})
 }
 
+// ListChannels returns the per-provider channel addressing rows recorded for
+// the subscriber within scope, ordered by provider. Mirrors the read side of
+// SetCredentials.
+func (svc *Service) ListChannels(ctx context.Context, scope domain.Scope, subscriberID string) ([]domain.SubscriberChannel, error) {
+	return svc.store.SubscriberChannels().ListBySubscriber(ctx, scope, subscriberID)
+}
+
 // CreateTopic upserts a topic by (scope, key) and returns the persisted row.
 func (svc *Service) CreateTopic(ctx context.Context, scope domain.Scope, key, name string) (domain.Topic, error) {
 	return svc.store.Topics().Create(ctx, scope, key, name)

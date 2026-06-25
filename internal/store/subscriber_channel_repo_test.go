@@ -101,3 +101,75 @@ func TestSubscriberChannels_CrossEnvIsolation(t *testing.T) {
 		t.Fatalf("cross-env read: err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestSubscriberChannels_ListBySubscriber(t *testing.T) {
+	ctx := context.Background()
+	s := openChannelStore(t)
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	// Insert two channels for user_1 (different providers) and one for user_2.
+	if _, err := s.SubscriberChannels().Upsert(ctx, scope, domain.SubscriberChannel{
+		SubscriberID: "user_1",
+		ProviderID:   "ntfy",
+		Type:         "push",
+		Credentials:  []byte(`{"topic":"alerts"}`),
+	}); err != nil {
+		t.Fatalf("Upsert ntfy: %v", err)
+	}
+	if _, err := s.SubscriberChannels().Upsert(ctx, scope, domain.SubscriberChannel{
+		SubscriberID: "user_1",
+		ProviderID:   "discord",
+		Type:         "chat",
+		Credentials:  []byte(`{"address":"https://discord/hook"}`),
+	}); err != nil {
+		t.Fatalf("Upsert discord: %v", err)
+	}
+	if _, err := s.SubscriberChannels().Upsert(ctx, scope, domain.SubscriberChannel{
+		SubscriberID: "user_2",
+		ProviderID:   "ntfy",
+		Type:         "push",
+		Credentials:  []byte(`{"topic":"other"}`),
+	}); err != nil {
+		t.Fatalf("Upsert user_2: %v", err)
+	}
+
+	got, err := s.SubscriberChannels().ListBySubscriber(ctx, scope, "user_1")
+	if err != nil {
+		t.Fatalf("ListBySubscriber: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListBySubscriber returned %d rows, want 2: %+v", len(got), got)
+	}
+	// Ordered by provider_id: discord before ntfy.
+	if got[0].ProviderID != "discord" || got[1].ProviderID != "ntfy" {
+		t.Fatalf("order = [%q, %q], want [discord, ntfy]", got[0].ProviderID, got[1].ProviderID)
+	}
+	if got[0].Type != "chat" || !bytes.Equal(got[0].Credentials, []byte(`{"address":"https://discord/hook"}`)) {
+		t.Errorf("discord row = %+v, want chat address row", got[0])
+	}
+	if got[1].Type != "push" || !bytes.Equal(got[1].Credentials, []byte(`{"topic":"alerts"}`)) {
+		t.Errorf("ntfy row = %+v, want push topic row", got[1])
+	}
+}
+
+func TestSubscriberChannels_ListBySubscriber_ScopeIsolation(t *testing.T) {
+	ctx := context.Background()
+	s := openChannelStore(t)
+
+	if _, err := s.SubscriberChannels().Upsert(ctx, domain.Scope{OrgID: "o1", EnvID: "e1"}, domain.SubscriberChannel{
+		SubscriberID: "user_1",
+		ProviderID:   "ntfy",
+		Type:         "push",
+		Credentials:  []byte(`{"topic":"alpha"}`),
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	got, err := s.SubscriberChannels().ListBySubscriber(ctx, domain.Scope{OrgID: "o1", EnvID: "e2"}, "user_1")
+	if err != nil {
+		t.Fatalf("ListBySubscriber cross-env: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("cross-env ListBySubscriber returned %d rows, want 0", len(got))
+	}
+}

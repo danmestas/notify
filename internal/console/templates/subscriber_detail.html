@@ -37,6 +37,10 @@
        class="console-tab{{if eq $page.ActiveTab "preferences"}} is-active{{end}}">
       Preferences
     </a>
+    <a href="/console/subscribers/{{$page.Sub.ID}}?tab=channels"
+       class="console-tab{{if eq $page.ActiveTab "channels"}} is-active{{end}}">
+      Channels
+    </a>
   </nav>
 
   {{/* Overview tab */}}
@@ -253,6 +257,82 @@
           </form>
           {{end}}
         </div>
+      </div>
+      {{end}}
+    </section>
+  </div>
+  {{end}}
+
+  {{/* Channels tab — per-subscriber delivery addresses (chat/push) */}}
+  {{if eq $page.ActiveTab "channels"}}
+  <div class="console-detail-grid">
+    <section class="console-card" aria-labelledby="sub-channels-heading">
+      <h2 id="sub-channels-heading" class="console-card-title">Channels</h2>
+      <p class="console-muted" style="margin-bottom:var(--space-3)">
+        Delivery addresses for this subscriber. Chat and push notifications need
+        a per-subscriber address or topic before they can be delivered.
+      </p>
+
+      {{/* Existing addressed channels */}}
+      {{if $page.Channels.Existing}}
+      <div class="console-table-wrap">
+        <table class="console-table" aria-label="Subscriber channels">
+          <thead>
+            <tr>
+              <th scope="col">Provider</th>
+              <th scope="col">Channel</th>
+              <th scope="col">Address / topic</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range $page.Channels.Existing}}
+            <tr>
+              <td>{{.ProviderLabel}}</td>
+              <td><span class="activity-channel-badge activity-channel-badge--{{.ChannelType}}">{{.ChannelLabel}}</span></td>
+              <td><code>{{if .Value}}{{.Value}}{{else}}—{{end}}</code></td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}
+      <p class="console-muted">No delivery addresses saved yet.</p>
+      {{end}}
+
+      {{/* Add / update address form */}}
+      {{if not $page.ReadOnly}}
+      <div class="console-card-actions" style="margin-top:var(--space-4)">
+        <h3 class="console-card-title" style="margin-top:var(--space-4)">Add / update address</h3>
+        {{if $page.Channels.Connectable}}
+        <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}/channels" class="console-form">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <div class="form-row">
+            <label class="form-label" for="channel-provider-trigger">Provider *</label>
+            {{/* uiSelectForm declares + seeds channelProviderId itself.
+                 Name="provider_id" renders the hidden input that carries the
+                 value on submit; the server enforces required + active. */}}
+            {{template "ui-select" (uiSelectForm "channel-provider" "provider_id" "channelProviderId"
+              $page.Channels.Connectable "Select a provider…" "" true "" true)}}
+            <span class="form-hint">Only providers with an active chat or push integration are shown.</span>
+          </div>
+          <div class="form-row">
+            <label class="form-label" for="channel-value">Address / topic *</label>
+            <input class="console-input" type="text" id="channel-value" name="value"
+                   placeholder="Address (chat) or topic / token (push)" required>
+            <span class="form-hint">Chat providers take an address (channel, webhook URL, number); push providers take a topic or device token.</span>
+          </div>
+          <button type="submit" class="btn btn-primary">Save address</button>
+        </form>
+        {{else}}
+        <div class="console-empty-state" data-component="empty-state">
+          <h2 class="console-empty-state-title">No connectable providers</h2>
+          <p class="console-empty-state-description">
+            Connect an active chat or push integration first, then return here to
+            set a delivery address.
+          </p>
+          <a class="btn btn-primary" href="/console/integrations">Go to integrations</a>
+        </div>
+        {{end}}
       </div>
       {{end}}
     </section>

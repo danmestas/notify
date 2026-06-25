@@ -84,12 +84,33 @@ type subscriberDetailView struct {
 	Sub         domain.Subscriber
 	Activity    subscriberActivityView
 	Preferences subscriberPrefsView
+	Channels    *subscriberChannelsView
 	Signals     template.JS
 	ReadOnly    bool
-	ActiveTab   string // "overview" | "activity" | "preferences"
+	ActiveTab   string // "overview" | "activity" | "preferences" | "channels"
 	// ConfirmDelete renders the inline two-step delete confirmation
 	// (?confirmDelete=true).
 	ConfirmDelete bool
+}
+
+// subscriberChannelsView is the channels-tab content for a subscriber: the
+// list of existing per-subscriber delivery addresses plus the set of
+// connectable providers offered in the add-form.
+type subscriberChannelsView struct {
+	// Existing holds the channels already addressed for this subscriber.
+	Existing []subscriberChannelRow
+	// Connectable holds the providers that have an active chat/push
+	// integration in scope — the only ones the add-form offers.
+	Connectable []uiSelectOption
+}
+
+// subscriberChannelRow is one existing per-subscriber channel address.
+type subscriberChannelRow struct {
+	ProviderID    string
+	ProviderLabel string
+	ChannelType   string // "chat" | "push"
+	ChannelLabel  string // "Chat" | "Push"
+	Value         string // the address (chat) or topic (push)
 }
 
 // subscriberPrefsView is the preferences-tab content for a subscriber.
@@ -404,6 +425,16 @@ func (c *Console) serveSubscriberDetail(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	var channels *subscriberChannelsView
+	if tab == "channels" {
+		var chanErr error
+		channels, chanErr = c.buildSubscriberChannels(r.Context(), scope, sub.SubscriberID)
+		if chanErr != nil {
+			c.deps.Logger.Error("console: subscriber channels", "err", chanErr)
+			// non-fatal: render page with whatever was assembled
+		}
+	}
+
 	first := strings.TrimSpace(sub.FirstName)
 	last := strings.TrimSpace(sub.LastName)
 	title := sub.SubscriberID
@@ -423,6 +454,7 @@ func (c *Console) serveSubscriberDetail(w http.ResponseWriter, r *http.Request) 
 		Sub:           sub,
 		Activity:      activity,
 		Preferences:   prefs,
+		Channels:      channels,
 		Signals:       template.JS(sigs),
 		ReadOnly:      c.deps.ReadOnly,
 		ActiveTab:     tab,
@@ -458,6 +490,136 @@ func (c *Console) buildSubscriberActivity(r *http.Request, scope domain.Scope, s
 		})
 	}
 	return subscriberActivityView{Messages: rows}, nil
+}
+
+// ─── channel addressing (chat/push delivery values) ──────────────────────────
+
+// chatProviderIDs are the providers whose per-subscriber credential is a chat
+// address, stored as {"address": value}. delivery/chat.go reads
+// credentials.address.
+var chatProviderIDs = map[string]bool{
+	"discord":      true,
+	"telegram":     true,
+	"slack":        true,
+	"whatsapp":     true,
+	"chat-webhook": true,
+}
+
+// pushProviderIDs are the providers whose per-subscriber credential is a push
+// topic/token, stored as {"topic": value}. delivery/push.go reads
+// credentials.topic.
+var pushProviderIDs = map[string]bool{
+	"ntfy":         true,
+	"expo":         true,
+	"fcm":          true,
+	"push-webhook": true,
+}
+
+// channelTypeForProvider returns "chat", "push", or "" for a provider id. The
+// mapping is explicit (not derived from the catalog Channel string) because the
+// catalog values are not a reliable type discriminator across providers.
+func channelTypeForProvider(providerID string) string {
+	switch {
+	case chatProviderIDs[providerID]:
+		return "chat"
+	case pushProviderIDs[providerID]:
+		return "push"
+	default:
+		return ""
+	}
+}
+
+// channelCredentials builds the plaintext credentials JSON for a provider's
+// addressable value: chat → {"address": value}, push → {"topic": value}.
+func channelCredentials(providerID, value string) (channelType string, creds json.RawMessage, ok bool) {
+	switch channelTypeForProvider(providerID) {
+	case "chat":
+		b, _ := json.Marshal(map[string]string{"address": value})
+		return "chat", b, true
+	case "push":
+		b, _ := json.Marshal(map[string]string{"topic": value})
+		return "push", b, true
+	default:
+		return "", nil, false
+	}
+}
+
+// channelValueFromCredentials extracts the operator-visible value (address for
+// chat, topic for push) from a stored channel's credentials JSON.
+func channelValueFromCredentials(channelType string, creds json.RawMessage) string {
+	if len(creds) == 0 {
+		return ""
+	}
+	var m map[string]string
+	if err := json.Unmarshal(creds, &m); err != nil {
+		return ""
+	}
+	switch channelType {
+	case "chat":
+		return m["address"]
+	case "push":
+		return m["topic"]
+	default:
+		return ""
+	}
+}
+
+// connectableChannelProviders returns the chat/push providers that have at
+// least one active integration in scope, as ui-select options (value=provider
+// id, label=catalog label), sorted by label. These are the only providers the
+// add-form offers.
+func (c *Console) connectableChannelProviders(ctx context.Context, scope domain.Scope) ([]uiSelectOption, error) {
+	if c.deps.Integrations == nil {
+		return nil, nil
+	}
+	integrations, err := c.deps.Integrations.List(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool)
+	var opts []uiSelectOption
+	for _, in := range integrations {
+		if !in.Active {
+			continue
+		}
+		if channelTypeForProvider(in.ProviderID) == "" {
+			continue // not a chat/push addressable provider
+		}
+		if seen[in.ProviderID] {
+			continue
+		}
+		seen[in.ProviderID] = true
+		opts = append(opts, uiSelectOption{Value: in.ProviderID, Label: providerLabel(in.ProviderID)})
+	}
+	sort.Slice(opts, func(i, j int) bool { return opts[i].Label < opts[j].Label })
+	return opts, nil
+}
+
+// buildSubscriberChannels assembles the channels-tab view: existing addresses
+// (via ListBySubscriber) plus the connectable providers for the add-form.
+func (c *Console) buildSubscriberChannels(ctx context.Context, scope domain.Scope, subscriberID string) (*subscriberChannelsView, error) {
+	view := &subscriberChannelsView{}
+
+	channels, err := c.deps.Audience.ListChannels(ctx, scope, subscriberID)
+	if err != nil {
+		return view, err
+	}
+	for _, ch := range channels {
+		view.Existing = append(view.Existing, subscriberChannelRow{
+			ProviderID:    ch.ProviderID,
+			ProviderLabel: providerLabel(ch.ProviderID),
+			ChannelType:   ch.Type,
+			ChannelLabel:  channelLabel(ch.Type),
+			Value:         channelValueFromCredentials(ch.Type, ch.Credentials),
+		})
+	}
+
+	connectable, err := c.connectableChannelProviders(ctx, scope)
+	if err != nil {
+		return view, err
+	}
+	view.Connectable = connectable
+	return view, nil
 }
 
 // buildSubscriberPreferences fetches the subscriber's stored preferences and
@@ -623,6 +785,100 @@ func (c *Console) handleSubscriberPreferencesPatch(w http.ResponseWriter, r *htt
 	}
 
 	http.Redirect(w, r, "/console/subscribers/"+id+"?tab=preferences", http.StatusSeeOther)
+}
+
+// handleSubscriberChannels handles POST /console/subscribers/{subscriberId}/channels.
+// Form fields: provider_id (a chat/push provider with an active integration),
+// value (the chat address or push topic/token). Builds the plaintext
+// credentials JSON per the chat/push mapping and upserts via Audience. Native
+// form POST → 303 redirect back to the Channels tab.
+func (c *Console) handleSubscriberChannels(w http.ResponseWriter, r *http.Request) {
+	if w == nil {
+		panic("handleSubscriberChannels: w is nil")
+	}
+	if r == nil {
+		panic("handleSubscriberChannels: r is nil")
+	}
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
+		panic("handleSubscriberChannels: no scope in context")
+	}
+	if c.deps.ReadOnly {
+		http.Error(w, "console is read-only", http.StatusForbidden)
+		return
+	}
+	if c.deps.Audience == nil {
+		http.Error(w, "audience service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := chi.URLParam(r, "subscriberId")
+	if id == "" {
+		http.Error(w, "missing subscriberId", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve the subscriber's external ID from the internal ULID id.
+	sub, err := c.deps.Audience.GetSubscriberByID(r.Context(), scope, id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			c.serveNotFound(w, r)
+			return
+		}
+		c.deps.Logger.Error("console: channels patch: get subscriber", "err", err)
+		c.serveError(w, r)
+		return
+	}
+
+	providerID := strings.TrimSpace(r.FormValue("provider_id"))
+	value := strings.TrimSpace(r.FormValue("value"))
+	if providerID == "" {
+		http.Error(w, "provider_id is required", http.StatusBadRequest)
+		return
+	}
+	if value == "" {
+		http.Error(w, "value is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate the provider is a known chat/push addressable provider.
+	channelType, creds, mapped := channelCredentials(providerID, value)
+	if !mapped {
+		http.Error(w, "unknown channel provider", http.StatusBadRequest)
+		return
+	}
+
+	// Validate the provider has an active integration in scope.
+	connectable, err := c.connectableChannelProviders(r.Context(), scope)
+	if err != nil {
+		c.deps.Logger.Error("console: channels patch: list connectable", "err", err)
+		c.serveError(w, r)
+		return
+	}
+	active := false
+	for _, opt := range connectable {
+		if opt.Value == providerID {
+			active = true
+			break
+		}
+	}
+	if !active {
+		http.Error(w, "provider has no active integration", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := c.deps.Audience.SetCredentials(r.Context(), scope, sub.SubscriberID, providerID, channelType, creds); err != nil {
+		c.deps.Logger.Error("console: channels patch: set credentials", "err", err)
+		c.serveError(w, r)
+		return
+	}
+
+	http.Redirect(w, r, "/console/subscribers/"+id+"?tab=channels", http.StatusSeeOther)
 }
 
 // ─── mutation handlers ────────────────────────────────────────────────────────

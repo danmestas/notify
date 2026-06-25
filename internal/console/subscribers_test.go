@@ -377,6 +377,214 @@ func TestSubscribers_PreferencesPatch_ReadOnlyBlocked(t *testing.T) {
 	}
 }
 
+// ─── channels tab (set per-subscriber delivery addresses) ────────────────────
+
+func TestSubscribers_DetailPage_ChannelsTab_WithActiveIntegration(t *testing.T) {
+	tc := newTestConsole(t)
+	// Seed an active chat integration so its provider is connectable.
+	tc.seedIntegration(t, domain.Integration{
+		ProviderID: "discord",
+		Channel:    "chat",
+		Active:     true,
+	})
+	sub := tc.seedSubscriber(t, audience.SubscriberInput{SubscriberID: "chan-sub"})
+	// Seed an existing channel address for this subscriber.
+	if _, err := tc.deps.Audience.SetCredentials(testBackground(), tc.scope, sub.SubscriberID, "discord", "chat", []byte(`{"address":"https://discord/hook"}`)); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/subscribers/"+sub.ID+"?tab=channels", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("channels tab: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	// Tab link present and active.
+	if !strings.Contains(body, "tab=channels") {
+		t.Errorf("channels tab link missing")
+	}
+	// Existing channel row shows the provider label + stored value.
+	if !strings.Contains(body, "Discord") {
+		t.Errorf("expected Discord provider label in channels list, got: %s", body)
+	}
+	if !strings.Contains(body, "https://discord/hook") {
+		t.Errorf("expected stored address in channels list, got: %s", body)
+	}
+	// Add-form action posts to the channels handler.
+	if !strings.Contains(body, "/console/subscribers/"+sub.ID+"/channels") {
+		t.Errorf("expected channels add-form action, got: %s", body)
+	}
+}
+
+func TestSubscribers_DetailPage_ChannelsTab_EmptyStateNoIntegrations(t *testing.T) {
+	tc := newTestConsole(t)
+	sub := tc.seedSubscriber(t, audience.SubscriberInput{SubscriberID: "chan-empty-sub"})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/subscribers/"+sub.ID+"?tab=channels", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("channels tab: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	// No connectable providers → point operator to integrations.
+	if !strings.Contains(body, "/console/integrations") {
+		t.Errorf("expected empty-state pointing to /console/integrations, got: %s", body)
+	}
+}
+
+func TestSubscribers_ChannelsPatch_SetsAddress303(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedIntegration(t, domain.Integration{
+		ProviderID: "discord",
+		Channel:    "chat",
+		Active:     true,
+	})
+	sub := tc.seedSubscriber(t, audience.SubscriberInput{SubscriberID: "chan-set-sub"})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+sub.ID+"/channels",
+		url.Values{
+			"csrf_token":  {csrf},
+			"provider_id": {"discord"},
+			"value":       {"https://discord.example/webhook"},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("channels PATCH: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Location"); !strings.Contains(got, "tab=channels") {
+		t.Errorf("channels PATCH: Location = %q, want ?tab=channels", got)
+	}
+
+	// Verify persisted via the store (chat → {"address": value}).
+	ch, err := tc.st.SubscriberChannels().GetByProvider(testBackground(), tc.scope, sub.SubscriberID, "discord")
+	if err != nil {
+		t.Fatalf("GetByProvider after PATCH: %v", err)
+	}
+	if ch.Type != "chat" {
+		t.Errorf("Type = %q, want chat", ch.Type)
+	}
+	if string(ch.Credentials) != `{"address":"https://discord.example/webhook"}` {
+		t.Errorf("Credentials = %s, want chat address JSON", ch.Credentials)
+	}
+}
+
+func TestSubscribers_ChannelsPatch_SetsTopicForPush(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedIntegration(t, domain.Integration{
+		ProviderID: "ntfy",
+		Channel:    "push",
+		Active:     true,
+	})
+	sub := tc.seedSubscriber(t, audience.SubscriberInput{SubscriberID: "chan-push-sub"})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+sub.ID+"/channels",
+		url.Values{
+			"csrf_token":  {csrf},
+			"provider_id": {"ntfy"},
+			"value":       {"agent-alerts"},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("channels PATCH push: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	ch, err := tc.st.SubscriberChannels().GetByProvider(testBackground(), tc.scope, sub.SubscriberID, "ntfy")
+	if err != nil {
+		t.Fatalf("GetByProvider after PATCH: %v", err)
+	}
+	if ch.Type != "push" {
+		t.Errorf("Type = %q, want push", ch.Type)
+	}
+	if string(ch.Credentials) != `{"topic":"agent-alerts"}` {
+		t.Errorf("Credentials = %s, want push topic JSON", ch.Credentials)
+	}
+}
+
+func TestSubscribers_ChannelsPatch_RejectsUnknownProvider(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedIntegration(t, domain.Integration{
+		ProviderID: "discord",
+		Channel:    "chat",
+		Active:     true,
+	})
+	sub := tc.seedSubscriber(t, audience.SubscriberInput{SubscriberID: "chan-bad-sub"})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+sub.ID+"/channels",
+		url.Values{
+			"csrf_token":  {csrf},
+			"provider_id": {"not-a-provider"},
+			"value":       {"x"},
+		},
+		cookie)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("unknown provider: status = %d, want 400", rr.Code)
+	}
+}
+
+func TestSubscribers_ChannelsPatch_RejectsEmptyValue(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedIntegration(t, domain.Integration{
+		ProviderID: "discord",
+		Channel:    "chat",
+		Active:     true,
+	})
+	sub := tc.seedSubscriber(t, audience.SubscriberInput{SubscriberID: "chan-empty-val"})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+sub.ID+"/channels",
+		url.Values{
+			"csrf_token":  {csrf},
+			"provider_id": {"discord"},
+			"value":       {"   "}, // whitespace trims to empty
+		},
+		cookie)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("empty value: status = %d, want 400", rr.Code)
+	}
+	// Nothing should have been persisted for an empty value.
+	if _, err := tc.st.SubscriberChannels().GetByProvider(testBackground(), tc.scope, sub.SubscriberID, "discord"); err == nil {
+		t.Error("empty value was persisted; want no row written")
+	}
+}
+
+func TestSubscribers_ChannelsPatch_RejectsInactiveProvider(t *testing.T) {
+	tc := newTestConsole(t)
+	// ntfy is a valid push provider but has NO active integration in scope.
+	sub := tc.seedSubscriber(t, audience.SubscriberInput{SubscriberID: "chan-inactive-sub"})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+sub.ID+"/channels",
+		url.Values{
+			"csrf_token":  {csrf},
+			"provider_id": {"ntfy"},
+			"value":       {"agent-alerts"},
+		},
+		cookie)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("inactive provider: status = %d, want 400", rr.Code)
+	}
+}
+
+func TestSubscribers_ChannelsPatch_ReadOnlyBlocked(t *testing.T) {
+	tc := newReadOnlyTestConsole(t)
+	sub := tc.seedSubscriber(t, audience.SubscriberInput{SubscriberID: "ro-chan-sub"})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+sub.ID+"/channels",
+		url.Values{
+			"csrf_token":  {csrf},
+			"provider_id": {"discord"},
+			"value":       {"x"},
+		},
+		cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("read-only channels PATCH: status = %d, want 403", rr.Code)
+	}
+}
+
 func TestSubscribers_DetailPage_NotFound(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)

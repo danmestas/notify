@@ -392,6 +392,8 @@ func (c *Console) Routes() http.Handler {
 		pr.Get("/console/api/fragments/subscribers-list", c.serveFragmentSubscribersList)
 		// W4-S1: subscriber preferences tab (BP-10)
 		pr.Post("/console/subscribers/{subscriberId}/preferences", c.handleSubscriberPreferencesPatch)
+		// subscriber channels tab: per-subscriber delivery addresses (chat/push)
+		pr.Post("/console/subscribers/{subscriberId}/channels", c.handleSubscriberChannels)
 		// W2-C4: topic management
 		pr.Get("/console/topics", c.serveTopicsPage)
 		pr.Get("/console/topics/new", c.serveTopicNew)
