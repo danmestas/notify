@@ -36,6 +36,12 @@ type EmailThreadRepo interface {
 	// Get reads the binding for a thread without creating one. ErrNotFound when
 	// absent.
 	Get(ctx context.Context, scope domain.Scope, platformThreadID string) (EmailThread, error)
+	// List returns the scope's email-thread bindings, keyset-paginated on
+	// platform_thread_id (the stable, scope-unique key) ascending. The over-fetch
+	// + cursor mirrors InboundDomainRepo.List. SQL ordering is by
+	// platform_thread_id ASC for cursor correctness; callers that want a
+	// presentation order (e.g. newest-first) re-sort the returned page.
+	List(ctx context.Context, scope domain.Scope, after string, limit int) (items []EmailThread, nextCursor string, total int, err error)
 }
 
 type emailThreadRepo struct {
@@ -92,4 +98,75 @@ func (repo *emailThreadRepo) Get(ctx context.Context, scope domain.Scope, platfo
 		return EmailThread{}, err
 	}
 	return out, nil
+}
+
+// List returns the scope's email-thread bindings, keyset-paginated on
+// platform_thread_id ASC. The query is scope-guarded (org_id, environment_id),
+// over-fetches limit+1 to derive nextCursor, and clamps the limit. No dedicated
+// index is required at current scale (mirrors InboundDomainRepo.List).
+func (repo *emailThreadRepo) List(ctx context.Context, scope domain.Scope, after string, limit int) ([]EmailThread, string, int, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+
+	var total int
+	if err := repo.r.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM email_threads WHERE org_id = ? AND environment_id = ?`,
+		scope.OrgID, scope.EnvID,
+	).Scan(&total); err != nil {
+		return nil, "", 0, err
+	}
+
+	var rows *sql.Rows
+	var err error
+	if after == "" {
+		rows, err = repo.r.QueryContext(
+			ctx,
+			`SELECT id, org_id, environment_id, agent_identifier, platform_thread_id,
+			   subscriber_id, subscriber_email, inbound_domain, created_at, last_activity_at
+			 FROM email_threads
+			 WHERE org_id = ? AND environment_id = ?
+			 ORDER BY platform_thread_id ASC
+			 LIMIT ?`,
+			scope.OrgID, scope.EnvID, limit+1,
+		)
+	} else {
+		rows, err = repo.r.QueryContext(
+			ctx,
+			`SELECT id, org_id, environment_id, agent_identifier, platform_thread_id,
+			   subscriber_id, subscriber_email, inbound_domain, created_at, last_activity_at
+			 FROM email_threads
+			 WHERE org_id = ? AND environment_id = ? AND platform_thread_id > ?
+			 ORDER BY platform_thread_id ASC
+			 LIMIT ?`,
+			scope.OrgID, scope.EnvID, after, limit+1,
+		)
+	}
+	if err != nil {
+		return nil, "", 0, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var items []EmailThread
+	for rows.Next() {
+		var out EmailThread
+		if err := rows.Scan(&out.ID, &out.OrgID, &out.EnvID, &out.AgentIdentifier, &out.PlatformThreadID,
+			&out.SubscriberID, &out.SubscriberEmail, &out.InboundDomain, &out.CreatedAt, &out.LastActivityAt); err != nil {
+			return nil, "", 0, err
+		}
+		items = append(items, out)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", 0, err
+	}
+
+	var nextCursor string
+	if len(items) > limit {
+		items = items[:limit]
+		// Cursor is the last returned row's platform_thread_id; the next page's
+		// WHERE filters on platform_thread_id > cursor, so no row is skipped.
+		nextCursor = items[limit-1].PlatformThreadID
+	}
+	return items, nextCursor, total, nil
 }

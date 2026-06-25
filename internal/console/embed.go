@@ -128,4 +128,6 @@ var uiIconFS embed.FS
 //go:embed templates/conversations.html
 //go:embed templates/partials/global_conversations_tbody.html
 //go:embed templates/chat.html
+//go:embed templates/inbound_email.html
+//go:embed templates/partials/inbound_email_tbody.html
 var templatesFS embed.FS

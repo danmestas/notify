@@ -1,0 +1,60 @@
+{{define "content"}}{{$page := .Page}}
+<section class="console-section">
+  {{template "page-header" $page.Header}}
+
+  {{/* Endpoint configuration card: webhook URL + secret status. The secret
+       value is never rendered — only its configured/not-configured status. */}}
+  <div class="console-card">
+    <h2 class="console-card-title">Inbound endpoint</h2>
+    <table class="console-table">
+      <tbody>
+        <tr>
+          <td>Webhook URL</td>
+          <td><code>{{$page.WebhookURL}}</code></td>
+        </tr>
+        <tr>
+          <td>Endpoint secret</td>
+          <td>
+            {{if $page.SecretConfigured}}
+            <span class="chip chip-success">Endpoint live</span>
+            {{else}}
+            <span class="chip chip-danger">Endpoint disabled</span>
+            {{end}}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    {{if not $page.PublicBaseURLSet}}
+    <p class="console-muted">
+      NOTIFY_PUBLIC_BASE_URL is unset, so the webhook URL shows a
+      <code>{base_url}</code> placeholder — set it to the server's public origin
+      before registering the endpoint.
+    </p>
+    {{end}}
+    {{if not $page.SecretConfigured}}
+    <p class="console-muted">
+      NOTIFY_INBOUND_SECRET is unset — the /v1/inbound/email endpoint returns 501
+      and no inbound email is accepted. Set it to enable the endpoint.
+    </p>
+    {{end}}
+  </div>
+
+  {{/* Verified-domain summary — links to the Domains page for CRUD, never
+       duplicates it here. */}}
+  <div class="console-card">
+    <h2 class="console-card-title">Verified domains</h2>
+    <p>{{$page.VerifiedDomains}} of {{$page.TotalDomains}} domains verified.</p>
+    <p>
+      <a class="console-link" href="/console/domains">Manage domains {{ uiIcon "arrow-up-right" }}</a>
+    </p>
+  </div>
+
+  {{/* Received-thread activity log. */}}
+  <div class="console-card">
+    <h2 class="console-card-title">Received threads</h2>
+    <div data-on-load="@get('/console/api/fragments/inbound-email-list')">
+      {{template "inbound-email-tbody" $page.Fragment}}
+    </div>
+  </div>
+</section>
+{{end}}

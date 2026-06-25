@@ -1,0 +1,41 @@
+{{/*
+  inbound-email-tbody — PatchElements fragment target for the received
+  inbound-email thread log. The outer element carries the stable id so the
+  default outer-mode patch lines up. The table header renders unconditionally
+  so the page always shows the column layout; the body shows an empty-state
+  row when there are no threads. Binds inboundEmailListView.
+*/}}
+{{define "inbound-email-tbody"}}{{$v := .}}
+<div id="inbound-email-tbody" data-component="inbound-email-tbody">
+  <div class="console-table-wrap">
+    <table class="console-table" aria-label="Inbound email threads">
+      <thead>
+        <tr>
+          <th scope="col">Subscriber Email</th>
+          <th scope="col">Agent</th>
+          <th scope="col">Inbound Domain</th>
+          <th scope="col">Last Activity</th>
+          <th scope="col">Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if eq (len $v.Rows) 0}}
+        <tr>
+          <td colspan="5" class="console-muted">No inbound email received yet.</td>
+        </tr>
+        {{else}}
+        {{range $v.Rows}}
+        <tr class="console-table-row">
+          <td>{{if .SubscriberEmail}}<span>{{.SubscriberEmail}}</span>{{else}}<span class="console-muted">—</span>{{end}}</td>
+          <td>{{if .AgentIdentifier}}<code>{{.AgentIdentifier}}</code>{{else}}<span class="console-muted">—</span>{{end}}</td>
+          <td>{{if .InboundDomain}}<span>{{.InboundDomain}}</span>{{else}}<span class="console-muted">—</span>{{end}}</td>
+          <td>{{if .LastActivityAt}}<span>{{.LastActivityAt}}</span>{{else}}<span class="console-muted">—</span>{{end}}</td>
+          <td>{{if .CreatedAt}}<span>{{.CreatedAt}}</span>{{else}}<span class="console-muted">—</span>{{end}}</td>
+        </tr>
+        {{end}}
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}

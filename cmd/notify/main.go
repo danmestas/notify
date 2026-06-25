@@ -334,10 +334,13 @@ func runServe(args []string) error {
 		Environments:   st.Environments(),
 		EnvVars:        ev,
 		InboundDomains: inbounddomains.New(st),
-		Trigger:        trg,
-		CredVerifier:   credVerify,
-		Agents:         ags,
-		Composer:       consoleComposer{ing},
+		// Inbound email console page: read-only thread log + endpoint status.
+		EmailThreads:            st.EmailThreads(),
+		InboundSecretConfigured: os.Getenv("NOTIFY_INBOUND_SECRET") != "",
+		Trigger:                 trg,
+		CredVerifier:            credVerify,
+		Agents:                  ags,
+		Composer:                consoleComposer{ing},
 		// #106: read-only chat inbound status page. The loop resolves its
 		// default agent in the chat default scope (NOTIFY_CHAT_DEFAULT_ORG/ENV),
 		// not the console operator's scope, so pin chatScope here.

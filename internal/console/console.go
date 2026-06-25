@@ -171,6 +171,13 @@ type Deps struct {
 	// the /console/chat status page (#106). The production wiring passes the
 	// *chatloop.Service; tests pass a stub. Nil leaves the chat route unmounted.
 	ChatStatus ChatStatusProvider
+	// EmailThreads provides the inbound email thread log for the
+	// /console/inbound-email page. Nil leaves the inbound-email route unmounted.
+	EmailThreads store.EmailThreadRepo
+	// InboundSecretConfigured is true when NOTIFY_INBOUND_SECRET is set, i.e. the
+	// /v1/inbound/email endpoint is live. False renders the "endpoint disabled"
+	// warning. The console never sees the secret value.
+	InboundSecretConfigured bool
 	// PublicBaseURL is the server's public origin (e.g.
 	// "https://notify.example.com"). The agent channels tab uses it to render a
 	// ready-to-register inbound webhook URL for each linked chat integration,
@@ -485,6 +492,13 @@ func (c *Console) Routes() http.Handler {
 		// gateway). Env-driven config — no mutation routes.
 		if c.deps.ChatStatus != nil {
 			pr.Get("/console/chat", c.serveChatPage)
+		}
+		// Inbound email: read-only config banner + received-thread activity log.
+		// Gated on both the thread store and the inbound-domain service being
+		// wired. No detail route, no mutations (read-only).
+		if c.deps.EmailThreads != nil && c.deps.InboundDomains != nil {
+			pr.Get("/console/inbound-email", c.serveInboundEmailPage)
+			pr.Get("/console/api/fragments/inbound-email-list", c.serveFragmentInboundEmailList)
 		}
 		// W3: agents management + conversation console. The literal `new`
 		// segment is registered before the {identifier} wildcard so chi never

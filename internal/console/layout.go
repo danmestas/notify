@@ -72,6 +72,8 @@ var pageContentFiles = map[string]string{
 	"conversations": "templates/conversations.html",
 	// #106: read-only chat inbound status.
 	"chat": "templates/chat.html",
+	// Inbound email: read-only config + received-thread activity log.
+	"inbound-email": "templates/inbound_email.html",
 	// W4-E1/E2: environments + API keys.
 	"environments": "templates/environments.html",
 	"api-keys":     "templates/api_keys.html",
@@ -247,6 +249,7 @@ func navIconSVG(key string) template.HTML {
 		"layouts":       `<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>`,
 		"translations":  `<path d="M4 5h7M9 3v2c0 4-2 7-5 9M5 9c0 3 3 5 7 5"/><path d="M14 19l3-7 3 7M14.5 17h5"/>`,
 		"domains":       `<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20z"/>`,
+		"inbound-email": `<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/>`,
 		"environments":  `<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>`,
 		"api-keys":      `<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`,
 	}
@@ -346,6 +349,7 @@ var navGroups = []navGroup{
 		{Label: "Agents", Href: "/console/agents", Section: "agents", Icon: "agents", BadgeKey: "agents"},
 		{Label: "Conversations", Href: "/console/conversations", Section: "conversations", Icon: "conversations"},
 		{Label: "Chat Inbound", Href: "/console/chat", Section: "chat", Icon: "chat"},
+		{Label: "Inbound Email", Href: "/console/inbound-email", Section: "inbound-email", Icon: "inbound-email"},
 	}},
 	{Label: "SYSTEM", Entries: []navEntry{
 		{Label: "Analytics", Href: "/console/analytics", Section: "analytics", Icon: "analytics"},
