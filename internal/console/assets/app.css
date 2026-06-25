@@ -999,6 +999,26 @@ a.activity-item-run { color: var(--accent); }
   background: var(--danger-soft);
   color: var(--status-danger);
 }
+/* Inline status banner (verify result, test-send result, …). Was referenced by
+   .console-banner--success markup but had no styling, so success notices
+   rendered as bare prose. */
+.console-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+.console-banner--success {
+  border-color: var(--status-success);
+  background: rgba(26, 127, 55, 0.10);
+}
+.console-banner--success strong { color: var(--status-success); }
 .console-login-hint {
   margin: 0;
   color: var(--text-secondary);

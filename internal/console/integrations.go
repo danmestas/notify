@@ -156,6 +156,14 @@ type integrationDetailView struct {
 	// the verification engine run, or the failure message. Mutually exclusive.
 	VerifyRunURL string
 	VerifyError  string
+	// CanTestSend reports whether the per-integration test-send action is wired
+	// (Deps.Connectivity != nil && !ReadOnly). When false the Send-test form is
+	// not rendered.
+	CanTestSend bool
+	// TestSendOK / TestSendError carry the post-test-send banner: a success flag
+	// or a short failure message (no decrypted credentials). Mutually exclusive.
+	TestSendOK    bool
+	TestSendError string
 }
 
 // integrationActivityRow is one row in the Activity tab of the detail drawer.
@@ -536,6 +544,9 @@ func (c *Console) serveFragmentIntegrationDetail(w http.ResponseWriter, r *http.
 		ConfirmVerify: confirmVerify,
 		VerifyRunURL:  verifyRunURL,
 		VerifyError:   r.URL.Query().Get("verifyError"),
+		CanTestSend:   c.deps.Connectivity != nil && !c.deps.ReadOnly,
+		TestSendOK:    r.URL.Query().Get("testSendOK") == "1",
+		TestSendError: r.URL.Query().Get("testSendError"),
 	})
 	if err != nil {
 		c.deps.Logger.Error("console: render integration detail", "err", err)
@@ -588,6 +599,60 @@ func (c *Console) handleIntegrationVerify(w http.ResponseWriter, r *http.Request
 		return
 	}
 	http.Redirect(w, r, backURL+"?verifyRun="+url.QueryEscape(runID), http.StatusSeeOther)
+}
+
+// handleIntegrationTestSend handles POST /console/integrations/{id}/test-send:
+// the per-integration test-send action. The operator supplies a destination
+// (required) and an optional message; notify sends ONE real message through THIS
+// integration via connectivity.TestSend, then 303-redirects back to the drawer
+// with ?testSendOK=1 (success) or ?testSendError=<short msg> (failure). Mirrors
+// handleIntegrationVerify: native form POST → 303.
+func (c *Console) handleIntegrationTestSend(w http.ResponseWriter, r *http.Request) {
+	if w == nil {
+		panic("handleIntegrationTestSend: w is nil")
+	}
+	if r == nil {
+		panic("handleIntegrationTestSend: r is nil")
+	}
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
+		panic("handleIntegrationTestSend: no scope in context")
+	}
+	if c.deps.ReadOnly {
+		http.Error(w, "console is read-only", http.StatusForbidden)
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "missing integration id", http.StatusBadRequest)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	destination := strings.TrimSpace(r.PostForm.Get("destination"))
+	if destination == "" {
+		http.Error(w, "destination is required", http.StatusBadRequest)
+		return
+	}
+	message := r.PostForm.Get("message")
+
+	backURL := "/console/integrations/" + url.PathEscape(id)
+
+	if c.deps.Connectivity == nil {
+		http.Redirect(w, r, backURL+"?testSendError="+
+			url.QueryEscape("Test send is unavailable."), http.StatusSeeOther)
+		return
+	}
+
+	if _, err := c.deps.Connectivity.TestSend(r.Context(), scope, id, destination, message); err != nil {
+		c.deps.Logger.Error("console: integration test-send", "id", id, "err", err)
+		http.Redirect(w, r, backURL+"?testSendError="+
+			url.QueryEscape("Test send failed."), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, backURL+"?testSendOK=1", http.StatusSeeOther)
 }
 
 // ─── fragment: integration activity tab ─────────────────────────────────────

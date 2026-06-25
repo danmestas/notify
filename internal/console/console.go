@@ -378,6 +378,10 @@ func (c *Console) Routes() http.Handler {
 		// provider handshake). Kicks an engine run that probes the credentials
 		// and surfaces the run deep-link + result.
 		pr.Post("/console/integrations/{id}/verify", c.handleIntegrationVerify)
+		// Per-integration test-send (#…): sends ONE real message through THIS
+		// integration to an operator-supplied destination; 303 back to the drawer
+		// with ?testSendOK=1 or ?testSendError=<msg>.
+		pr.Post("/console/integrations/{id}/test-send", c.handleIntegrationTestSend)
 		pr.Get("/console/api/fragments/integrations-grid", c.serveFragmentIntegrationsGrid)
 		pr.Get("/console/api/fragments/integration-detail", c.serveFragmentIntegrationDetail)
 		pr.Get("/console/api/fragments/integration-activity", c.serveFragmentIntegrationActivity)

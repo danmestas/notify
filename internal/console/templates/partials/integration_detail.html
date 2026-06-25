@@ -110,6 +110,50 @@
     {{end}}
   </div>
 
+  {{/* Per-integration test-send: one real message through THIS integration to
+       an operator-supplied destination. Native POST → 303 back to the drawer
+       with ?testSendOK=1 / ?testSendError=<msg>. */}}
+  <div class="integration-testsend-zone">
+    {{if $.TestSendOK}}
+    <div class="console-banner console-banner--success" role="status" id="integration-testsend-success">
+      <strong>Test message sent.</strong>
+      One real message was delivered through this integration.
+    </div>
+    {{else if $.TestSendError}}
+    <p class="console-form-error" role="alert" id="integration-testsend-error">{{$.TestSendError}}</p>
+    {{end}}
+
+    {{if $.CanTestSend}}
+    <form method="post" action="/console/integrations/{{$in.ID}}/test-send" class="integration-testsend-form">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <div class="console-form-field">
+        <label class="console-form-label" for="testsend-destination-{{$in.ID}}">
+          {{if eq $in.Channel "email"}}Test email address
+          {{else if eq $in.Channel "sms"}}Test phone (E.164)
+          {{else if eq $in.Channel "push"}}Topic / device token
+          {{else if eq $in.Channel "chat"}}Address (e.g. Telegram chat ID)
+          {{else}}Destination{{end}}
+        </label>
+        <input type="text"
+               id="testsend-destination-{{$in.ID}}"
+               name="destination"
+               class="console-input"
+               autocomplete="off"
+               required>
+      </div>
+      <div class="console-form-field">
+        <label class="console-form-label" for="testsend-message-{{$in.ID}}">Message (optional)</label>
+        <input type="text"
+               id="testsend-message-{{$in.ID}}"
+               name="message"
+               class="console-input"
+               autocomplete="off">
+      </div>
+      <button type="submit" class="btn btn-primary integration-testsend-btn">Send test</button>
+    </form>
+    {{end}}
+  </div>
+
   {{/* Edit form or read-only view */}}
   {{if $.ReadOnly}}
   <div class="integration-detail-readonly">

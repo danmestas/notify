@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"html"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/providers"
@@ -376,71 +377,85 @@ func (svc *Service) ResolveEmail(ctx context.Context, scope domain.Scope) (provi
 	if err != nil {
 		return nil, "", "", "", err
 	}
-	plaintext, err := svc.decrypt(in.EncCredentials)
-	if err != nil {
-		return nil, "", "", "", fmt.Errorf("connectivity: decrypt email config: %w", err)
-	}
 
 	providerID := in.ProviderID
 	if providerID == "" {
 		providerID = "smtp" // normalise legacy rows that predate the field
 	}
 
+	prov, from, err := svc.EmailProviderFromIntegration(in)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	return prov, from, providerID, in.ID, nil
+}
+
+// EmailProviderFromIntegration decrypts in.EncCredentials and constructs the
+// email provider client matching in.ProviderID. It returns the provider and the
+// configured sender ("From"), or an error. Webhook providers have no configured
+// sender and return "". This is the single switch shared by ResolveEmail and
+// TestSend; the decrypted plaintext never escapes this function.
+func (svc *Service) EmailProviderFromIntegration(in domain.Integration) (providers.EmailProvider, string, error) {
+	plaintext, err := svc.decrypt(in.EncCredentials)
+	if err != nil {
+		return nil, "", fmt.Errorf("connectivity: decrypt email config: %w", err)
+	}
+
 	switch in.ProviderID {
 	case "cloudflare-email":
 		var cfg CloudflareEmailConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", "", fmt.Errorf("connectivity: unmarshal cloudflare email config: %w", err)
+			return nil, "", fmt.Errorf("connectivity: unmarshal cloudflare email config: %w", err)
 		}
 		return &cloudflareemail.Client{
 			AccountID: cfg.AccountID,
 			APIToken:  cfg.APIToken,
 			From:      cfg.From,
-		}, cfg.From, providerID, in.ID, nil
+		}, cfg.From, nil
 	case "resend":
 		var cfg ResendConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", "", fmt.Errorf("connectivity: unmarshal resend config: %w", err)
+			return nil, "", fmt.Errorf("connectivity: unmarshal resend config: %w", err)
 		}
 		return &resend.Client{
 			APIKey: cfg.APIKey,
 			From:   cfg.From,
-		}, cfg.From, providerID, in.ID, nil
+		}, cfg.From, nil
 	case "ses":
 		var cfg SESConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", "", fmt.Errorf("connectivity: unmarshal ses config: %w", err)
+			return nil, "", fmt.Errorf("connectivity: unmarshal ses config: %w", err)
 		}
 		return &ses.Client{
 			AccessKeyID:     cfg.AccessKeyID,
 			SecretAccessKey: cfg.SecretAccessKey,
 			Region:          cfg.Region,
 			From:            cfg.From,
-		}, cfg.From, providerID, in.ID, nil
+		}, cfg.From, nil
 	case "email-webhook":
 		var cfg EmailWebhookConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", "", fmt.Errorf("connectivity: unmarshal email-webhook config: %w", err)
+			return nil, "", fmt.Errorf("connectivity: unmarshal email-webhook config: %w", err)
 		}
 		// A webhook has no configured sender; the From travels in the rendered
 		// EmailMessage and is serialised into the JSON body unchanged. Return ""
 		// so the caller's From default stays whatever the message carried.
-		return &webhook.EmailClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret}, "", providerID, in.ID, nil
+		return &webhook.EmailClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret}, "", nil
 	case "smtp", "": // empty ProviderID covers legacy rows created before the field was enforced.
 		var cfg SMTPConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", "", fmt.Errorf("connectivity: unmarshal smtp config: %w", err)
+			return nil, "", fmt.Errorf("connectivity: unmarshal smtp config: %w", err)
 		}
 		return &providers.SMTP{
 			Addr:     cfg.Addr,
 			Host:     cfg.Host,
 			Username: cfg.Username,
 			Password: cfg.Password,
-		}, cfg.From, providerID, in.ID, nil
+		}, cfg.From, nil
 	default:
 		// Fail closed: decoding unknown-provider credentials as SMTPConfig
 		// would surface as a confusing empty-Addr dial failure at send time.
-		return nil, "", "", "", fmt.Errorf("connectivity: unknown email provider %q", in.ProviderID)
+		return nil, "", fmt.Errorf("connectivity: unknown email provider %q", in.ProviderID)
 	}
 }
 
@@ -554,9 +569,27 @@ func (svc *Service) ResolvePush(ctx context.Context, scope domain.Scope) (provid
 	if err != nil {
 		return nil, "", "", err
 	}
+
+	providerID := in.ProviderID
+	if providerID == "" {
+		providerID = "ntfy" // normalise legacy rows that predate the field
+	}
+
+	prov, err := svc.PushProviderFromIntegration(ctx, in)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return prov, providerID, in.ID, nil
+}
+
+// PushProviderFromIntegration decrypts in.EncCredentials and constructs the push
+// provider client matching in.ProviderID. An empty ProviderID is normalised to
+// "ntfy" (legacy rows). This is the single switch shared by ResolvePush and
+// TestSend; the decrypted plaintext never escapes this function.
+func (svc *Service) PushProviderFromIntegration(ctx context.Context, in domain.Integration) (providers.PushProvider, error) {
 	plaintext, err := svc.decrypt(in.EncCredentials)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("connectivity: decrypt push config: %w", err)
+		return nil, fmt.Errorf("connectivity: decrypt push config: %w", err)
 	}
 
 	providerID := in.ProviderID
@@ -568,35 +601,35 @@ func (svc *Service) ResolvePush(ctx context.Context, scope domain.Scope) (provid
 	case "ntfy":
 		var cfg NtfyConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", fmt.Errorf("connectivity: unmarshal ntfy config: %w", err)
+			return nil, fmt.Errorf("connectivity: unmarshal ntfy config: %w", err)
 		}
-		return &ntfy.Client{BaseURL: cfg.BaseURL, Token: cfg.Token}, providerID, in.ID, nil
+		return &ntfy.Client{BaseURL: cfg.BaseURL, Token: cfg.Token}, nil
 	case "expo":
 		var cfg ExpoConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", fmt.Errorf("connectivity: unmarshal expo config: %w", err)
+			return nil, fmt.Errorf("connectivity: unmarshal expo config: %w", err)
 		}
-		return &expo.Client{AccessToken: cfg.AccessToken}, providerID, in.ID, nil
+		return &expo.Client{AccessToken: cfg.AccessToken}, nil
 	case "fcm":
 		var cfg FCMConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", fmt.Errorf("connectivity: unmarshal fcm config: %w", err)
+			return nil, fmt.Errorf("connectivity: unmarshal fcm config: %w", err)
 		}
 		client, err := fcm.NewClient(ctx, []byte(cfg.ServiceAccount), cfg.ProjectID)
 		if err != nil {
-			return nil, "", "", fmt.Errorf("connectivity: build fcm client: %w", err)
+			return nil, fmt.Errorf("connectivity: build fcm client: %w", err)
 		}
-		return client, providerID, in.ID, nil
+		return client, nil
 	case "push-webhook":
 		var cfg PushWebhookConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", fmt.Errorf("connectivity: unmarshal push-webhook config: %w", err)
+			return nil, fmt.Errorf("connectivity: unmarshal push-webhook config: %w", err)
 		}
-		return &webhook.PushClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret}, providerID, in.ID, nil
+		return &webhook.PushClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret}, nil
 	default:
 		// Fail closed: an unknown push provider must not be silently decoded as
 		// another provider's config.
-		return nil, "", "", fmt.Errorf("connectivity: unknown push provider %q", in.ProviderID)
+		return nil, fmt.Errorf("connectivity: unknown push provider %q", in.ProviderID)
 	}
 }
 
@@ -731,48 +764,59 @@ func (svc *Service) ResolveChat(ctx context.Context, scope domain.Scope) (provid
 	if err != nil {
 		return nil, "", "", err
 	}
+	prov, err := svc.ChatProviderFromIntegration(in)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return prov, in.ProviderID, in.ID, nil
+}
+
+// ChatProviderFromIntegration decrypts in.EncCredentials and constructs the chat
+// provider client matching in.ProviderID. This is the single switch shared by
+// ResolveChat and TestSend; the decrypted plaintext never escapes this function.
+func (svc *Service) ChatProviderFromIntegration(in domain.Integration) (providers.ChatProvider, error) {
 	plaintext, err := svc.decrypt(in.EncCredentials)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("connectivity: decrypt chat config: %w", err)
+		return nil, fmt.Errorf("connectivity: decrypt chat config: %w", err)
 	}
 	switch in.ProviderID {
 	case "discord":
 		var cfg DiscordConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", fmt.Errorf("connectivity: unmarshal discord config: %w", err)
+			return nil, fmt.Errorf("connectivity: unmarshal discord config: %w", err)
 		}
-		return &discord.Client{WebhookURL: cfg.WebhookURL}, in.ProviderID, in.ID, nil
+		return &discord.Client{WebhookURL: cfg.WebhookURL}, nil
 	case "telegram":
 		var cfg TelegramConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", fmt.Errorf("connectivity: unmarshal telegram config: %w", err)
+			return nil, fmt.Errorf("connectivity: unmarshal telegram config: %w", err)
 		}
-		return &telegram.Client{BotToken: cfg.BotToken}, in.ProviderID, in.ID, nil
+		return &telegram.Client{BotToken: cfg.BotToken}, nil
 	case "slack":
 		var cfg SlackConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", fmt.Errorf("connectivity: unmarshal slack config: %w", err)
+			return nil, fmt.Errorf("connectivity: unmarshal slack config: %w", err)
 		}
-		return &slack.Client{BotToken: cfg.BotToken}, in.ProviderID, in.ID, nil
+		return &slack.Client{BotToken: cfg.BotToken}, nil
 	case "whatsapp":
 		var cfg WhatsAppConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", fmt.Errorf("connectivity: unmarshal whatsapp config: %w", err)
+			return nil, fmt.Errorf("connectivity: unmarshal whatsapp config: %w", err)
 		}
 		return &whatsapp.Client{
 			AccessToken:   cfg.AccessToken,
 			PhoneNumberID: cfg.PhoneNumberID,
-		}, in.ProviderID, in.ID, nil
+		}, nil
 	case "chat-webhook":
 		var cfg ChatWebhookConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", fmt.Errorf("connectivity: unmarshal chat-webhook config: %w", err)
+			return nil, fmt.Errorf("connectivity: unmarshal chat-webhook config: %w", err)
 		}
-		return &webhook.ChatClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret}, in.ProviderID, in.ID, nil
+		return &webhook.ChatClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret}, nil
 	default:
 		// Fail closed: an unknown chat provider must not be silently decoded as
 		// another provider's config.
-		return nil, "", "", fmt.Errorf("connectivity: unknown chat provider %q", in.ProviderID)
+		return nil, fmt.Errorf("connectivity: unknown chat provider %q", in.ProviderID)
 	}
 }
 
@@ -861,46 +905,115 @@ func (svc *Service) ResolveSMS(ctx context.Context, scope domain.Scope) (provide
 	if err != nil {
 		return nil, "", "", err
 	}
+	prov, err := svc.SMSProviderFromIntegration(in)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return prov, in.ProviderID, in.ID, nil
+}
+
+// SMSProviderFromIntegration decrypts in.EncCredentials and constructs the SMS
+// provider client matching in.ProviderID. This is the single switch shared by
+// ResolveSMS and TestSend; the decrypted plaintext never escapes this function.
+func (svc *Service) SMSProviderFromIntegration(in domain.Integration) (providers.SMSProvider, error) {
 	plaintext, err := svc.decrypt(in.EncCredentials)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("connectivity: decrypt sms config: %w", err)
+		return nil, fmt.Errorf("connectivity: decrypt sms config: %w", err)
 	}
 	switch in.ProviderID {
 	case "twilio":
 		var cfg TwilioConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", fmt.Errorf("connectivity: unmarshal twilio config: %w", err)
+			return nil, fmt.Errorf("connectivity: unmarshal twilio config: %w", err)
 		}
 		return &twilio.Client{
 			AccountSID: cfg.AccountSID,
 			AuthToken:  cfg.AuthToken,
 			From:       cfg.From,
-		}, in.ProviderID, in.ID, nil
+		}, nil
 	case "signalwire":
 		var cfg SignalWireConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", fmt.Errorf("connectivity: unmarshal signalwire config: %w", err)
+			return nil, fmt.Errorf("connectivity: unmarshal signalwire config: %w", err)
 		}
 		return &signalwire.Client{
 			ProjectID: cfg.ProjectID,
 			Token:     cfg.Token,
 			SpaceURL:  cfg.SpaceURL,
 			From:      cfg.From,
-		}, in.ProviderID, in.ID, nil
+		}, nil
 	case "sns":
 		var cfg SNSConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
-			return nil, "", "", fmt.Errorf("connectivity: unmarshal sns config: %w", err)
+			return nil, fmt.Errorf("connectivity: unmarshal sns config: %w", err)
 		}
 		return &sns.Client{
 			AccessKeyID:     cfg.AccessKeyID,
 			SecretAccessKey: cfg.SecretAccessKey,
 			Region:          cfg.Region,
-		}, in.ProviderID, in.ID, nil
+		}, nil
 	default:
 		// Fail closed: an unknown sms provider must not be silently decoded as
 		// another provider's config.
-		return nil, "", "", fmt.Errorf("connectivity: unknown sms provider %q", in.ProviderID)
+		return nil, fmt.Errorf("connectivity: unknown sms provider %q", in.ProviderID)
+	}
+}
+
+// testSendDefaultMessage is the canned body used when the operator leaves the
+// test-send message blank.
+const testSendDefaultMessage = "This is a test notification from notify."
+
+// TestSend delivers ONE real message through the single integration identified
+// by integrationID, to the operator-supplied destination. It is the engine
+// behind the console "Send test" control: it loads the full row (GetByID is the
+// only repo method returning EncCredentials), constructs the channel's provider
+// via the shared *FromIntegration helpers, and sends a minimal message shaped
+// for that channel. When message is empty a canned default is used. Errors are
+// wrapped with context but never include decrypted credentials.
+func (svc *Service) TestSend(ctx context.Context, scope domain.Scope, integrationID, destination, message string) (providers.Result, error) {
+	in, err := svc.store.Integrations().GetByID(ctx, scope, integrationID)
+	if err != nil {
+		return providers.Result{}, fmt.Errorf("connectivity: test-send: load integration: %w", err)
+	}
+
+	msg := message
+	if msg == "" {
+		msg = testSendDefaultMessage
+	}
+
+	switch in.Channel {
+	case "email":
+		prov, from, err := svc.EmailProviderFromIntegration(in)
+		if err != nil {
+			return providers.Result{}, err
+		}
+		return prov.Send(ctx, providers.EmailMessage{
+			From:    from,
+			To:      destination,
+			Subject: "notify test message",
+			Text:    msg,
+			HTML:    "<p>" + html.EscapeString(msg) + "</p>",
+		})
+	case "sms":
+		prov, err := svc.SMSProviderFromIntegration(in)
+		if err != nil {
+			return providers.Result{}, err
+		}
+		return prov.Send(ctx, providers.SMSMessage{To: destination, Body: msg})
+	case "push":
+		prov, err := svc.PushProviderFromIntegration(ctx, in)
+		if err != nil {
+			return providers.Result{}, err
+		}
+		return prov.Send(ctx, providers.PushMessage{Topic: destination, Title: "notify test", Body: msg})
+	case "chat":
+		prov, err := svc.ChatProviderFromIntegration(in)
+		if err != nil {
+			return providers.Result{}, err
+		}
+		return prov.Send(ctx, providers.ChatMessage{Address: destination, Content: msg})
+	default:
+		return providers.Result{}, fmt.Errorf("connectivity: test-send: unsupported channel %q", in.Channel)
 	}
 }
 
