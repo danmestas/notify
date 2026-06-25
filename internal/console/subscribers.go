@@ -905,10 +905,15 @@ func (c *Console) handleSubscriberCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Console-only convenience: a subscriber needs a stable, non-empty external
+	// key (triggers address subscribers by it), but operators creating one by
+	// hand don't always have an external id. When left blank, mint one
+	// server-side using the same ULID generator the store uses for primary
+	// keys, slugged with a readable "sub_" prefix. The /v1 API stays
+	// strictly caller-provided.
 	subID := strings.TrimSpace(r.FormValue("subscriberId"))
 	if subID == "" {
-		http.Error(w, "subscriberId is required", http.StatusBadRequest)
-		return
+		subID = "sub_" + strings.ToLower(store.NewULID())
 	}
 
 	created, err := c.deps.Audience.Upsert(r.Context(), scope, audience.SubscriberInput{

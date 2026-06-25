@@ -35,9 +35,10 @@
       <form method="POST" action="/console/subscribers" class="subscriber-edit-form">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
-          <label class="form-label" for="new-subscriberId">Subscriber ID *</label>
+          <label class="form-label" for="new-subscriberId">Subscriber ID</label>
           <input class="console-input" type="text" id="new-subscriberId" name="subscriberId"
-                 placeholder="usr-123" required autofocus>
+                 placeholder="Leave blank to auto-generate" autofocus>
+          <span class="form-hint">Your own external id for this subscriber (e.g. usr-123). Leave blank to auto-generate one.</span>
         </div>
         <div class="form-row">
           <label class="form-label" for="new-email">Email</label>

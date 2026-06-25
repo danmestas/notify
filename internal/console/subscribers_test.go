@@ -24,6 +24,8 @@
 //	TestSubscribers_Update_ReadOnlyBlocked                — POST update → 403 on read-only
 //	TestSubscribers_Delete_ReadOnlyBlocked                — POST delete → 403 on read-only
 //	TestSubscribers_Create_Redirect                       — successful create → redirect to list
+//	TestSubscribers_Create_AutoGeneratesBlankID           — blank subscriberId → server-minted sub_ id
+//	TestSubscribers_Create_PreservesProvidedID            — provided subscriberId → used verbatim
 //	TestSubscribers_Delete_Redirect                       — successful delete → redirect to list
 //	TestSubscribers_ScopeIsolation                        — alt-scope rows not visible
 //	TestSubscribers_RouteAuth                             — all new routes behind session gate
@@ -665,6 +667,71 @@ func TestSubscribers_Create_Redirect(t *testing.T) {
 	}
 }
 
+// TestSubscribers_Create_AutoGeneratesBlankID pins the console-only
+// convenience: when the operator leaves subscriberId blank (or whitespace),
+// the handler mints a stable, non-empty SubscriberID server-side rather than
+// rejecting the form. The generated id carries the "sub_" prefix.
+func TestSubscribers_Create_AutoGeneratesBlankID(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers",
+		url.Values{
+			"subscriberId": {"   "}, // whitespace-only → treated as blank
+			"email":        {"auto@example.com"},
+			"firstName":    {"Auto"},
+			"csrf_token":   {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("create subscriber (blank id): status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	// Location redirects to /console/subscribers/<internal ULID>; resolve the
+	// persisted row by that internal id and assert the generated external id.
+	loc := rr.Header().Get("Location")
+	internalID := strings.TrimPrefix(loc, "/console/subscribers/")
+	if internalID == "" || internalID == loc {
+		t.Fatalf("create subscriber (blank id): unexpected Location = %q", loc)
+	}
+	created, err := tc.deps.Audience.GetSubscriberByID(testBackground(), tc.scope, internalID)
+	if err != nil {
+		t.Fatalf("created subscriber (blank id) not persisted: %v", err)
+	}
+	if created.SubscriberID == "" {
+		t.Errorf("create subscriber (blank id): persisted SubscriberID is empty, want auto-generated")
+	}
+	if !strings.HasPrefix(created.SubscriberID, "sub_") {
+		t.Errorf("create subscriber (blank id): SubscriberID = %q, want \"sub_\" prefix", created.SubscriberID)
+	}
+}
+
+// TestSubscribers_Create_PreservesProvidedID is a regression guard: when the
+// operator supplies a subscriberId, that exact caller-owned value is used and
+// never auto-generated over.
+func TestSubscribers_Create_PreservesProvidedID(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers",
+		url.Values{
+			"subscriberId": {"usr-explicit-42"},
+			"email":        {"explicit@example.com"},
+			"csrf_token":   {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("create subscriber (provided id): status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	created, err := tc.deps.Audience.Get(testBackground(), tc.scope, "usr-explicit-42")
+	if err != nil {
+		t.Fatalf("created subscriber (provided id) not persisted under exact id: %v", err)
+	}
+	if created.SubscriberID != "usr-explicit-42" {
+		t.Errorf("create subscriber (provided id): SubscriberID = %q, want %q", created.SubscriberID, "usr-explicit-42")
+	}
+}
+
 func TestSubscribers_Delete_Redirect(t *testing.T) {
 	tc := newTestConsole(t)
 	sub := tc.seedSubscriber(t, audience.SubscriberInput{
@@ -686,7 +753,7 @@ func TestSubscribers_Delete_Redirect(t *testing.T) {
 // ─── create slide-over ────────────────────────────────────────────────────────
 
 // TestSubscribers_NewRendersCreateForm pins the /new slide-over: the create
-// form must actually render (form element + required subscriberId input +
+// form must actually render (form element + subscriberId input +
 // CSRF token), not just return 200 with the plain list.
 func TestSubscribers_NewRendersCreateForm(t *testing.T) {
 	tc := newTestConsole(t)
