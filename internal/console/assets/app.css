@@ -534,6 +534,45 @@ code, .console-mono { font-family: var(--font-mono); font-size: 0.92em; }
   cursor: not-allowed;
 }
 
+/* ===== checkbox (Basecoat / shadcn-style, applied app-wide) ======== */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  cursor: pointer;
+  display: inline-grid;
+  place-content: center;
+  vertical-align: middle;
+  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+input[type="checkbox"]::after {
+  content: "";
+  width: 11px;
+  height: 11px;
+  transform: scale(0);
+  transition: transform 0.1s ease;
+  background-color: #fff;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+input[type="checkbox"]:hover { border-color: var(--accent); }
+input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+input[type="checkbox"]:checked::after { transform: scale(1); }
+input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+input[type="checkbox"]:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ===== page header + KPI tiles ==================================== */
 
 .page-header h1 { margin: 0; font-size: 1.45rem; }
@@ -1280,8 +1319,13 @@ a.activity-item-run { color: var(--accent); }
   width: 34px;
   height: 34px;
   border-radius: 8px;
+  /* Brand logos are multi-hued (and some are near-black: Resend, Expo), so they
+     sit on a constant light tile in BOTH themes — the standard treatment for
+     brand marks (the reference platform does the same). The tile reads as an intentional "app
+     icon" via a soft border + shadow rather than a bare white square. */
   background: #FFFFFF;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
 }
 .integration-provider-icon svg {
   width: 20px;

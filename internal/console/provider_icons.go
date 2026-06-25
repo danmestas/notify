@@ -19,11 +19,27 @@ func providerIcon(id string) template.HTML {
 	if id == "" || strings.ContainsAny(id, "/\\.") {
 		return providerIconPlaceholder
 	}
-	body, err := fs.ReadFile(iconFS, path.Join("assets/icons", id+".svg"))
-	if err != nil {
-		return providerIconPlaceholder
+	// Provider ids are inconsistent about separators between the console catalog
+	// ("cloudflare_email") and the stored ProviderID ("cloudflare-email"), so try
+	// the id verbatim first, then with separators swapped, before giving up.
+	for _, name := range iconCandidates(id) {
+		if body, err := fs.ReadFile(iconFS, path.Join("assets/icons", name+".svg")); err == nil {
+			return template.HTML(body) //nolint:gosec // trusted vendored SVG, no user input
+		}
 	}
-	return template.HTML(body) //nolint:gosec // trusted vendored SVG, no user input
+	return providerIconPlaceholder
+}
+
+// iconCandidates returns the icon filenames to try for a provider id: the id
+// itself, then the hyphen/underscore-swapped variants (deduplicated).
+func iconCandidates(id string) []string {
+	out := []string{id}
+	for _, alt := range []string{strings.ReplaceAll(id, "-", "_"), strings.ReplaceAll(id, "_", "-")} {
+		if alt != id && alt != out[len(out)-1] {
+			out = append(out, alt)
+		}
+	}
+	return out
 }
 
 // providerIconPlaceholder is the neutral fallback rendered when a provider id

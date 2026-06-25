@@ -27,6 +27,16 @@ func TestProviderIcon_EveryCatalogEntry(t *testing.T) {
 	}
 }
 
+// TestProviderIcon_SeparatorAgnostic guards the hyphen/underscore alias: the
+// stored ProviderID "cloudflare-email" must resolve to the cloudflare_email.svg
+// brand icon (the bug where it rendered a blank placeholder tile).
+func TestProviderIcon_SeparatorAgnostic(t *testing.T) {
+	got := string(providerIcon("cloudflare-email"))
+	if !strings.Contains(got, "<svg") || !strings.Contains(got, "Cloudflare") {
+		t.Errorf("providerIcon(%q) = %q, want the Cloudflare brand svg", "cloudflare-email", got)
+	}
+}
+
 // TestProviderIcon_UnknownID returns a neutral placeholder (never errors,
 // never panics) so an unmapped id can't break a render.
 func TestProviderIcon_UnknownID(t *testing.T) {
