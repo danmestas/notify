@@ -26,13 +26,10 @@
                  placeholder="e.g. staging" required autofocus>
         </div>
         <div class="form-row">
-          <label class="form-label" for="new-env-type">Type</label>
-          <select class="console-input" id="new-env-type" name="type">
-            <option value="">— select type —</option>
-            <option value="development">Development</option>
-            <option value="staging">Staging</option>
-            <option value="production">Production</option>
-          </select>
+          <label class="form-label" for="new-env-type-trigger">Type</label>
+          {{template "ui-select" (uiSelectForm "new-env-type" "type" "envType"
+            (uiSelectOptions "" "— select type —" "development" "Development" "staging" "Staging" "production" "Production")
+            "— select type —" "" false "" true)}}
         </div>
         <div class="console-slideover-actions">
           <a class="btn btn-outline" href="/console/settings/environments">Cancel</a>

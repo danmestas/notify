@@ -71,6 +71,18 @@ type analyticsView struct {
 	Workflows []workflowOption // populated for the workflow filter dropdown
 }
 
+// WorkflowSelectOptions adapts the workflow filter entries into the
+// []uiSelectOption the ui-select component renders, prepending the
+// "All workflows" (empty value) row that clears the filter.
+func (v analyticsView) WorkflowSelectOptions() []uiSelectOption {
+	opts := make([]uiSelectOption, 0, len(v.Workflows)+1)
+	opts = append(opts, uiSelectOption{Value: "", Label: "All workflows"})
+	for _, wf := range v.Workflows {
+		opts = append(opts, uiSelectOption{Value: wf.ID, Label: wf.Label})
+	}
+	return opts
+}
+
 // workflowOption is one entry in the workflow filter dropdown.
 type workflowOption struct {
 	ID    string // workflow trigger identifier (slug)

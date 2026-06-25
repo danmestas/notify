@@ -19,15 +19,9 @@
            data-bind-wfFilter
            data-on-input__debounce.300ms="@get('/console/api/fragments/workflows-list')"
            aria-label="Search workflows">
-    <select id="wf-status"
-            class="console-select"
-            data-bind-wfStatus
-            data-on-change="@get('/console/api/fragments/workflows-list')"
-            aria-label="Filter by status">
-      <option value="" {{if eq $frag.FilterStatus ""}}selected{{end}}>All statuses</option>
-      <option value="active" {{if eq $frag.FilterStatus "active"}}selected{{end}}>Active</option>
-      <option value="inactive" {{if eq $frag.FilterStatus "inactive"}}selected{{end}}>Inactive</option>
-    </select>
+    {{template "ui-select" (uiSelect "wf-status" "" "wfStatus"
+      (uiSelectOptions "" "All statuses" "active" "Active" "inactive" "Inactive")
+      "All statuses" "@get('/console/api/fragments/workflows-list')" false)}}
     {{if not $page.ReadOnly}}
     <a class="btn btn-primary" href="/console/workflows/new">+ New workflow</a>
     {{end}}

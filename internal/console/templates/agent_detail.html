@@ -152,13 +152,13 @@
         <form method="POST" action="/console/agents/{{$page.Agent.Identifier}}/channels" class="console-form">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           <div class="form-row">
-            <label class="form-label" for="link-integration">Integration *</label>
-            <select class="console-input" id="link-integration" name="integrationId" required autofocus>
-              <option value="">Select an integration…</option>
-              {{range $page.Linkable}}
-              <option value="{{.ID}}">{{.Identifier}} — {{.ProviderLabel}} ({{.ChannelLabel}})</option>
-              {{end}}
-            </select>
+            <label class="form-label" for="link-integration-trigger">Integration *</label>
+            {{/* Form select with no ancestor-owned signal → uiSelectForm declares
+                 + seeds linkIntegrationId itself. Name="integrationId" renders the
+                 hidden input that carries the value on submit; the placeholder
+                 stays (no pre-select) and the server enforces required. */}}
+            {{template "ui-select" (uiSelectForm "link-integration" "integrationId" "linkIntegrationId"
+              $page.LinkableSelectOptions "Select an integration…" "" true "" true)}}
             <span class="form-hint">Only integrations not already linked to this agent are shown.</span>
           </div>
           <div class="console-slideover-actions">

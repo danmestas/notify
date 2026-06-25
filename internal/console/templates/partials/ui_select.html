@@ -1,0 +1,70 @@
+{{/*
+  ui-select — a Basecoat/shadcn-style searchable combobox that replaces the
+  native <select> across the console. It is a Datastar component: no Basecoat
+  JS, only data-* attributes and our CSS tokens.
+
+  Inputs arrive as a uiSelect struct (build it with the uiSelect helper). Every
+  Datastar expression below is a pre-built template.JS field on the struct, not
+  an inline "{{.Signal}}" interpolation: html/template's JS-context escaper
+  rewrites bare interpolations inside data-on/data-attr attributes and would
+  corrupt the expression. See ui_select.go for the field definitions.
+
+  Open/close mirrors the env-menu popover idiom (data-show on a per-instance
+  open signal) plus a click__outside + Escape close. The trigger text tracks
+  the value signal reactively via data-text, so a selection updates the label
+  with no server round-trip.
+
+  Form support: when .Name is set a hidden <input> mirrors .Signal so a normal
+  form submit carries the value. "required" form selects rely on existing
+  server-side validation — the placeholder stays selectable, we do NOT fake
+  native required on the hidden input, and we do NOT pre-select an option.
+*/}}
+{{define "ui-select"}}
+<div class="ui-select" id="{{.ID}}" data-signals="{{.SignalsAttr}}">
+
+  {{if .Name}}
+  <input type="hidden" name="{{.Name}}" data-attr:value="{{.HiddenValueExpr}}">
+  {{end}}
+
+  <button type="button" class="ui-select-trigger" id="{{.ID}}-trigger"
+          aria-haspopup="listbox"
+          data-attr:aria-expanded="{{.ExpandedExpr}}"
+          data-on:click="{{.ToggleExpr}}"
+          data-on:keydown__window="{{.EscapeExpr}}">
+    <span class="ui-select-trigger-label" data-text="{{.SelectedLabel}}">{{.Placeholder}}</span>
+    <span class="ui-select-trigger-chevron" aria-hidden="true">{{ uiIcon "chevron-down" }}</span>
+  </button>
+
+  <div class="ui-select-popover" id="{{.ID}}-popover" role="listbox"
+       data-show="{{.ShowExpr}}"
+       data-on:click__outside="{{.OutsideExpr}}">
+
+    {{if .Searchable}}
+    <div class="ui-select-search-wrap">
+      <input type="text" class="ui-select-search" id="{{.ID}}-search"
+             placeholder="Search…" autocomplete="off"
+             aria-label="Search options"
+             data-bind="{{.FilterSignal}}">
+    </div>
+    {{end}}
+
+    <div class="ui-select-options">
+      {{$searchable := .Searchable}}
+      {{range .Rows}}
+      <div class="ui-select-option" role="option"
+           data-value="{{.Value}}"
+           data-attr:aria-selected="{{.SelectedExpr}}"
+           {{if $searchable}}data-show="{{.FilterExpr}}"{{end}}
+           data-on:click="{{.ClickExpr}}">
+        <span class="ui-select-option-label">{{.Label}}</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="{{.SelectedExpr}}">{{ uiIcon "check" }}</span>
+      </div>
+      {{end}}
+      {{if .Searchable}}
+      <div class="ui-select-empty" role="presentation" data-show="{{.EmptyExpr}}">No results</div>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{end}}

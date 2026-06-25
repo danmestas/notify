@@ -38,13 +38,10 @@
              value="{{index $step.ControlMap "amount"}}">
     </div>
     <div class="form-row">
-      <label class="form-label" for="cv-unit">Unit</label>
-      <select class="console-input" id="cv-unit" name="unit">
-        <option value="seconds" {{if eq (index $step.ControlMap "unit") "seconds"}}selected{{end}}>Seconds</option>
-        <option value="minutes" {{if eq (index $step.ControlMap "unit") "minutes"}}selected{{end}}>Minutes</option>
-        <option value="hours" {{if eq (index $step.ControlMap "unit") "hours"}}selected{{end}}>Hours</option>
-        <option value="days" {{if eq (index $step.ControlMap "unit") "days"}}selected{{end}}>Days</option>
-      </select>
+      <label class="form-label" for="delay-unit-trigger">Unit</label>
+      {{template "ui-select" (uiSelectForm "delay-unit" "unit" "delayUnit"
+        (uiSelectOptions "seconds" "Seconds" "minutes" "Minutes" "hours" "Hours" "days" "Days")
+        "Unit" "" false (index $step.ControlMap "unit") true)}}
     </div>
     {{else if eq $step.Type "digest"}}
     <div class="form-row">
@@ -53,13 +50,10 @@
              value="{{index $step.ControlMap "amount"}}">
     </div>
     <div class="form-row">
-      <label class="form-label" for="cv-unit">Window unit</label>
-      <select class="console-input" id="cv-unit" name="unit">
-        <option value="seconds" {{if eq (index $step.ControlMap "unit") "seconds"}}selected{{end}}>Seconds</option>
-        <option value="minutes" {{if eq (index $step.ControlMap "unit") "minutes"}}selected{{end}}>Minutes</option>
-        <option value="hours" {{if eq (index $step.ControlMap "unit") "hours"}}selected{{end}}>Hours</option>
-        <option value="days" {{if eq (index $step.ControlMap "unit") "days"}}selected{{end}}>Days</option>
-      </select>
+      <label class="form-label" for="digest-unit-trigger">Window unit</label>
+      {{template "ui-select" (uiSelectForm "digest-unit" "unit" "digestUnit"
+        (uiSelectOptions "seconds" "Seconds" "minutes" "Minutes" "hours" "Hours" "days" "Days")
+        "Window unit" "" false (index $step.ControlMap "unit") true)}}
     </div>
     {{else}}
     <div class="form-row">

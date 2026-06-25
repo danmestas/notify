@@ -132,6 +132,19 @@ func staticFuncMap() template.FuncMap {
 		// illustrations — replacing the emoji/glyph "icons" the console must
 		// never render. Inherits text colour, so it adapts to the theme.
 		"uiIcon": uiIcon,
+		// uiSelect packs the inputs for the "ui-select" partial — the
+		// Basecoat-style searchable combobox that replaces native <select>
+		// across the console. Callers pass id/name/signal/options/etc.
+		// positionally; the helper derives the per-instance open + filter
+		// signals and the auto-searchable flag.
+		"uiSelect": newUISelect,
+		// uiSelectForm is the form variant: it declares + seeds the value
+		// signal itself (last two args: initial value, declare=true), for
+		// selects inside a <form> whose signal no ancestor data-signals owns.
+		"uiSelectForm": newUISelectForm,
+		// uiSelectOptions packs alternating value/label pairs into the
+		// []uiSelectOption a uiSelect call ranges over (dict/list idiom).
+		"uiSelectOptions": uiSelectOptions,
 		// actionArgs packs the action-button partial's inputs so callers
 		// (templates and Go views alike) bind the one actionButton shape.
 		"actionArgs": func(label, href string, readOnly bool) actionButton {

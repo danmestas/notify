@@ -153,8 +153,10 @@ func TestAgents_Create_InvalidRuntimeRedirectsWithError(t *testing.T) {
 }
 
 // TestAgents_CreateFormRuntimeOptions_OnlySupported asserts the create form's
-// runtime <select> offers exactly SupportedRuntimes — no unimplemented
+// runtime picker offers exactly SupportedRuntimes — no unimplemented
 // bridge/managed options that would silently dead-letter every turn (#103).
+// The native <select> is now the ui-select combobox, so options render as
+// role="option" rows (data-value=…) carrying the runtime label.
 func TestAgents_CreateFormRuntimeOptions_OnlySupported(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)
@@ -163,13 +165,14 @@ func TestAgents_CreateFormRuntimeOptions_OnlySupported(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rr.Code)
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, `<option value="mesh">mesh</option>`) {
+	if !strings.Contains(body, `data-value="mesh"`) ||
+		!strings.Contains(body, `class="ui-select-option-label">mesh<`) {
 		t.Errorf("create form missing supported mesh option; body:\n%s", body)
 	}
-	if strings.Contains(body, `<option value="bridge">`) {
+	if strings.Contains(body, `data-value="bridge"`) {
 		t.Errorf("create form must NOT offer unimplemented bridge runtime")
 	}
-	if strings.Contains(body, `<option value="managed">`) {
+	if strings.Contains(body, `data-value="managed"`) {
 		t.Errorf("create form must NOT offer unimplemented managed runtime")
 	}
 }

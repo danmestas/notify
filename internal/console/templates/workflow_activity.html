@@ -30,25 +30,14 @@
   </nav>
 
   {{/* Filter bar */}}
-  <div class="activity-filter-bar" id="wf-activity-filter-bar">
-    <select class="console-select" id="wf-act-status"
-            data-signals="{wfActStatus: ''}"
-            data-bind-wfActStatus
-            data-on:change="@get('/console/api/fragments/workflow-activity/{{$page.TriggerIdentifier}}?status=' + $wfActStatus + '&range=' + $wfActRange)">
-      <option value="">All statuses</option>
-      <option value="pending">Pending</option>
-      <option value="sent">Sent</option>
-      <option value="delivered">Delivered</option>
-      <option value="failed">Failed</option>
-    </select>
-    <select class="console-select" id="wf-act-range"
-            data-bind-wfActRange
-            data-on:change="@get('/console/api/fragments/workflow-activity/{{$page.TriggerIdentifier}}?status=' + $wfActStatus + '&range=' + $wfActRange)">
-      <option value="">All time</option>
-      <option value="1h">Last 1 hour</option>
-      <option value="24h">Last 24 hours</option>
-      <option value="7d">Last 7 days</option>
-    </select>
+  <div class="activity-filter-bar" id="wf-activity-filter-bar"
+       data-signals="{wfActStatus: '', wfActRange: ''}">
+    {{template "ui-select" (uiSelect "wf-act-status" "" "wfActStatus"
+      (uiSelectOptions "" "All statuses" "pending" "Pending" "sent" "Sent" "delivered" "Delivered" "failed" "Failed")
+      "All statuses" (print "@get('/console/api/fragments/workflow-activity/" $page.TriggerIdentifier "?status=' + $wfActStatus + '&range=' + $wfActRange)") false)}}
+    {{template "ui-select" (uiSelect "wf-act-range" "" "wfActRange"
+      (uiSelectOptions "" "All time" "1h" "Last 1 hour" "24h" "Last 24 hours" "7d" "Last 7 days")
+      "All time" (print "@get('/console/api/fragments/workflow-activity/" $page.TriggerIdentifier "?status=' + $wfActStatus + '&range=' + $wfActRange)") false)}}
   </div>
 
   <table class="activity-table wf-activity-table" id="wf-activity-table">

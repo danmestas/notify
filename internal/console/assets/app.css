@@ -1025,6 +1025,137 @@ a.activity-item-run { color: var(--accent); }
 }
 .console-input[type="search"]::-webkit-search-cancel-button { cursor: pointer; }
 
+/* ===== ui-select (searchable combobox) ============================= */
+
+/* A Basecoat/shadcn-style select rebuilt as a Datastar component: an
+   input-styled trigger button, a popover card, optional search input, and
+   option rows with a check on the selected one. Replaces every native
+   <select> in the console (see templates/partials/ui_select.html). */
+.ui-select {
+  position: relative;
+  display: inline-block;
+}
+/* The trigger looks like a .console-input but is a button: same border,
+   radius, padding, and focus ring, with a right-aligned chevron. */
+.ui-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 9rem;
+  font: inherit;
+  font-size: 0.9rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--bg);
+  color: var(--text-primary);
+  cursor: pointer;
+  outline: none;
+  text-align: left;
+}
+.ui-select-trigger:hover { border-color: var(--accent); }
+.ui-select-trigger:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ui-select-trigger[aria-expanded="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ui-select-trigger-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-select-trigger-chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-secondary);
+}
+.ui-select-trigger-chevron svg { width: 16px; height: 16px; display: block; }
+/* The popover is a surface-2 card below the trigger. Hidden by default;
+   data-show flips display to block when the open signal is truthy. */
+.ui-select-popover {
+  position: absolute;
+  left: 0;
+  top: calc(100% + var(--space-1));
+  z-index: 45;
+  display: none;
+  min-width: 100%;
+  max-width: min(22rem, 90vw);
+  max-height: 18rem;
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-pop);
+}
+.ui-select-popover[data-show] { display: block; }
+.ui-select-search-wrap {
+  padding: var(--space-1);
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: var(--space-1);
+}
+.ui-select-search {
+  width: 100%;
+  font: inherit;
+  font-size: 0.875rem;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--bg);
+  color: var(--text-primary);
+  outline: none;
+}
+.ui-select-search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.ui-select-options {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ui-select-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-tile);
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.ui-select-option:hover { background: var(--accent-soft); }
+.ui-select-option[aria-selected="true"] {
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+/* The check sits at the right of the selected row (Basecoat idiom), so the
+   left-aligned labels stay aligned whether or not a row is selected. */
+.ui-select-option-check {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+  color: var(--accent);
+}
+.ui-select-option-check svg { width: 16px; height: 16px; display: block; }
+.ui-select-option-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-select-empty {
+  padding: var(--space-3) var(--space-2);
+  text-align: center;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
 /* ===== btn-outline + btn-icon ====================================== */
 
 .btn-outline {

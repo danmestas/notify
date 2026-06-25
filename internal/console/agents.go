@@ -48,6 +48,19 @@ type agentsPageView struct {
 	CSRF       string
 }
 
+// RuntimeSelectOptions adapts the supported runtime values into the
+// []uiSelectOption the ui-select component renders. Each runtime is both the
+// value and the label (the catalog uses bare identifiers); no empty-value row
+// is included so the placeholder stands for "nothing chosen" and server-side
+// required validation rejects an empty submit (#103).
+func (v agentsPageView) RuntimeSelectOptions() []uiSelectOption {
+	opts := make([]uiSelectOption, 0, len(v.Runtimes))
+	for _, rt := range v.Runtimes {
+		opts = append(opts, uiSelectOption{Value: rt, Label: rt})
+	}
+	return opts
+}
+
 // agentsListView binds the agents-tbody fragment.
 type agentsListView struct {
 	Rows          []agentRow
@@ -82,6 +95,22 @@ type agentDetailView struct {
 	ShowLink      bool                       // channels tab: render the link picker (?link=true)
 	ConvsFragment agentConvsListView         // conversations tab
 	CSRF          string
+}
+
+// LinkableSelectOptions adapts the linkable integrations into the
+// []uiSelectOption the ui-select "Link channel" picker renders. The label
+// mirrors the old <option> text ("identifier — Provider (Channel)"). No
+// empty-value row: the placeholder stands for "choose an integration" and the
+// server enforces the required field.
+func (v agentDetailView) LinkableSelectOptions() []uiSelectOption {
+	opts := make([]uiSelectOption, 0, len(v.Linkable))
+	for _, li := range v.Linkable {
+		opts = append(opts, uiSelectOption{
+			Value: li.ID,
+			Label: li.Identifier + " — " + li.ProviderLabel + " (" + li.ChannelLabel + ")",
+		})
+	}
+	return opts
 }
 
 // agentLinkRow is one linked channel integration shown on the channels tab.

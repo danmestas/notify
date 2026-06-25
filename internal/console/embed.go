@@ -73,6 +73,7 @@ var uiIconFS embed.FS
 //go:embed templates/workflow_detail.html
 //go:embed templates/workflow_test.html
 //go:embed templates/workflow_activity.html
+//go:embed templates/partials/ui_select.html
 //go:embed templates/partials/page_header.html
 //go:embed templates/partials/empty_state.html
 //go:embed templates/partials/toast.html

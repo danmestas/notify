@@ -54,14 +54,14 @@
                     rows="2" placeholder="What this agent does…"></textarea>
         </div>
         <div class="form-row">
-          <label class="form-label" for="new-runtime">Runtime *</label>
-          <select class="console-input" id="new-runtime" name="runtime" required
-                  data-bind="agentRuntime">
-            <option value="">Select runtime…</option>
-            {{/* Only runtimes with a registered executor — domain.SupportedRuntimes (#103). */}}
-            {{range $page.Runtimes}}<option value="{{.}}">{{.}}</option>
-            {{end}}
-          </select>
+          <label class="form-label" for="new-runtime-trigger">Runtime *</label>
+          {{/* The agentRuntime signal is declared+seeded on the slide-over
+               wrapper (it drives the mesh/bridge data-show rows below), so the
+               filter-style uiSelect helper is correct here — Name="runtime"
+               renders the hidden input that carries the value on submit.
+               Only runtimes with a registered executor are offered (#103). */}}
+          {{template "ui-select" (uiSelect "new-runtime" "runtime" "agentRuntime"
+            $page.RuntimeSelectOptions "Select runtime…" "" true)}}
         </div>
         <div class="form-row" data-show="$agentRuntime === 'mesh'">
           <label class="form-label" for="new-meshSubject">Mesh subject</label>
