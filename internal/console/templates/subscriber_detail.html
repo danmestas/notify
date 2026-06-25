@@ -4,7 +4,7 @@
   {{template "page-header" $page.Header}}
 
   <div class="console-action-row">
-    <a class="btn btn-outline" href="/console/subscribers">← Back to subscribers</a>
+    <a class="btn btn-outline" href="/console/subscribers">{{ uiIcon "arrow-left" }} Back to subscribers</a>
     {{if not $page.ReadOnly}}
     {{if $page.ConfirmDelete}}
     {{/* Two-step inline confirm (chassis idiom): the first click navigated
@@ -137,7 +137,7 @@
               <td>
                 {{if .RunURL}}
                 <a href="{{.RunURL}}" target="_blank" rel="noopener noreferrer" class="subscriber-run-link">
-                  <code>{{.RunID}}</code> ↗
+                  <code>{{.RunID}}</code> {{ uiIcon "arrow-up-right" }}
                 </a>
                 {{else}}
                 <code class="console-muted">{{if .RunID}}{{.RunID}}{{else}}—{{end}}</code>

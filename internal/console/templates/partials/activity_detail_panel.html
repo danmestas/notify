@@ -21,7 +21,7 @@
       {{if .RunURL}}
       <a href="{{.RunURL}}" class="btn btn-outline activity-detail-run-link"
          target="_blank" rel="noopener noreferrer">
-        View in engine console ↗
+        View in engine console {{ uiIcon "arrow-up-right" }}
       </a>
       {{else if $n.RunID}}
       <code class="activity-monospace activity-detail-run-id" title="run id">{{$n.RunID}}</code>
@@ -36,7 +36,7 @@
     <div class="console-banner console-banner--success" role="status" id="activity-resend-success">
       <strong>Resend fired.</strong>
       A new engine run was started for this notification.
-      <a class="console-link" href="{{.ResendRunURL}}" target="_blank" rel="noopener noreferrer">View run in dagnats ↗</a>
+      <a class="console-link" href="{{.ResendRunURL}}" target="_blank" rel="noopener noreferrer">View run in dagnats {{ uiIcon "arrow-up-right" }}</a>
     </div>
     {{else if .ResendError}}
     <p class="console-form-error" role="alert" id="activity-resend-error">{{.ResendError}}</p>

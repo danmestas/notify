@@ -33,7 +33,7 @@
   <td class="activity-col-run">
     {{if .RunURL}}
     <a class="console-link activity-run-link" href="{{.RunURL}}"
-       target="_blank" rel="noopener" title="View run {{.RunID}} in dagnats">run ↗</a>
+       target="_blank" rel="noopener" title="View run {{.RunID}} in dagnats">run {{ uiIcon "arrow-up-right" }}</a>
     {{else if .RunID}}
     <code class="activity-monospace activity-truncate" title="{{.RunID}}">{{.RunID}}</code>
     {{else}}

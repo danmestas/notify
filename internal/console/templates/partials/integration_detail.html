@@ -18,14 +18,14 @@
       <span class="integration-provider-label">{{$in.ProviderLabel}}</span>
       <span class="activity-channel-badge activity-channel-badge--{{$in.Channel}}">{{$in.ChannelLabel}}</span>
       {{if $in.Primary}}
-      <span class="chip chip-info" title="Primary provider for this channel">★ primary</span>
+      <span class="chip chip-info" title="Primary provider for this channel">{{ uiIcon "star" }} primary</span>
       {{end}}
     </div>
     <button type="button"
             class="btn btn-outline integration-close-btn"
             aria-label="Close"
             data-on:click="$integrationDetailOpen=false;$integrationDetailId=''">
-      ✕
+      {{ uiIcon "x" }}
     </button>
   </div>
 
@@ -81,7 +81,7 @@
     <div class="console-banner console-banner--success" role="status" id="integration-verify-success">
       <strong>Verification run started.</strong>
       A durable credentials check was kicked off for this integration.
-      <a class="console-link" href="{{$.VerifyRunURL}}" target="_blank" rel="noopener noreferrer">View run in dagnats ↗</a>
+      <a class="console-link" href="{{$.VerifyRunURL}}" target="_blank" rel="noopener noreferrer">View run in dagnats {{ uiIcon "arrow-up-right" }}</a>
     </div>
     {{else if $.VerifyError}}
     <p class="console-form-error" role="alert" id="integration-verify-error">{{$.VerifyError}}</p>
@@ -232,7 +232,7 @@
             <td>
               {{if .RunURL}}
               <a href="{{.RunURL}}" target="_blank" rel="noopener noreferrer" class="subscriber-run-link">
-                <code>{{.RunID}}</code> ↗
+                <code>{{.RunID}}</code> {{ uiIcon "arrow-up-right" }}
               </a>
               {{else}}
               <code class="console-muted">{{if .RunID}}{{.RunID}}{{else}}—{{end}}</code>

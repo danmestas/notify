@@ -26,7 +26,7 @@
       </div>
       <p class="kpi-card-value">
         {{$page.Cards.Sent.Total}}
-        {{if $page.Cards.Sent.DeltaPct}}<span class="kpi-delta {{if $page.Cards.Sent.DeltaUp}}is-up{{else}}is-down{{end}}">{{if $page.Cards.Sent.DeltaUp}}↑{{else}}↓{{end}}{{$page.Cards.Sent.DeltaPct}}</span>{{end}}
+        {{if $page.Cards.Sent.DeltaPct}}<span class="kpi-delta {{if $page.Cards.Sent.DeltaUp}}is-up{{else}}is-down{{end}}">{{if $page.Cards.Sent.DeltaUp}}{{ uiIcon "arrow-up" }}{{else}}{{ uiIcon "arrow-down" }}{{end}}{{$page.Cards.Sent.DeltaPct}}</span>{{end}}
       </p>
       <ul class="kpi-breakdown" role="list">
         {{range $page.Cards.Sent.Channels}}
@@ -47,7 +47,7 @@
       </div>
       <p class="kpi-card-value">{{$page.Cards.Workflows.Active}} <span class="kpi-card-of">of {{$page.Cards.Workflows.Total}}</span></p>
       <p class="kpi-card-note">
-        {{if $page.Cards.Workflows.Inactive}}<a href="/console/workflows">{{$page.Cards.Workflows.Inactive}} inactive — review →</a>{{else}}all active{{end}}
+        {{if $page.Cards.Workflows.Inactive}}<a href="/console/workflows">{{$page.Cards.Workflows.Inactive}} inactive — review {{ uiIcon "arrow-right" }}</a>{{else}}all active{{end}}
       </p>
     </article>
 
@@ -74,7 +74,7 @@
       </div>
       <p class="kpi-card-value">{{$page.Cards.Errors.Count}} <span class="kpi-card-sub-inline">{{$page.Cards.Errors.DeadLettered}} dead-lettered</span></p>
       <p class="kpi-card-note">
-        {{if $page.Cards.Errors.DLQURL}}<a href="{{$page.Cards.Errors.DLQURL}}" target="_blank" rel="noopener" class="kpi-link-danger">Open DLQ in dagnats ↗</a>{{else}}<span class="kpi-link-danger">DLQ in dagnats</span>{{end}}
+        {{if $page.Cards.Errors.DLQURL}}<a href="{{$page.Cards.Errors.DLQURL}}" target="_blank" rel="noopener" class="kpi-link-danger">Open DLQ in dagnats {{ uiIcon "arrow-up-right" }}</a>{{else}}<span class="kpi-link-danger">DLQ in dagnats</span>{{end}}
       </p>
     </article>
   </div>
@@ -128,7 +128,7 @@
     <section class="card dashboard-activity" aria-label="Recent activity">
       <header class="dashboard-activity-head">
         <h3 class="card-title">Recent activity</h3>
-        <a href="/console/activity" class="dashboard-activity-all">View all →</a>
+        <a href="/console/activity" class="dashboard-activity-all">View all {{ uiIcon "arrow-right" }}</a>
       </header>
       <ul class="dashboard-activity-list" role="list">
         {{range $page.Activity}}
@@ -139,11 +139,11 @@
               {{.WorkflowName}}
               {{if eq .Status "failed"}}<span class="activity-tag activity-tag-dlq">DLQ</span>{{end}}
             </p>
-            <p class="activity-item-target">→ {{if .SubscriberID}}{{.SubscriberID}}{{else}}—{{end}}</p>
+            <p class="activity-item-target">{{ uiIcon "arrow-right" }} {{if .SubscriberID}}{{.SubscriberID}}{{else}}—{{end}}</p>
           </div>
           {{if .Channel}}<span class="activity-item-channel">{{.Channel}}</span>{{end}}
           <span class="activity-item-time">{{.RelativeTime}}</span>
-          {{if .RunURL}}<a href="{{.RunURL}}" target="_blank" rel="noopener" class="activity-item-run">{{if .RunID}}{{.RunID}}{{else}}run{{end}} ↗</a>{{else if .RunID}}<span class="activity-item-run">{{.RunID}}</span>{{end}}
+          {{if .RunURL}}<a href="{{.RunURL}}" target="_blank" rel="noopener" class="activity-item-run">{{if .RunID}}{{.RunID}}{{else}}run{{end}} {{ uiIcon "arrow-up-right" }}</a>{{else if .RunID}}<span class="activity-item-run">{{.RunID}}</span>{{end}}
         </li>
         {{else}}
         <li class="dashboard-activity-empty">No recent activity in this environment.</li>

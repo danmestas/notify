@@ -40,7 +40,7 @@
          data-component="workflow-create">
       <div class="console-slideover-header">
         <h2 id="wf-create-heading" class="console-card-title">Create workflow</h2>
-        <a class="btn-icon console-slideover-close" href="/console/workflows" aria-label="Close">✕</a>
+        <a class="btn-icon console-slideover-close" href="/console/workflows" aria-label="Close">{{ uiIcon "x" }}</a>
       </div>
       {{if $page.FormError}}
       <p id="wf-form-error" class="console-form-error" role="alert">{{$page.FormError}}</p>
@@ -74,7 +74,7 @@
          data-component="workflow-duplicate">
       <div class="console-slideover-header">
         <h2 id="wf-dup-heading" class="console-card-title">Duplicate workflow</h2>
-        <a class="btn-icon console-slideover-close" href="/console/workflows/{{$page.SourceSlug}}" aria-label="Close">✕</a>
+        <a class="btn-icon console-slideover-close" href="/console/workflows/{{$page.SourceSlug}}" aria-label="Close">{{ uiIcon "x" }}</a>
       </div>
       {{if $page.FormError}}
       <p class="console-form-error" role="alert">{{$page.FormError}}</p>

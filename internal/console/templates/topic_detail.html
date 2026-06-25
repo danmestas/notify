@@ -4,7 +4,7 @@
   {{template "page-header" $page.Header}}
 
   <div class="console-action-row">
-    <a class="btn btn-outline" href="/console/topics">← Back to topics</a>
+    <a class="btn btn-outline" href="/console/topics">{{ uiIcon "arrow-left" }} Back to topics</a>
     {{if not $page.ReadOnly}}
     {{if $page.ConfirmDelete}}
     {{/* Two-step inline confirm (chassis idiom): the first click navigated
@@ -144,7 +144,7 @@
                 </div>
                 {{else}}
                 <a class="btn-icon" title="Remove from topic"
-                   href="/console/topics/{{$page.Topic.Key}}?tab=subscribers&confirmRemove={{.SubscriberID | urlquery}}">✕</a>
+                   href="/console/topics/{{$page.Topic.Key}}?tab=subscribers&confirmRemove={{.SubscriberID | urlquery}}">{{ uiIcon "x" }}</a>
                 {{end}}
                 {{end}}
               </td>

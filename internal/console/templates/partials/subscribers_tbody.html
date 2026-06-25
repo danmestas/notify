@@ -8,7 +8,7 @@
   {{if and (eq (len .Rows) 0) (not .HasFilters)}}
   {{/* Empty state — no subscribers yet */}}
   <div class="console-empty-state" data-component="empty-state">
-    <span class="console-empty-state-icon" aria-hidden="true">👤</span>
+    <span class="console-empty-state-icon" aria-hidden="true">{{ uiIcon "user" }}</span>
     <h2 class="console-empty-state-title">No subscribers yet</h2>
     <p class="console-empty-state-description">Add your first subscriber via API or the button above.</p>
     {{if not .ReadOnly}}
@@ -53,7 +53,7 @@
           </td>
           <td class="subscriber-col-actions">
             <div class="subscriber-row-actions">
-              <a class="btn-icon" href="/console/subscribers/{{.ID}}" title="View subscriber">↗</a>
+              <a class="btn-icon" href="/console/subscribers/{{.ID}}" title="View subscriber">{{ uiIcon "arrow-up-right" }}</a>
               {{if not $.ReadOnly}}
               {{if eq $.ConfirmDelete .ID}}
               {{/* Two-step inline confirm (chassis idiom): first click swapped
@@ -70,7 +70,7 @@
               {{else}}
               <button type="button" class="btn-icon" title="Delete subscriber"
                       data-on:click="@get('/console/api/fragments/subscribers-list?confirmDelete={{.ID}}')">
-                ✕
+                {{ uiIcon "x" }}
               </button>
               {{end}}
               {{end}}

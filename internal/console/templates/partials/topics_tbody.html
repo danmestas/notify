@@ -7,7 +7,7 @@
   {{if and (eq (len .Rows) 0) (not .HasFilters)}}
   {{/* Empty state — no topics yet */}}
   <div class="console-empty-state" data-component="empty-state">
-    <span class="console-empty-state-icon" aria-hidden="true">📢</span>
+    <span class="console-empty-state-icon" aria-hidden="true">{{ uiIcon "megaphone" }}</span>
     <h2 class="console-empty-state-title">No topics yet</h2>
     <p class="console-empty-state-description">Create a topic to group subscribers for broadcast delivery.</p>
     {{if not .ReadOnly}}
@@ -43,7 +43,7 @@
           </td>
           <td class="topic-col-actions">
             <div class="subscriber-row-actions">
-              <a class="btn-icon" href="/console/topics/{{.Key}}" title="View topic">↗</a>
+              <a class="btn-icon" href="/console/topics/{{.Key}}" title="View topic">{{ uiIcon "arrow-up-right" }}</a>
               {{if not $.ReadOnly}}
               {{if eq $.ConfirmDelete .Key}}
               {{/* Two-step inline confirm (chassis idiom): first click swapped
@@ -60,7 +60,7 @@
               {{else}}
               <button type="button" class="btn-icon" title="Delete topic"
                       data-on:click="@get('/console/api/fragments/topics-list?confirmDelete={{.Key | urlquery}}')">
-                ✕
+                {{ uiIcon "x" }}
               </button>
               {{end}}
               {{end}}

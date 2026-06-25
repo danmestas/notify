@@ -41,7 +41,7 @@
           <td class="console-muted">{{.UpdatedAt}}</td>
           <td>
             <div class="agent-row-actions">
-              <a class="btn-icon" href="/console/agents/{{.Identifier}}" title="View agent">↗</a>
+              <a class="btn-icon" href="/console/agents/{{.Identifier}}" title="View agent">{{ uiIcon "arrow-up-right" }}</a>
               {{if not $frag.ReadOnly}}
               {{if eq $frag.ConfirmDelete .Identifier}}
               <button type="button" class="btn btn-outline"
@@ -55,7 +55,7 @@
               {{else}}
               <button type="button" class="btn-icon" title="Delete agent"
                       data-on:click="@get('/console/api/fragments/agents-list?confirmDelete={{.Identifier}}')">
-                ✕
+                {{ uiIcon "x" }}
               </button>
               {{end}}
               {{end}}

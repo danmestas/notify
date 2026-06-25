@@ -46,6 +46,16 @@ var assetsFS embed.FS
 //go:embed assets/icons/*.svg
 var iconFS embed.FS
 
+// uiIconFS holds the vendored, single-element line-icon SVGs (Lucide-style,
+// currentColor stroke) used for UI affordances across the console — close
+// buttons, back/external-link arrows, trend indicators, and empty-state
+// illustrations. They replace the emoji and typographic-glyph "icons" the
+// console must never render (see the uiIcon helper in layout.go). Our own
+// trusted markup — no user input — so inlining as template.HTML is safe.
+//
+//go:embed assets/ui-icons/*.svg
+var uiIconFS embed.FS
+
 // templatesFS carries every Go html/template file the console renders.
 // The layout and shared partials form the base tree; each page file owns
 // one `content` overlay (see loadTemplates in layout.go).

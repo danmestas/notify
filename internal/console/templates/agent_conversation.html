@@ -5,7 +5,7 @@
 
   <div class="console-action-row">
     <a class="btn btn-outline" href="/console/agents/{{$page.Agent.Identifier}}/tabs/conversations">
-      ← Back to conversations
+      {{ uiIcon "arrow-left" }} Back to conversations
     </a>
     <span class="console-muted">
       Agent: <a href="/console/agents/{{$page.Agent.Identifier}}">{{$page.Agent.Name}}</a>
@@ -57,7 +57,7 @@
 
     {{if eq (len $page.Turns) 0}}
     <div class="console-empty-state" data-component="empty-state">
-      <span class="console-empty-state-icon" aria-hidden="true">💬</span>
+      <span class="console-empty-state-icon" aria-hidden="true">{{ uiIcon "message-circle" }}</span>
       <h2 class="console-empty-state-title">No messages yet</h2>
       <p class="console-empty-state-description">Messages in this conversation will appear here.</p>
     </div>
@@ -69,7 +69,7 @@
         <span class="agent-turn-role chip {{if eq .Role "user"}}chip-info{{else if eq .Role "agent"}}chip-success{{else}}chip-default{{end}}">{{.Role}}</span>
         <span class="agent-turn-time console-muted">{{.CreatedAt}}</span>
         {{if .RunURL}}
-        <a class="agent-turn-run-link" href="{{.RunURL}}" target="_blank" rel="noopener">View run ↗</a>
+        <a class="agent-turn-run-link" href="{{.RunURL}}" target="_blank" rel="noopener">View run {{ uiIcon "arrow-up-right" }}</a>
         {{end}}
       </div>
       <div class="agent-turn-body">{{.Text}}</div>

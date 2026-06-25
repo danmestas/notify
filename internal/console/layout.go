@@ -127,6 +127,11 @@ func staticFuncMap() template.FuncMap {
 		// providerIcon inlines a provider's vendored brand SVG (our own trusted
 		// markup) into the connect-integration drawer's provider rows.
 		"providerIcon": providerIcon,
+		// uiIcon inlines a vendored line-icon SVG (currentColor stroke) for a
+		// UI affordance — close buttons, back/external arrows, empty-state
+		// illustrations — replacing the emoji/glyph "icons" the console must
+		// never render. Inherits text colour, so it adapts to the theme.
+		"uiIcon": uiIcon,
 		// actionArgs packs the action-button partial's inputs so callers
 		// (templates and Go views alike) bind the one actionButton shape.
 		"actionArgs": func(label, href string, readOnly bool) actionButton {

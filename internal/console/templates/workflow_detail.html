@@ -3,7 +3,7 @@
   {{template "page-header" $page.Header}}
 
   <div class="console-action-row">
-    <a class="btn btn-outline" href="/console/workflows">← Back</a>
+    <a class="btn btn-outline" href="/console/workflows">{{ uiIcon "arrow-left" }} Back</a>
     {{if not $page.ReadOnly}}
     <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}/duplicate">Duplicate</a>
     {{if $page.ConfirmDelete}}
@@ -40,7 +40,7 @@
               <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
               <input type="hidden" name="stepId" value="{{$step.StepID}}">
               <input type="hidden" name="direction" value="up">
-              <button type="submit" class="btn-icon" title="Move up" aria-label="Move step up">↑</button>
+              <button type="submit" class="btn-icon" title="Move up" aria-label="Move step up">{{ uiIcon "arrow-up" }}</button>
             </form>
             {{end}}
             {{if lt $i (sub (len $page.Steps) 1)}}
@@ -48,12 +48,12 @@
               <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
               <input type="hidden" name="stepId" value="{{$step.StepID}}">
               <input type="hidden" name="direction" value="down">
-              <button type="submit" class="btn-icon" title="Move down" aria-label="Move step down">↓</button>
+              <button type="submit" class="btn-icon" title="Move down" aria-label="Move step down">{{ uiIcon "arrow-down" }}</button>
             </form>
             {{end}}
             <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/steps/{{$step.StepID}}/delete" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-              <button type="submit" class="btn-icon btn-icon-danger" title="Remove step" aria-label="Remove step">✕</button>
+              <button type="submit" class="btn-icon btn-icon-danger" title="Remove step" aria-label="Remove step">{{ uiIcon "x" }}</button>
             </form>
           </div>
           {{end}}

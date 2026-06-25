@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="{{assetURL "app.css"}}">
   <script>
     // Apply the persisted theme before first paint to avoid the
-    // light → dark flash. The attribute lives on <html> so the html
+    // light-to-dark flash. The attribute lives on <html> so the html
     // element paints the chosen palette (dagnats layout idiom);
     // theme.js owns the toggle UI, this stub owns early render only.
     (function () {
@@ -60,7 +60,7 @@
          {{if .DagnatsURL}}target="_blank" rel="noopener"{{end}}>
         <span class="console-sidebar-extlink-dot" aria-hidden="true"></span>
         <span>dagnats console</span>
-        <span class="console-extlink-arrow" aria-hidden="true">↗</span>
+        <span class="console-extlink-arrow" aria-hidden="true">{{ uiIcon "arrow-up-right" }}</span>
       </a>
       <p class="console-sidebar-version">notify {{.Version}} · :3000</p>
     </div>

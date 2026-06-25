@@ -3,7 +3,7 @@
   {{template "page-header" $page.Header}}
 
   <div class="console-action-row">
-    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}">← Editor</a>
+    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}">{{ uiIcon "arrow-left" }} Editor</a>
     <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}/activity">Activity</a>
   </div>
 
@@ -54,7 +54,7 @@
       &mdash; Run ID: <code class="wf-test-run-id">{{$page.RunID}}</code>
       {{end}}
       {{if $page.RunURL}}
-      &mdash; <a class="console-link" href="{{$page.RunURL}}" target="_blank" rel="noopener">View run in dagnats ↗</a>
+      &mdash; <a class="console-link" href="{{$page.RunURL}}" target="_blank" rel="noopener">View run in dagnats {{ uiIcon "arrow-up-right" }}</a>
       {{end}}
       &mdash; <a class="console-link" href="/console/workflows/{{$page.TriggerIdentifier}}/activity?txid={{$page.TransactionID}}">View in Activity tab</a>
     </div>

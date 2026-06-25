@@ -1060,6 +1060,49 @@ a.activity-item-run { color: var(--accent); }
   opacity: 1 !important;
 }
 
+/* ===== inline ui-icons ============================================= */
+
+/* uiIcon SVGs are currentColor line-icons that replace the old emoji /
+   glyph "icons" everywhere in the console. The baseline keeps them sitting
+   on the text baseline at the surrounding font size; the stroke inherits the
+   text colour, so they adapt to the active theme automatically. */
+.ui-icon,
+.btn svg,
+.btn-icon svg,
+.console-slideover-close svg,
+.integration-close-btn svg,
+.console-extlink-arrow svg,
+.kpi-delta svg,
+.console-link svg,
+.dashboard-activity-all svg,
+.kpi-card-note a svg,
+.agent-turn-run-link svg,
+.activity-item-run svg,
+.activity-item-target svg,
+.chip svg {
+  width: 1em;
+  height: 1em;
+  flex: none;
+  vertical-align: -0.125em;
+}
+.ui-icon-fallback {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+}
+/* Table-row and drawer close/move affordances size the glyph at ~16px. */
+.btn-icon svg,
+.console-slideover-close svg {
+  width: 16px;
+  height: 16px;
+}
+/* Empty-state illustration: render larger and muted (replaces the old
+   1.6rem emoji glyph). */
+.console-empty-state-icon svg {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+
 /* ===== console table (shared) ====================================== */
 
 .console-table {
