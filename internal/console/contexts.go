@@ -25,17 +25,17 @@ import (
 var contextSignalKeys = []string{
 	"contextsType",
 	"contextsSearch",
+	"contextNewOpen",
 }
 
 // ─── view structs ─────────────────────────────────────────────────────────────
 
 type contextsPageView struct {
-	Header     pageHeader
-	Fragment   contextsListView
-	Signals    template.JS
-	ReadOnly   bool
-	ShowCreate bool
-	FormError  string
+	Header    pageHeader
+	Fragment  contextsListView
+	Signals   template.JS
+	ReadOnly  bool
+	FormError string
 }
 
 type contextsListView struct {
@@ -64,10 +64,13 @@ type contextDetailView struct {
 	Signals       template.JS
 }
 
-func contextsSignalsJSON(ctype string) template.JS {
-	m := map[string]string{
+func contextsSignalsJSON(ctype string, newOpen bool) template.JS {
+	m := map[string]any{
 		"contextsType":   ctype,
 		"contextsSearch": "",
+		// contextNewOpen drives the create slide-over's data-show. A real JSON
+		// boolean (not the string "false", which is truthy in JS).
+		"contextNewOpen": newOpen,
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -152,7 +155,7 @@ func (c *Console) serveContextsPage(w http.ResponseWriter, r *http.Request) {
 	view := contextsPageView{
 		Header:   header,
 		Fragment: frag,
-		Signals:  contextsSignalsJSON(frag.FilterType),
+		Signals:  contextsSignalsJSON(frag.FilterType, false),
 		ReadOnly: c.deps.ReadOnly,
 	}
 	c.renderPage(w, r, http.StatusOK, "contexts", "Contexts", view)
@@ -195,14 +198,13 @@ func (c *Console) serveContextNew(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := contextsPageView{
-		Header:     header,
-		Fragment:   frag,
-		Signals:    contextsSignalsJSON(""),
-		ReadOnly:   c.deps.ReadOnly,
-		ShowCreate: !c.deps.ReadOnly,
-		FormError:  formErr,
+		Header:    header,
+		Fragment:  frag,
+		Signals:   contextsSignalsJSON("", !c.deps.ReadOnly),
+		ReadOnly:  c.deps.ReadOnly,
+		FormError: formErr,
 	}
-	c.renderPage(w, r, http.StatusOK, "contexts", "New context", view)
+	c.renderPage(w, r, http.StatusOK, "contexts", "Contexts", view)
 }
 
 func (c *Console) serveContextDetail(w http.ResponseWriter, r *http.Request) {
@@ -250,7 +252,7 @@ func (c *Console) serveContextDetail(w http.ResponseWriter, r *http.Request) {
 		ConfirmDelete: r.URL.Query().Get("confirmDelete") == "true",
 		FormError:     detailFormErr,
 		CSRF:          s.CSRF,
-		Signals:       contextsSignalsJSON(""),
+		Signals:       contextsSignalsJSON("", false),
 	}
 	c.renderPage(w, r, http.StatusOK, "context-detail", ctx.Type+"/"+ctx.ExternalID, view)
 }

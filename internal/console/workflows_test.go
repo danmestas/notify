@@ -511,10 +511,25 @@ func TestWorkflowNew_RendersCreateForm(t *testing.T) {
 	if !strings.Contains(body, `name="trigger_identifier"`) {
 		t.Errorf("/new missing trigger_identifier input")
 	}
-	// The list page itself must NOT show the create slide-over.
+
+	// The create slide-over is now a client-side overlay seeded by the
+	// $workflowNewOpen signal (data-show), so it overlays the unchanged list
+	// page and opening it causes NO layout shift. The list page renders the
+	// same slide-over hidden; the +New button and the slide-over's controls
+	// flip the signal instead of navigating to /console/workflows/new.
 	rrList := tc.get(t, "/console/workflows", cookie)
-	if strings.Contains(rrList.Body.String(), `action="/console/api/workflows"`) {
-		t.Errorf("/console/workflows should not render the create slide-over form")
+	listBody := rrList.Body.String()
+	if !strings.Contains(listBody, `data-component="workflow-create"`) {
+		t.Errorf("list page missing the (hidden) create slide-over")
+	}
+	if !strings.Contains(listBody, `data-show="$workflowNewOpen"`) {
+		t.Errorf("list page slide-over missing data-show on $workflowNewOpen")
+	}
+	if !strings.Contains(listBody, `data-on:click="$workflowNewOpen = true"`) {
+		t.Errorf("list page missing the open-slide-over button binding")
+	}
+	if strings.Contains(listBody, `href="/console/workflows/new"`) {
+		t.Errorf("list page should not link to /console/workflows/new (signal-driven now)")
 	}
 }
 

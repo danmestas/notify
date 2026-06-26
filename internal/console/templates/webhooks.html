@@ -5,18 +5,22 @@
 
   <div class="console-filter-bar">
     {{if not $page.ReadOnly}}
-    <a class="btn btn-primary" href="/console/webhooks/new">+ Add endpoint</a>
+    <button type="button" class="btn btn-primary" data-on:click="$webhookNewOpen = true">+ Add endpoint</button>
     {{end}}
   </div>
 
-  {{/* Webhook create slide-over — rendered on /console/webhooks/new */}}
+  {{/* Webhook create slide-over — a client-side overlay (data-show on the
+       webhookNewOpen signal). It overlays the unchanged list page so opening it
+       causes NO layout shift; the /new route just seeds webhookNewOpen=true. */}}
   <div id="webhook-slideover">
-    {{if $page.ShowCreate}}
+    {{if not $page.ReadOnly}}
     <div class="console-slideover" role="dialog" aria-labelledby="webhook-create-heading"
-         data-component="webhook-create">
+         data-component="webhook-create"
+         data-show="$webhookNewOpen">
       <div class="console-slideover-header">
         <h2 id="webhook-create-heading" class="console-card-title">Add endpoint</h2>
-        <a class="btn-icon console-slideover-close" href="/console/webhooks" aria-label="Close">{{ uiIcon "x" }}</a>
+        <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
+                data-on:click="$webhookNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
       <form method="POST" action="/console/webhooks" class="webhook-edit-form">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
@@ -31,7 +35,7 @@
           </label>
         </div>
         <div class="console-slideover-actions">
-          <a class="btn btn-outline" href="/console/webhooks">Cancel</a>
+          <button type="button" class="btn btn-outline" data-on:click="$webhookNewOpen = false">Cancel</button>
           <button type="submit" class="btn btn-primary">Add endpoint</button>
         </div>
       </form>

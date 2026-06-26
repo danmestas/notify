@@ -11,7 +11,11 @@
   <h2 class="console-empty-state-title">{{.Title}}</h2>
   <p class="console-empty-state-description">{{.Description}}</p>
   {{with .PrimaryAction}}
+  {{if .OnClick}}
+  <button type="button" class="btn btn-outline console-action" data-on:click="{{.OnClick}}">{{.Label}}</button>
+  {{else}}
   {{template "action-button" (actionArgs .Label .Href $.ReadOnly)}}
+  {{end}}
   {{end}}
 </div>
 {{end}}{{end}}

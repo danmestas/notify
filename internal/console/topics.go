@@ -35,8 +35,6 @@ type topicsPageView struct {
 	Fragment topicsListView
 	Signals  template.JS
 	ReadOnly bool
-	// ShowCreate renders the create-topic slide-over (/console/topics/new).
-	ShowCreate bool
 }
 
 // topicsListView is the #topics-tbody fragment binding.
@@ -101,13 +99,15 @@ type topicActivityRow struct {
 
 // ─── signal helpers ──────────────────────────────────────────────────────────
 
-func topicsSignalsJSON(name, key string) template.JS {
-	sig := map[string]string{
+func topicsSignalsJSON(name, key string, newOpen bool) template.JS {
+	sig := map[string]any{
 		"topicsName": name,
 		"topicsKey":  key,
 		"topicTab":   "overview",
 		// subscriber autocomplete signals
 		"topicAddSubscriberID": "",
+		// real JSON boolean — the string "false" is truthy in JS
+		"topicNewOpen": newOpen,
 	}
 	b, err := json.Marshal(sig)
 	if err != nil {
@@ -204,7 +204,7 @@ func (c *Console) serveTopicsPage(w http.ResponseWriter, r *http.Request) {
 	view := topicsPageView{
 		Header:   header,
 		Fragment: frag,
-		Signals:  topicsSignalsJSON("", ""),
+		Signals:  topicsSignalsJSON("", "", false),
 		ReadOnly: c.deps.ReadOnly,
 	}
 	c.renderPage(w, r, http.StatusOK, "topics", "Topics", view)
@@ -227,18 +227,23 @@ func (c *Console) serveTopicNew(w http.ResponseWriter, r *http.Request) {
 		c.serveError(w, r)
 		return
 	}
-	header := pageHeader{Title: "Topics", Subtitle: "Named subscriber groups for broadcast delivery."}
+	header := pageHeader{
+		Title:    "Topics",
+		Subtitle: "Named subscriber groups for broadcast delivery.",
+		Tiles: []tile{
+			{Label: "topics", Count: len(frag.Rows), Tone: toneDefault},
+		},
+	}
+	if err := header.validate(); err != nil {
+		header = pageHeader{Title: "Topics"}
+	}
 	view := topicsPageView{
 		Header:   header,
 		Fragment: frag,
-		Signals:  topicsSignalsJSON("", ""),
+		Signals:  topicsSignalsJSON("", "", !c.deps.ReadOnly),
 		ReadOnly: c.deps.ReadOnly,
-		// The create slide-over is the whole point of /new; read-only
-		// consoles render the plain list instead (mutations are gated
-		// server-side regardless).
-		ShowCreate: !c.deps.ReadOnly,
 	}
-	c.renderPage(w, r, http.StatusOK, "topics", "Create Topic", view)
+	c.renderPage(w, r, http.StatusOK, "topics", "Topics", view)
 }
 
 // serveFragmentTopicsList handles GET /console/api/fragments/topics-list.

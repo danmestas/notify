@@ -97,8 +97,6 @@ type workflowsPageView struct {
 	Fragment workflowsListView
 	Signals  template.JS
 	ReadOnly bool
-	// ShowCreate renders the create slide-over (/console/workflows/new).
-	ShowCreate bool
 	// ShowDuplicate renders the duplicate slide-over
 	// (/console/workflows/{slug}/duplicate).
 	ShowDuplicate bool
@@ -240,8 +238,14 @@ type wfActivityListView struct {
 var wfActivitySignalKeys = []string{"wfActStatus", "wfActRange"}
 
 // workflowsSignalsJSON returns the editor/list page's Datastar signals.
-func workflowsSignalsJSON() template.JS {
-	b, err := json.Marshal(map[string]string{"wfTab": "editor"})
+// newOpen seeds workflowNewOpen, which drives the create slide-over's
+// data-show. It MUST be a real JSON boolean (map[string]any) — the string
+// "false" is truthy in JS and would leave the slide-over open.
+func workflowsSignalsJSON(newOpen bool) template.JS {
+	b, err := json.Marshal(map[string]any{
+		"wfTab":           "editor",
+		"workflowNewOpen": newOpen,
+	})
 	if err != nil {
 		return template.JS("{}")
 	}
@@ -386,7 +390,7 @@ func (c *Console) serveWorkflowsList(w http.ResponseWriter, r *http.Request) {
 	view := workflowsPageView{
 		Header:   header,
 		Fragment: frag,
-		Signals:  workflowsSignalsJSON(),
+		Signals:  workflowsSignalsJSON(false),
 		ReadOnly: c.deps.ReadOnly,
 	}
 	c.renderPage(w, r, http.StatusOK, "workflows", "Workflows", view)
@@ -401,11 +405,25 @@ func (c *Console) serveWorkflowNew(w http.ResponseWriter, r *http.Request) {
 	if r == nil {
 		panic("serveWorkflowNew: r is nil")
 	}
-	if _, ok := domain.ScopeFromContext(r.Context()); !ok {
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
 		panic("serveWorkflowNew: no scope in context")
 	}
-	header := pageHeader{Title: "Workflows", Subtitle: "All notification workflows in this environment."}
+	workflows, err := c.deps.Authoring.List(r.Context(), scope)
+	if err != nil {
+		c.deps.Logger.Error("console: list workflows", "err", err)
+		c.serveError(w, r)
+		return
+	}
+	header := pageHeader{
+		Title:    "Workflows",
+		Subtitle: "All notification workflows in this environment.",
+		Tiles: []tile{
+			{Label: "workflows", Count: len(workflows), Tone: toneDefault},
+		},
+	}
 	if err := header.validate(); err != nil {
+		c.deps.Logger.Error("console: workflows header", "err", err)
 		header = pageHeader{Title: "Workflows"}
 	}
 	frag, err := c.buildWorkflowsListView(r, "", "")
@@ -415,14 +433,13 @@ func (c *Console) serveWorkflowNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := workflowsPageView{
-		Header:     header,
-		Fragment:   frag,
-		Signals:    workflowsSignalsJSON(),
-		ReadOnly:   c.deps.ReadOnly,
-		ShowCreate: !c.deps.ReadOnly,
-		FormError:  r.URL.Query().Get("error"),
+		Header:    header,
+		Fragment:  frag,
+		Signals:   workflowsSignalsJSON(!c.deps.ReadOnly),
+		ReadOnly:  c.deps.ReadOnly,
+		FormError: r.URL.Query().Get("error"),
 	}
-	c.renderPage(w, r, http.StatusOK, "workflows", "Create workflow", view)
+	c.renderPage(w, r, http.StatusOK, "workflows", "Workflows", view)
 }
 
 // serveWorkflowDuplicate renders GET /console/workflows/{slug}/duplicate.
@@ -465,7 +482,7 @@ func (c *Console) serveWorkflowDuplicate(w http.ResponseWriter, r *http.Request)
 	view := workflowsPageView{
 		Header:           header,
 		Fragment:         frag,
-		Signals:          workflowsSignalsJSON(),
+		Signals:          workflowsSignalsJSON(false),
 		ReadOnly:         c.deps.ReadOnly,
 		ShowDuplicate:    !c.deps.ReadOnly,
 		FormError:        r.URL.Query().Get("error"),
@@ -531,8 +548,8 @@ func workflowsEmptyState(filtered bool, readOnly bool) *emptyState {
 	}
 	if !readOnly {
 		es.PrimaryAction = &emptyStateAction{
-			Label: "Create workflow",
-			Href:  "/console/workflows/new",
+			Label:   "Create workflow",
+			OnClick: "$workflowNewOpen = true",
 		}
 	}
 	return es
@@ -603,7 +620,7 @@ func (c *Console) serveWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 		ConfirmDelete:     r.URL.Query().Get("confirmDelete") == "true",
 		FormError:         r.URL.Query().Get("error"),
 		ActiveTab:         "editor",
-		Signals:           workflowsSignalsJSON(),
+		Signals:           workflowsSignalsJSON(false),
 	}
 	c.renderPage(w, r, http.StatusOK, "workflow-detail", wf.Name, view)
 }

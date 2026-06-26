@@ -64,12 +64,47 @@ func TestDomains_StatusChip_Pending(t *testing.T) {
 func TestDomains_CreateFormRendersOnNew(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)
-	rr := tc.get(t, "/console/domains/new", cookie)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("GET /console/domains/new: status=%d", rr.Code)
+
+	// LIST page: slide-over must be present in DOM (not gated by ShowCreate) but
+	// hidden — driven by $domainNewOpen signal, which is false on the list route.
+	listRR := tc.get(t, "/console/domains", cookie)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("GET /console/domains: status=%d body=%s", listRR.Code, listRR.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "domain-create-form") && !strings.Contains(rr.Body.String(), "domain-create") {
-		t.Errorf("create form not rendered on /console/domains/new")
+	listBody := listRR.Body.String()
+	// Slide-over container must be in DOM with its data-component marker.
+	if !strings.Contains(listBody, `data-component="domain-create"`) {
+		t.Errorf("list page missing data-component=\"domain-create\" on slideover")
+	}
+	// Slide-over must carry data-show so Datastar controls visibility.
+	if !strings.Contains(listBody, `data-show="$domainNewOpen"`) {
+		t.Errorf("list page missing data-show=\"$domainNewOpen\" on slideover")
+	}
+	// Add button must be a button that sets the signal, not a hard nav link.
+	if !strings.Contains(listBody, `data-on:click="$domainNewOpen = true"`) {
+		t.Errorf("list page missing data-on:click=\"$domainNewOpen = true\" on Add button")
+	}
+	// No hard link to /new — that would cause a layout shift.
+	if strings.Contains(listBody, `href="/console/domains/new"`) {
+		t.Errorf("list page must not contain href=\"/console/domains/new\" (causes layout shift)")
+	}
+
+	// /new route: must render identically to the list page but with
+	// domainNewOpen seeded true so the slide-over opens immediately.
+	newRR := tc.get(t, "/console/domains/new", cookie)
+	if newRR.Code != http.StatusOK {
+		t.Fatalf("GET /console/domains/new: status=%d", newRR.Code)
+	}
+	newBody := newRR.Body.String()
+	if !strings.Contains(newBody, `data-component="domain-create"`) {
+		t.Errorf("/new missing data-component=\"domain-create\" on slideover")
+	}
+	if !strings.Contains(newBody, `data-show="$domainNewOpen"`) {
+		t.Errorf("/new missing data-show=\"$domainNewOpen\" on slideover")
+	}
+	// Signal must be seeded true so the slide-over opens on page load.
+	if !strings.Contains(newBody, `&#34;domainNewOpen&#34;:true`) {
+		t.Errorf("/new missing domainNewOpen:true in page signals")
 	}
 }
 

@@ -9,6 +9,7 @@ package console
 // has a ?reveal=1 query param.
 
 import (
+	"encoding/json"
 	"errors"
 	"html/template"
 	"net/http"
@@ -30,11 +31,10 @@ var variableSignalKeys = []string{
 // ─── view structs ─────────────────────────────────────────────────────────────
 
 type variablesPageView struct {
-	Header     pageHeader
-	Fragment   variablesListView
-	Signals    template.JS
-	ReadOnly   bool
-	ShowCreate bool
+	Header   pageHeader
+	Fragment variablesListView
+	Signals  template.JS
+	ReadOnly bool
 }
 
 type variablesListView struct {
@@ -64,11 +64,18 @@ type variableDetailView struct {
 	Signals       template.JS
 }
 
-func variablesSignalsJSON(search string) template.JS {
-	// Use json.Marshal manually so we don't import encoding/json at the top level —
-	// the value is simple strings so manual construction is safe.
-	s := `{"variablesSearch":` + `"` + strings.ReplaceAll(search, `"`, `\"`) + `"}`
-	return template.JS(s)
+func variablesSignalsJSON(search string, newOpen bool) template.JS {
+	sig := map[string]any{
+		"variablesSearch": search,
+		// variableNewOpen drives the create slide-over's data-show. A real JSON
+		// boolean (not the string "false", which is truthy in JS).
+		"variableNewOpen": newOpen,
+	}
+	b, err := json.Marshal(sig)
+	if err != nil {
+		return template.JS("{}")
+	}
+	return template.JS(b)
 }
 
 // ─── view builder ─────────────────────────────────────────────────────────────
@@ -152,7 +159,7 @@ func (c *Console) serveVariablesPage(w http.ResponseWriter, r *http.Request) {
 	view := variablesPageView{
 		Header:   header,
 		Fragment: frag,
-		Signals:  variablesSignalsJSON(""),
+		Signals:  variablesSignalsJSON("", false),
 		ReadOnly: c.deps.ReadOnly,
 	}
 	c.renderPage(w, r, http.StatusOK, "variables", "Variables", view)
@@ -188,13 +195,14 @@ func (c *Console) serveVariableNew(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := variablesPageView{
-		Header:     header,
-		Fragment:   frag,
-		Signals:    variablesSignalsJSON(""),
-		ReadOnly:   c.deps.ReadOnly,
-		ShowCreate: !c.deps.ReadOnly,
+		Header:   header,
+		Fragment: frag,
+		// /new seeds variableNewOpen=true so the slide-over opens on direct visit
+		// without re-rendering the page — no layout shift versus the list.
+		Signals:  variablesSignalsJSON("", !c.deps.ReadOnly),
+		ReadOnly: c.deps.ReadOnly,
 	}
-	c.renderPage(w, r, http.StatusOK, "variables", "New variable", view)
+	c.renderPage(w, r, http.StatusOK, "variables", "Variables", view)
 }
 
 func (c *Console) serveVariableDetail(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +255,7 @@ func (c *Console) serveVariableDetail(w http.ResponseWriter, r *http.Request) {
 		ReadOnly:      c.deps.ReadOnly,
 		ConfirmDelete: r.URL.Query().Get("confirmDelete") == "true",
 		CSRF:          s.CSRF,
-		Signals:       variablesSignalsJSON(""),
+		Signals:       variablesSignalsJSON("", false),
 	}
 	c.renderPage(w, r, http.StatusOK, "variable-detail", key, view)
 }

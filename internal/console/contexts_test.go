@@ -29,13 +29,37 @@ func TestContexts_CreateFormRendersOnNew(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)
 
-	rr := tc.get(t, "/console/contexts/new", cookie)
+	// LIST page: slide-over is present in DOM but hidden (contextNewOpen=false).
+	rr := tc.get(t, "/console/contexts", cookie)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("GET /console/contexts/new: status=%d", rr.Code)
+		t.Fatalf("GET /console/contexts: status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	body := rr.Body.String()
-	if !strings.Contains(body, "context-create-form") && !strings.Contains(body, "context-create") {
+	listBody := rr.Body.String()
+	if !strings.Contains(listBody, `data-component="context-create"`) {
+		t.Errorf("list page: slide-over marker data-component=\"context-create\" missing")
+	}
+	if !strings.Contains(listBody, `data-show="$contextNewOpen"`) {
+		t.Errorf("list page: data-show=\"$contextNewOpen\" missing from slide-over")
+	}
+	if !strings.Contains(listBody, `data-on:click="$contextNewOpen = true"`) {
+		t.Errorf("list page: + Add button missing data-on:click=\"$contextNewOpen = true\"")
+	}
+	if strings.Contains(listBody, `href="/console/contexts/new"`) {
+		t.Errorf("list page: must not contain href link to /console/contexts/new (causes layout shift)")
+	}
+
+	// /new route: seeds contextNewOpen=true so the slide-over is open on arrival.
+	rr2 := tc.get(t, "/console/contexts/new", cookie)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("GET /console/contexts/new: status=%d", rr2.Code)
+	}
+	newBody := rr2.Body.String()
+	if !strings.Contains(newBody, "context-create-form") && !strings.Contains(newBody, `data-component="context-create"`) {
 		t.Errorf("create form not rendered on /console/contexts/new")
+	}
+	// The data-signals attribute JSON is HTML-escaped (" -> &#34;).
+	if !strings.Contains(newBody, `&#34;contextNewOpen&#34;:true`) {
+		t.Errorf("/new: contextNewOpen signal not seeded true")
 	}
 }
 

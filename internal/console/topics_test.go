@@ -26,6 +26,8 @@
 //	TestTopics_AddRemoveSubscriber                   — add member + verify + remove member
 //	TestTopics_ScopeIsolation                        — alt-scope rows not visible
 //	TestTopics_RouteAuth                             — all new routes behind session gate
+//	TestTopics_NewRendersCreateForm                  — /new seeds signal open; list has overlay in DOM
+//	TestTopics_NewReadOnly_SlideOverGated            — slide-over absent on read-only console
 package console
 
 import (
@@ -444,22 +446,39 @@ func TestTopics_AddRemoveSubscriber(t *testing.T) {
 
 // ─── create slide-over ────────────────────────────────────────────────────────
 
-// TestTopics_NewRendersCreateForm pins the /new slide-over: the create form
-// must actually render (form element + required key input + CSRF token),
-// not just return 200 with the plain list.
+// TestTopics_NewRendersCreateForm pins the /new slide-over: visiting /new
+// renders the same list page with the slide-over overlay seeded open via the
+// topicNewOpen signal. Both /new and /console/topics render the slide-over
+// DOM; only the signal value differs (true vs false), so there is no layout
+// shift when the overlay opens.
 func TestTopics_NewRendersCreateForm(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, csrf := tc.login(t)
 
+	// /new must render the list page with the slide-over present and open.
 	rr := tc.get(t, "/console/topics/new", cookie)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET /console/topics/new: status = %d, want 200", rr.Code)
 	}
 	body := rr.Body.String()
 
+	// Slide-over component is in the DOM.
 	if !strings.Contains(body, `data-component="topic-create"`) {
-		t.Errorf("/new missing topic-create slide-over")
+		t.Errorf("/new missing topic-create slide-over component")
 	}
+	// Overlay is controlled by the signal.
+	if !strings.Contains(body, `data-show="$topicNewOpen"`) {
+		t.Errorf("/new missing data-show=$topicNewOpen on slide-over")
+	}
+	// The + Create Topic button uses signal, not navigation.
+	if !strings.Contains(body, `data-on:click="$topicNewOpen = true"`) {
+		t.Errorf("/new missing data-on:click=$topicNewOpen=true on Add button")
+	}
+	// No hard navigation to /new from the Add control.
+	if strings.Contains(body, `href="/console/topics/new"`) {
+		t.Errorf("/new must not contain href=/console/topics/new (Add control must not navigate)")
+	}
+	// Form is present with required fields and CSRF.
 	if !strings.Contains(body, `<form method="POST" action="/console/topics"`) {
 		t.Errorf("/new missing create form posting to /console/topics")
 	}
@@ -473,10 +492,36 @@ func TestTopics_NewRendersCreateForm(t *testing.T) {
 		t.Errorf("/new create form missing CSRF token")
 	}
 
-	// The plain list page must NOT render the slide-over.
+	// The plain list page must also render the slide-over in the DOM (hidden
+	// by default via the signal) — the overlay must not be gated out.
 	rr = tc.get(t, "/console/topics", cookie)
-	if strings.Contains(rr.Body.String(), `data-component="topic-create"`) {
-		t.Errorf("/console/topics rendered the create slide-over without /new")
+	listBody := rr.Body.String()
+	if !strings.Contains(listBody, `data-component="topic-create"`) {
+		t.Errorf("/console/topics missing slide-over component (must be in DOM, hidden by signal)")
+	}
+	if !strings.Contains(listBody, `data-show="$topicNewOpen"`) {
+		t.Errorf("/console/topics missing data-show=$topicNewOpen on slide-over")
+	}
+	if !strings.Contains(listBody, `data-on:click="$topicNewOpen = true"`) {
+		t.Errorf("/console/topics missing data-on:click=$topicNewOpen=true on Add button")
+	}
+}
+
+// TestTopics_NewReadOnly_SlideOverGated pins that the slide-over is not
+// rendered at all on read-only consoles (no write controls to show).
+func TestTopics_NewReadOnly_SlideOverGated(t *testing.T) {
+	tc := newReadOnlyTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	for _, path := range []string{"/console/topics", "/console/topics/new"} {
+		rr := tc.get(t, path, cookie)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("GET %s: status = %d, want 200", path, rr.Code)
+		}
+		body := rr.Body.String()
+		if strings.Contains(body, `data-component="topic-create"`) {
+			t.Errorf("%s rendered topic-create slide-over on read-only console", path)
+		}
 	}
 }
 

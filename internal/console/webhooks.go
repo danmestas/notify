@@ -32,9 +32,6 @@ type webhooksPageView struct {
 	Fragment webhooksListView
 	Signals  template.JS
 	ReadOnly bool
-	// ShowCreate renders the create-endpoint slide-over
-	// (/console/webhooks/new).
-	ShowCreate bool
 }
 
 // webhooksListView is the #webhooks-tbody fragment binding.
@@ -57,11 +54,13 @@ type webhookRow struct {
 }
 
 // webhooksSignalsJSON renders the initial Datastar signal envelope for the
-// webhooks page. The filter signal is plumbed now so the fragment envelope
-// vocabulary knows it exists (future filter UI).
-func webhooksSignalsJSON(filter string) template.JS {
-	sig := map[string]string{
+// webhooks page. newOpen seeds the webhookNewOpen signal that gates the
+// create slide-over; it must be map[string]any so the bool marshals as a
+// real JSON boolean (a string "false" is truthy in JS).
+func webhooksSignalsJSON(filter string, newOpen bool) template.JS {
+	sig := map[string]any{
 		"webhooksFilter": filter,
+		"webhookNewOpen": newOpen,
 	}
 	b, err := json.Marshal(sig)
 	if err != nil {
@@ -151,7 +150,7 @@ func (c *Console) serveWebhooksPage(w http.ResponseWriter, r *http.Request) {
 	view := webhooksPageView{
 		Header:   header,
 		Fragment: frag,
-		Signals:  webhooksSignalsJSON(""),
+		Signals:  webhooksSignalsJSON("", false),
 		ReadOnly: c.deps.ReadOnly,
 	}
 	c.renderPage(w, r, http.StatusOK, "webhooks", "Webhooks", view)
@@ -188,17 +187,14 @@ func (c *Console) serveWebhookNew(w http.ResponseWriter, r *http.Request) {
 		header = pageHeader{Title: "Webhooks"}
 	}
 
+	// It just seeds webhookNewOpen=true so a direct visit opens the slide-over.
 	view := webhooksPageView{
 		Header:   header,
 		Fragment: frag,
-		Signals:  webhooksSignalsJSON(""),
+		Signals:  webhooksSignalsJSON("", !c.deps.ReadOnly),
 		ReadOnly: c.deps.ReadOnly,
-		// The create slide-over is the whole point of /new; read-only
-		// consoles render the plain list instead (mutations are gated
-		// server-side regardless).
-		ShowCreate: !c.deps.ReadOnly,
 	}
-	c.renderPage(w, r, http.StatusOK, "webhooks", "Add endpoint", view)
+	c.renderPage(w, r, http.StatusOK, "webhooks", "Webhooks", view)
 }
 
 // serveFragmentWebhooksList handles GET /console/api/fragments/webhooks-list.

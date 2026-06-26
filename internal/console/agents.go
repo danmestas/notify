@@ -38,14 +38,13 @@ const agentConvPageSize = 20
 
 // agentsPageView binds templates/agents.html.
 type agentsPageView struct {
-	Header     pageHeader
-	Fragment   agentsListView
-	Signals    template.JS
-	ReadOnly   bool
-	ShowCreate bool     // true on /console/agents/new (renders the create slide-over)
-	FormError  string   // surfaced from ?error= after a failed create
-	Runtimes   []string // runtime <option> values; only implemented runtimes (domain.SupportedRuntimes, #103)
-	CSRF       string
+	Header    pageHeader
+	Fragment  agentsListView
+	Signals   template.JS
+	ReadOnly  bool
+	FormError string   // surfaced from ?error= after a failed create
+	Runtimes  []string // runtime <option> values; only implemented runtimes (domain.SupportedRuntimes, #103)
+	CSRF      string
 }
 
 // RuntimeSelectOptions adapts the supported runtime values into the
@@ -172,8 +171,10 @@ type turnRow struct {
 }
 
 // agentsSignalsJSON returns the Datastar signals for the agents list page.
-func agentsSignalsJSON(filter string) template.JS {
-	b, err := json.Marshal(map[string]string{"agentsFilter": filter, "agentsPage": ""})
+// newOpen seeds the agentNewOpen signal; pass false for every route except
+// /console/agents/new (which seeds it true so the slide-over opens immediately).
+func agentsSignalsJSON(filter string, newOpen bool) template.JS {
+	b, err := json.Marshal(map[string]any{"agentsFilter": filter, "agentsPage": "", "agentNewOpen": newOpen})
 	if err != nil {
 		return template.JS("{}")
 	}
@@ -241,7 +242,7 @@ func (c *Console) serveAgentsPage(w http.ResponseWriter, r *http.Request) {
 	pd := agentsPageView{
 		Header:    pageHeader{Title: "Agents", Subtitle: "Conversational endpoints registered with this environment."},
 		Fragment:  frag,
-		Signals:   agentsSignalsJSON(filter),
+		Signals:   agentsSignalsJSON(filter, false),
 		ReadOnly:  c.deps.ReadOnly,
 		FormError: r.URL.Query().Get("error"),
 		CSRF:      s.CSRF,
@@ -269,16 +270,15 @@ func (c *Console) serveAgentNew(w http.ResponseWriter, r *http.Request) {
 		frag.Empty = emptyAgentsState(c.deps.ReadOnly, false)
 	}
 	pd := agentsPageView{
-		Header:     pageHeader{Title: "Agents", Subtitle: "Conversational endpoints registered with this environment."},
-		Fragment:   frag,
-		Signals:    agentsSignalsJSON(""),
-		ReadOnly:   c.deps.ReadOnly,
-		ShowCreate: !c.deps.ReadOnly,
-		FormError:  r.URL.Query().Get("error"),
-		Runtimes:   agentdomain.SupportedRuntimes,
-		CSRF:       s.CSRF,
+		Header:    pageHeader{Title: "Agents", Subtitle: "Conversational endpoints registered with this environment."},
+		Fragment:  frag,
+		Signals:   agentsSignalsJSON("", !c.deps.ReadOnly),
+		ReadOnly:  c.deps.ReadOnly,
+		FormError: r.URL.Query().Get("error"),
+		Runtimes:  agentdomain.SupportedRuntimes,
+		CSRF:      s.CSRF,
 	}
-	c.renderPage(w, r, http.StatusOK, "agents", "New agent", pd)
+	c.renderPage(w, r, http.StatusOK, "agents", "Agents", pd)
 }
 
 func emptyAgentsState(readOnly, filtered bool) *emptyState {
@@ -296,7 +296,7 @@ func emptyAgentsState(readOnly, filtered bool) *emptyState {
 		ReadOnly:    readOnly,
 	}
 	if !readOnly {
-		es.PrimaryAction = &emptyStateAction{Label: "Create agent", Href: "/console/agents/new"}
+		es.PrimaryAction = &emptyStateAction{Label: "Create agent", OnClick: "$agentNewOpen = true"}
 	}
 	return es
 }
@@ -355,7 +355,7 @@ func (c *Console) serveAgentDetailPage(w http.ResponseWriter, r *http.Request) {
 		Header:        pageHeader{Title: agentTitle(agent)},
 		Agent:         agent,
 		ActiveTab:     activeTab,
-		Signals:       agentsSignalsJSON(""),
+		Signals:       agentsSignalsJSON("", false),
 		ReadOnly:      c.deps.ReadOnly,
 		ConfirmDelete: r.URL.Query().Get("confirmDelete") == "true",
 		FormError:     r.URL.Query().Get("error"),

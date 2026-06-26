@@ -11,7 +11,7 @@
     <h2 class="console-empty-state-title">No topics yet</h2>
     <p class="console-empty-state-description">Create a topic to group subscribers for broadcast delivery.</p>
     {{if not .ReadOnly}}
-    <a class="btn btn-outline console-action" href="/console/topics/new">Create topic</a>
+    <button type="button" class="btn btn-outline console-action" data-on:click="$topicNewOpen = true">Create topic</button>
     {{end}}
   </div>
   {{else if and (eq (len .Rows) 0) .HasFilters}}

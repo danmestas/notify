@@ -1,4 +1,9 @@
 {{define "content"}}{{$page := .Page}}
+{{/*
+  data-signals seeds the Datastar signal store for the domains page.
+  domainNewOpen drives the create slide-over's data-show. The /new route
+  seeds it true so a direct visit opens the slide-over without a layout shift.
+*/}}
 <section class="console-section"
          data-signals="{{$page.Signals}}">
   {{template "page-header" $page.Header}}
@@ -9,18 +14,22 @@
            data-bind="domainsSearch"
            data-on:input__debounce.300ms="@get('/console/api/fragments/domains-list')">
     {{if not $page.ReadOnly}}
-    <a class="btn btn-primary" href="/console/domains/new">+ Add domain</a>
+    <button type="button" class="btn btn-primary" data-on:click="$domainNewOpen = true">+ Add domain</button>
     {{end}}
   </div>
 
-  {{/* Create slide-over — rendered on /console/domains/new */}}
+  {{/* Domain create slide-over — a client-side overlay (data-show on the
+       domainNewOpen signal). It overlays the unchanged list page so opening it
+       causes NO layout shift; the /new route just seeds domainNewOpen=true. */}}
   <div id="domain-slideover">
-    {{if $page.ShowCreate}}
+    {{if not $page.ReadOnly}}
     <div class="console-slideover" role="dialog" aria-labelledby="domain-create-heading"
-         data-component="domain-create">
+         data-component="domain-create"
+         data-show="$domainNewOpen">
       <div class="console-slideover-header">
         <h2 id="domain-create-heading" class="console-card-title">Add domain</h2>
-        <a class="btn-icon console-slideover-close" href="/console/domains" aria-label="Close">&#x2715;</a>
+        <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
+                data-on:click="$domainNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
       <form method="POST" action="/console/domains" class="domain-create-form">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
@@ -30,7 +39,7 @@
                  placeholder="mail.example.com" required autofocus>
         </div>
         <div class="console-slideover-actions">
-          <a class="btn btn-outline" href="/console/domains">Cancel</a>
+          <button type="button" class="btn btn-outline" data-on:click="$domainNewOpen = false">Cancel</button>
           <button type="submit" class="btn btn-primary">Add domain</button>
         </div>
       </form>
@@ -38,7 +47,7 @@
     {{end}}
   </div>
 
-  {{/* Main table */}}
+  {{/* Main table — loads via Datastar on-load; initial server render ensures no-JS fallback */}}
   <div data-on-load="@get('/console/api/fragments/domains-list')">
     {{template "domains-tbody" $page.Fragment}}
   </div>

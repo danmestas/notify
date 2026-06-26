@@ -81,20 +81,43 @@ func TestAgents_NavEntryIsLive(t *testing.T) {
 
 func TestAgents_CreateFormRenders(t *testing.T) {
 	tc := newTestConsole(t)
-	cookie, _ := tc.login(t)
+	cookie, csrf := tc.login(t)
+
 	rr := tc.get(t, "/console/agents/new", cookie)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rr.Code)
+		t.Fatalf("GET /console/agents/new: status = %d, want 200", rr.Code)
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, `action="/console/agents"`) {
-		t.Errorf("create form action missing")
+
+	if !strings.Contains(body, `data-component="agent-create"`) {
+		t.Errorf("/new missing agent-create slide-over")
 	}
-	if !strings.Contains(body, `name="csrf_token"`) {
-		t.Errorf("create form missing csrf token")
+	if !strings.Contains(body, `<form method="POST" action="/console/agents"`) {
+		t.Errorf("/new missing create form posting to /console/agents")
 	}
 	if !strings.Contains(body, `name="identifier"`) {
-		t.Errorf("create form missing identifier field")
+		t.Errorf("/new create form missing identifier field")
+	}
+	if !strings.Contains(body, `name="csrf_token" value="`+csrf+`"`) {
+		t.Errorf("/new create form missing CSRF token")
+	}
+
+	// The create slide-over is a CLIENT-SIDE overlay: present on the list page
+	// too, but hidden via data-show on the agentNewOpen signal (seeded closed),
+	// so opening it causes NO layout shift. The "+ New agent" control toggles
+	// the signal instead of navigating to /new (which would re-render the page).
+	listBody := tc.get(t, "/console/agents", cookie).Body.String()
+	if !strings.Contains(listBody, `data-component="agent-create"`) {
+		t.Error("list page should render the create slide-over as a hidden overlay")
+	}
+	if !strings.Contains(listBody, `data-show="$agentNewOpen"`) {
+		t.Error("create slide-over must be gated by data-show on the agentNewOpen signal")
+	}
+	if !strings.Contains(listBody, `data-on:click="$agentNewOpen = true"`) {
+		t.Error(`"+ New agent" must toggle the agentNewOpen signal, not navigate`)
+	}
+	if strings.Contains(listBody, `href="/console/agents/new"`) {
+		t.Error(`"+ New agent" must not be a navigation link to /console/agents/new`)
 	}
 }
 

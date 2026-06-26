@@ -24,11 +24,10 @@ import (
 var domainSignalKeys = []string{"domainsSearch"}
 
 type domainsPageView struct {
-	Header     pageHeader
-	Fragment   domainsListView
-	Signals    template.JS
-	ReadOnly   bool
-	ShowCreate bool
+	Header   pageHeader
+	Fragment domainsListView
+	Signals  template.JS
+	ReadOnly bool
 }
 
 type domainsListView struct {
@@ -52,8 +51,13 @@ type domainDetailView struct {
 	Signals       template.JS
 }
 
-func domainsSignalsJSON(search string) template.JS {
-	m := map[string]string{"domainsSearch": search}
+func domainsSignalsJSON(search string, newOpen bool) template.JS {
+	m := map[string]any{
+		"domainsSearch": search,
+		// domainNewOpen drives the create slide-over's data-show. Must be a
+		// real JSON boolean — a string "false" is truthy in JS/Datastar.
+		"domainNewOpen": newOpen,
+	}
 	b, err := json.Marshal(m)
 	if err != nil {
 		return template.JS("{}")
@@ -118,7 +122,7 @@ func (c *Console) serveDomainsPage(w http.ResponseWriter, r *http.Request) {
 	view := domainsPageView{
 		Header:   header,
 		Fragment: frag,
-		Signals:  domainsSignalsJSON(""),
+		Signals:  domainsSignalsJSON("", false),
 		ReadOnly: c.deps.ReadOnly,
 	}
 	c.renderPage(w, r, http.StatusOK, "domains", "Inbound Domains", view)
@@ -149,13 +153,12 @@ func (c *Console) serveDomainNew(w http.ResponseWriter, r *http.Request) {
 		header = pageHeader{Title: "Inbound Domains"}
 	}
 	view := domainsPageView{
-		Header:     header,
-		Fragment:   frag,
-		Signals:    domainsSignalsJSON(""),
-		ReadOnly:   c.deps.ReadOnly,
-		ShowCreate: !c.deps.ReadOnly,
+		Header:   header,
+		Fragment: frag,
+		Signals:  domainsSignalsJSON("", !c.deps.ReadOnly),
+		ReadOnly: c.deps.ReadOnly,
 	}
-	c.renderPage(w, r, http.StatusOK, "domains", "Add domain", view)
+	c.renderPage(w, r, http.StatusOK, "domains", "Inbound Domains", view)
 }
 
 func (c *Console) serveDomainDetail(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +193,7 @@ func (c *Console) serveDomainDetail(w http.ResponseWriter, r *http.Request) {
 		ReadOnly:      c.deps.ReadOnly,
 		ConfirmDelete: r.URL.Query().Get("confirmDelete") == "true",
 		CSRF:          s.CSRF,
-		Signals:       domainsSignalsJSON(""),
+		Signals:       domainsSignalsJSON("", false),
 	}
 	if err := view.Header.validate(); err != nil {
 		view.Header = pageHeader{Title: d.Name}

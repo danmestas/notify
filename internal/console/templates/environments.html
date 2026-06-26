@@ -5,18 +5,22 @@
 
   <div class="console-filter-bar">
     {{if not $page.ReadOnly}}
-    <a class="btn btn-primary" href="/console/settings/environments/new">+ Add environment</a>
+    <button type="button" class="btn btn-primary" data-on:click="$envNewOpen = true">+ Add environment</button>
     {{end}}
   </div>
 
-  {{/* Environment create slide-over — rendered on /console/settings/environments/new */}}
+  {{/* Environment create slide-over — a client-side overlay (data-show on the
+       envNewOpen signal). It overlays the unchanged list page so opening it
+       causes NO layout shift; the /new route just seeds envNewOpen=true. */}}
   <div id="environment-slideover">
-    {{if $page.ShowCreate}}
+    {{if not $page.ReadOnly}}
     <div class="console-slideover" role="dialog" aria-labelledby="env-create-heading"
-         data-component="env-create">
+         data-component="env-create"
+         data-show="$envNewOpen">
       <div class="console-slideover-header">
         <h2 id="env-create-heading" class="console-card-title">Add environment</h2>
-        <a class="btn-icon console-slideover-close" href="/console/settings/environments" aria-label="Close">{{ uiIcon "x" }}</a>
+        <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
+                data-on:click="$envNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
       <form method="POST" action="/console/settings/environments">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
@@ -32,7 +36,7 @@
             "— select type —" "" false "" true)}}
         </div>
         <div class="console-slideover-actions">
-          <a class="btn btn-outline" href="/console/settings/environments">Cancel</a>
+          <button type="button" class="btn btn-outline" data-on:click="$envNewOpen = false">Cancel</button>
           <button type="submit" class="btn btn-primary">Add environment</button>
         </div>
       </form>

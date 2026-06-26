@@ -565,9 +565,12 @@ type emptyState struct {
 }
 
 // emptyStateAction is the optional CTA below the description.
+// Set Href for a navigation link or OnClick for a signal-toggling button;
+// OnClick takes precedence when both are set.
 type emptyStateAction struct {
-	Label string
-	Href  string
+	Label   string
+	Href    string
+	OnClick string // e.g. "$agentNewOpen = true"; renders a <button> instead of <a>
 }
 
 // actionButton binds the ReadOnly-aware action-button partial: a

@@ -7,7 +7,7 @@
 //	TestEnvironments_UnauthenticatedRedirectsToLogin  — no cookie → 303 to /console/login
 //	TestEnvironments_NavEntryIsLive                   — nav link present + is-active
 //	TestFragment_EnvironmentsList_SSEFraming          — fragment GET has SSE event marker
-//	TestEnvironments_NewRendersCreateForm             — /new shows slide-over; base does not
+//	TestEnvironments_NewRendersCreateForm             — /new seeds envNewOpen=true; list renders hidden overlay
 //	TestEnvironments_ConfirmDeleteState               — fragment ?confirmDelete shows confirm row
 //	TestEnvironments_Create_ReadOnlyBlocked           — POST create → 403 when ReadOnly
 //	TestEnvironments_Delete_ReadOnlyBlocked           — POST delete → 403
@@ -97,19 +97,38 @@ func TestEnvironments_NewRendersCreateForm(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)
 
-	// /new shows the slide-over.
+	// /new must render the slide-over (form + heading) and return 200.
 	rr := tc.get(t, "/console/settings/environments/new", cookie)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("/new: status = %d, want 200", rr.Code)
 	}
-	if body := rr.Body.String(); !strings.Contains(body, "Add environment") {
-		t.Error("/new missing create-form heading 'Add environment'")
+	body := rr.Body.String()
+	if !strings.Contains(body, `data-component="env-create"`) {
+		t.Error("/new missing env-create slide-over")
+	}
+	if !strings.Contains(body, `<form method="POST" action="/console/settings/environments"`) {
+		t.Error("/new missing create form posting to /console/settings/environments")
+	}
+	if !strings.Contains(body, `name="name"`) {
+		t.Error("/new create form missing name input")
 	}
 
-	// Base page does NOT show the slide-over.
-	rr2 := tc.get(t, "/console/settings/environments", cookie)
-	if body := rr2.Body.String(); strings.Contains(body, `data-component="env-create"`) {
-		t.Error("base environments page shows create slide-over unexpectedly")
+	// The create slide-over is a CLIENT-SIDE overlay: present on the list page
+	// too (hidden via data-show on the envNewOpen signal, seeded closed), so
+	// opening it causes NO layout shift. The "+ Add environment" button toggles
+	// the signal instead of navigating to /new.
+	listBody := tc.get(t, "/console/settings/environments", cookie).Body.String()
+	if !strings.Contains(listBody, `data-component="env-create"`) {
+		t.Error("list page should render the create slide-over as a hidden overlay")
+	}
+	if !strings.Contains(listBody, `data-show="$envNewOpen"`) {
+		t.Error("create slide-over must be gated by data-show on the envNewOpen signal")
+	}
+	if !strings.Contains(listBody, `data-on:click="$envNewOpen = true"`) {
+		t.Error(`"+ Add environment" must toggle the envNewOpen signal, not navigate`)
+	}
+	if strings.Contains(listBody, `href="/console/settings/environments/new"`) {
+		t.Error(`"+ Add environment" must not be a link to /new (causes layout shift)`)
 	}
 }
 

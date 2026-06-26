@@ -27,11 +27,10 @@ import (
 // ─── view structs ─────────────────────────────────────────────────────────────
 
 type environmentsPageView struct {
-	Header     pageHeader
-	Fragment   environmentsListView
-	Signals    template.JS
-	ReadOnly   bool
-	ShowCreate bool
+	Header   pageHeader
+	Fragment environmentsListView
+	Signals  template.JS
+	ReadOnly bool
 }
 
 type environmentsListView struct {
@@ -51,9 +50,12 @@ type environmentRow struct {
 	IsCurrent  bool
 }
 
-func environmentsSignalsJSON(filter string) template.JS {
-	sig := map[string]string{
+func environmentsSignalsJSON(filter string, newOpen bool) template.JS {
+	sig := map[string]any{
 		"environmentsFilter": filter,
+		// envNewOpen drives the create slide-over's data-show. A real JSON
+		// boolean is required — a string "false" is truthy in JS.
+		"envNewOpen": newOpen,
 	}
 	b, err := json.Marshal(sig)
 	if err != nil {
@@ -130,7 +132,7 @@ func (c *Console) serveEnvironmentsPage(w http.ResponseWriter, r *http.Request) 
 	view := environmentsPageView{
 		Header:   header,
 		Fragment: frag,
-		Signals:  environmentsSignalsJSON(""),
+		Signals:  environmentsSignalsJSON("", false),
 		ReadOnly: c.deps.ReadOnly,
 	}
 	c.renderPage(w, r, http.StatusOK, "environments", "Environments", view)
@@ -166,13 +168,12 @@ func (c *Console) serveEnvironmentNew(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := environmentsPageView{
-		Header:     header,
-		Fragment:   frag,
-		Signals:    environmentsSignalsJSON(""),
-		ReadOnly:   c.deps.ReadOnly,
-		ShowCreate: !c.deps.ReadOnly,
+		Header:   header,
+		Fragment: frag,
+		Signals:  environmentsSignalsJSON("", !c.deps.ReadOnly),
+		ReadOnly: c.deps.ReadOnly,
 	}
-	c.renderPage(w, r, http.StatusOK, "environments", "Add environment", view)
+	c.renderPage(w, r, http.StatusOK, "environments", "Environments", view)
 }
 
 func (c *Console) serveFragmentEnvironmentsList(w http.ResponseWriter, r *http.Request) {

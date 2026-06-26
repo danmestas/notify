@@ -149,16 +149,29 @@ func TestWebhooks_NewRendersCreateForm(t *testing.T) {
 		t.Errorf("/new missing create form action")
 	}
 	if !strings.Contains(body, `data-component="webhook-create"`) {
-		t.Errorf("/new missing create slide-over component")
+		t.Errorf("/new missing webhook-create slide-over")
 	}
 	if !strings.Contains(body, csrf) {
 		t.Errorf("/new create form missing CSRF token")
 	}
 
-	// The plain list page does NOT show the create slide-over.
+	// The create slide-over is now a CLIENT-SIDE overlay: present on the list
+	// page too, but hidden via data-show on the webhookNewOpen signal (seeded
+	// false by the list handler, true by the /new handler).
 	rrList := tc.get(t, "/console/webhooks", cookie)
-	if strings.Contains(rrList.Body.String(), `data-component="webhook-create"`) {
-		t.Errorf("/console/webhooks should not render the create slide-over")
+	listBody := rrList.Body.String()
+
+	if !strings.Contains(listBody, `data-component="webhook-create"`) {
+		t.Error("list page should render the create slide-over as a hidden overlay")
+	}
+	if !strings.Contains(listBody, `data-show="$webhookNewOpen"`) {
+		t.Error("create slide-over must be gated by data-show on the webhookNewOpen signal")
+	}
+	if !strings.Contains(listBody, `data-on:click="$webhookNewOpen = true"`) {
+		t.Error(`"+ Add endpoint" must toggle the webhookNewOpen signal, not navigate`)
+	}
+	if strings.Contains(listBody, `href="/console/webhooks/new"`) {
+		t.Error("list page must not contain a navigation link to /console/webhooks/new")
 	}
 }
 
