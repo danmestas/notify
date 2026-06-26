@@ -80,10 +80,10 @@
       <dd><time datetime="{{$n.CreatedAt}}">{{$n.CreatedAt}}</time></dd>
     </dl>
 
-    {{if $n.Payload}}
+    {{if .PayloadText}}
     <section class="activity-detail-section">
       <h3 class="activity-detail-section-title">Payload</h3>
-      <pre class="activity-detail-payload"><code>{{$n.Payload}}</code></pre>
+      <pre class="activity-detail-payload"><code>{{.PayloadText}}</code></pre>
     </section>
     {{end}}
 

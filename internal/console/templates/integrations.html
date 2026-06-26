@@ -68,7 +68,12 @@
            role="dialog"
            aria-label="Integration detail">
       <div id="integration-detail-inner">
-        <div id="integration-detail" class="integration-detail-inner">
+        {{/* When the page is opened at /console/integrations/{id} (or a
+             verify/test-send 303-redirect lands here) integrationDetailId is
+             seeded but the body would stay on this placeholder; data-on-load
+             fetches the detail fragment so the banners/body show (#bug-3). */}}
+        <div id="integration-detail" class="integration-detail-inner"
+             data-on-load="$integrationDetailId && @get('/console/api/fragments/integration-detail')">
           <div class="integration-detail-empty">
             <p class="console-lede">Select an integration to configure it.</p>
           </div>

@@ -125,8 +125,10 @@ func TestFragment_IntegrationProviderForm_ListsFullCatalog(t *testing.T) {
 		if !strings.Contains(body, ">"+p.Label+"<") {
 			t.Errorf("provider picker missing catalog entry %q (id=%s)", p.Label, p.ID)
 		}
-		if !strings.Contains(body, "provider="+p.ID) {
-			t.Errorf("provider picker missing select link for id=%s", p.ID)
+		// The pick rides the integrationProviderPick signal (Datastar drops a
+		// literal ?provider=); the row sets it then refetches the fragment.
+		if !strings.Contains(body, "$integrationProviderPick='"+p.ID+"'") {
+			t.Errorf("provider picker missing signal-based select for id=%s", p.ID)
 		}
 	}
 }
@@ -286,10 +288,10 @@ func TestFragment_IntegrationProviderForm_RowsHaveIcons(t *testing.T) {
 	}
 	body := rr.Body.String()
 
-	// Every catalog entry renders a row with a select link + label.
+	// Every catalog entry renders a row with a signal-based select + label.
 	for _, p := range providerCatalog {
-		if !strings.Contains(body, "provider="+p.ID) {
-			t.Errorf("provider list missing select link for id=%s", p.ID)
+		if !strings.Contains(body, "$integrationProviderPick='"+p.ID+"'") {
+			t.Errorf("provider list missing signal-based select for id=%s", p.ID)
 		}
 		if !strings.Contains(body, ">"+p.Label+"<") {
 			t.Errorf("provider list missing label %q (id=%s)", p.Label, p.ID)
@@ -1010,5 +1012,173 @@ func TestIntegrations_RouteAuth(t *testing.T) {
 				t.Errorf("%s %s: Location = %q, want /console/login", rt.method, rt.path, got)
 			}
 		})
+	}
+}
+
+// ─── regression: connect-form CSRF (#bug-1) ──────────────────────────────────
+
+// TestFragment_IntegrationProviderForm_CSRFPopulated guards the connect drawer's
+// step-2 credential form against the regression where its hidden csrf_token
+// rendered empty (value=""), so every create POST 403'd and no integration was
+// created. The fragment must plumb the per-session CSRF token into the input.
+func TestFragment_IntegrationProviderForm_CSRFPopulated(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.getWithQuery(t, "/console/api/fragments/integration-provider-form",
+		url.Values{"provider": {"smtp"}}.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("provider form fragment: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// The form must NOT carry an empty csrf_token.
+	if strings.Contains(body, `name="csrf_token" value=""`) {
+		t.Fatal("connect-form csrf_token is empty — create POST would 403 (#bug-1)")
+	}
+	// It must carry the live session token.
+	if !strings.Contains(body, `name="csrf_token" value="`+csrf+`"`) {
+		t.Errorf("connect-form missing populated csrf_token=%q; body excerpt:\n%s",
+			csrf, body[strings.Index(body, "csrf_token"):min(len(body), strings.Index(body, "csrf_token")+80)])
+	}
+}
+
+// ─── regression: provider pick via signal (#bug-2) ───────────────────────────
+
+// TestFragment_IntegrationProviderForm_PickViaSignal proves the step-2 form
+// loads when the chosen provider arrives via the integrationProviderPick signal
+// (the ?datastar= envelope) rather than a literal ?provider= query param —
+// because Datastar serialises signals to ?datastar= and drops literal params,
+// so the old row link silently failed to load the chosen provider.
+func TestFragment_IntegrationProviderForm_PickViaSignal(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	v := url.Values{}
+	v.Set("datastar", `{"integrationProviderPick":"twilio"}`)
+	rr := tc.getWithQuery(t, "/console/api/fragments/integration-provider-form",
+		v.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("provider form fragment: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// Step-2 loaded for Twilio: its title + a Twilio-specific credential field.
+	if !strings.Contains(body, "Connect Twilio SMS") {
+		t.Errorf("signal-routed provider pick did not load step-2 for twilio; body:\n%s", body)
+	}
+	if !strings.Contains(body, `name="account_sid"`) {
+		t.Error("signal-routed twilio form missing account_sid credential field")
+	}
+}
+
+// TestEnvelopeToQuery_IntegrationProviderPick locks the envelope→query mapping
+// that mergeFragmentParams relies on to forward the signal as ?provider=.
+func TestEnvelopeToQuery_IntegrationProviderPick(t *testing.T) {
+	key, val := envelopeToQuery(fragmentEnvelope{IntegrationProviderPick: "slack"}, "integrationProviderPick")
+	if key != "provider" || val != "slack" {
+		t.Errorf("envelopeToQuery(integrationProviderPick) = (%q,%q), want (provider,slack)", key, val)
+	}
+}
+
+// ─── regression: detail-drawer auto-fetch (#bug-3) ───────────────────────────
+
+// TestIntegrations_DetailDrawerAutoFetchesWhenPreopened guards the wiring that
+// makes a direct GET /console/integrations/{id} (and the verify/test-send 303
+// redirects, which reload the page with integrationDetailId seeded) actually
+// populate the detail body. Without a data-on-load on #integration-detail the
+// drawer stays stuck on the "Select an integration…" placeholder and the
+// verify/test-send banners never show.
+func TestIntegrations_DetailDrawerAutoFetchesWhenPreopened(t *testing.T) {
+	tc := newTestConsole(t)
+	in := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "smtp-1",
+		EncCredentials: []byte("ct"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/integrations/"+in.ID, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations/{id}: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// The persistent #integration-detail element must auto-fetch the detail
+	// fragment when integrationDetailId is set.
+	idx := strings.Index(body, `id="integration-detail"`)
+	if idx < 0 {
+		t.Fatal("page missing #integration-detail element")
+	}
+	// Find the opening tag for that element.
+	start := strings.LastIndex(body[:idx], "<div")
+	end := strings.Index(body[idx:], ">")
+	if start < 0 || end < 0 {
+		t.Fatal("could not isolate #integration-detail opening tag")
+	}
+	tag := body[start : idx+end+1]
+	if !strings.Contains(tag, "data-on-load") {
+		t.Errorf("#integration-detail has no data-on-load auto-fetch (#bug-3); tag:\n%s", tag)
+	}
+	if !strings.Contains(tag, "/console/api/fragments/integration-detail") {
+		t.Errorf("#integration-detail data-on-load does not fetch the detail fragment; tag:\n%s", tag)
+	}
+}
+
+// ─── regression: Twilio Auth Token masked (#bug-4) ───────────────────────────
+
+// TestFragment_IntegrationProviderForm_TwilioAuthTokenMasked proves the Twilio
+// Auth Token (a secret) renders as a password input, not plaintext type=text.
+func TestFragment_IntegrationProviderForm_TwilioAuthTokenMasked(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.getWithQuery(t, "/console/api/fragments/integration-provider-form",
+		url.Values{"provider": {"twilio"}}.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("twilio form: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	idx := strings.Index(body, `name="auth_token"`)
+	if idx < 0 {
+		t.Fatal("twilio form missing auth_token field")
+	}
+	start := strings.LastIndex(body[:idx], "<input")
+	if start < 0 || !strings.Contains(body[start:idx], `type="password"`) {
+		t.Errorf("twilio auth_token is not a password input (renders plaintext) (#bug-4); input:\n%s",
+			body[start:idx])
+	}
+}
+
+// ─── regression: empty-state icon is SVG, not emoji (#bug-5) ──────────────────
+
+// TestIntegrations_EmptyStateIconIsSVG proves the integrations empty-state
+// renders its icon as a vendored ui-icon SVG (no-emoji rule) rather than the
+// literal 🔌 glyph it shipped with.
+func TestIntegrations_EmptyStateIconIsSVG(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/integrations", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	if strings.Contains(body, "🔌") {
+		t.Error("integrations empty-state still renders the 🔌 emoji (#bug-5)")
+	}
+	// The empty-state icon span must carry the unplug ui-icon and an inlined SVG.
+	idx := strings.Index(body, `data-kind="unplug"`)
+	if idx < 0 {
+		t.Fatal("integrations empty-state missing data-kind=\"unplug\" icon span")
+	}
+	// The span body should be an inlined SVG, not a text glyph.
+	tail := body[idx:min(len(body), idx+200)]
+	if !strings.Contains(tail, "<svg") {
+		t.Errorf("empty-state unplug icon is not an inlined SVG; span:\n%s", tail)
 	}
 }

@@ -51,6 +51,8 @@
         </td>
         <td class="console-action-row">
           {{if not $v.ReadOnly}}
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="$envEditID = '{{.ID}}'; $envEditName = '{{.Name}}'; $envEditOpen = true">Edit</button>
           {{if not .IsCurrent}}
           <button type="button" class="btn btn-outline btn-sm"
                   data-on:click="@get('/console/api/fragments/environments-list?confirmDelete={{.ID | urlquery}}')">Delete</button>

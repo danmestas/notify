@@ -49,6 +49,10 @@ type fragmentEnvelope struct {
 	IntegrationChannel string `json:"integrationChannel,omitempty"`
 	// IntegrationDetailId is the ID of the open detail drawer ("" = closed).
 	IntegrationDetailId string `json:"integrationDetailId,omitempty"`
+	// IntegrationProviderPick is the provider id chosen in step-1 of the
+	// connect drawer. Datastar drops literal query params, so the row routes
+	// the pick through this signal instead of ?provider=.
+	IntegrationProviderPick string `json:"integrationProviderPick,omitempty"`
 	// Subscriber list filter signals (W2-C3).
 	SubscribersEmail string `json:"subscribersEmail,omitempty"`
 	SubscribersPhone string `json:"subscribersPhone,omitempty"`
@@ -148,6 +152,8 @@ func envelopeToQuery(env fragmentEnvelope, key string) (string, string) {
 		return "channel", env.IntegrationChannel
 	case "integrationDetailId":
 		return "id", env.IntegrationDetailId
+	case "integrationProviderPick":
+		return "provider", env.IntegrationProviderPick
 	// Subscriber list filter signals (W2-C3).
 	case "subscribersEmail":
 		return "subscribersEmail", env.SubscribersEmail

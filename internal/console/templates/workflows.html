@@ -24,7 +24,7 @@
            placeholder="Search by name or identifier"
            value="{{$frag.FilterQ}}"
            data-bind-wfFilter
-           data-on-input__debounce.300ms="@get('/console/api/fragments/workflows-list')"
+           data-on:input__debounce.300ms="@get('/console/api/fragments/workflows-list')"
            aria-label="Search workflows">
     {{template "ui-select" (uiSelect "wf-status" "" "wfStatus"
       (uiSelectOptions "" "All statuses" "active" "Active" "inactive" "Inactive")

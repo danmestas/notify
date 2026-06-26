@@ -26,3 +26,5 @@ mise.local.toml
 /step*.png
 /*-screenshot.png
 /screenshot*.png
+/*.png
+/*.jpeg

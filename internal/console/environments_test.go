@@ -17,6 +17,11 @@
 //	TestEnvironments_Delete_RemovesEnvironment        — delete non-current → 303; gone from list
 //	TestEnvironments_NonDatastarPOSTRedirects         — native form POST gets 303, not SSE
 //	TestEnvironments_RouteAuth                        — all routes → 303 /console/login without session
+//	TestEnvironments_EditSlideoverPresent             — list page renders edit slide-over overlay
+//	TestEnvironments_TbodyHasEditButton               — fragment tbody has Edit button per non-current row
+//	TestEnvironments_Update_Redirect                  — POST update → 303 + name changed
+//	TestEnvironments_Update_ReadOnlyBlocked           — POST update → 403 when ReadOnly
+//	TestEnvironments_Update_MissingName               — POST update with blank name → 400
 package console
 
 import (
@@ -316,5 +321,131 @@ func TestEnvironments_RouteAuth(t *testing.T) {
 		if loc := rr.Header().Get("Location"); !strings.Contains(loc, "/console/login") {
 			t.Errorf("%s redirect = %q, want /console/login", path, loc)
 		}
+	}
+}
+
+// ─── edit/rename slide-over ───────────────────────────────────────────────────
+
+// TestEnvironments_EditSlideoverPresent verifies that the list page renders the
+// edit slide-over as a hidden client-side overlay (data-show on the
+// envEditOpen signal) — matching the create-slide-over pattern — and that no
+// link navigates to an external route (no layout shift).
+func TestEnvironments_EditSlideoverPresent(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/settings/environments", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET environments: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// The edit slide-over must be present on the list page as a hidden overlay.
+	if !strings.Contains(body, `data-component="env-edit"`) {
+		t.Error("environments list missing env-edit slide-over (data-component=\"env-edit\")")
+	}
+	if !strings.Contains(body, `data-show="$envEditOpen"`) {
+		t.Error("env-edit slide-over must be gated by data-show on the envEditOpen signal")
+	}
+	// The edit form must POST to /console/api/environments/ (update route).
+	if !strings.Contains(body, `/console/api/environments/`) {
+		t.Error("env-edit slide-over form must POST to /console/api/environments/{id}")
+	}
+	// The form must have a name input.
+	if !strings.Contains(body, `name="name"`) {
+		t.Error("env-edit slide-over form missing name input")
+	}
+	// Must NOT navigate away via a link to an external edit page.
+	if strings.Contains(body, `href="/console/settings/environments/`) {
+		t.Error("env-edit must not link to a separate route (causes layout shift)")
+	}
+}
+
+// TestEnvironments_TbodyHasEditButton verifies that the environments fragment
+// tbody renders an Edit button for non-current rows, and that the button sets
+// the envEditOpen signal (client-side overlay, not navigation).
+func TestEnvironments_TbodyHasEditButton(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	// Create a second environment so we have a non-current row to inspect.
+	_, _, scope2, err := tc.deps.Identity.CreateEnvironment(testBackground(), tc.scope.OrgID, "staging", "")
+	if err != nil {
+		t.Fatalf("CreateEnvironment: %v", err)
+	}
+	_ = scope2
+
+	rr := tc.get(t, "/console/api/fragments/environments-list", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("fragment: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// An Edit button must appear — it should reference the envEditOpen signal.
+	if !strings.Contains(body, "Edit") {
+		t.Error("environments tbody missing Edit button")
+	}
+	if !strings.Contains(body, "$envEditOpen") {
+		t.Error("Edit button must set the $envEditOpen signal (client-side overlay, not navigation)")
+	}
+}
+
+// TestEnvironments_Update_Redirect verifies that POSTing to the update handler
+// renames the environment and redirects to the environments list.
+func TestEnvironments_Update_Redirect(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	// Create a second environment to rename (update the non-current one).
+	_, _, scope2, err := tc.deps.Identity.CreateEnvironment(testBackground(), tc.scope.OrgID, "staging", "")
+	if err != nil {
+		t.Fatalf("CreateEnvironment: %v", err)
+	}
+
+	rr := tc.postForm(t, "/console/api/environments/"+scope2.EnvID,
+		url.Values{"name": {"renamed-env"}, "csrf_token": {csrf}}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("update: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if loc := rr.Header().Get("Location"); loc != "/console/settings/environments" {
+		t.Errorf("update redirect = %q, want /console/settings/environments", loc)
+	}
+
+	// Verify the renamed environment appears in the list.
+	rr2 := tc.get(t, "/console/settings/environments", cookie)
+	if body := rr2.Body.String(); !strings.Contains(body, "renamed-env") {
+		t.Error("renamed environment not visible in list after update")
+	}
+}
+
+// TestEnvironments_Update_ReadOnlyBlocked verifies POST update is blocked in
+// read-only mode.
+func TestEnvironments_Update_ReadOnlyBlocked(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.c.deps.ReadOnly = true
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/environments/some-id",
+		url.Values{"name": {"newname"}, "csrf_token": {csrf}}, cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("update read-only: status = %d, want 403", rr.Code)
+	}
+}
+
+// TestEnvironments_Update_MissingName verifies that an empty name is rejected
+// with 400.
+func TestEnvironments_Update_MissingName(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	_, _, scope2, err := tc.deps.Identity.CreateEnvironment(testBackground(), tc.scope.OrgID, "staging", "")
+	if err != nil {
+		t.Fatalf("CreateEnvironment: %v", err)
+	}
+
+	rr := tc.postForm(t, "/console/api/environments/"+scope2.EnvID,
+		url.Values{"name": {""}, "csrf_token": {csrf}}, cookie)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("update blank name: status = %d, want 400", rr.Code)
 	}
 }

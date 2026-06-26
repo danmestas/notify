@@ -6,7 +6,13 @@
 {{define "empty-state"}}{{with .}}
 <div class="console-empty-state" data-component="empty-state">
   {{if .Icon}}
+  {{/* When Icon is a vendored ui-icon name, inline its currentColor SVG
+       (no-emoji rule); otherwise fall back to rendering the literal Icon. */}}
+  {{if or (eq .Icon "unplug") (eq .Icon "megaphone") (eq .Icon "message-circle") (eq .Icon "user") (eq .Icon "star")}}
+  <span class="console-empty-state-icon" data-kind="{{.Icon}}" aria-hidden="true">{{ uiIcon .Icon }}</span>
+  {{else}}
   <span class="console-empty-state-icon" data-kind="{{.Icon}}" aria-hidden="true">{{.Icon}}</span>
+  {{end}}
   {{end}}
   <h2 class="console-empty-state-title">{{.Title}}</h2>
   <p class="console-empty-state-description">{{.Description}}</p>

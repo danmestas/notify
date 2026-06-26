@@ -5,7 +5,13 @@
   stored encrypted value.
 */}}
 {{define "integration-detail"}}
-<div id="integration-detail" class="integration-detail-inner">
+{{/* data-on-load re-fetches the detail body whenever this element mounts with
+     integrationDetailId set but no integration loaded (Empty). Covers the
+     direct GET /console/integrations/{id} pre-open and the verify/test-send
+     303-redirects, which reload the page with integrationDetailId set but
+     leave the body on the placeholder until something fetches it (#bug-3). */}}
+<div id="integration-detail" class="integration-detail-inner"
+     {{if .Empty}}data-on-load="$integrationDetailId && @get('/console/api/fragments/integration-detail')"{{end}}>
   {{if .Empty}}
   <div class="integration-detail-empty">
     <p class="console-lede">Select an integration to configure it.</p>

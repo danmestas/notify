@@ -465,7 +465,15 @@ func TestFragment_AnalyticsCharts_ChannelToggle(t *testing.T) {
 }
 
 // TestFragment_AnalyticsCharts_ChannelToggleQuoteSafe proves the channel-toggle
-// control is immune to JS-literal breakout.
+// control is immune to JS-literal breakout. The toggle now embeds the channel
+// name as a jsEscape'd JS literal in the data-on:click expression (not via
+// $el.dataset.channel, which Datastar does not resolve reliably at runtime).
+//
+// html/template HTML-encodes the single quotes in template.JS values when they
+// appear inside an HTML attribute, so 'ev\'il' becomes &#39;ev\x27il&#39; in
+// the raw source. The browser decodes &#39; back to ' before Datastar parses
+// the expression, so the runtime JS sees 'ev\x27il' (a well-formed string
+// literal).
 func TestFragment_AnalyticsCharts_ChannelToggleQuoteSafe(t *testing.T) {
 	tc := newTestConsole(t)
 	const evil = "ev'il"
@@ -480,14 +488,53 @@ func TestFragment_AnalyticsCharts_ChannelToggleQuoteSafe(t *testing.T) {
 	}
 	body := rr.Body.String()
 
-	if !strings.Contains(body, "$el.dataset.channel") {
-		t.Errorf("channel-toggle handler does not use the $el.dataset.channel idiom")
+	// The click expression must NOT use $el.dataset.channel (unreliable in Datastar).
+	if strings.Contains(body, "$el.dataset.channel") {
+		t.Errorf("channel-toggle must not use $el.dataset.channel (Datastar does not resolve it reliably)")
 	}
+	// A raw unescaped 'ev'il' must never appear — that would break out of the JS literal.
 	if strings.Contains(body, `=== 'ev'il'`) || strings.Contains(body, `'ev'il'`) {
 		t.Errorf("channel name broke out of a JS string literal: %.400s", body)
 	}
-	if !strings.Contains(body, `data-channel="ev&#39;il"`) {
-		t.Errorf("channel name not HTML-escaped into data-channel attribute: %.400s", body)
+	// jsEscapeStringLiteral("ev'il") → 'ev\'il'; html/template then HTML-encodes
+	// both outer quotes and the escaped inner quote in the attribute value,
+	// yielding &#39;ev\&#39;il&#39;. The browser decodes &#39; → ' before JS
+	// evaluation, so the runtime expression sees 'ev\'il' — a valid JS literal.
+	if !strings.Contains(body, `&#39;ev\&#39;il&#39;`) {
+		t.Errorf("channel name not JS-escaped in click expression (want &#39;ev\\&#39;il&#39;): %.400s", body)
+	}
+}
+
+// TestFragment_AnalyticsCharts_ChannelToggleExpressionLiteral is a regression
+// guard for the channel-toggle bug: the data-on:click expression must embed
+// the channel as a literal JS string value (not via $el.dataset) so that
+// Datastar actually updates $analyticsChannels at runtime before the @get.
+//
+// html/template HTML-encodes single quotes in template.JS attribute values:
+// 'in_app' renders as &#39;in_app&#39; in the raw HTML source. The browser
+// decodes this correctly before Datastar evaluates the expression.
+func TestFragment_AnalyticsCharts_ChannelToggleExpressionLiteral(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "in_app", Status: "sent"},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/analytics-charts", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("analytics-charts fragment: %d", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// The click handler must assign $analyticsChannels to the literal channel
+	// value embedded in the expression. html/template encodes 'in_app' as
+	// &#39;in_app&#39; in the attribute value.
+	if !strings.Contains(body, `&#39;in_app&#39;`) {
+		t.Errorf("channel toggle click expression missing encoded literal &#39;in_app&#39;: %.400s", body)
+	}
+	// $el.dataset.channel must not be used.
+	if strings.Contains(body, "$el.dataset.channel") {
+		t.Errorf("channel toggle must not use $el.dataset.channel")
 	}
 }
 

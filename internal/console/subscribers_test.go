@@ -877,6 +877,51 @@ func TestFragment_SubscribersList_ConfirmDeleteState(t *testing.T) {
 	}
 }
 
+// TestSubscribers_CreateForm_HasTimezoneField is a regression guard for the
+// missing timezone input in the subscriber create slide-over. domain.Subscriber
+// has a Timezone field and handleSubscriberCreate already reads it from the
+// form; the form itself was missing the input.
+func TestSubscribers_CreateForm_HasTimezoneField(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.get(t, "/console/subscribers/new", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/subscribers/new: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// The create form must include a timezone input.
+	if !strings.Contains(body, `name="timezone"`) {
+		t.Errorf("/new create form missing timezone input (name=\"timezone\")")
+	}
+
+	// The field must have a reasonable placeholder (IANA tz example).
+	if !strings.Contains(body, "America/New_York") && !strings.Contains(body, "UTC") {
+		t.Errorf("/new create form timezone input missing IANA timezone placeholder")
+	}
+
+	// Submitting with a timezone must persist it.
+	rr2 := tc.postForm(t, "/console/subscribers",
+		url.Values{
+			"subscriberId": {"tz-test-sub"},
+			"email":        {"tz@example.com"},
+			"timezone":     {"America/Chicago"},
+			"csrf_token":   {csrf},
+		},
+		cookie)
+	if rr2.Code != http.StatusSeeOther {
+		t.Fatalf("create with timezone: status = %d, want 303 (body: %s)", rr2.Code, rr2.Body.String())
+	}
+	created, err := tc.deps.Audience.Get(testBackground(), tc.scope, "tz-test-sub")
+	if err != nil {
+		t.Fatalf("created subscriber not persisted: %v", err)
+	}
+	if created.Timezone != "America/Chicago" {
+		t.Errorf("created subscriber Timezone = %q, want %q", created.Timezone, "America/Chicago")
+	}
+}
+
 // TestConsoleTemplates_NoNativeConfirm is the regression gate for the
 // chassis idiom: no template may use a native confirm()/alert()/prompt()
 // dialog — they are off-idiom and break headless verification.

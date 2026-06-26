@@ -406,3 +406,109 @@ func TestFragment_ActivityList_InvalidCursorReturns400(t *testing.T) {
 		t.Fatalf("garbage cursor: got %d, want 400", rr.Code)
 	}
 }
+
+// ─── regression: Bug 1 — payload rendered as JSON text ───────────────────────
+
+// TestFragment_ActivityDetail_PayloadRendersAsJSONText is the regression for
+// the byte-slice payload rendering bug. Before the fix, Notification.Payload
+// (json.RawMessage / []byte) was passed directly to html/template which
+// formats []byte as its decimal byte-slice representation ("[123 34 …]")
+// instead of the raw JSON text. The fix exposes PayloadText string in
+// activityDetailView. This test seeds a notification with a JSON payload and
+// asserts the rendered panel contains the JSON text, not a decimal byte list.
+func TestFragment_ActivityDetail_PayloadRendersAsJSONText(t *testing.T) {
+	tc := newTestConsole(t)
+	n := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-payload",
+		RunID:        "run-payload",
+		Payload:      json.RawMessage(`{"hello":"world"}`),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/activity-detail?notification_id="+n.ID, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("detail: status = %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	// The payload must appear as JSON text, not as a decimal byte-slice
+	// ("[123 34 …]"). html/template HTML-escapes double-quotes as &#34; in
+	// text context, so the rendered form of {"hello":"world"} is
+	// {&#34;hello&#34;:&#34;world&#34;}.
+	if !strings.Contains(body, "{&#34;hello&#34;:&#34;world&#34;}") {
+		t.Errorf("detail panel missing JSON payload (expected HTML-escaped JSON text); body snippet:\n%s",
+			body[:min(600, len(body))])
+	}
+	// The byte-slice rendering must be absent.
+	if strings.Contains(body, "[123 34") {
+		t.Errorf("detail panel contains raw byte-slice encoding of payload; body snippet:\n%s",
+			body[:min(600, len(body))])
+	}
+}
+
+// ─── regression: Bug 2 — selectedNotificationId absent from seeded signals ───
+
+// TestActivity_SignalsJSONOmitsSelectedNotificationId is the regression for the
+// detail-panel auto-close bug. Before the fix, signalsJSON() included
+// "selectedNotificationId":"" in the data-signals attribute. Any re-processing
+// of that attribute by the Datastar runtime (e.g. triggered by a list-fragment
+// patch) would reset the signal to "" and close an open detail panel. The fix
+// omits selectedNotificationId from signalsJSON() so that the signal is created
+// lazily on the first row-click and is never reset by a list refresh.
+func TestActivity_SignalsJSONOmitsSelectedNotificationId(t *testing.T) {
+	f := activityFilters{Range: "1h", Status: "sent"}
+	js := string(f.signalsJSON())
+
+	var got map[string]string
+	if err := json.Unmarshal([]byte(js), &got); err != nil {
+		t.Fatalf("signalsJSON produced invalid JSON: %v\n%s", err, js)
+	}
+	if _, present := got["selectedNotificationId"]; present {
+		t.Errorf("signalsJSON must not seed selectedNotificationId (got %q); "+
+			"seeding it causes Datastar to reset it to \"\" on list refreshes, closing the detail panel",
+			got["selectedNotificationId"])
+	}
+	// Filter signals must still be present.
+	if got["activityRange"] != "1h" {
+		t.Errorf("activityRange missing or wrong: %q", got["activityRange"])
+	}
+	if got["activityStatus"] != "sent" {
+		t.Errorf("activityStatus missing or wrong: %q", got["activityStatus"])
+	}
+}
+
+// TestFragment_ActivityDetail_PersistsAcrossListRefresh verifies that fetching
+// the activity-list fragment (a list refresh) does NOT produce HTML that would
+// reset the selectedNotificationId signal. Specifically, the list fragment
+// response must not contain a data-signals attribute that declares
+// selectedNotificationId. If it did, Datastar could reset the signal to ""
+// and close an open detail panel.
+func TestFragment_ActivityDetail_PersistsAcrossListRefresh(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-refresh",
+		RunID:        "run-refresh",
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/activity-list", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list fragment: status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// The list fragment must NOT include a data-signals attribute that declares
+	// selectedNotificationId as a JSON key (e.g. `"selectedNotificationId":""`).
+	// Such a declaration would allow Datastar to reset the signal to "" and
+	// close an open detail panel. Appearing in a data-on:click expression
+	// (to SET the signal: $selectedNotificationId = '...') is fine and expected.
+	// We match the JSON-key form `"selectedNotificationId":` to distinguish a
+	// signal declaration from the click-handler expression.
+	if strings.Contains(body, `"selectedNotificationId":`) {
+		t.Errorf("list fragment contains a data-signals declaration of selectedNotificationId "+
+			"(JSON key form); this can reset the signal and close an open detail panel.\nbody snippet:\n%s",
+			body[:min(600, len(body))])
+	}
+}

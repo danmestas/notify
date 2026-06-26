@@ -2,6 +2,8 @@ package console
 
 import (
 	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -130,5 +132,31 @@ func TestTemplates_NoEmojiOrGlyphIcons(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("walk templates: %v", err)
+	}
+}
+
+// TestGoSource_NoEmojiIconLiterals_Integrations is the regression guard for
+// emoji that the template sweep can't catch: empty-state Icon values set in Go
+// source (e.g. `Icon: "🔌"`). The empty-state partial renders Icon as text, so
+// an emoji there violates the no-emoji rule just as it would in a template —
+// but TestTemplates_NoEmojiOrGlyphIcons only scans .html bodies. This scans
+// integrations.go's `Icon:` literals (the file the 🔌 sweep touched). Other
+// console pages still carry emoji Icons tracked as their own cleanup; scoping
+// here keeps this guard green while locking integrations' fix.
+func TestGoSource_NoEmojiIconLiterals_Integrations(t *testing.T) {
+	src, err := os.ReadFile(filepath.Clean("integrations.go"))
+	if err != nil {
+		t.Fatalf("read integrations.go: %v", err)
+	}
+	for i, line := range strings.Split(string(src), "\n") {
+		if !strings.Contains(line, "Icon:") {
+			continue
+		}
+		for _, r := range line {
+			if isEmojiCodepoint(r) {
+				t.Errorf("integrations.go:%d: Icon literal contains emoji U+%04X (%q) — use a ui-icon name rendered via uiIcon instead: %s",
+					i+1, r, string(r), strings.TrimSpace(line))
+			}
+		}
 	}
 }

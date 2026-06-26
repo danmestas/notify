@@ -35,8 +35,7 @@
       <li>
         <button type="button"
                 class="analytics-channel-toggle{{if $active}} is-active{{end}}"
-                data-channel="{{.}}"
-                data-on:click="$analyticsChannels = $analyticsChannels === $el.dataset.channel ? '' : $el.dataset.channel; @get('/console/api/fragments/analytics-charts')"
+                data-on:click="$analyticsChannels = $analyticsChannels === {{. | jsEscape}} ? '' : {{. | jsEscape}}; @get('/console/api/fragments/analytics-charts')"
                 aria-pressed="{{if $active}}true{{else}}false{{end}}">
           {{.}}
         </button>

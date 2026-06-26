@@ -56,6 +56,12 @@ func environmentsSignalsJSON(filter string, newOpen bool) template.JS {
 		// envNewOpen drives the create slide-over's data-show. A real JSON
 		// boolean is required — a string "false" is truthy in JS.
 		"envNewOpen": newOpen,
+		// envEditOpen drives the edit/rename slide-over's data-show.
+		"envEditOpen": false,
+		// envEditID / envEditName are set by the Edit button click so the
+		// slide-over form can embed the target id and pre-fill the name input.
+		"envEditID":   "",
+		"envEditName": "",
 	}
 	b, err := json.Marshal(sig)
 	if err != nil {

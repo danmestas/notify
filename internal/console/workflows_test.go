@@ -1357,3 +1357,60 @@ func TestFragmentStepPreview_RequiresAuth(t *testing.T) {
 		t.Fatalf("step-preview without session: status = %d, want 303", rr.Code)
 	}
 }
+
+// ---- regression: Bug 1 — search input must use colon-form data-on:input ----
+
+// TestWorkflowsList_SearchInputUsesColonEventSyntax guards against the
+// hyphen-form regression (data-on-input vs data-on:input).  The Datastar build
+// used by this project only processes the colon form; the hyphen form silently
+// does nothing, making the search box dead.
+func TestWorkflowsList_SearchInputUsesColonEventSyntax(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/workflows: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// The search input must carry the colon form so Datastar picks it up.
+	if !strings.Contains(body, `data-on:input__debounce.300ms`) {
+		t.Errorf("search input missing data-on:input__debounce.300ms (colon form); Datastar will not fire the handler")
+	}
+	// The broken hyphen form must not appear anywhere on the page.
+	if strings.Contains(body, `data-on-input`) {
+		t.Errorf("page contains data-on-input (hyphen form); this handler will never fire in the current Datastar build")
+	}
+}
+
+// ---- regression: Bug 2 — duplicate POST success must not redirect to ?error ----
+
+// TestWorkflowDuplicate_SuccessNeverRedirectsToError is the regression for the
+// bug where authoring.Duplicate returned (Workflow{}, err) after a successful
+// Create+Publish sequence, causing handleWorkflowDuplicate to redirect to
+// ?error=Duplicate+failed even though the workflow was persisted.  The handler
+// must always redirect to the new editor on a clean unique-identifier POST.
+func TestWorkflowDuplicate_SuccessNeverRedirectsToError(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "Source WF", "source-wf")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/source-wf/duplicate", url.Values{
+		"csrf_token":         {csrf},
+		"name":               {"Copy of Source WF"},
+		"trigger_identifier": {"source-wf-copy-unique"},
+	}, cookie)
+
+	// Must be a success redirect, never an error redirect.
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("duplicate POST: status = %d, want 303", rr.Code)
+	}
+	loc := rr.Header().Get("Location")
+	if strings.Contains(loc, "error=") {
+		t.Errorf("duplicate success redirected to an error URL: %q", loc)
+	}
+	if loc != "/console/workflows/source-wf-copy-unique" {
+		t.Errorf("Location = %q, want /console/workflows/source-wf-copy-unique", loc)
+	}
+}

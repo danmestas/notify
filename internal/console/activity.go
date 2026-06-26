@@ -47,14 +47,20 @@ type activityView struct {
 // arbitrary signal keys. Returned as template.JS so html/template emits it
 // verbatim into the attribute without HTML-entity-mangling the JSON.
 func (f activityFilters) signalsJSON() template.JS {
+	// selectedNotificationId is intentionally absent here. Seeding it to ""
+	// in data-signals causes Datastar to reset it to "" any time the
+	// attribute is re-processed (e.g. during a list-fragment patch that
+	// triggers re-evaluation of ancestor signal declarations), which would
+	// close an open detail panel. The signal is created lazily on the first
+	// row-click ($selectedNotificationId = 'id') and survives list refreshes
+	// because it is no longer declared in the seeded signal map.
 	sig := map[string]string{
-		"activityRange":          f.Range,
-		"activityWorkflow":       f.WorkflowID,
-		"activityChannel":        f.Channel,
-		"activitySubscriber":     f.SubscriberID,
-		"activityTransaction":    f.TransactionID,
-		"activityStatus":         f.Status,
-		"selectedNotificationId": "",
+		"activityRange":       f.Range,
+		"activityWorkflow":    f.WorkflowID,
+		"activityChannel":     f.Channel,
+		"activitySubscriber":  f.SubscriberID,
+		"activityTransaction": f.TransactionID,
+		"activityStatus":      f.Status,
 	}
 	b, err := json.Marshal(sig)
 	if err != nil { // map[string]string never fails to marshal
@@ -120,9 +126,15 @@ type activityRow struct {
 // activityDetailView is the #activity-detail-panel fragment binding.
 type activityDetailView struct {
 	Notification domain.Notification
-	Messages     []domain.Message
-	RunURL       string // empty when DagnatsConsoleURL is unset
-	Empty        bool   // true when no notification is selected or found
+	// PayloadText is the notification payload rendered as a UTF-8 string so
+	// that html/template emits it verbatim. Notification.Payload is a
+	// json.RawMessage ([]byte); html/template renders []byte as its decimal
+	// byte-slice representation ([123 34 …]) rather than as JSON text.
+	// The handler populates this field with string(Notification.Payload).
+	PayloadText string
+	Messages    []domain.Message
+	RunURL      string // empty when DagnatsConsoleURL is unset
+	Empty       bool   // true when no notification is selected or found
 	// CSRF is the session token for the inline Resend form (W4 #55). Empty
 	// when no session (renderEmpty path) — the form is only shown for a
 	// selected notification.
@@ -562,6 +574,7 @@ func (c *Console) serveFragmentActivityDetail(w http.ResponseWriter, r *http.Req
 	}
 	html, err := renderFragment(c.ts.base, "activity-detail-panel", activityDetailView{
 		Notification:  n,
+		PayloadText:   string(n.Payload),
 		Messages:      msgs,
 		RunURL:        c.runURL(n.RunID),
 		CSRF:          s.CSRF,

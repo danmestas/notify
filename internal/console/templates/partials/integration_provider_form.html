@@ -20,7 +20,7 @@
 
   <button type="button"
           class="integration-provider-back"
-          data-on:click="@get('/console/api/fragments/integration-provider-form')">
+          data-on:click="$integrationProviderPick='';@get('/console/api/fragments/integration-provider-form')">
     {{ uiIcon "arrow-left" }} Back
   </button>
 
@@ -31,7 +31,7 @@
         action="/console/integrations"
         class="integration-create-form"
         autocomplete="off">
-    <input type="hidden" name="csrf_token" value="">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <input type="hidden" name="provider_id" value="{{.ProviderID}}">
 
     <div class="console-form-field">
@@ -59,7 +59,7 @@
         <label class="console-form-label" for="create-{{.Key}}">
           {{.Label}}{{if .Required}} <span aria-hidden="true">*</span>{{end}}
         </label>
-        <input type="{{if or (eq .Key "password") (eq .Key "token") (eq .Key "api_token") (eq .Key "api_key") (eq .Key "bot_token") (eq .Key "access_token") (eq .Key "secret_access_key")}}password{{else}}text{{end}}"
+        <input type="{{if or (eq .Key "password") (eq .Key "token") (eq .Key "api_token") (eq .Key "api_key") (eq .Key "bot_token") (eq .Key "access_token") (eq .Key "secret_access_key") (eq .Key "auth_token")}}password{{else}}text{{end}}"
                id="create-{{.Key}}"
                name="{{.Key}}"
                class="console-input"
@@ -111,7 +111,7 @@
             class="integration-provider-row"
             role="listitem"
             data-show="$connectChannel === '{{.Channel}}'"
-            data-on:click="@get('/console/api/fragments/integration-provider-form?provider={{.ID}}')">
+            data-on:click="$integrationProviderPick='{{.ID}}';@get('/console/api/fragments/integration-provider-form')">
       <span class="integration-provider-icon">{{providerIcon .ID}}</span>
       <span class="integration-provider-row-label">{{.Label}}</span>
       <span class="integration-provider-row-chevron" aria-hidden="true">›</span>

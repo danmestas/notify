@@ -347,7 +347,10 @@ func (s *Service) Duplicate(ctx context.Context, scope domain.Scope, srcSlug str
 	}
 
 	if err := s.Publish(ctx, scope, in.TriggerIdentifier); err != nil {
-		return domain.Workflow{}, err
+		// The workflow row is already persisted; Publish failure is non-fatal
+		// (matches the Create path). Log and return the created workflow so
+		// callers can redirect to the editor instead of surfacing a false error.
+		slog.Default().Error("authoring: publish after duplicate (non-fatal)", "trigger", in.TriggerIdentifier, "err", err)
 	}
 
 	return created, nil

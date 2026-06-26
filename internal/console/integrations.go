@@ -188,6 +188,10 @@ type integrationProviderFormView struct {
 	// step-1 tile grid when ProviderID is empty.
 	Catalog  []providerMeta
 	ReadOnly bool
+	// CSRF is the per-session token plumbed into the connect form's native
+	// POST to /console/integrations. Without it every create POST sends an
+	// empty csrf_token and is rejected 403 (#bug-1).
+	CSRF string
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -225,13 +229,13 @@ func filterRows(rows []integrationRow, channel string) []integrationRow {
 func integrationsEmptyState(filtered bool, readOnly bool) *emptyState {
 	if filtered {
 		return &emptyState{
-			Icon:        "🔌",
+			Icon:        "unplug",
 			Title:       "No integrations in this channel",
 			Description: "Switch to All to see every integration, or connect a new provider.",
 		}
 	}
 	es := &emptyState{
-		Icon:        "🔌",
+		Icon:        "unplug",
 		Title:       "No integrations yet",
 		Description: "Connect a provider to start delivering notifications.",
 	}
@@ -344,10 +348,13 @@ func integrationsSignalsJSON(channel, detailID string) string {
 		// connectChannel drives the connect-integration drawer's channel tabs;
 		// it filters the provider list client-side. Defaults to email.
 		"connectChannel": "email",
+		// integrationProviderPick carries the step-1 provider choice to the
+		// provider-form fragment (Datastar drops literal ?provider= params).
+		"integrationProviderPick": "",
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
-		return `{"integrationChannel":"","integrationDetailId":"","integrationDetailOpen":false,"connectChannel":"email"}`
+		return `{"integrationChannel":"","integrationDetailId":"","integrationDetailOpen":false,"connectChannel":"email","integrationProviderPick":""}`
 	}
 	return string(b)
 }
@@ -757,7 +764,16 @@ func (c *Console) serveFragmentIntegrationProviderForm(w http.ResponseWriter, r 
 		panic("serveFragmentIntegrationProviderForm: no scope in context")
 	}
 
-	providerID := r.URL.Query().Get("provider")
+	// The chosen provider rides the integrationProviderPick signal (step-1 row
+	// click sets it then @gets this fragment); Datastar serialises signals to
+	// ?datastar= and would DROP a literal ?provider= query param, so the row
+	// must route via the signal. mergeFragmentParams maps it back onto the
+	// "provider" query key. A literal ?provider= (older links/tests) still wins.
+	q := mergeFragmentParams(r, "integrationProviderPick")
+	providerID := ""
+	if vs := q["provider"]; len(vs) > 0 {
+		providerID = vs[0]
+	}
 	var meta providerMeta
 	for _, p := range providerCatalog {
 		if p.ID == providerID {
@@ -766,6 +782,7 @@ func (c *Console) serveFragmentIntegrationProviderForm(w http.ResponseWriter, r 
 		}
 	}
 
+	s, _ := sessionFromContext(r.Context())
 	fv := integrationProviderFormView{
 		ProviderID: meta.ID,
 		Label:      meta.Label,
@@ -773,6 +790,7 @@ func (c *Console) serveFragmentIntegrationProviderForm(w http.ResponseWriter, r 
 		CredFields: credentialFieldsForProvider(meta.ID),
 		Catalog:    providerCatalog,
 		ReadOnly:   c.deps.ReadOnly,
+		CSRF:       s.CSRF,
 	}
 	html, err := renderFragment(c.ts.base, "integration-provider-form", fv)
 	if err != nil {
