@@ -21,3 +21,8 @@ coverage.html
 # mise local overrides
 mise.local.toml
 .mise.local.toml
+
+# Verifier/screenshot artifacts (never commit)
+/step*.png
+/*-screenshot.png
+/screenshot*.png
