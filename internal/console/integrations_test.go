@@ -1127,6 +1127,109 @@ func TestIntegrations_DetailDrawerAutoFetchesWhenPreopened(t *testing.T) {
 	}
 }
 
+// ─── regression: verify/test-send banner surfaces at page level (#bug) ───────
+
+// TestIntegrations_VerifyBannerRendersAtPageLevel proves that a verify 303
+// redirect to /console/integrations/{id}?verifyRun=<run> surfaces the result
+// banner in the PAGE HTML. The detail fragment @get cannot carry ?verifyRun
+// (Datastar serializes signals to ?datastar= and drops literal query params),
+// so the banner must render at the page level above #integration-detail.
+func TestIntegrations_VerifyBannerRendersAtPageLevel(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.deps.DagnatsConsoleURL = "http://dagnats.local"
+	tc.rebuild()
+	in := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "smtp-1",
+		EncCredentials: []byte("ct"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/integrations/"+in.ID+"?verifyRun=run-verify-1", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations/{id}?verifyRun: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "http://dagnats.local/console/runs/run-verify-1") {
+		t.Errorf("page-level verify banner missing dagnats deep-link; body:\n%s",
+			body[:min(len(body), 2000)])
+	}
+}
+
+// TestIntegrations_VerifyErrorBannerRendersAtPageLevel proves the failure path:
+// ?verifyError=<msg> surfaces the error banner in the page HTML.
+func TestIntegrations_VerifyErrorBannerRendersAtPageLevel(t *testing.T) {
+	tc := newTestConsole(t)
+	in := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "smtp-1",
+		EncCredentials: []byte("ct"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/integrations/"+in.ID+"?verifyError=Verification+failed+to+start", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations/{id}?verifyError: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Verification failed to start") {
+		t.Errorf("page-level verify error banner missing message; body:\n%s",
+			body[:min(len(body), 2000)])
+	}
+}
+
+// TestIntegrations_TestSendBannerRendersAtPageLevel proves the test-send 303
+// redirect (?testSendOK=1) surfaces the success banner in the page HTML.
+func TestIntegrations_TestSendBannerRendersAtPageLevel(t *testing.T) {
+	tc := newTestConsole(t)
+	in := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "smtp-1",
+		EncCredentials: []byte("ct"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/integrations/"+in.ID+"?testSendOK=1", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations/{id}?testSendOK=1: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Test message sent.") {
+		t.Errorf("page-level test-send success banner missing; body:\n%s",
+			body[:min(len(body), 2000)])
+	}
+}
+
+// TestIntegrations_TestSendErrorBannerRendersAtPageLevel proves the test-send
+// failure path (?testSendError=<msg>) surfaces the error banner in the page HTML.
+func TestIntegrations_TestSendErrorBannerRendersAtPageLevel(t *testing.T) {
+	tc := newTestConsole(t)
+	in := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "smtp-1",
+		EncCredentials: []byte("ct"),
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/integrations/"+in.ID+"?testSendError=SMTP+connection+refused", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations/{id}?testSendError: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "SMTP connection refused") {
+		t.Errorf("page-level test-send error banner missing message; body:\n%s",
+			body[:min(len(body), 2000)])
+	}
+}
+
 // ─── regression: Twilio Auth Token masked (#bug-4) ───────────────────────────
 
 // TestFragment_IntegrationProviderForm_TwilioAuthTokenMasked proves the Twilio

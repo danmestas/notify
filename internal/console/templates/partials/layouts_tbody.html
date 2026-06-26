@@ -33,11 +33,20 @@
       </tr>
       {{else}}
       <tr id="layout-row-{{.Key}}">
-        <td><a href="/console/layouts/{{.Key}}"><code class="chip chip-default">{{.Key}}</code></a></td>
+        <td>
+          <a href="/console/layouts/{{.Key}}"><code class="chip chip-default">{{.Key}}</code></a>
+          {{if .IsDefault}}<span class="chip chip-success">Default</span>{{end}}
+        </td>
         <td>{{.Name}}</td>
         <td class="console-action-row">
           {{if not $v.ReadOnly}}
           <a href="/console/layouts/{{.Key}}" class="btn btn-outline btn-sm">Edit</a>
+          {{if not .IsDefault}}
+          <form method="POST" action="/console/api/layouts/{{.Key}}/default" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
+            <button type="submit" class="btn btn-outline btn-sm">Set default</button>
+          </form>
+          {{end}}
           <button type="button" class="btn btn-outline btn-sm"
                   data-on:click="@get('/console/api/fragments/layouts-list?confirmDelete={{.Key | urlquery}}')">Delete</button>
           {{end}}

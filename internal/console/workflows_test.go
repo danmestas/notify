@@ -1386,6 +1386,82 @@ func TestWorkflowsList_SearchInputUsesColonEventSyntax(t *testing.T) {
 
 // ---- regression: Bug 2 — duplicate POST success must not redirect to ?error ----
 
+// ---- regression: Bug 3 — step-editor wiring on workflow_detail.html ----
+
+// TestWorkflowDetail_StepEditorWiringPresent proves the detail page wires each
+// step item to @get the step-editor fragment and provides a #workflow-step-editor
+// target container for Datastar PatchElements to land in. Regression for Run-2
+// finding: the served page had zero references to 'workflow-step-editor'.
+func TestWorkflowDetail_StepEditorWiringPresent(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "email-1", Type: "email", ControlValues: json.RawMessage(`{"subject":"Hello"}`)},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/my-wf", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/workflows/my-wf: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	// Each step item must embed an @get URL pointing at the step-editor fragment.
+	if !strings.Contains(body, "workflow-step-editor/my-wf/email-1") {
+		t.Errorf("detail page step item missing @get URL for step-editor fragment (my-wf/email-1)")
+	}
+	// A target container must be present for Datastar PatchElements to replace.
+	if !strings.Contains(body, `id="workflow-step-editor"`) {
+		t.Errorf("detail page missing #workflow-step-editor target container for PatchElements")
+	}
+}
+
+// TestFragmentWorkflowStepEditor_RendersEmailFields proves the step-editor
+// fragment endpoint returns Datastar SSE with per-type fields for an email step.
+func TestFragmentWorkflowStepEditor_RendersEmailFields(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "email-1", Type: "email", ControlValues: json.RawMessage(`{"subject":"Hello World","body":"Hi there"}`)},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/email-1", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET step-editor fragment: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	// Must be Datastar SSE.
+	if !strings.Contains(body, "event: datastar-patch-elements") {
+		t.Errorf("step-editor fragment missing SSE event framing")
+	}
+	// Must carry the target element id.
+	if !strings.Contains(body, "workflow-step-editor") {
+		t.Errorf("step-editor fragment missing #workflow-step-editor id in response")
+	}
+	// Must render email-specific subject field.
+	if !strings.Contains(body, `name="subject"`) {
+		t.Errorf("email step-editor fragment missing subject field")
+	}
+	// Pre-filled value from controlValues must appear.
+	if !strings.Contains(body, "Hello World") {
+		t.Errorf("email step-editor fragment missing pre-filled subject value")
+	}
+}
+
+// TestFragmentWorkflowStepEditor_RequiresAuth proves the fragment endpoint sits
+// behind the session gate.
+func TestFragmentWorkflowStepEditor_RequiresAuth(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	rr := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/some-step", nil)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("step-editor fragment without session: status = %d, want 303", rr.Code)
+	}
+	if got := rr.Header().Get("Location"); got != "/console/login" {
+		t.Errorf("Location = %q, want /console/login", got)
+	}
+}
+
 // TestWorkflowDuplicate_SuccessNeverRedirectsToError is the regression for the
 // bug where authoring.Duplicate returned (Workflow{}, err) after a successful
 // Create+Publish sequence, causing handleWorkflowDuplicate to redirect to

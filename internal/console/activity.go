@@ -400,6 +400,28 @@ func (c *Console) buildActivityListView(ctx context.Context, scope domain.Scope,
 		rows = append(rows, c.buildActivityRow(n, msgs, wfName, c.runURL(n.RunID)))
 	}
 
+	// Channel and Status are derived from messages, not stored on notifications,
+	// so they cannot be pushed into the store.NotificationFilter DB query.
+	// Apply them in-process after row construction. W1: acceptable for small datasets.
+	totalCount := page.TotalCount
+	if filters.Channel != "" || filters.Status != "" {
+		kept := rows[:0]
+		for _, row := range rows {
+			if filters.Channel != "" && row.Channel != filters.Channel {
+				continue
+			}
+			if filters.Status != "" && row.Status != filters.Status {
+				continue
+			}
+			kept = append(kept, row)
+		}
+		rows = kept
+		// page.TotalCount is the UNFILTERED DB count; after in-process channel/
+		// status filtering it would overstate the visible rows, so report the
+		// filtered count instead.
+		totalCount = len(rows)
+	}
+
 	from := 1
 	if cursor != "" {
 		from = 0 // absolute offset unknown without a count-before-cursor query
@@ -409,7 +431,7 @@ func (c *Console) buildActivityListView(ctx context.Context, scope domain.Scope,
 		Rows:       rows,
 		Cursor:     page.Cursor,
 		PrevCursor: cursor,
-		TotalCount: page.TotalCount,
+		TotalCount: totalCount,
 		Limit:      limit,
 		From:       from,
 		Filters:    filters,

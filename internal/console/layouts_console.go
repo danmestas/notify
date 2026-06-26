@@ -57,8 +57,9 @@ type layoutsListView struct {
 
 // layoutRow is one <tr> in the layouts table.
 type layoutRow struct {
-	Key  string
-	Name string
+	Key       string
+	Name      string
+	IsDefault bool
 }
 
 // layoutEditorView is what layout_editor.html binds.
@@ -116,7 +117,7 @@ func (c *Console) buildLayoutsListView(r *http.Request) (layoutsListView, error)
 			!strings.Contains(strings.ToLower(l.Name), filter) {
 			continue
 		}
-		rows = append(rows, layoutRow{Key: l.Key, Name: l.Name})
+		rows = append(rows, layoutRow{Key: l.Key, Name: l.Name, IsDefault: l.IsDefault})
 	}
 
 	s, _ := sessionFromContext(r.Context())
@@ -453,6 +454,38 @@ func (c *Console) handleLayoutDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		c.deps.Logger.Error("console: delete layout", "err", err)
 		http.Error(w, "delete failed", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/console/layouts", http.StatusSeeOther)
+}
+
+// handleLayoutSetDefault handles POST /console/api/layouts/{key}/default. It
+// marks the given layout as the sole default for the scope and redirects back
+// to the layouts list.
+func (c *Console) handleLayoutSetDefault(w http.ResponseWriter, r *http.Request) {
+	if w == nil {
+		panic("handleLayoutSetDefault: w is nil")
+	}
+	if r == nil {
+		panic("handleLayoutSetDefault: r is nil")
+	}
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
+		panic("handleLayoutSetDefault: no scope in context")
+	}
+
+	if c.deps.ReadOnly {
+		http.Error(w, "console is read-only", http.StatusForbidden)
+		return
+	}
+	key := chi.URLParam(r, "key")
+	if err := c.deps.Layouts.SetDefault(r.Context(), scope, key); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			c.serveNotFound(w, r)
+			return
+		}
+		c.deps.Logger.Error("console: set default layout", "err", err)
+		http.Error(w, "set default failed", http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/console/layouts", http.StatusSeeOther)

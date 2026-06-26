@@ -28,7 +28,8 @@
       <ol class="wf-step-list" role="list">
         {{range $i, $step := $page.Steps}}
         <li class="wf-step-item" data-step-index="{{$i}}">
-          <header class="wf-step-header">
+          <header class="wf-step-header" style="cursor:pointer"
+                  data-on:click="@get('/console/api/fragments/workflow-step-editor/{{$page.TriggerIdentifier}}/{{$step.StepID}}')">
             <span class="chip chip-step chip-step--{{$step.Type}} wf-step-type-chip">{{$step.Type}}</span>
             <span class="wf-step-id"><code>{{$step.StepID}}</code></span>
             {{if $step.Name}}<span class="wf-step-name">{{$step.Name}}</span>{{end}}
@@ -155,5 +156,14 @@
     </section>
 
   </div>
+
+  {{/* Step editor: Datastar patches #workflow-step-editor here on step-header click */}}
+  <section class="console-card" aria-labelledby="wf-step-editor-heading">
+    <h2 id="wf-step-editor-heading" class="console-card-title">Step editor</h2>
+    <div id="workflow-step-editor">
+      <p class="console-lede">Select a step to edit.</p>
+    </div>
+  </section>
+
 </section>
 {{end}}

@@ -29,6 +29,10 @@ type LayoutRepo interface {
 	// Delete removes the layout for (scope, key). Returns ErrNotFound when no
 	// row matches.
 	Delete(ctx context.Context, scope domain.Scope, key string) error
+	// SetDefault marks key as the sole default layout for scope, clearing any
+	// prior default in the same environment within the same transaction. Returns
+	// ErrNotFound when key does not exist in scope.
+	SetDefault(ctx context.Context, scope domain.Scope, key string) error
 }
 
 type layoutRepo struct {
@@ -54,10 +58,10 @@ func (repo *layoutRepo) Get(ctx context.Context, scope domain.Scope, key string)
 	var l domain.Layout
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, org_id, environment_id, key, name, content
+		`SELECT id, org_id, environment_id, key, name, content, is_default
 		 FROM layouts WHERE environment_id=? AND key=?`,
 		scope.EnvID, key,
-	).Scan(&l.ID, &l.OrgID, &l.EnvID, &l.Key, &l.Name, &l.Content)
+	).Scan(&l.ID, &l.OrgID, &l.EnvID, &l.Key, &l.Name, &l.Content, &l.IsDefault)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Layout{}, ErrNotFound
 	}
@@ -71,17 +75,18 @@ func (repo *layoutRepo) Get(ctx context.Context, scope domain.Scope, key string)
 // key) maps to ErrConflict; Create never updates an existing row.
 func (repo *layoutRepo) Create(ctx context.Context, scope domain.Scope, key, name, content string) (domain.Layout, error) {
 	l := domain.Layout{
-		ID:      newULID(),
-		OrgID:   scope.OrgID,
-		EnvID:   scope.EnvID,
-		Key:     key,
-		Name:    name,
-		Content: content,
+		ID:        newULID(),
+		OrgID:     scope.OrgID,
+		EnvID:     scope.EnvID,
+		Key:       key,
+		Name:      name,
+		Content:   content,
+		IsDefault: false,
 	}
 	_, err := repo.w.ExecContext(
 		ctx,
-		`INSERT INTO layouts (id, org_id, environment_id, key, name, content)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO layouts (id, org_id, environment_id, key, name, content, is_default)
+		 VALUES (?, ?, ?, ?, ?, ?, 0)`,
 		l.ID, l.OrgID, l.EnvID, l.Key, l.Name, l.Content,
 	)
 	if err != nil {
@@ -102,7 +107,7 @@ func (repo *layoutRepo) List(ctx context.Context, scope domain.Scope, afterKey s
 	}
 	rows, err := repo.r.QueryContext(
 		ctx,
-		`SELECT id, org_id, environment_id, key, name, content
+		`SELECT id, org_id, environment_id, key, name, content, is_default
 		 FROM layouts
 		 WHERE environment_id=? AND (?='' OR key > ?)
 		 ORDER BY key ASC
@@ -117,7 +122,7 @@ func (repo *layoutRepo) List(ctx context.Context, scope domain.Scope, afterKey s
 	out := make([]domain.Layout, 0, limit)
 	for rows.Next() {
 		var l domain.Layout
-		if err := rows.Scan(&l.ID, &l.OrgID, &l.EnvID, &l.Key, &l.Name, &l.Content); err != nil {
+		if err := rows.Scan(&l.ID, &l.OrgID, &l.EnvID, &l.Key, &l.Name, &l.Content, &l.IsDefault); err != nil {
 			return nil, "", err
 		}
 		out = append(out, l)
@@ -153,4 +158,45 @@ func (repo *layoutRepo) Delete(ctx context.Context, scope domain.Scope, key stri
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetDefault marks key as the sole default layout for scope. It runs in a
+// transaction: clear all is_default flags in the environment first, then set
+// the target key. Returns ErrNotFound when key does not exist in scope.
+func (repo *layoutRepo) SetDefault(ctx context.Context, scope domain.Scope, key string) error {
+	tx, err := repo.w.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var exists int
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM layouts WHERE environment_id=? AND key=?`,
+		scope.EnvID, key,
+	).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return ErrNotFound
+	}
+
+	if _, err := tx.ExecContext(
+		ctx,
+		`UPDATE layouts SET is_default=0 WHERE environment_id=?`,
+		scope.EnvID,
+	); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(
+		ctx,
+		`UPDATE layouts SET is_default=1 WHERE environment_id=? AND key=?`,
+		scope.EnvID, key,
+	); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }

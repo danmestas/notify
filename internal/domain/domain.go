@@ -194,12 +194,13 @@ type Translation struct {
 }
 
 type Layout struct {
-	ID      string `db:"id"`
-	OrgID   string `db:"org_id"`
-	EnvID   string `db:"environment_id"`
-	Key     string `db:"key"`
-	Name    string `db:"name"`
-	Content string `db:"content"`
+	ID        string `db:"id"`
+	OrgID     string `db:"org_id"`
+	EnvID     string `db:"environment_id"`
+	Key       string `db:"key"`
+	Name      string `db:"name"`
+	Content   string `db:"content"`
+	IsDefault bool   `db:"is_default"`
 }
 
 type Context struct {

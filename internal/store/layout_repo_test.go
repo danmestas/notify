@@ -11,8 +11,8 @@ import (
 func TestMigrate_0009_AppliesLayouts(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 19 {
-		t.Fatalf("expected 19 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 20 {
+		t.Fatalf("expected 20 recorded migrations, got %d", n)
 	}
 
 	var name string
@@ -207,5 +207,69 @@ func TestLayoutRepo_ScopeIsolation(t *testing.T) {
 	// The same key is free to create in scopeB (per-env uniqueness).
 	if _, err := repo.Create(ctx, scopeB, "shared", "B's layout", "{{content}}"); err != nil {
 		t.Fatalf("create same key in scopeB: %v", err)
+	}
+}
+
+func TestLayoutRepo_SetDefault_FlipsAndIsolates(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Layouts()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	other := domain.Scope{OrgID: "o1", EnvID: "e2"}
+
+	if _, err := repo.Create(ctx, scope, "a", "A", "{{content}}"); err != nil {
+		t.Fatalf("create a: %v", err)
+	}
+	if _, err := repo.Create(ctx, scope, "b", "B", "{{content}}"); err != nil {
+		t.Fatalf("create b: %v", err)
+	}
+
+	// No defaults after creation.
+	la, _ := repo.Get(ctx, scope, "a")
+	if la.IsDefault {
+		t.Fatalf("layout a: IsDefault = true before SetDefault, want false")
+	}
+
+	// SetDefault on non-existent key → ErrNotFound.
+	if err := repo.SetDefault(ctx, scope, "ghost"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("SetDefault ghost: err=%v, want ErrNotFound", err)
+	}
+
+	// Set a as default.
+	if err := repo.SetDefault(ctx, scope, "a"); err != nil {
+		t.Fatalf("SetDefault a: %v", err)
+	}
+	la, _ = repo.Get(ctx, scope, "a")
+	lb, _ := repo.Get(ctx, scope, "b")
+	if !la.IsDefault {
+		t.Errorf("layout a IsDefault = false after SetDefault, want true")
+	}
+	if lb.IsDefault {
+		t.Errorf("layout b IsDefault = true after SetDefault(a), want false")
+	}
+
+	// Flip default to b: a must lose the flag (only one default per scope).
+	if err := repo.SetDefault(ctx, scope, "b"); err != nil {
+		t.Fatalf("SetDefault b: %v", err)
+	}
+	la, _ = repo.Get(ctx, scope, "a")
+	lb, _ = repo.Get(ctx, scope, "b")
+	if la.IsDefault {
+		t.Errorf("layout a IsDefault = true after SetDefault(b), want false")
+	}
+	if !lb.IsDefault {
+		t.Errorf("layout b IsDefault = false after SetDefault(b), want true")
+	}
+
+	// Scope isolation: other env SetDefault does not touch scope's rows.
+	if _, err := repo.Create(ctx, other, "a", "OtherA", "{{content}}"); err != nil {
+		t.Fatalf("create other/a: %v", err)
+	}
+	if err := repo.SetDefault(ctx, other, "a"); err != nil {
+		t.Fatalf("SetDefault other/a: %v", err)
+	}
+	lb2, _ := repo.Get(ctx, scope, "b")
+	if !lb2.IsDefault {
+		t.Errorf("scope b IsDefault cleared by other-env SetDefault, want unchanged (true)")
 	}
 }

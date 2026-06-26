@@ -396,6 +396,206 @@ func TestActivity_SignalsJSONQuoteSafe(t *testing.T) {
 	}
 }
 
+// ─── regression: channel and status filters were silently dropped ─────────────
+//
+// Before the fix, activityFiltersFromQuery correctly parsed channel/status from
+// the merged query but notificationFilterFromActivity never forwarded them to
+// the store layer (store.NotificationFilter has no Channel/Status fields —
+// those are message-derived). The fix applies in-process post-filtering inside
+// buildActivityListView after messages are fetched and channel/status are known.
+
+// TestFragment_ActivityList_FilterByChannel seeds two notifications each with a
+// message on a different channel and asserts the channel= query param filters rows.
+func TestFragment_ActivityList_FilterByChannel(t *testing.T) {
+	tc := newTestConsole(t)
+
+	nEmail := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-email",
+		RunID:        "run-email",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     nEmail.WorkflowID,
+		NotificationID: nEmail.ID,
+		RunID:          nEmail.RunID,
+		SubscriberID:   nEmail.SubscriberID,
+		Channel:        "email",
+		Status:         "sent",
+	})
+
+	nSMS := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-sms",
+		RunID:        "run-sms",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     nSMS.WorkflowID,
+		NotificationID: nSMS.ID,
+		RunID:          nSMS.RunID,
+		SubscriberID:   nSMS.SubscriberID,
+		Channel:        "sms",
+		Status:         "sent",
+	})
+
+	cookie, _ := tc.login(t)
+	rr := tc.get(t, "/console/api/fragments/activity-list?channel=email", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("channel filter: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "sub-email") {
+		t.Errorf("channel=email filter missing sub-email row")
+	}
+	if strings.Contains(body, "sub-sms") {
+		t.Errorf("channel=email filter leaked sub-sms row")
+	}
+}
+
+// TestFragment_ActivityList_FilterByChannelSignal proves the same filter
+// via the Datastar activityChannel signal (the path the UI actually takes).
+func TestFragment_ActivityList_FilterByChannelSignal(t *testing.T) {
+	tc := newTestConsole(t)
+
+	nEmail := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-sig-email",
+		RunID:        "run-sig-email",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     nEmail.WorkflowID,
+		NotificationID: nEmail.ID,
+		RunID:          nEmail.RunID,
+		SubscriberID:   nEmail.SubscriberID,
+		Channel:        "email",
+		Status:         "sent",
+	})
+
+	nSMS := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-sig-sms",
+		RunID:        "run-sig-sms",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     nSMS.WorkflowID,
+		NotificationID: nSMS.ID,
+		RunID:          nSMS.RunID,
+		SubscriberID:   nSMS.SubscriberID,
+		Channel:        "sms",
+		Status:         "sent",
+	})
+
+	cookie, _ := tc.login(t)
+	v := url.Values{}
+	v.Set("datastar", `{"activityChannel":"email"}`)
+	rr := tc.get(t, "/console/api/fragments/activity-list?"+v.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("activityChannel signal filter: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "sub-sig-email") {
+		t.Errorf("activityChannel=email signal filter missing sub-sig-email row")
+	}
+	if strings.Contains(body, "sub-sig-sms") {
+		t.Errorf("activityChannel=email signal filter leaked sub-sig-sms row")
+	}
+}
+
+// TestFragment_ActivityList_FilterByStatus seeds two notifications with
+// messages of different statuses and asserts the status= query param filters rows.
+func TestFragment_ActivityList_FilterByStatus(t *testing.T) {
+	tc := newTestConsole(t)
+
+	nSent := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-sent",
+		RunID:        "run-sent",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     nSent.WorkflowID,
+		NotificationID: nSent.ID,
+		RunID:          nSent.RunID,
+		SubscriberID:   nSent.SubscriberID,
+		Channel:        "email",
+		Status:         "sent",
+	})
+
+	nFailed := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-failed",
+		RunID:        "run-failed",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     nFailed.WorkflowID,
+		NotificationID: nFailed.ID,
+		RunID:          nFailed.RunID,
+		SubscriberID:   nFailed.SubscriberID,
+		Channel:        "email",
+		Status:         "failed",
+	})
+
+	cookie, _ := tc.login(t)
+	rr := tc.get(t, "/console/api/fragments/activity-list?status=sent", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status filter: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "sub-sent") {
+		t.Errorf("status=sent filter missing sub-sent row")
+	}
+	if strings.Contains(body, "sub-failed") {
+		t.Errorf("status=sent filter leaked sub-failed row")
+	}
+}
+
+// TestFragment_ActivityList_FilterByStatusSignal proves status filtering via the
+// Datastar activityStatus signal (the path the UI actually takes).
+func TestFragment_ActivityList_FilterByStatusSignal(t *testing.T) {
+	tc := newTestConsole(t)
+
+	nSent := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-sig-sent",
+		RunID:        "run-sig-sent",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     nSent.WorkflowID,
+		NotificationID: nSent.ID,
+		RunID:          nSent.RunID,
+		SubscriberID:   nSent.SubscriberID,
+		Channel:        "email",
+		Status:         "sent",
+	})
+
+	nFailed := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-sig-failed",
+		RunID:        "run-sig-failed",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     nFailed.WorkflowID,
+		NotificationID: nFailed.ID,
+		RunID:          nFailed.RunID,
+		SubscriberID:   nFailed.SubscriberID,
+		Channel:        "email",
+		Status:         "failed",
+	})
+
+	cookie, _ := tc.login(t)
+	v := url.Values{}
+	v.Set("datastar", `{"activityStatus":"sent"}`)
+	rr := tc.get(t, "/console/api/fragments/activity-list?"+v.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("activityStatus signal filter: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "sub-sig-sent") {
+		t.Errorf("activityStatus=sent signal filter missing sub-sig-sent row")
+	}
+	if strings.Contains(body, "sub-sig-failed") {
+		t.Errorf("activityStatus=sent signal filter leaked sub-sig-failed row")
+	}
+}
+
 // TestFragment_ActivityList_InvalidCursorReturns400 proves a crafted cursor
 // is a client error (400), not a server fault (500).
 func TestFragment_ActivityList_InvalidCursorReturns400(t *testing.T) {

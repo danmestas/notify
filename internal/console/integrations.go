@@ -112,6 +112,18 @@ type integrationsListView struct {
 	// PreopenID is set when the page is opened at /console/integrations/{id}:
 	// the drawer opens immediately for that row.
 	PreopenID string
+	// VerifyRunURL / VerifyError / TestSendOK / TestSendError carry the
+	// post-verify and post-test-send result banners read from the page URL
+	// query. The verify/test-send handlers 303-redirect to
+	// /console/integrations/{id}?verifyRun=<run> (or ?verifyError= /
+	// ?testSendOK=1 / ?testSendError=<msg>). The detail fragment @get can't
+	// carry those literal params (Datastar serializes signals to ?datastar=
+	// and drops them), so the banner renders at the page level, above
+	// #integration-detail, where it shows regardless of the fragment fetch.
+	VerifyRunURL  string
+	VerifyError   string
+	TestSendOK    bool
+	TestSendError string
 }
 
 // integrationsGridView is what the integrations-grid fragment binds.
@@ -406,13 +418,26 @@ func (c *Console) serveIntegrationsPage(w http.ResponseWriter, r *http.Request) 
 		empty = integrationsEmptyState(false, c.deps.ReadOnly)
 	}
 
+	// Post-verify / post-test-send result banners. The handlers 303-redirect
+	// here with these literal query params; render them at the page level
+	// because the detail fragment @get can't carry them (Datastar drops
+	// literal query params in favour of ?datastar=).
+	verifyRunURL := ""
+	if rid := r.URL.Query().Get("verifyRun"); rid != "" {
+		verifyRunURL = c.runURL(rid)
+	}
+
 	view := integrationsListView{
-		Header:    header,
-		Rows:      rows,
-		Empty:     empty,
-		Signals:   integrationsSignalsJSON("", preopenID),
-		ReadOnly:  c.deps.ReadOnly,
-		PreopenID: preopenID,
+		Header:        header,
+		Rows:          rows,
+		Empty:         empty,
+		Signals:       integrationsSignalsJSON("", preopenID),
+		ReadOnly:      c.deps.ReadOnly,
+		PreopenID:     preopenID,
+		VerifyRunURL:  verifyRunURL,
+		VerifyError:   r.URL.Query().Get("verifyError"),
+		TestSendOK:    r.URL.Query().Get("testSendOK") == "1",
+		TestSendError: r.URL.Query().Get("testSendError"),
 	}
 
 	c.renderPage(w, r, http.StatusOK, "integrations", "Integration Store", view)

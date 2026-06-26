@@ -68,6 +68,30 @@
            role="dialog"
            aria-label="Integration detail">
       <div id="integration-detail-inner">
+        {{/* Page-level result banner. The verify/test-send handlers
+             303-redirect to /console/integrations/{id}?verifyRun=<run>
+             (or ?verifyError= / ?testSendOK=1 / ?testSendError=). The detail
+             fragment @get can't carry those literal params (Datastar drops
+             them in favour of ?datastar=), so the banner renders here —
+             persistent, above #integration-detail — and shows regardless of
+             the fragment fetch. */}}
+        {{if $page.VerifyRunURL}}
+        <div class="console-banner console-banner--success" role="status" id="integration-verify-success-page">
+          <strong>Verification run started.</strong>
+          A durable credentials check was kicked off for this integration.
+          <a class="console-link" href="{{$page.VerifyRunURL}}" target="_blank" rel="noopener noreferrer">View run in dagnats {{ uiIcon "arrow-up-right" }}</a>
+        </div>
+        {{else if $page.VerifyError}}
+        <p class="console-form-error" role="alert" id="integration-verify-error-page">{{$page.VerifyError}}</p>
+        {{end}}
+        {{if $page.TestSendOK}}
+        <div class="console-banner console-banner--success" role="status" id="integration-testsend-success-page">
+          <strong>Test message sent.</strong>
+          One real message was delivered through this integration.
+        </div>
+        {{else if $page.TestSendError}}
+        <p class="console-form-error" role="alert" id="integration-testsend-error-page">{{$page.TestSendError}}</p>
+        {{end}}
         {{/* When the page is opened at /console/integrations/{id} (or a
              verify/test-send 303-redirect lands here) integrationDetailId is
              seeded but the body would stay on this placeholder; data-on-load

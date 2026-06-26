@@ -370,6 +370,7 @@ func TestConsoleLayouts_RouteAuth(t *testing.T) {
 		{http.MethodPost, "/console/api/layouts"},
 		{http.MethodPost, "/console/api/layouts/x/save"},
 		{http.MethodPost, "/console/api/layouts/x/delete"},
+		{http.MethodPost, "/console/api/layouts/x/default"},
 		{http.MethodGet, "/console/api/fragments/layouts-list"},
 		{http.MethodGet, "/console/api/fragments/layout-editor"},
 	}
@@ -385,5 +386,103 @@ func TestConsoleLayouts_RouteAuth(t *testing.T) {
 		if got := resp.Header().Get("Location"); got != "/console/login" {
 			t.Errorf("%s %s: Location = %q, want /console/login", rt.method, rt.path, got)
 		}
+	}
+}
+
+// ─── set default ──────────────────────────────────────────────────────────────
+
+// TestLayouts_SetDefault_FlipsDefault verifies that POST .../default marks the
+// given layout as the sole default for the scope: a second call on a different
+// key clears the first key's flag.
+func TestLayouts_SetDefault_FlipsDefault(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedLayout(t, "layout-a", "Layout A", "{{content}}")
+	tc.seedLayout(t, "layout-b", "Layout B", "{{content}}")
+	cookie, csrf := tc.login(t)
+
+	// Set layout-a as default → 303 to /console/layouts.
+	rr := tc.postForm(t, "/console/api/layouts/layout-a/default",
+		url.Values{"csrf_token": {csrf}}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("set default layout-a: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if got, want := rr.Header().Get("Location"), "/console/layouts"; got != want {
+		t.Errorf("set default layout-a: Location = %q, want %q", got, want)
+	}
+
+	// Store agrees: layout-a is now default.
+	la, err := tc.st.Layouts().Get(testBackground(), tc.scope, "layout-a")
+	if err != nil {
+		t.Fatalf("get layout-a: %v", err)
+	}
+	if !la.IsDefault {
+		t.Errorf("layout-a IsDefault = false after set-default, want true")
+	}
+
+	// The list fragment renders the default badge on layout-a.
+	rr2 := tc.get(t, "/console/api/fragments/layouts-list", cookie)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("list fragment after set-default: status = %d", rr2.Code)
+	}
+	body2 := rr2.Body.String()
+	if !strings.Contains(body2, "chip-success") {
+		t.Errorf("list fragment after set-default: missing default badge (chip-success)")
+	}
+
+	// Set layout-b as default: layout-a must lose its flag (only one per scope).
+	rr3 := tc.postForm(t, "/console/api/layouts/layout-b/default",
+		url.Values{"csrf_token": {csrf}}, cookie)
+	if rr3.Code != http.StatusSeeOther {
+		t.Fatalf("set default layout-b: status = %d, want 303", rr3.Code)
+	}
+
+	lb, err := tc.st.Layouts().Get(testBackground(), tc.scope, "layout-b")
+	if err != nil {
+		t.Fatalf("get layout-b: %v", err)
+	}
+	if !lb.IsDefault {
+		t.Errorf("layout-b IsDefault = false after set-default, want true")
+	}
+
+	la2, err := tc.st.Layouts().Get(testBackground(), tc.scope, "layout-a")
+	if err != nil {
+		t.Fatalf("get layout-a post layout-b set-default: %v", err)
+	}
+	if la2.IsDefault {
+		t.Errorf("layout-a IsDefault = true after layout-b set-default, want false (only one default per scope)")
+	}
+}
+
+// TestLayouts_SetDefault_ReadOnlyBlocked verifies POST .../default → 403 in
+// read-only mode.
+func TestLayouts_SetDefault_ReadOnlyBlocked(t *testing.T) {
+	tc := newReadOnlyTestConsole(t)
+	tc.seedLayout(t, "ro-default-key", "RO Default", "{{content}}")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/layouts/ro-default-key/default",
+		url.Values{"csrf_token": {csrf}}, cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("read-only set default: status = %d, want 403", rr.Code)
+	}
+}
+
+// TestLayouts_SetDefault_NonDatastarPostRedirects verifies the set-default POST
+// returns a 303 (not SSE) — same contract as the other layout mutations.
+func TestLayouts_SetDefault_NonDatastarPostRedirects(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedLayout(t, "nd-default", "ND Default", "{{content}}")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/layouts/nd-default/default",
+		url.Values{"csrf_token": {csrf}}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("set default: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); strings.Contains(ct, "text/event-stream") {
+		t.Errorf("set default answered SSE (%q) to a native form POST", ct)
+	}
+	if body := rr.Body.String(); strings.Contains(body, "datastar-patch-elements") {
+		t.Errorf("set default response carries a raw SSE patch body")
 	}
 }

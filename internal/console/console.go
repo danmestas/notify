@@ -443,6 +443,7 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/api/layouts", c.handleLayoutCreate)
 		pr.Post("/console/api/layouts/{key}/save", c.handleLayoutSave)
 		pr.Post("/console/api/layouts/{key}/delete", c.handleLayoutDelete)
+		pr.Post("/console/api/layouts/{key}/default", c.handleLayoutSetDefault)
 		pr.Get("/console/api/fragments/layouts-list", c.serveFragmentLayoutsList)
 		pr.Get("/console/api/fragments/layout-editor", c.serveFragmentLayoutEditor)
 		// W4-L2: translations list, locale editor, settings. The literal
