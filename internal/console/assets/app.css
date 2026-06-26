@@ -47,6 +47,11 @@
   --radius-tile:  6px;
   --radius-card:  8px;
   --radius-pill:  9999px;
+  /* Aliases referenced in places that predate the scale; kept in sync with the
+     real tokens so they resolve (were undefined → square corners / no color). */
+  --radius:       var(--radius-tile);
+  --radius-md:    var(--radius-card);
+  --danger:       var(--status-danger);
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -529,6 +534,20 @@ code, .console-mono { font-family: var(--font-mono); font-size: 0.92em; }
   border-color: var(--accent);
   color: var(--bg);
 }
+/* Destructive actions (Confirm delete, Delete…). Was undefined → rendered as a
+   neutral grey .btn with no danger affordance. */
+.btn-danger {
+  background: var(--status-danger);
+  border-color: var(--status-danger);
+  color: #fff;
+}
+.btn-danger:hover { border-color: var(--status-danger); filter: brightness(0.92); }
+.btn-outline.btn-danger {
+  background: transparent;
+  color: var(--status-danger);
+  border-color: var(--status-danger);
+}
+.btn-outline.btn-danger:hover { background: var(--danger-soft); border-color: var(--status-danger); }
 .btn[aria-disabled="true"] {
   opacity: 0.55;
   cursor: not-allowed;
@@ -1019,6 +1038,30 @@ a.activity-item-run { color: var(--accent); }
   background: rgba(26, 127, 55, 0.10);
 }
 .console-banner--success strong { color: var(--status-success); }
+
+/* Form/result alert callouts (FormError, API-key reveal, …). Were undefined →
+   rendered as bare prose. Both modifier spellings (-danger and --error) are in
+   use across templates. */
+.console-alert {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+.console-alert-danger,
+.console-alert--error {
+  border-color: var(--status-danger);
+  background: var(--danger-soft);
+  color: var(--status-danger);
+}
+.console-alert-success {
+  border-color: var(--status-success);
+  background: rgba(26, 127, 55, 0.10);
+  color: var(--status-success);
+}
+
 .console-login-hint {
   margin: 0;
   color: var(--text-secondary);
