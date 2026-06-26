@@ -66,6 +66,11 @@ type fragmentEnvelope struct {
 	// Contexts list filter signals (W4-C2).
 	ContextsType   string `json:"contextsType,omitempty"`
 	ContextsSearch string `json:"contextsSearch,omitempty"`
+	// VariablesSearch / DomainsSearch are the variables and inbound-domains
+	// list search inputs. Without these the search signal is dropped from the
+	// ?datastar= envelope and the live filter silently does nothing.
+	VariablesSearch string `json:"variablesSearch,omitempty"`
+	DomainsSearch   string `json:"domainsSearch,omitempty"`
 	// LayoutsFilter is the layouts-list name/key search input (W4-L1).
 	LayoutsFilter string `json:"layoutsFilter,omitempty"`
 	// Workflow activity tab filter signals (W2-A6).
@@ -176,6 +181,10 @@ func envelopeToQuery(env fragmentEnvelope, key string) (string, string) {
 		return "type", env.ContextsType
 	case "contextsSearch":
 		return "q", env.ContextsSearch
+	case "variablesSearch":
+		return "variablesSearch", env.VariablesSearch
+	case "domainsSearch":
+		return "domainsSearch", env.DomainsSearch
 	// Layouts list filter signal (W4-L1).
 	case "layoutsFilter":
 		return "q", env.LayoutsFilter

@@ -32,6 +32,25 @@ func TestMergeFragmentParams_SignalApplies(t *testing.T) {
 	}
 }
 
+// TestMergeFragmentParams_SearchSignalsForwarded guards the variables/domains
+// list-search filters: the search signal must be forwarded from the ?datastar=
+// envelope to the SAME-named query key the handlers read. Missing envelope cases
+// were why the live search box fired a request but never filtered.
+func TestMergeFragmentParams_SearchSignalsForwarded(t *testing.T) {
+	for _, tc := range []struct{ signal, qkey, val string }{
+		{"variablesSearch", "variablesSearch", "aaa"},
+		{"domainsSearch", "domainsSearch", "alpha"},
+	} {
+		v := url.Values{}
+		v.Set("datastar", `{"`+tc.signal+`":"`+tc.val+`"}`)
+		req := httptest.NewRequest(http.MethodGet, "/x?"+v.Encode(), nil)
+		q := mergeFragmentParams(req, tc.signal)
+		if got := q[tc.qkey]; len(got) != 1 || got[0] != tc.val {
+			t.Errorf("%s: q[%q] = %v, want [%s] (search signal dropped from envelope)", tc.signal, tc.qkey, got, tc.val)
+		}
+	}
+}
+
 func TestMergeFragmentParams_QueryWinsOverSignal(t *testing.T) {
 	v := url.Values{}
 	v.Set("datastar", `{"kpiChannel":"push"}`)
