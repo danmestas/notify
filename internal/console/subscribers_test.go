@@ -784,10 +784,23 @@ func TestSubscribers_NewRendersCreateForm(t *testing.T) {
 		}
 	}
 
-	// The plain list page must NOT render the slide-over.
-	rr = tc.get(t, "/console/subscribers", cookie)
-	if strings.Contains(rr.Body.String(), `data-component="subscriber-create"`) {
-		t.Errorf("/console/subscribers rendered the create slide-over without /new")
+	// The create slide-over is now a CLIENT-SIDE overlay: present on the list
+	// page too, but hidden via data-show on the subNewOpen signal (seeded
+	// closed), so opening it causes NO layout shift. The "+ Add Subscriber"
+	// control toggles the signal instead of navigating to /new (which would
+	// re-render the page — dropping the total tile + changing the title).
+	listBody := tc.get(t, "/console/subscribers", cookie).Body.String()
+	if !strings.Contains(listBody, `data-component="subscriber-create"`) {
+		t.Error("list page should render the create slide-over as a hidden overlay")
+	}
+	if !strings.Contains(listBody, `data-show="$subNewOpen"`) {
+		t.Error("create slide-over must be gated by data-show on the subNewOpen signal")
+	}
+	if !strings.Contains(listBody, `data-on:click="$subNewOpen = true"`) {
+		t.Error(`"+ Add Subscriber" must toggle the subNewOpen signal, not navigate`)
+	}
+	if strings.Contains(listBody, `href="/console/subscribers/new"`) {
+		t.Error("the add control must not navigate to /new (causes layout shift)")
 	}
 }
 

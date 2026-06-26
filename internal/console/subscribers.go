@@ -42,9 +42,6 @@ type subscribersPageView struct {
 	Fragment subscribersListView
 	Signals  template.JS
 	ReadOnly bool
-	// ShowCreate renders the create-subscriber slide-over
-	// (/console/subscribers/new).
-	ShowCreate bool
 }
 
 // subscribersListView is the #subscribers-tbody fragment binding.
@@ -156,13 +153,16 @@ type subscriberMessageRow struct {
 
 // ─── signal helpers ──────────────────────────────────────────────────────────
 
-func subscribersSignalsJSON(email, name, phone, id string) template.JS {
-	sig := map[string]string{
+func subscribersSignalsJSON(email, name, phone, id string, newOpen bool) template.JS {
+	sig := map[string]any{
 		"subscribersEmail": email,
 		"subscribersName":  name,
 		"subscribersPhone": phone,
 		"subscribersId":    id,
 		"subscriberTab":    "overview",
+		// subNewOpen drives the create slide-over's data-show. A real JSON
+		// boolean (not the string "false", which is truthy in JS).
+		"subNewOpen": newOpen,
 	}
 	b, err := json.Marshal(sig)
 	if err != nil {
@@ -306,7 +306,7 @@ func (c *Console) serveSubscribersPage(w http.ResponseWriter, r *http.Request) {
 	view := subscribersPageView{
 		Header:   header,
 		Fragment: frag,
-		Signals:  subscribersSignalsJSON("", "", "", ""),
+		Signals:  subscribersSignalsJSON("", "", "", "", false),
 		ReadOnly: c.deps.ReadOnly,
 	}
 	c.renderPage(w, r, http.StatusOK, "subscribers", "Subscribers", view)
@@ -329,18 +329,26 @@ func (c *Console) serveSubscriberNew(w http.ResponseWriter, r *http.Request) {
 		c.serveError(w, r)
 		return
 	}
-	header := pageHeader{Title: "Subscribers", Subtitle: "All subscribers for this environment."}
+	// /new renders the SAME page as the list (identical header, title, and total
+	// tile) so the drawer is a pure overlay — no layout shift versus the list.
+	// It just seeds subNewOpen=true so a direct visit opens the slide-over.
+	header := pageHeader{
+		Title:    "Subscribers",
+		Subtitle: "All subscribers for this environment.",
+		Tiles: []tile{
+			{Label: "total", Count: frag.TotalCount, Tone: toneDefault},
+		},
+	}
+	if err := header.validate(); err != nil {
+		header = pageHeader{Title: "Subscribers"}
+	}
 	view := subscribersPageView{
 		Header:   header,
 		Fragment: frag,
-		Signals:  subscribersSignalsJSON("", "", "", ""),
+		Signals:  subscribersSignalsJSON("", "", "", "", !c.deps.ReadOnly),
 		ReadOnly: c.deps.ReadOnly,
-		// The create slide-over is the whole point of /new; read-only
-		// consoles render the plain list instead (mutations are gated
-		// server-side regardless).
-		ShowCreate: !c.deps.ReadOnly,
 	}
-	c.renderPage(w, r, http.StatusOK, "subscribers", "Add Subscriber", view)
+	c.renderPage(w, r, http.StatusOK, "subscribers", "Subscribers", view)
 }
 
 // serveFragmentSubscribersList handles GET /console/api/fragments/subscribers-list.

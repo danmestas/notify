@@ -19,18 +19,22 @@
            data-bind="subscribersEmail"
            data-on:input__debounce.300ms="@get('/console/api/fragments/subscribers-list')">
     {{if not $page.ReadOnly}}
-    <a class="btn btn-primary" href="/console/subscribers/new">+ Add Subscriber</a>
+    <button type="button" class="btn btn-primary" data-on:click="$subNewOpen = true">+ Add Subscriber</button>
     {{end}}
   </div>
 
-  {{/* Subscriber create slide-over — rendered on /console/subscribers/new */}}
+  {{/* Subscriber create slide-over — a client-side overlay (data-show on the
+       subNewOpen signal). It overlays the unchanged list page so opening it
+       causes NO layout shift; the /new route just seeds subNewOpen=true. */}}
   <div id="subscriber-slideover">
-    {{if $page.ShowCreate}}
+    {{if not $page.ReadOnly}}
     <div class="console-slideover" role="dialog" aria-labelledby="sub-create-heading"
-         data-component="subscriber-create">
+         data-component="subscriber-create"
+         data-show="$subNewOpen">
       <div class="console-slideover-header">
         <h2 id="sub-create-heading" class="console-card-title">Add subscriber</h2>
-        <a class="btn-icon console-slideover-close" href="/console/subscribers" aria-label="Close">{{ uiIcon "x" }}</a>
+        <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
+                data-on:click="$subNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
       <form method="POST" action="/console/subscribers" class="subscriber-edit-form">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
@@ -66,7 +70,7 @@
                  placeholder="en-US">
         </div>
         <div class="console-slideover-actions">
-          <a class="btn btn-outline" href="/console/subscribers">Cancel</a>
+          <button type="button" class="btn btn-outline" data-on:click="$subNewOpen = false">Cancel</button>
           <button type="submit" class="btn btn-primary">Create subscriber</button>
         </div>
       </form>

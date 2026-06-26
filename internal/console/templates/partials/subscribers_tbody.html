@@ -12,7 +12,7 @@
     <h2 class="console-empty-state-title">No subscribers yet</h2>
     <p class="console-empty-state-description">Add your first subscriber via API or the button above.</p>
     {{if not .ReadOnly}}
-    <a class="btn btn-outline console-action" href="/console/subscribers/new">Add subscriber</a>
+    <button type="button" class="btn btn-outline console-action" data-on:click="$subNewOpen = true">Add subscriber</button>
     {{end}}
   </div>
   {{else if and (eq (len .Rows) 0) .HasFilters}}
