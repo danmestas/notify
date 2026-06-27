@@ -103,8 +103,8 @@ func TestInboundEmail_SecretConfiguredChip(t *testing.T) {
 	if !strings.Contains(body, "Endpoint disabled") {
 		t.Error("unset secret should render 'Endpoint disabled'")
 	}
-	if !strings.Contains(body, "501") {
-		t.Error("unset secret should mention the 501 response")
+	if !strings.Contains(body, "503") {
+		t.Error("unset secret should mention the 503 response")
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -24,10 +25,11 @@ import (
 var domainSignalKeys = []string{"domainsSearch"}
 
 type domainsPageView struct {
-	Header   pageHeader
-	Fragment domainsListView
-	Signals  template.JS
-	ReadOnly bool
+	Header    pageHeader
+	Fragment  domainsListView
+	Signals   template.JS
+	ReadOnly  bool
+	FormError string // inline error from ?error= (e.g. duplicate domain conflict)
 }
 
 type domainsListView struct {
@@ -120,10 +122,11 @@ func (c *Console) serveDomainsPage(w http.ResponseWriter, r *http.Request) {
 		header = pageHeader{Title: "Inbound Domains"}
 	}
 	view := domainsPageView{
-		Header:   header,
-		Fragment: frag,
-		Signals:  domainsSignalsJSON("", false),
-		ReadOnly: c.deps.ReadOnly,
+		Header:    header,
+		Fragment:  frag,
+		Signals:   domainsSignalsJSON("", false),
+		ReadOnly:  c.deps.ReadOnly,
+		FormError: r.URL.Query().Get("error"),
 	}
 	c.renderPage(w, r, http.StatusOK, "domains", "Inbound Domains", view)
 }
@@ -153,10 +156,11 @@ func (c *Console) serveDomainNew(w http.ResponseWriter, r *http.Request) {
 		header = pageHeader{Title: "Inbound Domains"}
 	}
 	view := domainsPageView{
-		Header:   header,
-		Fragment: frag,
-		Signals:  domainsSignalsJSON("", !c.deps.ReadOnly),
-		ReadOnly: c.deps.ReadOnly,
+		Header:    header,
+		Fragment:  frag,
+		Signals:   domainsSignalsJSON("", !c.deps.ReadOnly),
+		ReadOnly:  c.deps.ReadOnly,
+		FormError: r.URL.Query().Get("error"),
 	}
 	c.renderPage(w, r, http.StatusOK, "domains", "Inbound Domains", view)
 }
@@ -251,6 +255,11 @@ func (c *Console) handleDomainCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := c.deps.InboundDomains.Create(r.Context(), scope, name); err != nil {
+		if errors.Is(err, store.ErrInboundDomainConflict) {
+			http.Redirect(w, r, "/console/domains/new?error="+
+				url.QueryEscape("Domain "+name+" already exists."), http.StatusSeeOther)
+			return
+		}
 		c.deps.Logger.Error("console: create domain", "err", err)
 		http.Error(w, "create failed", http.StatusInternalServerError)
 		return

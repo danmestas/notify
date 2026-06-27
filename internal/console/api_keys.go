@@ -36,8 +36,12 @@ type apiKeysPageView struct {
 	// shown once. Empty on all other renders.
 	NewRawKey     string
 	NewKeyRotated bool // true when NewRawKey comes from a rotation
-	ReadOnly      bool
-	CSRF          string
+	// RawKey is the current active key, surfaced only via the data-text
+	// reveal attribute so the Reveal toggle can show it client-side.
+	// It is never logged.
+	RawKey   string
+	ReadOnly bool
+	CSRF     string
 }
 
 // ─── page handlers ────────────────────────────────────────────────────────────
@@ -62,7 +66,7 @@ func (c *Console) serveAPIKeysPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	masked, last4, _, err := c.deps.Identity.DecryptForDisplay(r.Context(), scope)
+	masked, last4, rawHex, err := c.deps.Identity.DecryptForDisplay(r.Context(), scope)
 	if err != nil {
 		c.deps.Logger.Error("console: api-keys page: decrypt for display", "err", err)
 		c.serveError(w, r)
@@ -89,6 +93,7 @@ func (c *Console) serveAPIKeysPage(w http.ResponseWriter, r *http.Request) {
 		Env:           env,
 		MaskedKey:     masked,
 		Last4:         last4,
+		RawKey:        rawHex, // never logged; flows into data-text reveal attribute only
 		APIURL:        c.deps.HTTPAddr,
 		ConfirmRotate: r.URL.Query().Get("confirmRotate") == "1",
 		NewRawKey:     newRaw,

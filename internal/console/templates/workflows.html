@@ -13,7 +13,7 @@
   overlay hidden and the /new route just flips the signal.
 */}}
 <section class="console-section"
-         data-store='{"wfFilter":{{$frag.FilterQ | json}},"wfStatus":{{$frag.FilterStatus | json}}}'
+         data-store='{"wfFilter":{{$frag.FilterQ | json}},"wfStatus":{{$frag.FilterStatus | json}},"wfConfirmDelete":""}'
          data-signals="{{$page.Signals}}">
   {{template "page-header" $page.Header}}
 
@@ -23,12 +23,17 @@
            class="console-input"
            placeholder="Search by name or identifier"
            value="{{$frag.FilterQ}}"
-           data-bind-wfFilter
+           data-bind="wfFilter"
            data-on:input__debounce.300ms="@get('/console/api/fragments/workflows-list')"
            aria-label="Search workflows">
     {{template "ui-select" (uiSelect "wf-status" "" "wfStatus"
       (uiSelectOptions "" "All statuses" "active" "Active" "inactive" "Inactive")
       "All statuses" "@get('/console/api/fragments/workflows-list')" false)}}
+    {{/* Reset clears all filter signals reactively; data-show hides it when
+         no filters are active so no server round-trip is needed to toggle it. */}}
+    <button type="button" class="btn btn-outline"
+            data-show="$wfFilter !== '' || $wfStatus !== ''"
+            data-on:click="$wfFilter = ''; $wfStatus = ''; $wfConfirmDelete = ''; @get('/console/api/fragments/workflows-list')">Reset</button>
     {{if not $page.ReadOnly}}
     <button type="button" class="btn btn-primary" data-on:click="$workflowNewOpen = true">+ New workflow</button>
     {{end}}
@@ -121,6 +126,8 @@
       {{template "workflows-tbody" $frag}}
     </table>
   </div>
-  <p class="wf-footer-note">{{len $frag.Rows}} of {{len $frag.Rows}} workflows · click a row to open the editor</p>
+  {{/* The footer id is stable so Datastar PatchElements can update it from
+       the workflows-tbody fragment alongside the tbody when filters change. */}}
+  <p id="wf-footer-note" class="wf-footer-note">{{len $frag.Rows}} of {{$frag.Total}} workflows · click a row to open the editor</p>
 </section>
 {{end}}

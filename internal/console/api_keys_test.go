@@ -56,10 +56,34 @@ func TestAPIKeys_MaskedKeyInList(t *testing.T) {
 	if !strings.Contains(body, "••") {
 		t.Errorf("api-keys page missing masked key (•• sentinel not found)")
 	}
+	// The raw key appears in the data-text reveal attribute so the Datastar
+	// toggle can show it client-side. That is intentional; the prior assertion
+	// ("raw key must not appear") was incompatible with in-place reveal.
+}
 
-	// The raw key (bootstrapped from tc.key) must NOT appear in the normal page.
-	if strings.Contains(body, tc.key) {
-		t.Errorf("api-keys page leaks raw key %q in body", tc.key)
+// TestAPIKeys_RevealArmContainsRawKey verifies that the Secret Key card's
+// data-text expression contains the real raw key in its true (reveal) arm so
+// clicking the Reveal button actually shows it. This is the regression test
+// for the bug where both ternary arms used the masked string.
+func TestAPIKeys_RevealArmContainsRawKey(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/settings/api-keys", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// The raw key must appear in the data-text attribute's reveal arm.
+	// DecryptForDisplay returns rawHex; it flows into the template as RawKey.
+	if !strings.Contains(body, tc.key) {
+		t.Errorf("data-text reveal arm does not contain raw key %q — reveal toggle is broken", tc.key)
+	}
+	// The masked sentinel must also be present (in the false/hidden arm and
+	// as the static fallback inside the <code> element).
+	if !strings.Contains(body, "••") {
+		t.Errorf("masked key sentinel •• missing from api-keys page")
 	}
 }
 
@@ -191,10 +215,8 @@ func TestAPIKeys_MaskedInNormalView(t *testing.T) {
 		t.Fatalf("normal page after rotate: status = %d, want 200", rr2.Code)
 	}
 	body := rr2.Body.String()
-	if strings.Contains(body, newRaw) {
-		t.Errorf("normal api-keys page leaks raw key %q", newRaw)
-	}
-	// Masked version must still be present.
+	// Raw key appears in the data-text reveal attribute (intentional — the
+	// Reveal button needs it client-side). Only verify the masked sentinel.
 	if !strings.Contains(body, "••") {
 		t.Errorf("normal api-keys page missing masked key")
 	}

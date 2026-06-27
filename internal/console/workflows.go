@@ -81,6 +81,9 @@ type workflowsListView struct {
 	FilterStatus string
 	// HasFilters is true when any filter is active; the Reset link shows.
 	HasFilters bool
+	// Total is the count of all workflows before filtering. Combined with
+	// len(Rows) it produces the "X of Y workflows" footer label.
+	Total int
 	// Empty is the empty-state binding (nil when there are rows).
 	Empty    *emptyState
 	ReadOnly bool
@@ -327,7 +330,19 @@ func (c *Console) buildWorkflowsListView(r *http.Request, q, status string) (wor
 	rows := buildWorkflowRows(workflows, q, status)
 
 	s, _ := sessionFromContext(r.Context())
+
+	// Read confirmDelete from the URL query string (page loads and Cancel
+	// redirect links) or, as a fallback, from the wfConfirmDelete signal
+	// (Datastar @get requests where literal query params are dropped by the
+	// runtime — the delete kebab sets this signal before calling @get).
 	confirmDelete := r.URL.Query().Get("confirmDelete")
+	if confirmDelete == "" {
+		merged := mergeFragmentParams(r, "wfConfirmDelete")
+		if vs := merged["confirmDelete"]; len(vs) > 0 {
+			confirmDelete = vs[0]
+		}
+	}
+
 	for i := range rows {
 		rows[i].ReadOnly = c.deps.ReadOnly
 		rows[i].CSRF = s.CSRF
@@ -343,6 +358,7 @@ func (c *Console) buildWorkflowsListView(r *http.Request, q, status string) (wor
 		FilterQ:       q,
 		FilterStatus:  status,
 		HasFilters:    hasFilters,
+		Total:         len(workflows),
 		Empty:         empty,
 		ReadOnly:      c.deps.ReadOnly,
 		ConfirmDelete: confirmDelete,
@@ -505,7 +521,7 @@ func (c *Console) serveFragmentWorkflowsList(w http.ResponseWriter, r *http.Requ
 	if _, ok := domain.ScopeFromContext(r.Context()); !ok {
 		panic("serveFragmentWorkflowsList: no scope in context (route not behind sessionMiddleware)")
 	}
-	q := mergeFragmentParams(r, "wfFilter", "wfStatus")
+	q := mergeFragmentParams(r, "wfFilter", "wfStatus", "wfConfirmDelete")
 	filterQ := ""
 	if vs := q["q"]; len(vs) > 0 {
 		filterQ = vs[0]
@@ -1714,7 +1730,7 @@ func controlValuesFromForm(stepType string, r *http.Request) (json.RawMessage, e
 		m = map[string]any{"subject": field("subject"), "body": field("body")}
 	case "push":
 		m = map[string]any{"title": field("title"), "body": field("body")}
-	case "sms":
+	case "sms", "chat":
 		m = map[string]any{"body": field("body")}
 	case "delay", "digest":
 		amount, err := strconv.Atoi(field("amount"))

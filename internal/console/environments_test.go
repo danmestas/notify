@@ -432,6 +432,32 @@ func TestEnvironments_Update_ReadOnlyBlocked(t *testing.T) {
 	}
 }
 
+// TestEnvironments_EditFormActionAttribute verifies that the edit slide-over
+// form uses data-attr:action (the Datastar colon form) to bind the action
+// attribute dynamically. The suffix form data-bind-action is silently dropped
+// by this Datastar build, leaving form.getAttribute('action')===null and
+// causing the POST to go to the current page URL instead of the update route.
+func TestEnvironments_EditFormActionAttribute(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/settings/environments", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET environments: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// The colon form must be present so Datastar actually sets the action attr.
+	if !strings.Contains(body, `data-attr:action="'/console/api/environments/' + $envEditID"`) {
+		t.Error("env-edit form must use data-attr:action (colon form) to bind the update route; " +
+			"data-bind-action (suffix form) is dropped by this Datastar build and leaves action=null")
+	}
+	// The broken suffix form must not appear.
+	if strings.Contains(body, `data-bind-action`) {
+		t.Error("env-edit form must NOT use data-bind-action (suffix form); it is silently dropped by Datastar")
+	}
+}
+
 // TestEnvironments_Update_MissingName verifies that an empty name is rejected
 // with 400.
 func TestEnvironments_Update_MissingName(t *testing.T) {

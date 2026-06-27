@@ -175,6 +175,33 @@ func TestAgents_Create_InvalidRuntimeRedirectsWithError(t *testing.T) {
 	}
 }
 
+// TestAgents_ListPage_CreateFormRuntimeOptions asserts that the create
+// slide-over embedded in the main /console/agents list page (not just /new)
+// renders the runtime ui-select options so an operator can open it and pick a
+// runtime without navigating to /new. serveAgentsPage must populate Runtimes
+// on agentsPageView — the slide-over is a client-side overlay rendered at page
+// load time, so missing options mean an empty dropdown even though the DOM node
+// is present.
+func TestAgents_ListPage_CreateFormRuntimeOptions(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+	rr := tc.get(t, "/console/agents", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `data-value="mesh"`) ||
+		!strings.Contains(body, `class="ui-select-option-label">mesh<`) {
+		t.Errorf("list page slide-over missing runtime option 'mesh'; body:\n%s", body)
+	}
+	if strings.Contains(body, `data-value="bridge"`) {
+		t.Errorf("list page slide-over must NOT offer unimplemented bridge runtime")
+	}
+	if strings.Contains(body, `data-value="managed"`) {
+		t.Errorf("list page slide-over must NOT offer unimplemented managed runtime")
+	}
+}
+
 // TestAgents_CreateFormRuntimeOptions_OnlySupported asserts the create form's
 // runtime picker offers exactly SupportedRuntimes — no unimplemented
 // bridge/managed options that would silently dead-letter every turn (#103).

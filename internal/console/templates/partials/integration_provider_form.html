@@ -85,23 +85,23 @@
   <nav class="integration-connect-tabs" role="group" aria-label="Filter providers by channel">
     <button type="button"
             class="integration-connect-tab is-active"
-            data-class-is-active="$connectChannel === 'email'"
-            data-attr:aria-pressed="$connectChannel === 'email'"
+            data-class:is-active="$connectChannel === 'email'"
+            data-attr:aria-pressed="$connectChannel === 'email' ? 'true' : 'false'"
             data-on:click="$connectChannel='email'"><span>E-Mail</span></button>
     <button type="button"
             class="integration-connect-tab"
-            data-class-is-active="$connectChannel === 'sms'"
-            data-attr:aria-pressed="$connectChannel === 'sms'"
+            data-class:is-active="$connectChannel === 'sms'"
+            data-attr:aria-pressed="$connectChannel === 'sms' ? 'true' : 'false'"
             data-on:click="$connectChannel='sms'"><span>SMS</span></button>
     <button type="button"
             class="integration-connect-tab"
-            data-class-is-active="$connectChannel === 'push'"
-            data-attr:aria-pressed="$connectChannel === 'push'"
+            data-class:is-active="$connectChannel === 'push'"
+            data-attr:aria-pressed="$connectChannel === 'push' ? 'true' : 'false'"
             data-on:click="$connectChannel='push'"><span>Push</span></button>
     <button type="button"
             class="integration-connect-tab"
-            data-class-is-active="$connectChannel === 'chat'"
-            data-attr:aria-pressed="$connectChannel === 'chat'"
+            data-class:is-active="$connectChannel === 'chat'"
+            data-attr:aria-pressed="$connectChannel === 'chat' ? 'true' : 'false'"
             data-on:click="$connectChannel='chat'"><span>Chat</span></button>
   </nav>
 

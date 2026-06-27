@@ -119,6 +119,49 @@ func TestDomains_NavEntryIsLive(t *testing.T) {
 
 // ─── mutations ───────────────────────────────────────────────────────────────
 
+// TestDomains_CreateConflict_Redirects303WithError is the regression test for
+// the bug where a duplicate-domain POST returned a raw HTTP 500 instead of
+// redirecting back to the create slide-over with an inline error.
+func TestDomains_CreateConflict_Redirects303WithError(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedDomain(t, "dupe.com")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/domains",
+		url.Values{"name": {"dupe.com"}, "csrf_token": {csrf}},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("POST conflict: status=%d body=%s, want 303", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("conflict redirect %q missing error= param", loc)
+	}
+}
+
+func TestDomains_CreateConflict_ErrorRenderedInSlideover(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedDomain(t, "dupe2.com")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/domains",
+		url.Values{"name": {"dupe2.com"}, "csrf_token": {csrf}},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("POST conflict: status=%d body=%s, want 303", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+
+	rr2 := tc.get(t, loc, cookie)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("redirect target: status=%d body=%s", rr2.Code, rr2.Body.String())
+	}
+	body := rr2.Body.String()
+	if !strings.Contains(body, "already exists") {
+		t.Errorf("conflict error not rendered in slide-over: %s", body)
+	}
+}
+
 func TestDomains_CreateRedirects303(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, csrf := tc.login(t)

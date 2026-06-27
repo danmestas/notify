@@ -38,9 +38,9 @@
     </div>
     <div class="console-card-body">
       <div class="console-secret-reveal">
-        {{/* Masked display — always safe to render */}}
+        {{/* Masked display by default; data-text swaps to the real key when $showKey is true */}}
         <code class="console-secret-value"
-              data-bind-value="$showKey ? '{{$page.MaskedKey | jsEscape}}' : '{{$page.MaskedKey | jsEscape}}'">{{$page.MaskedKey}}</code>
+              data-text="$showKey ? {{$page.RawKey | jsEscape}} : {{$page.MaskedKey | jsEscape}}">{{$page.MaskedKey}}</code>
         <button type="button" class="btn btn-outline btn-sm"
                 data-on:click="$showKey = !$showKey"
                 aria-label="Toggle key visibility">

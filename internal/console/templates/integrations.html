@@ -14,31 +14,45 @@
     <nav class="integration-channel-tabs" role="group" id="integration-channel-tabs" aria-label="Filter by channel">
       <button type="button"
               class="integration-tab"
-              data-class-is-active="$integrationChannel === ''"
-              data-attr:aria-pressed="$integrationChannel === ''"
+              data-class:is-active="$integrationChannel === ''"
+              data-attr:aria-pressed="$integrationChannel === '' ? 'true' : 'false'"
               data-on:click="$integrationChannel='';@get('/console/api/fragments/integrations-grid')">
         All
       </button>
       <button type="button"
               class="integration-tab"
-              data-class-is-active="$integrationChannel === 'email'"
-              data-attr:aria-pressed="$integrationChannel === 'email'"
+              data-class:is-active="$integrationChannel === 'email'"
+              data-attr:aria-pressed="$integrationChannel === 'email' ? 'true' : 'false'"
               data-on:click="$integrationChannel='email';@get('/console/api/fragments/integrations-grid')">
         Email
       </button>
       <button type="button"
               class="integration-tab"
-              data-class-is-active="$integrationChannel === 'push'"
-              data-attr:aria-pressed="$integrationChannel === 'push'"
+              data-class:is-active="$integrationChannel === 'push'"
+              data-attr:aria-pressed="$integrationChannel === 'push' ? 'true' : 'false'"
               data-on:click="$integrationChannel='push';@get('/console/api/fragments/integrations-grid')">
         Push
       </button>
       <button type="button"
               class="integration-tab"
-              data-class-is-active="$integrationChannel === 'in_app'"
-              data-attr:aria-pressed="$integrationChannel === 'in_app'"
+              data-class:is-active="$integrationChannel === 'in_app'"
+              data-attr:aria-pressed="$integrationChannel === 'in_app' ? 'true' : 'false'"
               data-on:click="$integrationChannel='in_app';@get('/console/api/fragments/integrations-grid')">
         In-app
+      </button>
+      <button type="button"
+              class="integration-tab"
+              data-class:is-active="$integrationChannel === 'chat'"
+              data-attr:aria-pressed="$integrationChannel === 'chat' ? 'true' : 'false'"
+              data-on:click="$integrationChannel='chat';@get('/console/api/fragments/integrations-grid')">
+        Chat
+      </button>
+      <button type="button"
+              class="integration-tab"
+              data-class:is-active="$integrationChannel === 'sms'"
+              data-attr:aria-pressed="$integrationChannel === 'sms' ? 'true' : 'false'"
+              data-on:click="$integrationChannel='sms';@get('/console/api/fragments/integrations-grid')">
+        SMS
       </button>
     </nav>
 

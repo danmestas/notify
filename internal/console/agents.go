@@ -245,6 +245,7 @@ func (c *Console) serveAgentsPage(w http.ResponseWriter, r *http.Request) {
 		Signals:   agentsSignalsJSON(filter, false),
 		ReadOnly:  c.deps.ReadOnly,
 		FormError: r.URL.Query().Get("error"),
+		Runtimes:  agentdomain.SupportedRuntimes,
 		CSRF:      s.CSRF,
 	}
 	c.renderPage(w, r, http.StatusOK, "agents", "Agents", pd)

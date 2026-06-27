@@ -1285,3 +1285,81 @@ func TestIntegrations_EmptyStateIconIsSVG(t *testing.T) {
 		t.Errorf("empty-state unplug icon is not an inlined SVG; span:\n%s", tail)
 	}
 }
+
+// ─── regression: missing Chat and SMS tabs (bug 1) ────────────────────────────
+
+// TestIntegrations_ChannelTabsChatAndSMS is the regression test for bug 1:
+// the integration store toolbar was missing Chat and SMS filter tabs even
+// though chat (discord/telegram/slack/whatsapp/chat-webhook) and sms
+// (twilio/signalwire/sns) integrations exist in the catalog and the grid
+// filter logic already handles those channel values.
+func TestIntegrations_ChannelTabsChatAndSMS(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/integrations", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// Each tab must set the channel signal to drive the grid filter on click.
+	// The signal expression is the authoritative check: it proves the tab is
+	// present and wired; the label check below is belt-and-suspenders.
+	if !strings.Contains(body, "$integrationChannel='chat'") {
+		t.Error("Chat tab must set $integrationChannel='chat' on click (bug 1)")
+	}
+	if !strings.Contains(body, "$integrationChannel='sms'") {
+		t.Error("SMS tab must set $integrationChannel='sms' on click (bug 1)")
+	}
+	// Verify visible labels appear in the rendered toolbar.
+	for _, label := range []string{"Chat", "SMS"} {
+		if !strings.Contains(body, label) {
+			t.Errorf("integration-channel-tabs missing %q tab label (bug 1)", label)
+		}
+	}
+}
+
+// ─── regression: active-tab reactive state broken (bug 2) ────────────────────
+
+// TestIntegrations_ChannelTabActiveStateUsesColonForm is the regression test
+// for bug 2.  data-class-is-active (the attribute-suffix form) is silently
+// ignored in Datastar v1.0.2: the parser splits attribute names on the first
+// colon to find the plugin, so "class-is-active" is treated as the full
+// plugin name and never matched — the class plugin is registered as "class".
+// The fix is the colon form: data-class:is-active="expr".
+//
+// Additionally, data-attr:aria-pressed with a boolean expression (true/false)
+// is wrong: the Datastar v1.0.2 attr plugin maps boolean true → setAttribute
+// to "" (empty string) and boolean false → removeAttribute, both incorrect
+// for WAI-ARIA aria-pressed.  The expression must return the strings "true"
+// or "false" so the attr plugin sets the attribute value correctly.
+func TestIntegrations_ChannelTabActiveStateUsesColonForm(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/integrations", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/integrations: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// The broken suffix form must not appear anywhere in the channel tab nav.
+	if strings.Contains(body, "data-class-is-active") {
+		t.Error("channel filter tabs must not use data-class-is-active " +
+			"(suffix form is silently broken in Datastar v1.0.2; bug 2)")
+	}
+	// The reactive colon form must be present for each tab.
+	if !strings.Contains(body, "data-class:is-active") {
+		t.Error("channel filter tabs must use data-class:is-active " +
+			"(colon form) for reactive .is-active class binding (bug 2)")
+	}
+	// aria-pressed expression must return string "true"/"false", not a
+	// boolean.  The ternary "? 'true' : 'false'" is the canonical form
+	// used throughout this build.
+	if !strings.Contains(body, "'true' : 'false'") {
+		t.Error("aria-pressed expression must return string 'true'/'false', " +
+			"not a boolean (Datastar v1.0.2 attr plugin maps bool true → " +
+			"empty-string attribute; bug 2)")
+	}
+}

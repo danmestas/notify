@@ -59,7 +59,7 @@
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
                 data-on:click="$envEditOpen = false">{{ uiIcon "x" }}</button>
       </div>
-      <form method="POST" data-bind-action="'/console/api/environments/' + $envEditID">
+      <form method="POST" data-attr:action="'/console/api/environments/' + $envEditID">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="edit-env-name">Name *</label>

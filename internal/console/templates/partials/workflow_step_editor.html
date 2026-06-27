@@ -1,5 +1,5 @@
 {{define "workflow-step-editor"}}
-<div id="workflow-step-editor" data-signals="{wfPreviewTmpl:'',wfPreviewPayload:'{}'}">
+<div id="workflow-step-editor" data-signals="{wfPreviewTmpl:{{if .Step}}{{jsEscape (index .Step.ControlMap "body")}}{{else}}''{{end}},wfPreviewPayload:'{}'}">
   {{if .Step}}
   {{$step := .Step}}{{$slug := .Slug}}{{$csrf := .CSRF}}{{$readOnly := .ReadOnly}}
   <div class="wf-step-editor-header">
@@ -30,6 +30,8 @@
     </div>
     {{template "wf-preview-split" (dict "BodyLabel" "Body" "Rows" 4 "Body" (index $step.ControlMap "body"))}}
     {{else if eq $step.Type "sms"}}
+    {{template "wf-preview-split" (dict "BodyLabel" "Message" "Rows" 4 "Body" (index $step.ControlMap "body"))}}
+    {{else if eq $step.Type "chat"}}
     {{template "wf-preview-split" (dict "BodyLabel" "Message" "Rows" 4 "Body" (index $step.ControlMap "body"))}}
     {{else if eq $step.Type "delay"}}
     <div class="form-row">
@@ -89,20 +91,20 @@
     <div class="form-row">
       <label class="form-label" for="cv-body">{{.BodyLabel}}</label>
       <textarea class="console-input wf-preview-textarea" id="cv-body" name="body" rows="{{.Rows}}"
-                data-bind-wf-preview-tmpl
+                data-bind="wfPreviewTmpl"
                 data-on:input__debounce.400ms="@get('/console/api/fragments/step-preview')">{{.Body}}</textarea>
     </div>
     <div class="form-row">
       <label class="form-label" for="wf-preview-payload">Sample payload (JSON)</label>
       <textarea class="console-input console-input-mono" id="wf-preview-payload" rows="3"
-                data-bind-wf-preview-payload
+                data-bind="wfPreviewPayload"
                 data-on:input__debounce.400ms="@get('/console/api/fragments/step-preview')">{}</textarea>
     </div>
   </div>
   <div class="wf-preview-split-preview">
     <p class="form-label wf-preview-label">Preview</p>
     <p class="wf-preview-hint console-lede">Variables: <code>{{"{{payload.*}}"}}</code>, <code>{{"{{subscriber.firstName}}"}}</code></p>
-    <div data-on-load="@get('/console/api/fragments/step-preview')">
+    <div data-on:load="@get('/console/api/fragments/step-preview')">
       <div id="step-preview-pane" class="step-preview-pane">
         <pre class="step-preview-output wf-code-block"></pre>
       </div>

@@ -1490,3 +1490,387 @@ func TestWorkflowDuplicate_SuccessNeverRedirectsToError(t *testing.T) {
 		t.Errorf("Location = %q, want /console/workflows/source-wf-copy-unique", loc)
 	}
 }
+
+// ─── regression: Bug 1 — search bind must use the VALUE form ─────────────────
+
+// TestWorkflowsList_SearchBindUsesValueForm guards the attribute-suffix
+// regression: data-bind-wfFilter loses its capital F in the browser
+// (HTML attribute names are case-folded to lowercase), so Datastar sees
+// the signal "wffilter" instead of "wfFilter" and the typed value never
+// reaches the server. The VALUE form data-bind="wfFilter" preserves the
+// original case because HTML preserves attribute values.
+func TestWorkflowsList_SearchBindUsesValueForm(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/workflows: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// Value form must be present — Datastar reads signal name from the attribute
+	// VALUE, which the browser does NOT case-fold.
+	if !strings.Contains(body, `data-bind="wfFilter"`) {
+		t.Errorf("search input missing data-bind value form; Datastar will see the wrong signal name")
+	}
+	// Attribute-suffix form must NOT appear — the browser lowercases it to
+	// data-bind-wffilter, producing signal "wffilter" ≠ "wfFilter".
+	if strings.Contains(body, `data-bind-wfFilter`) || strings.Contains(body, `data-bind-wffilter`) {
+		t.Errorf("search input must not use attribute-suffix data-bind-wfFilter form (case-lossy)")
+	}
+}
+
+// TestFragmentWorkflowsList_SearchFilterEndToEnd proves that after the
+// correct data-bind="wfFilter" fix, the wfFilter signal (mixed-case key)
+// actually reaches the server and filters the list.  This duplicates
+// TestFragmentWorkflowsList_SearchFilter at the wire level but makes the
+// causal chain explicit.
+func TestFragmentWorkflowsList_SearchFilterEndToEnd(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "Welcome", "welcome-email")
+	tc.seedWorkflow(t, "Digest", "daily-digest")
+	cookie, _ := tc.login(t)
+
+	// Signal sent with the correct mixed-case key as Datastar emits it.
+	v := url.Values{}
+	v.Set("datastar", `{"wfFilter":"welcome","wfStatus":"","wfConfirmDelete":""}`)
+	rr := tc.getWithQuery(t, "/console/api/fragments/workflows-list", v.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("fragment: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Welcome") {
+		t.Errorf("filter end-to-end: fragment missing Welcome row")
+	}
+	if strings.Contains(body, "Digest") {
+		t.Errorf("filter end-to-end: fragment should not contain Digest row (filtered out)")
+	}
+}
+
+// ─── regression: Bug 2 — delete kebab must use data-on:click, not bare href ──
+
+// TestWorkflowsList_DeleteKebabUsesDatastarClick proves the Delete item in
+// the row kebab menu is wired as a Datastar in-place update (data-on:click)
+// rather than a bare anchor that navigates to the SSE fragment endpoint.
+// A bare href causes full-page navigation to the SSE stream, dumping raw
+// "event: datastar-patch-elements" text in the browser.
+func TestWorkflowsList_DeleteKebabUsesDatastarClick(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/workflows: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// The delete action must use Datastar's event handler.
+	if !strings.Contains(body, `data-on:click`) {
+		t.Errorf("delete kebab missing data-on:click — must use Datastar in-place update")
+	}
+	// Must NOT be a bare href pointing at the SSE fragment endpoint.
+	if strings.Contains(body, `href="/console/api/fragments/workflows-list?confirmDelete=`) {
+		t.Errorf("delete kebab must not be a bare anchor navigating to the fragment SSE endpoint")
+	}
+}
+
+// TestFragmentWorkflowsList_ConfirmDeleteViaSignal proves the confirmDelete
+// state is correctly rendered when delivered through the wfConfirmDelete
+// signal (the path taken by data-on:click rather than a query-param href).
+func TestFragmentWorkflowsList_ConfirmDeleteViaSignal(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, _ := tc.login(t)
+
+	v := url.Values{}
+	v.Set("datastar", `{"wfFilter":"","wfStatus":"","wfConfirmDelete":"my-wf"}`)
+	rr := tc.getWithQuery(t, "/console/api/fragments/workflows-list", v.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("confirm-via-signal: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	// The confirm row UI must appear inside the fragment.
+	if !strings.Contains(body, "console-confirm-label") {
+		t.Errorf("confirm-via-signal: fragment missing console-confirm-label confirm row")
+	}
+	if !strings.Contains(body, "Delete?") {
+		t.Errorf("confirm-via-signal: fragment missing Delete? label")
+	}
+}
+
+// ─── regression: Bug 3 — footer and Reset control ────────────────────────────
+
+// TestWorkflowsList_FooterHasIdAndShowsMatchedOfTotal proves the footer
+// carries a stable id (so Datastar PatchElements can update it in place)
+// and shows both the filtered row count and the total count.
+func TestWorkflowsList_FooterHasIdAndShowsMatchedOfTotal(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "Alpha", "alpha")
+	tc.seedWorkflow(t, "Beta", "beta")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/workflows: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// Footer must carry a stable id for Datastar in-place patching.
+	if !strings.Contains(body, `id="wf-footer-note"`) {
+		t.Errorf("footer missing id=\"wf-footer-note\" — Datastar cannot patch it without a stable id")
+	}
+	// Unfiltered: 2 of 2.
+	if !strings.Contains(body, "2 of 2") {
+		t.Errorf("footer does not show matched-of-total (expected '2 of 2')")
+	}
+	// The old always-same-number form (len of len) must not appear.
+	if strings.Contains(body, "2 of 2 of") {
+		t.Errorf("footer shows triple-redundant count")
+	}
+}
+
+// TestFragmentWorkflowsList_FooterReflectsFilteredCount proves that when a
+// filter is active, the fragment patches the footer with the correct
+// matched-vs-total ratio.
+func TestFragmentWorkflowsList_FooterReflectsFilteredCount(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "Alpha", "alpha")
+	tc.seedWorkflow(t, "Beta", "beta")
+	cookie, _ := tc.login(t)
+
+	v := url.Values{}
+	v.Set("datastar", `{"wfFilter":"alpha","wfStatus":"","wfConfirmDelete":""}`)
+	rr := tc.getWithQuery(t, "/console/api/fragments/workflows-list", v.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("fragment filter: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	// 1 matched, 2 total.
+	if !strings.Contains(body, "1 of 2") {
+		t.Errorf("fragment footer does not show '1 of 2' for filtered result (matched of total)")
+	}
+	// Footer element must be in the fragment so Datastar patches it.
+	if !strings.Contains(body, `id="wf-footer-note"`) {
+		t.Errorf("fragment missing id=\"wf-footer-note\" — footer will not update on filter")
+	}
+}
+
+// TestWorkflowsList_ResetControlPresent proves a Reset control with a
+// data-show attribute is rendered in the filter bar so it is visible
+// exactly when filter signals are non-empty.
+func TestWorkflowsList_ResetControlPresent(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/workflows: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// A Reset control must be present in the rendered HTML (visibility is
+	// controlled client-side via data-show on the filter signals).
+	if !strings.Contains(body, "Reset") {
+		t.Errorf("filter bar missing Reset control")
+	}
+	// It must be hidden/shown reactively via data-show (not a server-side {{if}}).
+	if !strings.Contains(body, `data-show=`) {
+		t.Errorf("Reset control missing data-show attribute for reactive visibility")
+	}
+}
+
+// ─── regression: Bug 4 — chat step editor ────────────────────────────────────
+
+// TestFragmentWorkflowStepEditor_RendersChat proves a chat step renders a
+// body/message textarea (mirroring sms) rather than falling through to the
+// generic JSON control-values editor.
+func TestFragmentWorkflowStepEditor_RendersChat(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "chat-1", Type: "chat", ControlValues: json.RawMessage(`{"body":"Hello chat"}`)},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/chat-1", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET step-editor chat fragment: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, "event: datastar-patch-elements") {
+		t.Errorf("chat step-editor fragment missing SSE event framing")
+	}
+	// Must render a body/message textarea (not the generic JSON fallback).
+	if !strings.Contains(body, `name="body"`) {
+		t.Errorf("chat step-editor fragment missing body textarea (fell through to generic editor)")
+	}
+	// Generic JSON fallback must NOT appear for chat.
+	if strings.Contains(body, `name="control_values_json"`) {
+		t.Errorf("chat step-editor fragment fell through to generic JSON editor instead of typed form")
+	}
+	// Pre-filled controlValues body must appear.
+	if !strings.Contains(body, "Hello chat") {
+		t.Errorf("chat step-editor fragment missing pre-filled body value from controlValues")
+	}
+}
+
+// TestWorkflowStepSave_ChatSavesBody proves the chat step-save handler
+// extracts body from the form (not control_values_json) and persists it.
+func TestWorkflowStepSave_ChatSavesBody(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "chat-1", Type: "chat", ControlValues: json.RawMessage(`{"body":"old"}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/chat-1/save", url.Values{
+		"csrf_token": {csrf},
+		"body":       {"new chat body"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("chat step save: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	// Re-fetch the step editor to confirm the value was persisted.
+	rr2 := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/chat-1", cookie)
+	if !strings.Contains(rr2.Body.String(), "new chat body") {
+		t.Errorf("after chat step save, step editor missing updated body value")
+	}
+}
+
+// ─── regression: Bug 5 — email/in_app/push content must round-trip ───────────
+
+// TestWorkflowStepSave_EmailSubjectAndBodyRoundTrip proves the email step-save
+// handler persists BOTH the subject and the body posted by the per-type form,
+// and that the step editor re-renders them on reload. Regression for the
+// content-bearing step types (email/in_app/push) losing their controlValues.
+func TestWorkflowStepSave_EmailSubjectAndBodyRoundTrip(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "email-1", Type: "email", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/email-1/save", url.Values{
+		"csrf_token": {csrf},
+		"subject":    {"Welcome aboard"},
+		"body":       {"Hello {{payload.name}}"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("email step save: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	// Reload the step editor; both fields must repopulate from the stored
+	// controlValues (save -> reload -> repopulate).
+	rr2 := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/email-1", cookie)
+	body := rr2.Body.String()
+	if !strings.Contains(body, `value="Welcome aboard"`) {
+		t.Errorf("after email save, subject field did not repopulate; want value=\"Welcome aboard\"")
+	}
+	if !strings.Contains(body, "Hello ") || !strings.Contains(body, "payload.name") {
+		t.Errorf("after email save, body textarea did not repopulate with the saved body")
+	}
+}
+
+// TestWorkflowStepSave_PushTitleRoundTrip proves the push step-save handler
+// persists the title (and body) and the editor repopulates them on reload.
+func TestWorkflowStepSave_PushTitleRoundTrip(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "push-1", Type: "push", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/push-1/save", url.Values{
+		"csrf_token": {csrf},
+		"title":      {"Ping title"},
+		"body":       {"Ping body"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("push step save: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	rr2 := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/push-1", cookie)
+	body := rr2.Body.String()
+	if !strings.Contains(body, `value="Ping title"`) {
+		t.Errorf("after push save, title field did not repopulate; want value=\"Ping title\"")
+	}
+	if !strings.Contains(body, "Ping body") {
+		t.Errorf("after push save, body textarea did not repopulate with the saved body")
+	}
+}
+
+// TestFragmentWorkflowStepEditor_SeedsPreviewSignalWithBody proves the
+// step-editor fragment seeds the wfPreviewTmpl signal with the step's saved
+// body. The body textarea carries data-bind="wfPreviewTmpl"; if that signal is
+// pre-declared empty (wfPreviewTmpl:”), Datastar's two-way binding overwrites
+// the server-rendered textarea content with the empty signal on load — wiping
+// the saved body and persisting empty on the next save. Seeding the signal with
+// the body keeps the textarea populated.
+func TestFragmentWorkflowStepEditor_SeedsPreviewSignalWithBody(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "email-1", Type: "email", ControlValues: json.RawMessage(`{"subject":"Hi","body":"BODYSEED"}`)},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/email-1", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET step-editor fragment: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	// The empty-seed form must NOT be present — it is what wipes the body.
+	if strings.Contains(body, "wfPreviewTmpl:''") {
+		t.Errorf("step-editor fragment pre-declares wfPreviewTmpl empty; data-bind will wipe the saved body")
+	}
+	// The signal must be seeded with the step's saved body.
+	if !strings.Contains(body, "wfPreviewTmpl:&#39;BODYSEED&#39;") {
+		t.Errorf("step-editor fragment did not seed wfPreviewTmpl with the saved body (want wfPreviewTmpl:'BODYSEED')")
+	}
+}
+
+// ─── regression: Bug 6 — Activate control must be a real form submit ─────────
+
+// TestWorkflowEditor_ActivateButtonIsRealSubmit proves the editor's Status
+// section renders the Activate control as a genuine submit button inside a
+// <form> that POSTs active=1 to the activate endpoint — so clicking it actually
+// fires the activation (rather than a stray button outside the form, a
+// non-submit, or a non-reactive Datastar attribute).
+func TestWorkflowEditor_ActivateButtonIsRealSubmit(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedInactiveWorkflow(t, "Toggle WF", "toggle-wf")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/toggle-wf", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET inactive detail: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	// Isolate the activate <form> so the assertions are scoped to it.
+	const action = `action="/console/api/workflows/toggle-wf/activate"`
+	start := strings.Index(body, action)
+	if start == -1 {
+		t.Fatalf("inactive detail missing activate form action %q", action)
+	}
+	formEnd := strings.Index(body[start:], "</form>")
+	if formEnd == -1 {
+		t.Fatalf("activate form not closed after action")
+	}
+	form := body[start : start+formEnd]
+
+	// The activate value must be 1 (activate, not deactivate).
+	if !strings.Contains(form, `name="active" value="1"`) {
+		t.Errorf("activate form does not POST active=1; got form: %q", form)
+	}
+	// The Activate control must be a real submit button inside this form.
+	if !strings.Contains(form, `type="submit"`) {
+		t.Errorf("activate form has no submit button; clicking Activate will not fire")
+	}
+	if !strings.Contains(form, "Activate") {
+		t.Errorf("activate form missing the Activate label")
+	}
+}

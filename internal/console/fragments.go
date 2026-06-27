@@ -85,6 +85,12 @@ type fragmentEnvelope struct {
 	// Handlebars template string; WfPreviewPayload is the sample JSON payload.
 	WfPreviewTmpl    string `json:"wfPreviewTmpl,omitempty"`
 	WfPreviewPayload string `json:"wfPreviewPayload,omitempty"`
+	// WFConfirmDelete is the trigger identifier of the workflow awaiting
+	// inline two-step delete confirmation on the list page. Carried as a
+	// signal because Datastar drops literal @get query params; the value
+	// form data-on:click sets this signal before calling @get so the
+	// server can render the correct confirm row in the patched tbody.
+	WFConfirmDelete string `json:"wfConfirmDelete,omitempty"`
 }
 
 // mergeFragmentParams merges the request's URL query with the Datastar
@@ -200,6 +206,11 @@ func envelopeToQuery(env fragmentEnvelope, key string) (string, string) {
 		return "before", env.AgentsPage
 	case "convPage":
 		return "before", env.ConvPage
+	// Workflows list inline confirm-delete signal. Datastar drops literal
+	// @get query params, so the row's data-on:click sets this signal and the
+	// fragment endpoint maps it back to the confirmDelete URL query key.
+	case "wfConfirmDelete":
+		return "confirmDelete", env.WFConfirmDelete
 	}
 	return "", ""
 }

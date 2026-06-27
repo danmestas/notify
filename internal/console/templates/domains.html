@@ -31,6 +31,9 @@
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
                 data-on:click="$domainNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
+      {{if $page.FormError}}
+      <p class="console-form-error" role="alert">{{$page.FormError}}</p>
+      {{end}}
       <form method="POST" action="/console/domains" class="domain-create-form">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
