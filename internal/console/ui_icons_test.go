@@ -135,6 +135,52 @@ func TestTemplates_NoEmojiOrGlyphIcons(t *testing.T) {
 	}
 }
 
+// TestTemplates_NoBrokenDatastarAttributeForms guards against the bug class the
+// browser bug-hunt repeatedly surfaced: NON-REACTIVE Datastar attribute forms.
+// In this Datastar build the bind/class/attr plugins are addressed with the
+// value form (data-bind="signal") or the colon form (data-class:is-active,
+// data-attr:aria-pressed). The hyphen-SUFFIX forms below silently do nothing:
+//   - data-bind-wfFilter   -> the browser lowercases the attribute name to
+//     data-bind-wffilter, yielding a 'wffilter' signal the server never reads
+//     (this is why the workflows search box looked wired but never filtered).
+//   - data-class-is-active -> the class plugin is never matched, so the active
+//     state is never applied (the integration channel tabs had no selected look).
+//   - data-attr-x          -> same parse failure as data-class-.
+//
+// These three substrings only ever appear in the broken form, so a plain
+// Contains check is sufficient. NOTE: data-on-load / data-on-focus (hyphen) are
+// intentionally NOT flagged — those work in this build; only bind/class/attr
+// have the suffix-vs-colon hazard.
+func TestTemplates_NoBrokenDatastarAttributeForms(t *testing.T) {
+	broken := map[string]string{
+		"data-bind-":  `use the value form data-bind="signalName"`,
+		"data-class-": `use the colon form data-class:is-active`,
+		"data-attr-":  `use the colon form data-attr:aria-pressed`,
+	}
+	err := fs.WalkDir(templatesFS, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(p, ".html") {
+			return nil
+		}
+		body, err := fs.ReadFile(templatesFS, p)
+		if err != nil {
+			return err
+		}
+		rendered := stripTemplateComments(string(body))
+		for bad, fix := range broken {
+			if strings.Contains(rendered, bad) {
+				t.Errorf("%s: contains non-reactive Datastar attribute form %q — %s", p, bad, fix)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk templates: %v", err)
+	}
+}
+
 // TestGoSource_NoEmojiIconLiterals_Integrations is the regression guard for
 // emoji that the template sweep can't catch: empty-state Icon values set in Go
 // source (e.g. `Icon: "🔌"`). The empty-state partial renders Icon as text, so
