@@ -213,6 +213,207 @@ func TestHandleInApp_SendsWhenEnabled(t *testing.T) {
 	}
 }
 
+// filterEnvelope builds an in_app envelope whose step carries the given raw
+// filters JSON, for the per-step condition gating tests.
+func filterEnvelope(filters json.RawMessage, payload json.RawMessage) runenv.InAppEnvelope {
+	env := inAppEnvelope()
+	if payload != nil {
+		env.Payload = payload
+	}
+	env.Step.Filters = filters
+	return env
+}
+
+// premiumFilter is a single-group, single-condition filter that passes when the
+// subscriber's data.plan equals "premium".
+var premiumFilter = json.RawMessage(`[{"combinator":"AND","conditions":[{"on":"subscriber","field":"data.plan","operator":"EQUAL","value":"premium"}]}]`)
+
+func msgsFor(t *testing.T, s *store.Store, subscriberID string) []domain.Message {
+	t.Helper()
+	msgs, err := s.Messages().List(context.Background(), domain.Scope{OrgID: "org_1", EnvID: "env_1"}, subscriberID, "in_app")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	return msgs
+}
+
+// TestHandleInApp_ConditionTrue_Sends: a step whose filter condition evaluates
+// true for the subscriber RUNS (one "sent" message).
+func TestHandleInApp_ConditionTrue_Sends(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	h := New(s)
+
+	env := filterEnvelope(premiumFilter, nil)
+	env.SubscriberID = "user_premium"
+	env.Subscriber = json.RawMessage(`{"subscriberId":"user_premium","firstName":"Ada","data":{"plan":"premium"}}`)
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	msgs := msgsFor(t, s, "user_premium")
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	if msgs[0].Status != "sent" {
+		t.Errorf("Status = %q, want %q", msgs[0].Status, "sent")
+	}
+}
+
+// TestHandleInApp_ConditionFalse_Skips: a step whose filter condition evaluates
+// false for the subscriber is SKIPPED (no "sent" message; a "skipped" row).
+func TestHandleInApp_ConditionFalse_Skips(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	h := New(s)
+
+	env := filterEnvelope(premiumFilter, nil)
+	env.SubscriberID = "user_free"
+	env.Subscriber = json.RawMessage(`{"subscriberId":"user_free","firstName":"Bob","data":{"plan":"free"}}`)
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	msgs := msgsFor(t, s, "user_free")
+	for _, m := range msgs {
+		if m.Status == "sent" {
+			t.Fatalf("condition false but a sent message was persisted: %+v", m)
+		}
+	}
+	if len(msgs) != 1 || msgs[0].Status != "skipped" {
+		t.Fatalf("expected one skipped message, got %+v", msgs)
+	}
+}
+
+// TestHandleInApp_NoFilters_AlwaysRuns: a step with absent filters always runs
+// (regression: the 99% no-condition path is unchanged).
+func TestHandleInApp_NoFilters_AlwaysRuns(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	h := New(s)
+
+	input, err := json.Marshal(inAppEnvelope()) // no Filters set
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	msgs := msgsFor(t, s, "user_123")
+	if len(msgs) != 1 || msgs[0].Status != "sent" {
+		t.Fatalf("expected one sent message, got %+v", msgs)
+	}
+}
+
+// TestHandleInApp_EmptyFiltersArray_AlwaysRuns: an explicit empty filters array
+// is equivalent to no condition and must run.
+func TestHandleInApp_EmptyFiltersArray_AlwaysRuns(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	h := New(s)
+
+	env := filterEnvelope(json.RawMessage(`[]`), nil)
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	msgs := msgsFor(t, s, "user_123")
+	if len(msgs) != 1 || msgs[0].Status != "sent" {
+		t.Fatalf("expected one sent message, got %+v", msgs)
+	}
+}
+
+// TestHandleInApp_PayloadCondition_Gates: a payload-sourced condition gates the
+// send correctly (true -> sent, false -> skipped).
+func TestHandleInApp_PayloadCondition_Gates(t *testing.T) {
+	payloadFilter := json.RawMessage(`[{"combinator":"AND","conditions":[{"on":"payload","field":"tier","operator":"EQUAL","value":"gold"}]}]`)
+
+	t.Run("true sends", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		h := New(s)
+		env := filterEnvelope(payloadFilter, json.RawMessage(`{"tier":"gold","itemCount":3}`))
+		env.SubscriberID = "p_gold"
+		env.Subscriber = json.RawMessage(`{"subscriberId":"p_gold","firstName":"Ada"}`)
+		input, _ := json.Marshal(env)
+		if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", Input: input}); err != nil {
+			t.Fatalf("HandleInApp: %v", err)
+		}
+		msgs := msgsFor(t, s, "p_gold")
+		if len(msgs) != 1 || msgs[0].Status != "sent" {
+			t.Fatalf("expected one sent message, got %+v", msgs)
+		}
+	})
+
+	t.Run("false skips", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		h := New(s)
+		env := filterEnvelope(payloadFilter, json.RawMessage(`{"tier":"silver","itemCount":3}`))
+		env.SubscriberID = "p_silver"
+		env.Subscriber = json.RawMessage(`{"subscriberId":"p_silver","firstName":"Bob"}`)
+		input, _ := json.Marshal(env)
+		if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", Input: input}); err != nil {
+			t.Fatalf("HandleInApp: %v", err)
+		}
+		msgs := msgsFor(t, s, "p_silver")
+		for _, m := range msgs {
+			if m.Status == "sent" {
+				t.Fatalf("condition false but a sent message was persisted: %+v", m)
+			}
+		}
+		if len(msgs) != 1 || msgs[0].Status != "skipped" {
+			t.Fatalf("expected one skipped message, got %+v", msgs)
+		}
+	})
+}
+
+// TestHandleInApp_MalformedFilters_FailsClosed: a malformed filters JSON must
+// fail closed (skip, no send) without panicking.
+func TestHandleInApp_MalformedFilters_FailsClosed(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	h := New(s)
+
+	// Filters that are valid JSON (so the envelope itself decodes) but the wrong
+	// shape for a filter array (an object, not an array of Group) — this models
+	// a corrupted/garbage persisted condition. Unmarshaling it into []filter.Group
+	// errors, which must fail closed (skip), not fall through to a send.
+	env := filterEnvelope(json.RawMessage(`{"corrupt":"not an array of groups"}`), nil)
+	env.SubscriberID = "user_bad"
+	env.Subscriber = json.RawMessage(`{"subscriberId":"user_bad","firstName":"Eve"}`)
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp returned error, want nil: %v", err)
+	}
+
+	msgs := msgsFor(t, s, "user_bad")
+	for _, m := range msgs {
+		if m.Status == "sent" {
+			t.Fatalf("malformed filters but a sent message was persisted (fail-open): %+v", m)
+		}
+	}
+	if len(msgs) != 1 || msgs[0].Status != "skipped" {
+		t.Fatalf("expected one skipped message (fail-closed), got %+v", msgs)
+	}
+}
+
 // stubPublisher records each PublishInbox and PublishDelivery call for assertions.
 type stubPublisher struct {
 	calls         []publishCall

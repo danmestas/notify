@@ -29,6 +29,11 @@ type Step struct {
 	Priority int      `json:"priority,omitempty"` // 1 (min) .. 5 (max); 0 = provider default
 	Tags     []string `json:"tags,omitempty"`
 	Markdown bool     `json:"markdown,omitempty"`
+	// Filters is the step's per-step condition (a JSON array of filter.Group,
+	// copied verbatim from domain.Step.Filters). Empty/absent => no condition =>
+	// the step always runs. When present, the send handler evaluates it against
+	// the {subscriber, payload} context and SKIPS the send when it is false.
+	Filters json.RawMessage `json:"filters,omitempty"`
 }
 
 // InAppEnvelope is the StartRun input for an in_app workflow run. Subscriber and

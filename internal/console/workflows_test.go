@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/danmestas/notify/internal/authoring"
+	"github.com/danmestas/notify/internal/delivery/filter"
 	"github.com/danmestas/notify/internal/domain"
 )
 
@@ -1872,5 +1873,200 @@ func TestWorkflowEditor_ActivateButtonIsRealSubmit(t *testing.T) {
 	}
 	if !strings.Contains(form, "Activate") {
 		t.Errorf("activate form missing the Activate label")
+	}
+}
+
+// ─── per-step CONDITIONS authoring (step.Filters) ────────────────────────────
+
+// TestWorkflowStepEditor_RendersConditionsSection proves the step editor
+// renders a "When should this step run?" conditions fieldset with the
+// combinator select + at least one condition row (On / Field / Operator /
+// Value), using design-system controls.
+func TestWorkflowStepEditor_RendersConditionsSection(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/in_app-1", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET step-editor fragment: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, "When should this step run?") {
+		t.Errorf("step editor missing the conditions fieldset legend")
+	}
+	// Combinator select posts cond_combinator.
+	if !strings.Contains(body, `name="cond_combinator"`) {
+		t.Errorf("step editor missing combinator select (name=cond_combinator)")
+	}
+	// At least the first condition row's four fields must be present.
+	for _, name := range []string{"cond_on_0", "cond_field_0", "cond_operator_0", "cond_value_0"} {
+		if !strings.Contains(body, `name="`+name+`"`) {
+			t.Errorf("step editor missing condition field name=%q", name)
+		}
+	}
+}
+
+// TestWorkflowStepSave_ConditionPersistsFilters proves that posting a single
+// condition row persists the correct []filter.Group JSON into step.Filters.
+func TestWorkflowStepSave_ConditionPersistsFilters(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/in_app-1/save", url.Values{
+		"csrf_token":      {csrf},
+		"subject":         {"Hi"},
+		"body":            {"Body"},
+		"cond_combinator": {"AND"},
+		"cond_on_0":       {"subscriber"},
+		"cond_field_0":    {"data.plan"},
+		"cond_operator_0": {"EQUAL"},
+		"cond_value_0":    {"premium"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("step save with condition: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	// Read the persisted step.Filters back out of the store and assert it
+	// matches the shared filter contract exactly.
+	wf, err := tc.deps.Authoring.GetBySlug(context.Background(), tc.scope, "my-wf")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	steps, err := decodeSteps(wf.Steps)
+	if err != nil {
+		t.Fatalf("decodeSteps: %v", err)
+	}
+	var saved domain.Step
+	for _, s := range steps {
+		if s.StepID == "in_app-1" {
+			saved = s
+		}
+	}
+	if len(saved.Filters) == 0 {
+		t.Fatalf("step.Filters empty after saving a condition")
+	}
+	var groups []filter.Group
+	if err := json.Unmarshal(saved.Filters, &groups); err != nil {
+		t.Fatalf("step.Filters is not []filter.Group: %v (raw: %s)", err, saved.Filters)
+	}
+	want := []filter.Group{{
+		Combinator: "AND",
+		Conditions: []filter.Condition{{
+			On:       "subscriber",
+			Field:    "data.plan",
+			Operator: filter.OpEqual,
+			Value:    "premium",
+		}},
+	}}
+	if len(groups) != 1 || len(groups[0].Conditions) != 1 {
+		t.Fatalf("step.Filters shape = %+v, want one group with one condition", groups)
+	}
+	gotC := groups[0].Conditions[0]
+	wantC := want[0].Conditions[0]
+	if groups[0].Combinator != want[0].Combinator {
+		t.Errorf("combinator = %q, want %q", groups[0].Combinator, want[0].Combinator)
+	}
+	if gotC.On != wantC.On || gotC.Field != wantC.Field || gotC.Operator != wantC.Operator {
+		t.Errorf("condition on/field/operator = %q/%q/%q, want %q/%q/%q",
+			gotC.On, gotC.Field, gotC.Operator, wantC.On, wantC.Field, wantC.Operator)
+	}
+	if v, ok := gotC.Value.(string); !ok || v != "premium" {
+		t.Errorf("condition value = %#v, want string \"premium\"", gotC.Value)
+	}
+
+	// Literal-key wire-format assertion: the JSON must carry the exact contract keys.
+	raw := string(saved.Filters)
+	for _, key := range []string{`"combinator":"AND"`, `"on":"subscriber"`, `"field":"data.plan"`, `"operator":"EQUAL"`, `"value":"premium"`} {
+		if !strings.Contains(raw, key) {
+			t.Errorf("step.Filters JSON missing literal key %s; raw = %s", key, raw)
+		}
+	}
+}
+
+// TestWorkflowStepSave_ConditionRoundTrips proves saving a condition then
+// reloading the step editor repopulates the condition row fields.
+func TestWorkflowStepSave_ConditionRoundTrips(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/in_app-1/save", url.Values{
+		"csrf_token":      {csrf},
+		"subject":         {"Hi"},
+		"body":            {"Body"},
+		"cond_combinator": {"OR"},
+		"cond_on_0":       {"payload"},
+		"cond_field_0":    {"data.plan"},
+		"cond_operator_0": {"EQUAL"},
+		"cond_value_0":    {"premium"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("step save: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	rr2 := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/in_app-1", cookie)
+	body := rr2.Body.String()
+	// Field + value prefilled into the text inputs.
+	if !strings.Contains(body, `value="data.plan"`) {
+		t.Errorf("after save, condition Field did not repopulate (want value=\"data.plan\"); body: %s", body)
+	}
+	if !strings.Contains(body, `value="premium"`) {
+		t.Errorf("after save, condition Value did not repopulate (want value=\"premium\")")
+	}
+	// The combinator + on + operator selects seed their value signals to the
+	// saved choices (uiSelectForm declares initialValue in data-signals).
+	if !strings.Contains(body, "OR") {
+		t.Errorf("after save, combinator did not repopulate to OR")
+	}
+	if !strings.Contains(body, "payload") {
+		t.Errorf("after save, condition On did not repopulate to payload")
+	}
+}
+
+// TestWorkflowStepSave_EmptyConditionsLeavesFiltersAbsent proves that saving
+// with no condition rows filled in leaves step.Filters empty/absent, so the
+// step is not gated.
+func TestWorkflowStepSave_EmptyConditionsLeavesFiltersAbsent(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/in_app-1/save", url.Values{
+		"csrf_token":      {csrf},
+		"subject":         {"Hi"},
+		"body":            {"Body"},
+		"cond_combinator": {"AND"},
+		"cond_on_0":       {"subscriber"},
+		"cond_field_0":    {""},
+		"cond_operator_0": {"EQUAL"},
+		"cond_value_0":    {""},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("step save: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	wf, err := tc.deps.Authoring.GetBySlug(context.Background(), tc.scope, "my-wf")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	steps, err := decodeSteps(wf.Steps)
+	if err != nil {
+		t.Fatalf("decodeSteps: %v", err)
+	}
+	for _, s := range steps {
+		if s.StepID == "in_app-1" && len(s.Filters) != 0 {
+			t.Errorf("step.Filters = %s, want empty/absent when no conditions entered", s.Filters)
+		}
 	}
 }

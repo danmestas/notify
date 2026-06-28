@@ -294,6 +294,7 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 			Priority:          controls.Priority,
 			Tags:              controls.Tags,
 			Markdown:          controls.Markdown,
+			Filters:           step.Filters,
 		},
 	}
 	envelopeJSON, err := json.Marshal(envelope)

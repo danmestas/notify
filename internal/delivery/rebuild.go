@@ -118,6 +118,7 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 			Priority:          controls.Priority,
 			Tags:              controls.Tags,
 			Markdown:          controls.Markdown,
+			Filters:           found.Filters,
 		},
 	}, notif.DigestKey, nil
 }

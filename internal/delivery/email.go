@@ -148,6 +148,15 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 	scope := domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
 	content = wrapLayout(ctx, h.store, scope, env.Step.LayoutKey, content, data, translate)
 
+	// Per-step condition gate. When the step authored a filter condition, it is
+	// evaluated against the {subscriber, payload} context; a false (or
+	// unevaluable) condition SKIPS the send. Absent/empty filters always run. A
+	// malformed condition fails closed (skip) so a broken condition never blasts
+	// a send to every subscriber.
+	if !conditionMet(env.Step.Filters, subMap, payloadMap) {
+		return h.persistEmailSkipped(ctx, env, t, scope, subject, content)
+	}
+
 	// Optional throttle gate. When the step configures a limit and a throttler
 	// is attached, a send over the per-(env,subscriber,workflow) limit records a
 	// "throttled" message instead of sending.

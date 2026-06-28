@@ -63,6 +63,51 @@
       <textarea class="console-input" name="control_values_json" rows="4">{{$step.ControlValuesJSON}}</textarea>
     </div>
     {{end}}
+    <fieldset class="wf-conditions">
+      <legend class="form-label wf-conditions-legend">{{uiIcon "unplug"}} When should this step run?</legend>
+      <p class="console-lede wf-conditions-hint">Leave conditions empty to always run this step.</p>
+      <div class="form-row">
+        <label class="form-label" for="cond-combinator-trigger">Match</label>
+        {{template "ui-select" (uiSelectForm "cond-combinator" "cond_combinator" "condCombinator"
+          (uiSelectOptions "AND" "All conditions (AND)" "OR" "Any condition (OR)")
+          "Match" "" false $step.Combinator true)}}
+      </div>
+      {{range $i, $c := $step.Conditions}}
+      <div class="wf-condition-row">
+        <div class="form-row wf-condition-on">
+          <label class="form-label" for="cond-on-{{$i}}-trigger">On</label>
+          {{template "ui-select" (uiSelectForm (printf "cond-on-%d" $i) (printf "cond_on_%d" $i) (printf "condOn%d" $i)
+            (uiSelectOptions "subscriber" "Subscriber" "payload" "Payload")
+            "On" "" false $c.On true)}}
+        </div>
+        <div class="form-row wf-condition-field">
+          <label class="form-label" for="cond-field-{{$i}}">Field</label>
+          <input class="console-input" type="text" id="cond-field-{{$i}}" name="cond_field_{{$i}}"
+                 placeholder="data.plan" value="{{$c.Field}}">
+        </div>
+        <div class="form-row wf-condition-operator">
+          <label class="form-label" for="cond-operator-{{$i}}-trigger">Operator</label>
+          {{template "ui-select" (uiSelectForm (printf "cond-operator-%d" $i) (printf "cond_operator_%d" $i) (printf "condOperator%d" $i)
+            (uiSelectOptions
+              "EQUAL" "equals"
+              "NOT_EQUAL" "not equals"
+              "LARGER" "greater than"
+              "SMALLER" "less than"
+              "LARGER_EQUAL" "greater or equal"
+              "SMALLER_EQUAL" "less or equal"
+              "IN" "in"
+              "NOT_IN" "not in"
+              "IS_DEFINED" "is defined")
+            "Operator" "" false $c.Operator true)}}
+        </div>
+        <div class="form-row wf-condition-value">
+          <label class="form-label" for="cond-value-{{$i}}">Value</label>
+          <input class="console-input" type="text" id="cond-value-{{$i}}" name="cond_value_{{$i}}"
+                 placeholder="premium" value="{{$c.Value}}">
+        </div>
+      </div>
+      {{end}}
+    </fieldset>
     <div class="console-slideover-actions">
       <button type="submit" class="btn btn-primary">Save step</button>
     </div>

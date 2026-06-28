@@ -40,20 +40,20 @@ const (
 // "subscriber", ...); Field is a dotted path within that source; Value is the
 // comparand. Negated inverts the result (the reference platform isNegated).
 type Condition struct {
-	On       string
-	Field    string
-	Operator Operator
-	Value    any
-	Negated  bool
+	On       string   `json:"on"`
+	Field    string   `json:"field"`
+	Operator Operator `json:"operator"`
+	Value    any      `json:"value"`
+	Negated  bool     `json:"negated"`
 }
 
 // Group is a recursive AND/OR tree. Combinator is "AND" or "OR" (case
 // insensitive; anything other than "OR" is treated as AND). A group passes per
 // its combinator over Conditions AND nested Groups.
 type Group struct {
-	Combinator string
-	Conditions []Condition
-	Groups     []Group
+	Combinator string      `json:"combinator"`
+	Conditions []Condition `json:"conditions"`
+	Groups     []Group     `json:"groups,omitempty"`
 }
 
 // EvalContext holds the named data sources. payload + subscriber are the

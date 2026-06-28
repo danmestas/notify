@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/danmestas/notify/internal/authoring"
+	"github.com/danmestas/notify/internal/delivery/filter"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
@@ -155,7 +156,28 @@ type workflowStepEditorStep struct {
 	// ControlMap is the decoded controlValues flattened to strings for
 	// form-field pre-fill.
 	ControlMap map[string]string
+	// Combinator is the AND/OR combinator of the step's first filter Group,
+	// pre-filling the conditions fieldset (defaults to "AND").
+	Combinator string
+	// Conditions are the step's filter conditions (the first Group's
+	// Conditions), flattened for the per-row form pre-fill. Always has at
+	// least one row so the editor renders an empty row to author into.
+	Conditions []stepConditionRow
 }
+
+// stepConditionRow is a single CONDITIONS authoring row, flattened from a
+// filter.Condition for form pre-fill. Value is rendered verbatim into a text
+// input; On/Operator seed their respective uiSelect value signals.
+type stepConditionRow struct {
+	On       string
+	Field    string
+	Operator string
+	Value    string
+}
+
+// stepConditionRows is how many condition rows the editor renders (MVP: a
+// fixed handful of repeatable rows; no nested groups).
+const stepConditionRows = 3
 
 // workflowStepEditorView is what the workflow-step-editor fragment binds.
 type workflowStepEditorView struct {
@@ -1182,6 +1204,12 @@ func (c *Console) handleWorkflowStepSave(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		steps[i].ControlValues = cv
+		filters, fErr := conditionsFromForm(r)
+		if fErr != nil {
+			http.Redirect(w, r, editURL+"?error="+url.QueryEscape(fErr.Error()), http.StatusSeeOther)
+			return
+		}
+		steps[i].Filters = filters
 		break
 	}
 	if !found {
@@ -1252,12 +1280,15 @@ func (c *Console) serveFragmentWorkflowStepEditor(w http.ResponseWriter, r *http
 	for _, st := range steps {
 		if st.StepID == stepID {
 			st := st
+			combinator, conditions := conditionsFromFilters(st.Filters)
 			view.Step = &workflowStepEditorStep{
 				StepID:            st.StepID,
 				Type:              st.Type,
 				Name:              st.Name,
 				ControlValuesJSON: prettyJSON(st.ControlValues),
 				ControlMap:        controlMap(st.ControlValues),
+				Combinator:        combinator,
+				Conditions:        conditions,
 			}
 			break
 		}
@@ -1782,6 +1813,135 @@ func controlMap(raw json.RawMessage) map[string]string {
 		}
 	}
 	return out
+}
+
+// conditionsFromFilters decodes step.Filters ([]filter.Group) back into the
+// editor's combinator + per-row form model. Only the first Group is surfaced
+// (the UI authors a single AND/OR group; no nested groups). The returned rows
+// are padded to stepConditionRows so the editor always renders blank rows to
+// author into. Combinator defaults to "AND" when absent.
+func conditionsFromFilters(raw json.RawMessage) (string, []stepConditionRow) {
+	combinator := "AND"
+	rows := make([]stepConditionRow, 0, stepConditionRows)
+	if len(raw) > 0 {
+		var groups []filter.Group
+		if err := json.Unmarshal(raw, &groups); err == nil && len(groups) > 0 {
+			g := groups[0]
+			if g.Combinator != "" {
+				combinator = strings.ToUpper(g.Combinator)
+			}
+			for _, c := range g.Conditions {
+				rows = append(rows, stepConditionRow{
+					On:       c.On,
+					Field:    c.Field,
+					Operator: string(c.Operator),
+					Value:    conditionValueString(c.Value),
+				})
+			}
+		}
+	}
+	for len(rows) < stepConditionRows {
+		rows = append(rows, stepConditionRow{})
+	}
+	return combinator, rows
+}
+
+// conditionValueString renders a decoded condition Value back to the text the
+// operator typed. Scalars round-trip; non-scalars (unused by the MVP UI) come
+// back empty.
+func conditionValueString(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(t)
+	}
+	return ""
+}
+
+// wireCondition / wireGroup mirror filter.Condition / filter.Group with the
+// shared-contract json tags. The vendored filter types carry no struct tags
+// (they rely on Go's case-insensitive unmarshal at eval time), so marshaling
+// them directly would emit Go field-name keys ("On", "Combinator", ...) rather
+// than the contract's lowercase keys ("on", "combinator", ...). We build
+// filter.* values for type-safety, then convert to these tagged mirrors for the
+// on-the-wire bytes the evaluator (and any other consumer) reads back.
+type wireCondition struct {
+	On       string          `json:"on"`
+	Field    string          `json:"field"`
+	Operator filter.Operator `json:"operator"`
+	Value    any             `json:"value"`
+	Negated  bool            `json:"negated"`
+}
+
+type wireGroup struct {
+	Combinator string          `json:"combinator"`
+	Conditions []wireCondition `json:"conditions"`
+	Groups     []wireGroup     `json:"groups,omitempty"`
+}
+
+func toWireGroup(g filter.Group) wireGroup {
+	wg := wireGroup{Combinator: g.Combinator}
+	for _, c := range g.Conditions {
+		wg.Conditions = append(wg.Conditions, wireCondition{
+			On:       c.On,
+			Field:    c.Field,
+			Operator: c.Operator,
+			Value:    c.Value,
+			Negated:  c.Negated,
+		})
+	}
+	for _, child := range g.Groups {
+		wg.Groups = append(wg.Groups, toWireGroup(child))
+	}
+	return wg
+}
+
+// conditionsFromForm parses the posted CONDITIONS rows into a single
+// filter.Group wrapped in a JSON array of Group, marshaled with the shared
+// contract's lowercase keys. Rows with an empty Field are skipped. When no
+// usable row exists it returns (nil, nil) so the step's Filters stay absent and
+// the step is not gated.
+func conditionsFromForm(r *http.Request) (json.RawMessage, error) {
+	field := func(name string) string { return strings.TrimSpace(r.FormValue(name)) }
+
+	combinator := strings.ToUpper(field("cond_combinator"))
+	if combinator != "OR" {
+		combinator = "AND"
+	}
+
+	var conditions []filter.Condition
+	for i := 0; i < stepConditionRows; i++ {
+		suffix := strconv.Itoa(i)
+		path := field("cond_field_" + suffix)
+		if path == "" {
+			continue
+		}
+		on := field("cond_on_" + suffix)
+		if on == "" {
+			on = "payload"
+		}
+		op := filter.Operator(field("cond_operator_" + suffix))
+		conditions = append(conditions, filter.Condition{
+			On:       on,
+			Field:    path,
+			Operator: op,
+			Value:    field("cond_value_" + suffix),
+		})
+	}
+	if len(conditions) == 0 {
+		return nil, nil
+	}
+	groups := []wireGroup{toWireGroup(filter.Group{Combinator: combinator, Conditions: conditions})}
+	b, err := json.Marshal(groups)
+	if err != nil {
+		return nil, fmt.Errorf("marshal conditions: %w", err)
+	}
+	return b, nil
 }
 
 // decodeSteps unmarshals the steps JSON into domain steps for re-application.
