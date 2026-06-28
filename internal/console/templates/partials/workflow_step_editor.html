@@ -97,6 +97,12 @@
               "SMALLER_EQUAL" "less or equal"
               "IN" "in"
               "NOT_IN" "not in"
+              "ALL_IN" "all in"
+              "ANY_IN" "any in"
+              "BETWEEN" "between"
+              "NOT_BETWEEN" "not between"
+              "LIKE" "contains"
+              "NOT_LIKE" "not contains"
               "IS_DEFINED" "is defined")
             "Operator" "" false $c.Operator true)}}
         </div>
@@ -104,6 +110,7 @@
           <label class="form-label" for="cond-value-{{$i}}">Value</label>
           <input class="console-input" type="text" id="cond-value-{{$i}}" name="cond_value_{{$i}}"
                  placeholder="premium" value="{{$c.Value}}">
+          <p class="form-hint">Comma-separated for in / all in / any in; min,max for between.</p>
         </div>
       </div>
       {{end}}

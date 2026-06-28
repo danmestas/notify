@@ -1846,9 +1846,50 @@ func conditionsFromFilters(raw json.RawMessage) (string, []stepConditionRow) {
 	return combinator, rows
 }
 
+// listValueOperators are the operators whose form Value is a single text field
+// holding a comma-separated list (IN/NOT_IN/ALL_IN/ANY_IN) or a "min,max" pair
+// (BETWEEN/NOT_BETWEEN). conditionsFromForm parses them into a []any; the
+// parse-back renders the []any as comma-joined text. Single-value operators
+// (LIKE/NOT_LIKE, EQUAL, ...) keep a plain string Value.
+var listValueOperators = map[filter.Operator]bool{
+	filter.OpIn:         true,
+	filter.OpNotIn:      true,
+	filter.OpAllIn:      true,
+	filter.OpAnyIn:      true,
+	filter.OpBetween:    true,
+	filter.OpNotBetween: true,
+}
+
+// conditionValueForOperator shapes the single Value text field into the
+// evaluator's expected wire shape for the given operator. For the list/range
+// operators it splits on "," into a []any (each piece trimmed); BETWEEN/
+// NOT_BETWEEN coerce each bound to a number when possible so the wire value is
+// a numeric [min,max] (matching the reference platform's between [min,max] number array), while
+// IN-family keep string elements. All other operators keep the raw string.
+func conditionValueForOperator(op filter.Operator, raw string) any {
+	if !listValueOperators[op] {
+		return raw
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]any, 0, len(parts))
+	numeric := op == filter.OpBetween || op == filter.OpNotBetween
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if numeric {
+			if f, err := strconv.ParseFloat(p, 64); err == nil {
+				out = append(out, f)
+				continue
+			}
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // conditionValueString renders a decoded condition Value back to the text the
-// operator typed. Scalars round-trip; non-scalars (unused by the MVP UI) come
-// back empty.
+// operator typed. Scalars round-trip; a []any (the IN-family list and the
+// BETWEEN range) renders as comma-joined text so the single Value input
+// repopulates. Other non-scalars come back empty.
 func conditionValueString(v any) string {
 	switch t := v.(type) {
 	case nil:
@@ -1859,6 +1900,12 @@ func conditionValueString(v any) string {
 		return strconv.FormatFloat(t, 'f', -1, 64)
 	case bool:
 		return strconv.FormatBool(t)
+	case []any:
+		parts := make([]string, len(t))
+		for i, e := range t {
+			parts[i] = conditionValueString(e)
+		}
+		return strings.Join(parts, ",")
 	}
 	return ""
 }
@@ -1930,7 +1977,7 @@ func conditionsFromForm(r *http.Request) (json.RawMessage, error) {
 			On:       on,
 			Field:    path,
 			Operator: op,
-			Value:    field("cond_value_" + suffix),
+			Value:    conditionValueForOperator(op, field("cond_value_"+suffix)),
 		})
 	}
 	if len(conditions) == 0 {

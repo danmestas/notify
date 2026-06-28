@@ -2070,3 +2070,147 @@ func TestWorkflowStepSave_EmptyConditionsLeavesFiltersAbsent(t *testing.T) {
 		}
 	}
 }
+
+// savedStepFilters posts a single condition row and reads the resulting
+// step.Filters []filter.Group back out of the store.
+func savedStepFilters(t *testing.T, on, field, operator, value string) []filter.Group {
+	t.Helper()
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/in_app-1/save", url.Values{
+		"csrf_token":      {csrf},
+		"subject":         {"Hi"},
+		"body":            {"Body"},
+		"cond_combinator": {"AND"},
+		"cond_on_0":       {on},
+		"cond_field_0":    {field},
+		"cond_operator_0": {operator},
+		"cond_value_0":    {value},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("step save: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	wf, err := tc.deps.Authoring.GetBySlug(context.Background(), tc.scope, "my-wf")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	steps, err := decodeSteps(wf.Steps)
+	if err != nil {
+		t.Fatalf("decodeSteps: %v", err)
+	}
+	var saved domain.Step
+	for _, s := range steps {
+		if s.StepID == "in_app-1" {
+			saved = s
+		}
+	}
+	if len(saved.Filters) == 0 {
+		t.Fatalf("step.Filters empty after saving a condition")
+	}
+	var groups []filter.Group
+	if err := json.Unmarshal(saved.Filters, &groups); err != nil {
+		t.Fatalf("step.Filters is not []filter.Group: %v (raw: %s)", err, saved.Filters)
+	}
+	return groups
+}
+
+// TestWorkflowStepSave_InValueParsedAsCommaList proves operator=IN with a
+// comma-separated Value persists a []any list of trimmed string elements.
+func TestWorkflowStepSave_InValueParsedAsCommaList(t *testing.T) {
+	groups := savedStepFilters(t, "payload", "data.plan", "IN", "a, b ,c")
+	if len(groups) != 1 || len(groups[0].Conditions) != 1 {
+		t.Fatalf("step.Filters shape = %+v, want one group with one condition", groups)
+	}
+	got, ok := groups[0].Conditions[0].Value.([]any)
+	if !ok {
+		t.Fatalf("IN value = %#v, want []any", groups[0].Conditions[0].Value)
+	}
+	want := []any{"a", "b", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("IN value = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("IN value[%d] = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestWorkflowStepSave_BetweenValueParsedAsNumberRange proves operator=BETWEEN
+// with "1,10" persists a 2-element numeric []any the evaluator's between helper
+// accepts.
+func TestWorkflowStepSave_BetweenValueParsedAsNumberRange(t *testing.T) {
+	groups := savedStepFilters(t, "payload", "data.count", "BETWEEN", "1,10")
+	got, ok := groups[0].Conditions[0].Value.([]any)
+	if !ok {
+		t.Fatalf("BETWEEN value = %#v, want []any", groups[0].Conditions[0].Value)
+	}
+	want := []any{float64(1), float64(10)}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("BETWEEN value = %#v, want %#v", got, want)
+	}
+
+	// The produced shape must actually evaluate: a field of 5 is in [1,10].
+	cond := groups[0].Conditions[0]
+	cond.On = "payload"
+	pass, err := filter.Match([]filter.Group{{Combinator: "AND", Conditions: []filter.Condition{cond}}},
+		filter.EvalContext{Sources: map[string]map[string]any{"payload": {"data": map[string]any{"count": 5}}}})
+	if err != nil {
+		t.Fatalf("Match error: %v", err)
+	}
+	if !pass {
+		t.Errorf("BETWEEN [1,10] did not match field value 5; produced shape not evaluator-compatible")
+	}
+}
+
+// TestWorkflowStepSave_ListValueRoundTrips proves an IN list and a BETWEEN range
+// render back into the single Value text input as comma-joined text.
+func TestWorkflowStepSave_ListValueRoundTrips(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+		{StepID: "in_app-2", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	// IN list round-trip.
+	if rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/in_app-1/save", url.Values{
+		"csrf_token":      {csrf},
+		"subject":         {"Hi"},
+		"body":            {"Body"},
+		"cond_combinator": {"AND"},
+		"cond_on_0":       {"payload"},
+		"cond_field_0":    {"data.plan"},
+		"cond_operator_0": {"IN"},
+		"cond_value_0":    {"a,b,c"},
+	}, cookie); rr.Code != http.StatusSeeOther {
+		t.Fatalf("IN save: status = %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/in_app-1", cookie).Body.String()
+	if !strings.Contains(body, `value="a,b,c"`) {
+		t.Errorf("IN list did not round-trip to comma form value=\"a,b,c\"; body: %s", body)
+	}
+
+	// BETWEEN range round-trip.
+	if rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/in_app-2/save", url.Values{
+		"csrf_token":      {csrf},
+		"subject":         {"Hi"},
+		"body":            {"Body"},
+		"cond_combinator": {"AND"},
+		"cond_on_0":       {"payload"},
+		"cond_field_0":    {"data.count"},
+		"cond_operator_0": {"BETWEEN"},
+		"cond_value_0":    {"1,10"},
+	}, cookie); rr.Code != http.StatusSeeOther {
+		t.Fatalf("BETWEEN save: status = %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	body2 := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/in_app-2", cookie).Body.String()
+	if !strings.Contains(body2, `value="1,10"`) {
+		t.Errorf("BETWEEN range did not round-trip to \"1,10\"; body: %s", body2)
+	}
+}
