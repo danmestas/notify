@@ -596,6 +596,93 @@ func TestFragment_ActivityList_FilterByStatusSignal(t *testing.T) {
 	}
 }
 
+// TestFragment_ActivityList_LoadMoreAppends is the TDD regression for the
+// "Load more REPLACES rows" bug. When cursor is set (a Load more click) the
+// server must emit SSE patches that insert new rows before the pagination
+// footer (mode before targeting #activity-pagination) rather than replacing
+// the whole <tbody> (which destroys the rows the user already loaded).
+//
+// Wire-format assertions:
+//   - page-1 (no cursor): one outer-replace event containing id="activity-tbody"
+//   - page-2 (cursor):    two events — first has `mode before` (insert new rows
+//     before #activity-pagination), second morphs the pagination row in place.
+//     Neither event wraps rows in a new <tbody id="activity-tbody">.
+func TestFragment_ActivityList_LoadMoreAppends(t *testing.T) {
+	tc := newTestConsole(t)
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	// Seed 4 notifications so page 1 (limit=2) has a cursor and page 2 exists.
+	for i := 0; i < 4; i++ {
+		tc.seedNotification(t, domain.Notification{
+			WorkflowID:   "wf",
+			SubscriberID: fmt.Sprintf("append-sub-%d", i),
+			RunID:        fmt.Sprintf("append-run-%d", i),
+			CreatedAt:    base.Add(time.Duration(i) * time.Second).UTC().Format(time.RFC3339Nano),
+		})
+	}
+	cookie, _ := tc.login(t)
+
+	// Page 1: no cursor — expect a full tbody outer-replace (no mode= line in SSE).
+	rr1 := tc.get(t, "/console/api/fragments/activity-list?limit=2", cookie)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("page1: status = %d (body: %s)", rr1.Code, rr1.Body.String())
+	}
+	body1 := rr1.Body.String()
+	if !strings.Contains(body1, `id="activity-tbody"`) {
+		t.Errorf("page1: missing activity-tbody wrapper (initial load must be a full replace)")
+	}
+	// Page 1 must NOT carry `mode before` — it is a full outer replace.
+	if strings.Contains(body1, "mode before") {
+		t.Errorf("page1 (no cursor): SSE must not use 'mode before' (first load is a full replace)")
+	}
+
+	// Extract cursor from page 1 Load more button.
+	const cursorAttr = "cursor="
+	cursorIdx := strings.Index(body1, cursorAttr)
+	if cursorIdx < 0 {
+		t.Fatalf("page1 missing cursor= in Load more button; body: %s", body1[:min(400, len(body1))])
+	}
+	cursorStart := cursorIdx + len(cursorAttr)
+	cursorEnd := strings.IndexAny(body1[cursorStart:], `&'"`)
+	if cursorEnd < 0 {
+		t.Fatalf("page1 could not parse cursor end")
+	}
+	cursor := body1[cursorStart : cursorStart+cursorEnd]
+
+	// Page 2: with cursor — this is the "Load more" click.
+	// The SSE response MUST carry `mode before` (rows event inserts before
+	// #activity-pagination) so existing rows stay in the DOM.
+	rr2 := tc.get(t, "/console/api/fragments/activity-list?limit=2&cursor="+cursor, cookie)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("page2: status = %d (body: %s)", rr2.Code, rr2.Body.String())
+	}
+	body2 := rr2.Body.String()
+
+	// Primary fix assertion: rows event must use mode=before, not outer-replace.
+	if !strings.Contains(body2, "mode before") {
+		t.Errorf("page2 (cursor set): SSE rows event must use `mode before` so existing rows are not replaced;\nbody:\n%s",
+			body2[:min(600, len(body2))])
+	}
+	// The page-2 subscriber rows must be present in the response payload.
+	// Rows are ordered created_at DESC, so page 1 returns append-sub-3 and
+	// append-sub-2; page 2 returns append-sub-1 and append-sub-0. Assert on
+	// a specific page-2 subscriber id so the check cannot pass by accidentally
+	// matching a page-1 row that leaked into the response.
+	if !strings.Contains(body2, "append-sub-1") {
+		t.Errorf("page2 response missing page-2 subscriber row append-sub-1; body: %s", body2[:min(400, len(body2))])
+	}
+	// Page 2 must NOT wrap rows in a new <tbody id="activity-tbody"> — that
+	// would replace the existing tbody content, defeating the append.
+	if strings.Contains(body2, `id="activity-tbody"`) {
+		t.Errorf("page2 append response must not contain a new <tbody id=activity-tbody>; "+
+			"a nested tbody is invalid HTML and causes the existing rows to vanish.\nbody:\n%s",
+			body2[:min(600, len(body2))])
+	}
+	// The pagination row must still be present (cursor advances or disappears).
+	if !strings.Contains(body2, `id="activity-pagination"`) {
+		t.Errorf("page2 response missing pagination row id=activity-pagination")
+	}
+}
+
 // TestFragment_ActivityList_InvalidCursorReturns400 proves a crafted cursor
 // is a client error (400), not a server fault (500).
 func TestFragment_ActivityList_InvalidCursorReturns400(t *testing.T) {

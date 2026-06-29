@@ -15,6 +15,7 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -42,6 +43,10 @@ type subscribersPageView struct {
 	Fragment subscribersListView
 	Signals  template.JS
 	ReadOnly bool
+	// FormError is an inline validation error surfaced from ?error= after a
+	// failed create (e.g. duplicate subscriberId). The slide-over stays open
+	// via subNewOpen=true so the operator sees the error in context.
+	FormError string
 }
 
 // subscribersListView is the #subscribers-tbody fragment binding.
@@ -99,6 +104,9 @@ type subscriberChannelsView struct {
 	// Connectable holds the providers that have an active chat/push
 	// integration in scope — the only ones the add-form offers.
 	Connectable []uiSelectOption
+	// FormError is an inline validation error surfaced from ?error= after a
+	// failed save (e.g. missing provider_id). Rendered in the channels tab.
+	FormError string
 }
 
 // subscriberChannelRow is one existing per-subscriber channel address.
@@ -256,9 +264,19 @@ func (c *Console) buildSubscribersListView(r *http.Request) (subscribersListView
 
 	s, _ := sessionFromContext(r.Context())
 
+	// When a filter is active, suppress the NextCursor. The store-level cursor
+	// is anchored to the unfiltered row set; following it while a filter is
+	// active fetches the next unfiltered page, discards rows that don't match,
+	// and renders an empty "no match" state — the bug. Hiding "Load more"
+	// when filters are active is the minimal correct fix.
+	nextCursor := page.NextCursor
+	if hasFilters {
+		nextCursor = ""
+	}
+
 	return subscribersListView{
 		Rows:          rows,
-		NextCursor:    page.NextCursor,
+		NextCursor:    nextCursor,
 		TotalCount:    page.TotalCount,
 		HasFilters:    hasFilters,
 		ReadOnly:      c.deps.ReadOnly,
@@ -343,10 +361,11 @@ func (c *Console) serveSubscriberNew(w http.ResponseWriter, r *http.Request) {
 		header = pageHeader{Title: "Subscribers"}
 	}
 	view := subscribersPageView{
-		Header:   header,
-		Fragment: frag,
-		Signals:  subscribersSignalsJSON("", "", "", "", !c.deps.ReadOnly),
-		ReadOnly: c.deps.ReadOnly,
+		Header:    header,
+		Fragment:  frag,
+		Signals:   subscribersSignalsJSON("", "", "", "", !c.deps.ReadOnly),
+		ReadOnly:  c.deps.ReadOnly,
+		FormError: r.URL.Query().Get("error"),
 	}
 	c.renderPage(w, r, http.StatusOK, "subscribers", "Subscribers", view)
 }
@@ -436,7 +455,7 @@ func (c *Console) serveSubscriberDetail(w http.ResponseWriter, r *http.Request) 
 	var channels *subscriberChannelsView
 	if tab == "channels" {
 		var chanErr error
-		channels, chanErr = c.buildSubscriberChannels(r.Context(), scope, sub.SubscriberID)
+		channels, chanErr = c.buildSubscriberChannels(r.Context(), scope, sub.SubscriberID, r.URL.Query().Get("error"))
 		if chanErr != nil {
 			c.deps.Logger.Error("console: subscriber channels", "err", chanErr)
 			// non-fatal: render page with whatever was assembled
@@ -605,8 +624,9 @@ func (c *Console) connectableChannelProviders(ctx context.Context, scope domain.
 
 // buildSubscriberChannels assembles the channels-tab view: existing addresses
 // (via ListBySubscriber) plus the connectable providers for the add-form.
-func (c *Console) buildSubscriberChannels(ctx context.Context, scope domain.Scope, subscriberID string) (*subscriberChannelsView, error) {
-	view := &subscriberChannelsView{}
+// formError is threaded from ?error= on the detail URL after a failed POST.
+func (c *Console) buildSubscriberChannels(ctx context.Context, scope domain.Scope, subscriberID, formError string) (*subscriberChannelsView, error) {
+	view := &subscriberChannelsView{FormError: formError}
 
 	channels, err := c.deps.Audience.ListChannels(ctx, scope, subscriberID)
 	if err != nil {
@@ -846,7 +866,10 @@ func (c *Console) handleSubscriberChannels(w http.ResponseWriter, r *http.Reques
 	providerID := strings.TrimSpace(r.FormValue("provider_id"))
 	value := strings.TrimSpace(r.FormValue("value"))
 	if providerID == "" {
-		http.Error(w, "provider_id is required", http.StatusBadRequest)
+		// Missing provider_id: redirect back to the channels tab with an
+		// inline error rather than a raw text/plain response.
+		chanTabURL := "/console/subscribers/" + id + "?tab=channels"
+		http.Redirect(w, r, chanTabURL+"&error="+url.QueryEscape("provider_id is required"), http.StatusSeeOther)
 		return
 	}
 	if value == "" {
@@ -920,8 +943,46 @@ func (c *Console) handleSubscriberCreate(w http.ResponseWriter, r *http.Request)
 	// keys, slugged with a readable "sub_" prefix. The /v1 API stays
 	// strictly caller-provided.
 	subID := strings.TrimSpace(r.FormValue("subscriberId"))
-	if subID == "" {
+	userSuppliedID := subID != ""
+	if !userSuppliedID {
 		subID = "sub_" + strings.ToLower(store.NewULID())
+	}
+
+	// Console-create intent: when the operator supplied a subscriberId, reject
+	// the form if that id is already taken by a LIVE (non-deleted) record.
+	// A previously soft-deleted subscriber with the same id is NOT a collision:
+	// we hard-purge the deleted row first so the subsequent Upsert inserts a
+	// fresh row with no inherited stale profile. The /v1 API and Upsert
+	// semantics for other callers are unchanged.
+	//
+	// TOCTOU note: between the Get (sees deleted) and the purge+Upsert below,
+	// a concurrent live insert of the same id is possible. The AND deleted=1
+	// predicate in PurgeDeleted prevents it from removing that live row; the
+	// Upsert's ON CONFLICT then merges onto the live row rather than erroring.
+	// This race is acceptable for the human-paced console flow and is noted here
+	// so it is not a surprise.
+	if userSuppliedID {
+		if existing, err := c.deps.Audience.Get(r.Context(), scope, subID); err == nil {
+			// GetByExternalID has no deleted=0 filter; only block when the
+			// found record is still live.
+			if !existing.Deleted {
+				http.Redirect(w, r,
+					"/console/subscribers/new?error="+url.QueryEscape("That Subscriber ID is taken"),
+					http.StatusSeeOther)
+				return
+			}
+			// Deleted record — hard-purge the stale row before Upsert so the
+			// re-create yields a clean record with no inherited profile fields.
+			if _, err := c.deps.Audience.PurgeDeleted(r.Context(), scope, subID); err != nil {
+				c.deps.Logger.Error("console: create subscriber: purge deleted", "err", err)
+				http.Error(w, "create failed", http.StatusInternalServerError)
+				return
+			}
+		} else if !errors.Is(err, store.ErrNotFound) {
+			c.deps.Logger.Error("console: create subscriber: check existence", "err", err)
+			http.Error(w, "create failed", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	created, err := c.deps.Audience.Upsert(r.Context(), scope, audience.SubscriberInput{

@@ -96,9 +96,17 @@ func (svc *Service) ListSubscribers(ctx context.Context, scope domain.Scope, aft
 }
 
 // GetSubscriberByID returns the subscriber identified by its internal ULID id
-// within scope.
+// within scope. A soft-deleted subscriber is treated as not found: callers
+// (e.g. the console detail page) must not render deleted records.
 func (svc *Service) GetSubscriberByID(ctx context.Context, scope domain.Scope, id string) (domain.Subscriber, error) {
-	return svc.store.Subscribers().GetByID(ctx, scope, id)
+	sub, err := svc.store.Subscribers().GetByID(ctx, scope, id)
+	if err != nil {
+		return domain.Subscriber{}, err
+	}
+	if sub.Deleted {
+		return domain.Subscriber{}, store.ErrNotFound
+	}
+	return sub, nil
 }
 
 // PatchSubscriber updates mutable profile fields on the subscriber identified by
@@ -137,6 +145,13 @@ func (svc *Service) PatchSubscriber(ctx context.Context, scope domain.Scope, id 
 // id within scope.
 func (svc *Service) DeleteSubscriber(ctx context.Context, scope domain.Scope, id string) error {
 	return svc.store.Subscribers().SoftDelete(ctx, scope, id)
+}
+
+// PurgeDeleted hard-deletes ONLY the soft-deleted row for the given external
+// subscriberID within scope. The underlying store call is scoped to deleted=1
+// rows so a concurrently-inserted live row is never removed.
+func (svc *Service) PurgeDeleted(ctx context.Context, scope domain.Scope, subscriberID string) (int64, error) {
+	return svc.store.Subscribers().PurgeDeletedByExternalID(ctx, scope, subscriberID)
 }
 
 // ListTopics returns all topics in scope annotated with their member counts.

@@ -271,23 +271,27 @@ func (c *Console) buildDashboardView(ctx context.Context, scope domain.Scope, no
 	}
 
 	// Sent + Errors cards off the by-channel/status matrix.
+	// "Sent today" counts only status=sent so the headline matches the label.
+	// Failures/bounces/errors are tallied separately for the errors card only.
 	sent := sentCard{DeltaPct: "12.4%", DeltaUp: true}
 	errCount := 0
 	for ch, statuses := range byChannel {
-		chTotal := 0
+		chSent := 0
 		for status, n := range statuses {
-			chTotal += n
-			sent.Total += n
+			if status == "sent" {
+				chSent += n
+				sent.Total += n
+			}
 			switch status {
 			case "failed", "error", "bounced":
 				errCount += n
 			}
 		}
-		// Only the named channels get a breakdown dot; others still count.
+		// Only the named channels get a breakdown dot; count reflects sent only.
 		for _, named := range dashChannels {
 			if ch == named {
 				sent.Channels = append(sent.Channels, channelStat{
-					Channel: ch, Count: chTotal, Class: channelClass(ch),
+					Channel: ch, Count: chSent, Class: channelClass(ch),
 				})
 			}
 		}

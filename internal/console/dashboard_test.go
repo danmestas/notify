@@ -126,6 +126,93 @@ func TestDashboard_NotFoundWithRevokedKeyRedirectsToLogin(t *testing.T) {
 	}
 }
 
+// TestDashboard_SentTodayCountsOnlySentStatus verifies that the "Sent today"
+// KPI card total only counts deliveries with status="sent" and does NOT
+// include failed, error, or bounced deliveries. A failed delivery must not
+// inflate the headline number.
+//
+// Seed shape: Sent.Total=3, Errors.Count=1 — the two KPI values are distinct
+// so an assertion on 3 cannot false-pass by matching the Errors card.
+func TestDashboard_SentTodayCountsOnlySentStatus(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "in_app", Status: "sent"},
+		{Channel: "in_app", Status: "sent"},
+		{Channel: "email", Status: "sent"},
+		{Channel: "email", Status: "failed"}, // must NOT count toward Sent total (Errors.Count=1)
+	})
+	cookie, _ := tc.login(t)
+
+	// Always assert on the view struct — the HTML substring check is
+	// unreliable when multiple KPI cards share the same numeric value.
+	ctx := domain.ContextWithScope(testBackground(), tc.scope)
+	view, err := tc.c.buildDashboardView(ctx, tc.scope, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("buildDashboardView: %v", err)
+	}
+	if view.Cards.Sent.Total != 3 {
+		t.Errorf("Sent.Total = %d, want 3 (failed must not count)", view.Cards.Sent.Total)
+	}
+	if view.Cards.Errors.Count != 1 {
+		t.Errorf("Errors.Count = %d, want 1 (only the failed delivery)", view.Cards.Errors.Count)
+	}
+
+	// Also verify the HTTP response loads successfully. The struct assertions
+	// above (Sent.Total, Errors.Count) are the authoritative correctness guard;
+	// no fragile HTML-substring value check is needed here.
+	rr := tc.get(t, "/console/", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/: status = %d, want 200", rr.Code)
+	}
+}
+
+// TestBuildDashboardView_SentCardExcludesFailures is the pure-unit companion:
+// it calls buildDashboardView with a seeded store and asserts exact counts
+// without going through HTTP rendering, proving the bug is at the computation
+// layer not the template layer.
+func TestBuildDashboardView_SentCardExcludesFailures(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "in_app", Status: "sent"},
+		{Channel: "in_app", Status: "sent"},
+		{Channel: "email", Status: "failed"},
+		{Channel: "push", Status: "bounced"},
+		{Channel: "push", Status: "error"},
+	})
+
+	ctx := domain.ContextWithScope(testBackground(), tc.scope)
+	view, err := tc.c.buildDashboardView(ctx, tc.scope, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("buildDashboardView: %v", err)
+	}
+
+	// Only the two in_app "sent" rows count toward Sent today.
+	if view.Cards.Sent.Total != 2 {
+		t.Errorf("Sent.Total = %d, want 2 (failed/bounced/error must not count)", view.Cards.Sent.Total)
+	}
+
+	// Per-channel breakdown dots must also reflect only sent counts.
+	for _, ch := range view.Cards.Sent.Channels {
+		switch ch.Channel {
+		case "in_app":
+			if ch.Count != 2 {
+				t.Errorf("in_app breakdown count = %d, want 2", ch.Count)
+			}
+		case "email":
+			// email had only a "failed" — it should not appear in the breakdown
+			// at all (count=0 channels are omitted) or appear with count=0.
+			if ch.Count != 0 {
+				t.Errorf("email breakdown count = %d, want 0 (only failed deliveries)", ch.Count)
+			}
+		case "push":
+			// push had only bounced+error — same: should not appear or count=0.
+			if ch.Count != 0 {
+				t.Errorf("push breakdown count = %d, want 0 (only bounced/error)", ch.Count)
+			}
+		}
+	}
+}
+
 func TestBuildSparkline_ZeroFillsAndScales(t *testing.T) {
 	now := time.Date(2026, 6, 12, 15, 0, 0, 0, time.UTC)
 	series := []domain.DeliveryDayCount{

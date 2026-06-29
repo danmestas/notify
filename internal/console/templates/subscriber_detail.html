@@ -303,6 +303,9 @@
       {{if not $page.ReadOnly}}
       <div class="console-card-actions" style="margin-top:var(--space-4)">
         <h3 class="console-card-title" style="margin-top:var(--space-4)">Add / update address</h3>
+        {{if $page.Channels.FormError}}
+        <p class="console-form-error" role="alert">{{$page.Channels.FormError}}</p>
+        {{end}}
         {{if $page.Channels.Connectable}}
         <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}/channels" class="console-form">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/starfederation/datastar-go/datastar"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
@@ -518,6 +519,19 @@ func (c *Console) serveFragmentActivityList(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// When a cursor is present the request is a "Load more" click: append new
+	// rows before the existing pagination footer rather than replacing the
+	// whole tbody (which would destroy the rows the user already loaded).
+	// Two SSE events are emitted:
+	//   1. new <tr> rows   — mode=before targeting #activity-pagination
+	//   2. pagination <tr> — mode=outer (morph) to advance the cursor
+	// When cursor is empty (initial load or filter change) a single outer
+	// replace of the full #activity-tbody is the correct behavior.
+	if cursor != "" {
+		c.patchActivityAppend(w, r, listView)
+		return
+	}
+
 	html, err := renderFragment(c.ts.base, "activity-tbody", listView)
 	if err != nil {
 		c.deps.Logger.Error("console: render activity list fragment", "err", err)
@@ -525,6 +539,49 @@ func (c *Console) serveFragmentActivityList(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	c.patchHTML(w, r, html)
+}
+
+// patchActivityAppend sends two Datastar SSE events for a "Load more" response:
+//  1. The new data rows (activity-rows template) inserted before
+//     #activity-pagination via mode=before — the rows land above the footer
+//     while existing rows stay in place.
+//  2. The updated pagination footer (activity-pagination template) morphed in
+//     place via mode=outer so the cursor advances to the next page.
+func (c *Console) patchActivityAppend(w http.ResponseWriter, r *http.Request, lv activityListView) {
+	if w == nil {
+		panic("patchActivityAppend: w is nil")
+	}
+	if r == nil {
+		panic("patchActivityAppend: r is nil")
+	}
+
+	rowsHTML, err := renderFragment(c.ts.base, "activity-rows", lv)
+	if err != nil {
+		c.deps.Logger.Error("console: render activity-rows fragment", "err", err)
+		http.Error(w, "render failed", http.StatusInternalServerError)
+		return
+	}
+	paginHTML, err := renderFragment(c.ts.base, "activity-pagination", lv)
+	if err != nil {
+		c.deps.Logger.Error("console: render activity-pagination fragment", "err", err)
+		http.Error(w, "render failed", http.StatusInternalServerError)
+		return
+	}
+
+	sse := datastar.NewSSE(w, r)
+	// Event 1: insert new rows before the pagination row so they accumulate above it.
+	if err := sse.PatchElements(
+		rowsHTML,
+		datastar.WithSelector("#activity-pagination"),
+		datastar.WithMode(datastar.ElementPatchModeBefore),
+	); err != nil {
+		c.deps.Logger.Error("console: patch activity rows (append)", "err", err)
+		return
+	}
+	// Event 2: morph the pagination row in place to advance the cursor.
+	if err := sse.PatchElements(paginHTML); err != nil {
+		c.deps.Logger.Error("console: patch activity pagination", "err", err)
+	}
 }
 
 // ─── detail panel fragment handler ──────────────────────────────────────────

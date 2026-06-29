@@ -1040,7 +1040,28 @@ func (c *Console) handleIntegrationUpdate(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		var conflict connectivity.ErrPrimaryConflict
 		if errors.As(err, &conflict) {
-			http.Error(w, "primary conflict: "+conflict.ExistingID, http.StatusConflict)
+			// Another provider in the same channel is primary. Transfer the
+			// primary slot: clear the existing primary, then retry this update.
+			clearInp := connectivity.UpdateInput{
+				Primary:     false,
+				Credentials: map[string]string{},
+			}
+			// Preserve the existing primary's identifier by loading it first.
+			if existing, gerr := c.deps.Integrations.GetByID(r.Context(), scope, conflict.ExistingID); gerr == nil {
+				clearInp.Identifier = existing.Identifier
+			}
+			if _, cerr := c.deps.Connectivity.Update(r.Context(), scope, conflict.ExistingID, clearInp); cerr != nil {
+				c.deps.Logger.Error("console: clear existing primary", "id", conflict.ExistingID, "err", cerr)
+				http.Error(w, "transfer primary failed", http.StatusInternalServerError)
+				return
+			}
+			// Retry with the new primary.
+			if _, rerr := c.deps.Connectivity.Update(r.Context(), scope, id, inp); rerr != nil {
+				c.deps.Logger.Error("console: update integration after primary transfer", "id", id, "err", rerr)
+				http.Error(w, "update failed", http.StatusInternalServerError)
+				return
+			}
+			http.Redirect(w, r, "/console/integrations/"+id, http.StatusSeeOther)
 			return
 		}
 		if errors.Is(err, store.ErrNotFound) {
@@ -1125,6 +1146,28 @@ func (c *Console) handleIntegrationToggleActive(w http.ResponseWriter, r *http.R
 
 	// "active" form field: "true" | "false" | "on" (checkbox).
 	active := r.FormValue("active") == "true" || r.FormValue("active") == "on"
+
+	// Block deactivating the current primary: an inactive provider cannot be
+	// the primary routing target. The operator must transfer the primary slot
+	// to another active provider first.
+	if !active {
+		current, gerr := c.deps.Integrations.GetByID(r.Context(), scope, id)
+		if gerr != nil {
+			if errors.Is(gerr, store.ErrNotFound) {
+				c.serveNotFound(w, r)
+				return
+			}
+			c.deps.Logger.Error("console: toggle active: load", "id", id, "err", gerr)
+			http.Error(w, "toggle failed", http.StatusInternalServerError)
+			return
+		}
+		if current.Primary {
+			http.Error(w,
+				"Cannot deactivate the primary provider. Transfer the primary slot to another active provider first.",
+				http.StatusUnprocessableEntity)
+			return
+		}
+	}
 
 	if err := c.deps.Integrations.SetActive(r.Context(), scope, id, active); err != nil {
 		if errors.Is(err, store.ErrNotFound) {

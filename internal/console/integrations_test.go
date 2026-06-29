@@ -1363,3 +1363,218 @@ func TestIntegrations_ChannelTabActiveStateUsesColonForm(t *testing.T) {
 			"empty-string attribute; bug 2)")
 	}
 }
+
+// ─── Bug 1: primary flag persists on Save / transfer ────────────────────────
+
+// TestIntegrations_Update_PrimaryFlagPersistedOnSave verifies two paths of the
+// "Primary provider" checkbox on the Configure form:
+//
+//  1. Sole-provider path: when no other provider of the same channel exists,
+//     saving with primary=on persists Primary=true (no ErrPrimaryConflict).
+//
+//  2. Transfer path (the ACTUAL bug): when provider A is already primary,
+//     saving provider B with primary=on must transfer the primary slot to B
+//     (A.Primary=false, B.Primary=true) rather than returning ErrPrimaryConflict
+//     and leaving B's flag unchanged.
+func TestIntegrations_Update_PrimaryFlagPersistedOnSave(t *testing.T) {
+	t.Run("sole provider becomes primary", func(t *testing.T) {
+		tc := newTestConsole(t)
+
+		// Seed a single SMTP integration that is NOT primary.
+		created, err := tc.deps.Connectivity.CreateSMTP(
+			testBackground(), tc.scope, "smtp-solo",
+			connectivity.SMTPConfig{Addr: "smtp.example.com:587", Host: "smtp.example.com"},
+			false,
+		)
+		if err != nil {
+			t.Fatalf("CreateSMTP: %v", err)
+		}
+		if created.Primary {
+			t.Fatal("precondition: created with primary=false but Primary=true")
+		}
+
+		cookie, csrf := tc.login(t)
+
+		rr := tc.postForm(t, "/console/integrations/"+created.ID,
+			url.Values{
+				"_method":    {"PUT"},
+				"identifier": {"smtp-solo"},
+				"primary":    {"on"},
+				"csrf_token": {csrf},
+			},
+			cookie)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("update with primary=on: status = %d, want 303; body: %s",
+				rr.Code, rr.Body.String())
+		}
+
+		rows, err := tc.st.Integrations().List(testBackground(), tc.scope)
+		if err != nil || len(rows) == 0 {
+			t.Fatalf("list after update: err=%v count=%d", err, len(rows))
+		}
+		if !rows[0].Primary {
+			t.Errorf("primary flag not persisted after Save: Primary=%v, want true", rows[0].Primary)
+		}
+	})
+
+	t.Run("transfer from existing primary (ErrPrimaryConflict path)", func(t *testing.T) {
+		tc := newTestConsole(t)
+
+		// Seed two SMTP integrations: providerA is primary, providerB is not.
+		providerA, err := tc.deps.Connectivity.CreateSMTP(
+			testBackground(), tc.scope, "smtp-a",
+			connectivity.SMTPConfig{Addr: "smtp-a.example.com:587", Host: "smtp-a.example.com"},
+			true, // A is primary
+		)
+		if err != nil {
+			t.Fatalf("CreateSMTP A: %v", err)
+		}
+		providerB, err := tc.deps.Connectivity.CreateSMTP(
+			testBackground(), tc.scope, "smtp-b",
+			connectivity.SMTPConfig{Addr: "smtp-b.example.com:587", Host: "smtp-b.example.com"},
+			false,
+		)
+		if err != nil {
+			t.Fatalf("CreateSMTP B: %v", err)
+		}
+
+		cookie, csrf := tc.login(t)
+
+		// Save B with primary=on — must transfer (not 409 / not leave A primary).
+		rr := tc.postForm(t, "/console/integrations/"+providerB.ID,
+			url.Values{
+				"_method":    {"PUT"},
+				"identifier": {"smtp-b"},
+				"primary":    {"on"},
+				"csrf_token": {csrf},
+			},
+			cookie)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("transfer primary to B: status = %d, want 303; body: %s",
+				rr.Code, rr.Body.String())
+		}
+
+		rows, err := tc.st.Integrations().List(testBackground(), tc.scope)
+		if err != nil {
+			t.Fatalf("list after transfer: %v", err)
+		}
+		byID := make(map[string]bool, len(rows))
+		for _, row := range rows {
+			byID[row.ID] = row.Primary
+		}
+		if !byID[providerB.ID] {
+			t.Errorf("B.Primary = false after transfer; want true")
+		}
+		if byID[providerA.ID] {
+			t.Errorf("A.Primary = true after transfer to B; want false (only one primary per channel)")
+		}
+	})
+}
+
+// TestIntegrations_Update_PrimaryTransfersToNewProvider verifies that saving
+// with primary=on when another provider in the same channel already holds
+// primary transfers the primary slot: the new provider becomes primary and
+// the previous primary is unset. Only one provider per channel may be primary.
+func TestIntegrations_Update_PrimaryTransfersToNewProvider(t *testing.T) {
+	tc := newTestConsole(t)
+
+	// Seed two SMTP integrations: r1 is primary, r2 is not.
+	if _, err := tc.deps.Connectivity.CreateSMTP(
+		testBackground(), tc.scope, "smtp-1",
+		connectivity.SMTPConfig{Addr: "smtp.example.com:587", Host: "smtp.example.com"},
+		true,
+	); err != nil {
+		t.Fatalf("CreateSMTP r1: %v", err)
+	}
+	r2, err := tc.deps.Connectivity.CreateSMTP(
+		testBackground(), tc.scope, "smtp-2",
+		connectivity.SMTPConfig{Addr: "smtp2.example.com:587", Host: "smtp2.example.com"},
+		false,
+	)
+	if err != nil {
+		t.Fatalf("CreateSMTP r2: %v", err)
+	}
+
+	cookie, csrf := tc.login(t)
+
+	// Save r2 with primary=on — must transfer, not 409.
+	rr := tc.postForm(t, "/console/integrations/"+r2.ID,
+		url.Values{
+			"_method":    {"PUT"},
+			"identifier": {"smtp-2"},
+			"primary":    {"on"},
+			"csrf_token": {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("update r2 as primary: status = %d, want 303 (primary transfer); body: %s",
+			rr.Code, rr.Body.String())
+	}
+
+	rows, err := tc.st.Integrations().List(testBackground(), tc.scope)
+	if err != nil {
+		t.Fatalf("list after transfer: %v", err)
+	}
+	var primaries []string
+	for _, row := range rows {
+		if row.Primary {
+			primaries = append(primaries, row.ID)
+		}
+	}
+	if len(primaries) != 1 {
+		t.Errorf("want exactly 1 primary per channel; got %d: %v", len(primaries), primaries)
+	} else if primaries[0] != r2.ID {
+		t.Errorf("want r2 (%s) to be primary after transfer; got %s", r2.ID, primaries[0])
+	}
+}
+
+// ─── Bug 2: deactivating primary is blocked with explanatory error ─────────
+
+// TestIntegrations_ToggleActive_BlocksDeactivatingPrimary verifies that
+// deactivating the current primary integration returns an explanatory error
+// (422) rather than silently leaving an inactive provider as the primary
+// routing target. Routes that need a primary provider must either transfer
+// the primary slot first or accept that no primary exists.
+func TestIntegrations_ToggleActive_BlocksDeactivatingPrimary(t *testing.T) {
+	tc := newTestConsole(t)
+
+	row := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Primary:        true,
+		Identifier:     "smtp-primary",
+		EncCredentials: []byte("fake"),
+	})
+	if !row.Primary {
+		t.Fatal("precondition: seeded with Primary=true")
+	}
+
+	cookie, csrf := tc.login(t)
+
+	// Attempt to deactivate the primary.
+	rr := tc.postForm(t, "/console/integrations/"+row.ID+"/active",
+		url.Values{"active": {"false"}, "csrf_token": {csrf}},
+		cookie)
+
+	// Must be blocked with an explanatory error, not silently succeed.
+	if rr.Code == http.StatusSeeOther {
+		// Deactivation succeeded — verify it didn't leave an inactive primary.
+		rows, _ := tc.st.Integrations().List(testBackground(), tc.scope)
+		for _, r := range rows {
+			if r.ID == row.ID && !r.Active && r.Primary {
+				t.Fatal("deactivating the primary silently left an inactive primary provider")
+			}
+		}
+		// If deactivation succeeded AND primary was cleared, that's also acceptable;
+		// however the spec says block with error.
+		t.Fatalf("deactivating primary must be blocked (422); got 303 without error")
+	}
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Errorf("deactivate primary: status = %d, want 422 with explanatory error", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "primary") {
+		t.Errorf("deactivate primary error body must mention 'primary'; got: %s", body)
+	}
+}

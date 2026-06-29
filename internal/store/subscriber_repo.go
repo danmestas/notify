@@ -24,6 +24,11 @@ type SubscriberRepo interface {
 	// SoftDelete marks the subscriber deleted without removing the row. Returns
 	// ErrNotFound when no matching active row exists.
 	SoftDelete(ctx context.Context, scope domain.Scope, id string) error
+	// PurgeDeletedByExternalID hard-deletes ONLY a soft-deleted row matching
+	// (org_id, environment_id, subscriber_id, deleted=1). The deleted=1 guard
+	// ensures a concurrently-inserted live row is never removed. Returns the
+	// number of rows deleted (0 or 1); zero means no soft-deleted row existed.
+	PurgeDeletedByExternalID(ctx context.Context, scope domain.Scope, subscriberID string) (int64, error)
 }
 
 // SubscriberPage is the result of a keyset-paginated List call.
@@ -262,4 +267,25 @@ func (repo *subscriberRepo) SoftDelete(ctx context.Context, scope domain.Scope, 
 		return ErrNotFound
 	}
 	return nil
+}
+
+// PurgeDeletedByExternalID hard-deletes ONLY the soft-deleted row for the
+// given external subscriberID within scope. The AND deleted=1 predicate is
+// required: a concurrently-inserted live row with the same external id must
+// never be removed by this call. Returns the count of rows deleted (0 or 1).
+func (repo *subscriberRepo) PurgeDeletedByExternalID(ctx context.Context, scope domain.Scope, subscriberID string) (int64, error) {
+	res, err := repo.w.ExecContext(
+		ctx,
+		`DELETE FROM subscribers
+		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND deleted = 1`,
+		scope.OrgID, scope.EnvID, subscriberID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }

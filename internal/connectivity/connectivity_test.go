@@ -378,8 +378,9 @@ func TestUpdate_ScopeIsolation_WrongEnvReturnsNotFound(t *testing.T) {
 	}
 }
 
-// isErrPrimaryConflict is a helper because errors.As does not work on value
-// receivers; the ErrPrimaryConflict type is a value, not a pointer.
+// isErrPrimaryConflict unwraps ErrPrimaryConflict from err using errors.As and
+// writes it into out. errors.As works on value receivers when the target is a
+// non-nil pointer to the value type, so *ErrPrimaryConflict is the correct form.
 func isErrPrimaryConflict(err error, out *ErrPrimaryConflict) bool {
 	var pc ErrPrimaryConflict
 	if errors.As(err, &pc) {

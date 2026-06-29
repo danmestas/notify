@@ -38,6 +38,9 @@
       </div>
       <form method="POST" action="/console/subscribers" class="subscriber-edit-form">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        {{if $page.FormError}}
+        <p class="console-form-error" role="alert">{{$page.FormError}}</p>
+        {{end}}
         <div class="form-row">
           <label class="form-label" for="new-subscriberId">Subscriber ID</label>
           <input class="console-input" type="text" id="new-subscriberId" name="subscriberId"

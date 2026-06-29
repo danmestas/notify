@@ -6,54 +6,75 @@
   Clicking a row sets $selectedNotificationId and triggers the detail
   panel fragment endpoint. The cursor-based "Load more" button appends
   the next page.
+
+  Three named templates are defined here:
+
+    activity-tbody       — full <tbody> replacement (initial load, filter change).
+    activity-rows        — raw <tr> rows only, no wrapper. Used for Load-more
+                           append patches (mode=before targeting #activity-pagination
+                           so new rows land above the footer).
+    activity-pagination  — the pagination <tr> only. Replaces #activity-pagination
+                           in place after a Load-more so the cursor advances.
 */}}
+
+{{/* ── activity-rows: data rows only, no <tbody> wrapper ─────────────── */}}
+{{define "activity-rows"}}
+{{range .Rows}}
+<tr class="activity-row" data-id="{{.ID}}"
+    data-on:click="$selectedNotificationId = '{{.ID}}'; @get('/console/api/fragments/activity-detail?notification_id={{.ID}}')">
+  <td class="activity-col-status">
+    <span class="activity-status-chip activity-status-chip--{{.Status}} tile-tone-{{.StatusTone}}"
+          title="{{.Status}}">{{.Status}}</span>
+  </td>
+  <td class="activity-col-workflow">
+    <span class="activity-workflow-name" title="{{.WorkflowID}}">{{.WorkflowName}}</span>
+  </td>
+  <td class="activity-col-subscriber">
+    <code class="activity-monospace">{{.SubscriberID}}</code>
+  </td>
+  <td class="activity-col-transaction">
+    <code class="activity-monospace activity-truncate" title="{{.TransactionID}}">{{.TransactionIDShort}}</code>
+  </td>
+  <td class="activity-col-channel">
+    {{if .Channel}}
+    <span class="activity-channel-badge activity-channel-badge--{{.Channel}}">{{.Channel}}</span>
+    {{else}}
+    <span class="activity-channel-badge activity-channel-badge--unknown">—</span>
+    {{end}}
+  </td>
+  <td class="activity-col-created">
+    <time datetime="{{.CreatedAt}}" title="{{.CreatedAt}}">{{.RelativeTime}}</time>
+  </td>
+</tr>
+{{end}}
+{{end}}
+
+{{/* ── activity-pagination: pagination footer row only ────────────────── */}}
+{{define "activity-pagination"}}
+<tr class="activity-pagination-row" id="activity-pagination">
+  <td colspan="6" class="activity-pagination-cell">
+    <div class="activity-pagination">
+      {{if .TotalCount}}
+      <span class="activity-pagination-count">{{.TotalCount}} total</span>
+      {{end}}
+      {{if .Cursor}}
+      <button type="button" class="btn btn-outline activity-load-more"
+              data-on:click="@get('/console/api/fragments/activity-list?cursor={{.Cursor}}&limit={{.Limit}}')">
+        Load more
+      </button>
+      {{end}}
+    </div>
+  </td>
+</tr>
+{{end}}
+
+{{/* ── activity-tbody: full replacement (initial load / filter change) ── */}}
 {{define "activity-tbody"}}
 <tbody id="activity-tbody">
   {{if .Rows}}
-  {{range .Rows}}
-  <tr class="activity-row" data-id="{{.ID}}"
-      data-on:click="$selectedNotificationId = '{{.ID}}'; @get('/console/api/fragments/activity-detail?notification_id={{.ID}}')">
-    <td class="activity-col-status">
-      <span class="activity-status-chip activity-status-chip--{{.Status}} tile-tone-{{.StatusTone}}"
-            title="{{.Status}}">{{.Status}}</span>
-    </td>
-    <td class="activity-col-workflow">
-      <span class="activity-workflow-name" title="{{.WorkflowID}}">{{.WorkflowName}}</span>
-    </td>
-    <td class="activity-col-subscriber">
-      <code class="activity-monospace">{{.SubscriberID}}</code>
-    </td>
-    <td class="activity-col-transaction">
-      <code class="activity-monospace activity-truncate" title="{{.TransactionID}}">{{.TransactionIDShort}}</code>
-    </td>
-    <td class="activity-col-channel">
-      {{if .Channel}}
-      <span class="activity-channel-badge activity-channel-badge--{{.Channel}}">{{.Channel}}</span>
-      {{else}}
-      <span class="activity-channel-badge activity-channel-badge--unknown">—</span>
-      {{end}}
-    </td>
-    <td class="activity-col-created">
-      <time datetime="{{.CreatedAt}}" title="{{.CreatedAt}}">{{.RelativeTime}}</time>
-    </td>
-  </tr>
-  {{end}}
+  {{template "activity-rows" .}}
   {{/* Pagination footer */}}
-  <tr class="activity-pagination-row" id="activity-pagination">
-    <td colspan="6" class="activity-pagination-cell">
-      <div class="activity-pagination">
-        {{if .TotalCount}}
-        <span class="activity-pagination-count">{{.TotalCount}} total</span>
-        {{end}}
-        {{if .Cursor}}
-        <button type="button" class="btn btn-outline activity-load-more"
-                data-on:click="@get('/console/api/fragments/activity-list?cursor={{.Cursor}}&limit={{.Limit}}')">
-          Load more
-        </button>
-        {{end}}
-      </div>
-    </td>
-  </tr>
+  {{template "activity-pagination" .}}
   {{else}}
   <tr class="activity-empty-row">
     <td colspan="6">

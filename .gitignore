@@ -28,3 +28,4 @@ mise.local.toml
 /screenshot*.png
 /*.png
 /*.jpeg
+/.claude/

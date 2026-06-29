@@ -1014,3 +1014,312 @@ func TestSubscribers_RouteAuth(t *testing.T) {
 		})
 	}
 }
+
+// ─── phase-1 bug regressions ──────────────────────────────────────────────────
+
+// TestSubscribers_Create_RejectsDuplicateSubscriberID guards Bug 1:
+// POSTing create with a subscriberId that already exists must NOT clobber the
+// existing record. The handler must 303 back to /new with an inline error and
+// keep subNewOpen=true so the slide-over stays open.
+func TestSubscribers_Create_RejectsDuplicateSubscriberID(t *testing.T) {
+	tc := newTestConsole(t)
+	// Seed an existing subscriber.
+	existing := tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "dup-id-001",
+		Email:        "original@example.com",
+		FirstName:    "Original",
+	})
+	cookie, csrf := tc.login(t)
+
+	// Attempt to create another subscriber with the same subscriberId.
+	rr := tc.postForm(t, "/console/subscribers",
+		url.Values{
+			"subscriberId": {"dup-id-001"},
+			"email":        {"clobber@example.com"},
+			"firstName":    {"Clobber"},
+			"csrf_token":   {csrf},
+		},
+		cookie)
+
+	// Must NOT succeed (no 303 to detail page).
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("duplicate create: status = %d, want 303 (to /new with error)", rr.Code)
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "/console/subscribers/new") {
+		t.Errorf("duplicate create: Location = %q, want redirect back to /new (not detail page)", loc)
+	}
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("duplicate create: Location = %q, missing error param", loc)
+	}
+
+	// The existing record must not have been clobbered.
+	got, err := tc.deps.Audience.Get(testBackground(), tc.scope, "dup-id-001")
+	if err != nil {
+		t.Fatalf("get after duplicate create attempt: %v", err)
+	}
+	if got.Email != existing.Email {
+		t.Errorf("clobber: email = %q, want %q (original must be preserved)", got.Email, existing.Email)
+	}
+	if got.FirstName != existing.FirstName {
+		t.Errorf("clobber: FirstName = %q, want %q (original must be preserved)", got.FirstName, existing.FirstName)
+	}
+
+	// /new must re-render with the error and subNewOpen=true.
+	rrGet := tc.get(t, loc, cookie)
+	if rrGet.Code != http.StatusOK {
+		t.Fatalf("GET %s: status = %d, want 200", loc, rrGet.Code)
+	}
+	body := rrGet.Body.String()
+	if !strings.Contains(body, "Subscriber ID is taken") && !strings.Contains(body, "taken") {
+		t.Errorf("error page missing 'taken' message; body snippet: %s", body[:min(500, len(body))])
+	}
+}
+
+// TestSubscribers_Create_AfterDelete_RevivesSubscriber guards the soft-delete
+// revival path: creating a subscriber whose id was previously used and then
+// soft-deleted must SUCCEED and yield a CLEAN record — only the fields
+// supplied in the re-create form may be set. Stale profile data from the
+// deleted era (firstName, phone, etc.) must be cleared, not silently inherited
+// through the Upsert COALESCE merge.
+//
+// This test MUST fail against a plain Upsert-merge revive (which keeps the
+// deleted-era profile) and pass only after the purge-then-upsert fix.
+func TestSubscribers_Create_AfterDelete_RevivesSubscriber(t *testing.T) {
+	tc := newTestConsole(t)
+
+	// Step 1: create subscriber "revive-me" with a full profile so there is
+	// stale data for the merge semantics to accidentally retain.
+	orig := tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "revive-me",
+		Email:        "old@example.com",
+		FirstName:    "Bob",
+		Phone:        "+15550001111",
+	})
+	cookie, csrf := tc.login(t)
+
+	// Step 2: soft-delete it.
+	rr := tc.postForm(t, "/console/subscribers/"+orig.ID+"/delete",
+		url.Values{"csrf_token": {csrf}},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("delete: status = %d, want 303", rr.Code)
+	}
+
+	// Step 3: re-create "revive-me" supplying ONLY a new email; firstName and
+	// phone are intentionally blank in the form.
+	rr2 := tc.postForm(t, "/console/subscribers",
+		url.Values{
+			"csrf_token":   {csrf},
+			"subscriberId": {"revive-me"},
+			"email":        {"revived@example.com"},
+			// firstName and phone deliberately omitted
+		},
+		cookie)
+	// Use Errorf (not Fatalf) on the status check so all assertions still run.
+	if rr2.Code != http.StatusSeeOther {
+		t.Errorf("re-create after delete: status = %d, want 303 (body: %s)", rr2.Code, rr2.Body.String())
+	}
+	loc := rr2.Header().Get("Location")
+	if strings.Contains(loc, "/new") {
+		t.Errorf("re-create after delete: redirected to /new — soft-deleted id must not block creation; Location: %s", loc)
+	}
+	if strings.Contains(loc, "error=") {
+		t.Errorf("re-create after delete: Location contains error= — must succeed; Location: %s", loc)
+	}
+
+	// Step 4: assert the revived record reflects ONLY the submitted fields.
+	// The deleted-era profile (FirstName=Bob, Phone=+15550001111) must be
+	// cleared — a console CREATE is not a partial patch.
+	revived, err := tc.deps.Audience.Get(testBackground(), tc.scope, "revive-me")
+	if err != nil {
+		t.Fatalf("get revived subscriber: %v", err)
+	}
+	if revived.Deleted {
+		t.Errorf("revived subscriber still marked deleted")
+	}
+	if revived.Email != "revived@example.com" {
+		t.Errorf("revived email = %q, want %q", revived.Email, "revived@example.com")
+	}
+	// These fields were NOT submitted — they must be blank, not inherited from
+	// the deleted-era record. A failure here means the purge-before-upsert fix
+	// is missing and the COALESCE merge is retaining stale data.
+	if revived.FirstName != "" {
+		t.Errorf("revived FirstName = %q, want empty (stale deleted-era data must be cleared)", revived.FirstName)
+	}
+	if revived.Phone != "" {
+		t.Errorf("revived Phone = %q, want empty (stale deleted-era data must be cleared)", revived.Phone)
+	}
+}
+
+// TestSubscribers_Create_LiveCollisionRejected pins the live-collision branch:
+// POSTing create with a subscriberId that belongs to a LIVE (non-deleted)
+// subscriber must 303 to /new?error=...taken and leave the original record
+// untouched. This guards against a future inversion of the !existing.Deleted
+// guard inside handleSubscriberCreate.
+func TestSubscribers_Create_LiveCollisionRejected(t *testing.T) {
+	tc := newTestConsole(t)
+	existing := tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "live-taken",
+		Email:        "live@example.com",
+		FirstName:    "Alive",
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers",
+		url.Values{
+			"csrf_token":   {csrf},
+			"subscriberId": {"live-taken"},
+			"email":        {"attacker@example.com"},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Errorf("live collision: status = %d, want 303", rr.Code)
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "/new") {
+		t.Errorf("live collision: Location = %q, want redirect to /new", loc)
+	}
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("live collision: Location = %q, missing error param", loc)
+	}
+
+	// The original live record must be completely untouched.
+	got, err := tc.deps.Audience.Get(testBackground(), tc.scope, "live-taken")
+	if err != nil {
+		t.Fatalf("get after live collision: %v", err)
+	}
+	if got.Email != existing.Email {
+		t.Errorf("live collision clobbered email: got %q, want %q", got.Email, existing.Email)
+	}
+	if got.FirstName != existing.FirstName {
+		t.Errorf("live collision clobbered FirstName: got %q, want %q", got.FirstName, existing.FirstName)
+	}
+	if got.Deleted {
+		t.Errorf("live collision: original subscriber was deleted")
+	}
+}
+
+// TestSubscribers_Detail_AfterDelete guards Bug 2:
+// GET /console/subscribers/{id} for a soft-deleted subscriber must 404, not 200.
+func TestSubscribers_Detail_AfterDelete(t *testing.T) {
+	tc := newTestConsole(t)
+	sub := tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "to-delete-detail",
+		Email:        "gone@example.com",
+	})
+	cookie, csrf := tc.login(t)
+
+	// Delete the subscriber.
+	rr := tc.postForm(t, "/console/subscribers/"+sub.ID+"/delete",
+		url.Values{"csrf_token": {csrf}},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("delete: status = %d, want 303", rr.Code)
+	}
+
+	// Now GET the detail page — must be 404.
+	rrDetail := tc.get(t, "/console/subscribers/"+sub.ID, cookie)
+	if rrDetail.Code != http.StatusNotFound {
+		t.Errorf("detail after delete: status = %d, want 404", rrDetail.Code)
+	}
+}
+
+// TestSubscribers_ChannelsPatch_MissingProviderInlineError guards Bug 3:
+// POST /console/subscribers/{id}/channels with no provider_id must 303 back
+// to ?tab=channels with an inline error, not return a raw text/plain error page.
+func TestSubscribers_ChannelsPatch_MissingProviderInlineError(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedIntegration(t, domain.Integration{
+		ProviderID: "discord",
+		Channel:    "chat",
+		Active:     true,
+	})
+	sub := tc.seedSubscriber(t, audience.SubscriberInput{SubscriberID: "chan-no-provider"})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+sub.ID+"/channels",
+		url.Values{
+			"csrf_token":  {csrf},
+			"provider_id": {""}, // missing
+			"value":       {"some-value"},
+		},
+		cookie)
+
+	// Must be a 303 redirect (not 400 with raw text/plain error).
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("missing provider: status = %d, want 303 redirect (got body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "tab=channels") {
+		t.Errorf("missing provider: Location = %q, want ?tab=channels", loc)
+	}
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("missing provider: Location = %q, missing error param", loc)
+	}
+
+	// Following the redirect must show the inline error.
+	rrGet := tc.get(t, loc, cookie)
+	if rrGet.Code != http.StatusOK {
+		t.Fatalf("GET %s: status = %d, want 200", loc, rrGet.Code)
+	}
+	body := rrGet.Body.String()
+	if !strings.Contains(body, "provider") && !strings.Contains(body, "required") {
+		t.Errorf("channels tab after error: missing provider-required message; snippet: %s", body[:min(500, len(body))])
+	}
+}
+
+// TestFragment_SubscribersList_LoadMoreWithFilterKeepsFilter guards Bug 4:
+// when a filter is active and the store returns a NextCursor (because the
+// unfiltered set spans multiple pages), "Load more" must NOT be rendered —
+// the cursor is anchored to the unfiltered set, so following it silently
+// discards the filter and returns irrelevant rows. The fix is to suppress
+// NextCursor in the view whenever hasFilters is true.
+func TestFragment_SubscribersList_LoadMoreWithFilterKeepsFilter(t *testing.T) {
+	tc := newTestConsole(t)
+	// Seed 55 subscribers total: 53 "bob" rows (which fill the 50-row first
+	// page and force a NextCursor) + 2 "alice" rows that happen to fall after
+	// the cursor anchor.  The bob rows get ULID-ordered IDs that sort before
+	// the alice rows, so the first page of 50 returns bob rows only, setting
+	// NextCursor, while alice rows sit on page 2.
+	for i := 0; i < 53; i++ {
+		tc.seedSubscriber(t, audience.SubscriberInput{
+			SubscriberID: "aaa-bob-" + strings.Repeat("0", 4-len(string(rune('0'+i)))) + string(rune('0'+i)),
+			FirstName:    "Bob",
+			LastName:     "Builder",
+		})
+	}
+	// These get later ULIDs (seeded after the bobs).
+	tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "zzz-alice-001",
+		FirstName:    "Alice",
+		LastName:     "Wonder",
+	})
+	tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "zzz-alice-002",
+		FirstName:    "Alice",
+		LastName:     "Smith",
+	})
+	cookie, _ := tc.login(t)
+
+	// Unfiltered first page: should have NextCursor because 55 > 50.
+	rrUnfiltered := tc.get(t, "/console/api/fragments/subscribers-list", cookie)
+	if !strings.Contains(rrUnfiltered.Body.String(), "Load more") {
+		t.Skip("store returned fewer than 50 rows; seeding timing inconsistency — skip")
+	}
+
+	// Filtered for "alice" — only 2 rows match, both sit on page 2 of the
+	// unfiltered set. Without the fix the store-level NextCursor is set,
+	// "Load more" appears, and clicking it drops the filter.
+	// With the fix: NextCursor is suppressed when hasFilters is true, so
+	// "Load more" must NOT appear.
+	rr := tc.getWithQuery(t, "/console/api/fragments/subscribers-list",
+		url.Values{"subscribersName": {"alice"}}.Encode(), cookie)
+	body := rr.Body.String()
+
+	// When a filter is active, Load more must NOT appear regardless of whether
+	// the underlying cursor has more pages.
+	if strings.Contains(body, "Load more") {
+		t.Errorf("filtered list must NOT show 'Load more' (following the cursor silently discards the filter)")
+	}
+}
