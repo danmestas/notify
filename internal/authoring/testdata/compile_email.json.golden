@@ -1,0 +1,10 @@
+{
+  "name": "env_golden-wf-email",
+  "steps": [
+    {
+      "id": "email-1",
+      "task": "send.email",
+      "type": "normal"
+    }
+  ]
+}

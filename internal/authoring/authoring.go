@@ -9,12 +9,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
 )
+
+// stepTypes is the canonical step-type registry: the single source of truth for
+// how each step type compiles, defaults, parses, and validates. Compile drives
+// every step's StepDef from it.
+var stepTypes = steptype.Default()
 
 // Service persists workflows and registers their compiled DAGs with the engine.
 type Service struct {
@@ -81,13 +86,15 @@ func Compile(wf domain.Workflow) (engine.WorkflowDef, error) {
 	}
 	for i, step := range steps {
 		var sd engine.StepDef
-		if step.Type == "delay" || step.Type == "digest" {
-			cfg, err := delayConfig(step.ControlValues)
-			if err != nil {
-				return engine.WorkflowDef{}, fmt.Errorf("authoring: step %q: %w", step.StepID, err)
+		if st := stepTypes.Get(step.Type); st != nil {
+			compiled, cErr := st.Compile(step)
+			if cErr != nil {
+				return engine.WorkflowDef{}, fmt.Errorf("authoring: step %q: %w", step.StepID, cErr)
 			}
-			sd = engine.StepDef{ID: step.StepID, Type: "sleep", Config: cfg}
+			sd = compiled
 		} else {
+			// Unknown/legacy type: preserve historical behavior — an
+			// unregistered type compiled to a channel "send.<type>" task.
 			sd = engine.StepDef{ID: step.StepID, Task: "send." + step.Type, Type: "normal"}
 		}
 		if i > 0 {
@@ -96,44 +103,6 @@ func Compile(wf domain.Workflow) (engine.WorkflowDef, error) {
 		def.Steps = append(def.Steps, sd)
 	}
 	return def, nil
-}
-
-// delayConfig parses a delay step's controlValues ({"amount":<int>,"unit":...})
-// into a dag.SleepConfig JSON ({"duration":<int64 ns>}). Unit defaults to
-// seconds; amount must be positive.
-func delayConfig(controlValues json.RawMessage) (json.RawMessage, error) {
-	var cv struct {
-		Amount int64  `json:"amount"`
-		Unit   string `json:"unit"`
-	}
-	if len(controlValues) > 0 {
-		if err := json.Unmarshal(controlValues, &cv); err != nil {
-			return nil, fmt.Errorf("unmarshal delay controlValues: %w", err)
-		}
-	}
-	if cv.Amount <= 0 {
-		return nil, fmt.Errorf("delay amount must be positive, got %d", cv.Amount)
-	}
-	var unit time.Duration
-	switch cv.Unit {
-	case "", "seconds":
-		unit = time.Second
-	case "minutes":
-		unit = time.Minute
-	case "hours":
-		unit = time.Hour
-	case "days":
-		unit = 24 * time.Hour
-	default:
-		return nil, fmt.Errorf("unknown delay unit %q", cv.Unit)
-	}
-	cfg, err := json.Marshal(struct {
-		Duration time.Duration `json:"duration"`
-	}{Duration: time.Duration(cv.Amount) * unit})
-	if err != nil {
-		return nil, fmt.Errorf("marshal sleep config: %w", err)
-	}
-	return cfg, nil
 }
 
 // GetBySlug loads a single workflow by its trigger identifier (slug) within

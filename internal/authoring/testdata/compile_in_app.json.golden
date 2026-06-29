@@ -1,0 +1,10 @@
+{
+  "name": "env_golden-wf-in_app",
+  "steps": [
+    {
+      "id": "in_app-1",
+      "task": "send.in_app",
+      "type": "normal"
+    }
+  ]
+}

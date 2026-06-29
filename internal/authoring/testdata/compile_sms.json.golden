@@ -1,0 +1,10 @@
+{
+  "name": "env_golden-wf-sms",
+  "steps": [
+    {
+      "id": "sms-1",
+      "task": "send.sms",
+      "type": "normal"
+    }
+  ]
+}

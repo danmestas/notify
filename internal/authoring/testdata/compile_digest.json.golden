@@ -1,0 +1,13 @@
+{
+  "name": "env_golden-wf-digest",
+  "steps": [
+    {
+      "id": "digest-1",
+      "task": "",
+      "type": "sleep",
+      "config": {
+        "duration": 172800000000000
+      }
+    }
+  ]
+}

@@ -45,10 +45,6 @@ import (
 // Every mutation handler is gated on Deps.ReadOnly server-side and
 // answers a native form POST with a 303 redirect (no SSE).
 
-// workflowStepTypes is the closed set of step types the editor offers as
-// "add step" buttons. delay/digest are sleep-compiled; the rest are channels.
-var workflowStepTypes = []string{"in_app", "email", "push", "chat", "sms", "delay", "digest"}
-
 // workflowRow is one row in the workflows-list table.
 type workflowRow struct {
 	// Name is the human display name.
@@ -156,6 +152,11 @@ type workflowStepEditorStep struct {
 	// ControlMap is the decoded controlValues flattened to strings for
 	// form-field pre-fill.
 	ControlMap map[string]string
+	// EditorPartial is the html/template partial name rendering this step
+	// type's editor fields, supplied by the step-type registry. The editor
+	// template dispatches to it via the "partial" helper instead of an
+	// inline per-type if/else chain.
+	EditorPartial string
 	// Combinator is the AND/OR combinator of the step's first filter Group,
 	// pre-filling the conditions fieldset (defaults to "AND").
 	Combinator string
@@ -1015,7 +1016,7 @@ func (c *Console) handleWorkflowStepAdd(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	stepType := strings.TrimSpace(r.FormValue("type"))
-	if !isKnownStepType(stepType) {
+	if !c.stepTypes.Has(stepType) {
 		http.Error(w, "unknown step type", http.StatusBadRequest)
 		return
 	}
@@ -1040,7 +1041,7 @@ func (c *Console) handleWorkflowStepAdd(w http.ResponseWriter, r *http.Request) 
 	steps = append(steps, domain.Step{
 		StepID:        nextStepID(steps, stepType),
 		Type:          stepType,
-		ControlValues: defaultControlValues(stepType),
+		ControlValues: c.stepTypes.Get(stepType).DefaultControlValues(),
 	})
 
 	if _, err := c.deps.Authoring.Update(r.Context(), scope, slug, authoring.UpdateInput{
@@ -1254,7 +1255,7 @@ func (c *Console) handleWorkflowStepSave(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 		found = true
-		cv, cvErr := controlValuesFromForm(steps[i].Type, r)
+		cv, cvErr := c.controlValuesFromForm(steps[i].Type, r)
 		if cvErr != nil {
 			http.Redirect(w, r, editURL+"?error="+url.QueryEscape(cvErr.Error()), http.StatusSeeOther)
 			return
@@ -1337,12 +1338,23 @@ func (c *Console) serveFragmentWorkflowStepEditor(w http.ResponseWriter, r *http
 		if st.StepID == stepID {
 			st := st
 			combinator, conditions, visible := conditionsFromFilters(st.Filters)
+			// Drive the per-type field markup and the controlValues flattening
+			// from the step-type registry. Unknown/legacy types fall back to the
+			// generic JSON-textarea partial and generic flatten (the old default
+			// editor arm) so a step persisted under a retired type still renders.
+			cmap := controlMap(st.ControlValues)
+			partial := "wf-step-fields-default"
+			if stype := c.stepTypes.Get(st.Type); stype != nil {
+				cmap = stype.ControlMap(st.ControlValues)
+				partial = stype.EditorPartial()
+			}
 			view.Step = &workflowStepEditorStep{
 				StepID:            st.StepID,
 				Type:              st.Type,
 				Name:              st.Name,
 				ControlValuesJSON: prettyJSON(st.ControlValues),
-				ControlMap:        controlMap(st.ControlValues),
+				ControlMap:        cmap,
+				EditorPartial:     partial,
 				Combinator:        combinator,
 				Conditions:        conditions,
 				VisibleConditions: visible,
@@ -1774,16 +1786,6 @@ func (c *Console) serveFragmentWorkflowActivity(w http.ResponseWriter, r *http.R
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-// isKnownStepType reports whether t is one of the offered step types.
-func isKnownStepType(t string) bool {
-	for _, k := range workflowStepTypes {
-		if k == t {
-			return true
-		}
-	}
-	return false
-}
-
 // nextStepID generates a "{type}-{n}" id where n is one past the count of
 // existing steps already carrying that type.
 func nextStepID(steps []domain.Step, stepType string) string {
@@ -1796,55 +1798,23 @@ func nextStepID(steps []domain.Step, stepType string) string {
 	return fmt.Sprintf("%s-%d", stepType, n+1)
 }
 
-// defaultControlValues returns a minimal valid controlValues blob for a new
-// step. delay/digest need a positive amount or they fail Compile, so they seed
-// a 1-minute window; channel steps seed an empty object.
-func defaultControlValues(stepType string) json.RawMessage {
-	switch stepType {
-	case "delay", "digest":
-		return json.RawMessage(`{"amount":1,"unit":"minutes"}`)
-	default:
-		return json.RawMessage(`{}`)
-	}
-}
-
 // controlValuesFromForm builds a step's controlValues JSON from the per-type
-// form fields posted by the step editor.
-func controlValuesFromForm(stepType string, r *http.Request) (json.RawMessage, error) {
-	field := func(name string) string { return strings.TrimSpace(r.FormValue(name)) }
-	var m map[string]any
-	switch stepType {
-	case "email", "in_app":
-		m = map[string]any{"subject": field("subject"), "body": field("body")}
-	case "push":
-		m = map[string]any{"title": field("title"), "body": field("body")}
-	case "sms", "chat":
-		m = map[string]any{"body": field("body")}
-	case "delay", "digest":
-		amount, err := strconv.Atoi(field("amount"))
-		if err != nil || amount < 1 {
-			return nil, fmt.Errorf("amount must be a positive whole number")
-		}
-		unit := field("unit")
-		if unit == "" {
-			unit = "minutes"
-		}
-		m = map[string]any{"amount": amount, "unit": unit}
-	default:
-		raw := field("control_values_json")
-		if raw == "" {
-			return json.RawMessage(`{}`), nil
-		}
-		if !json.Valid([]byte(raw)) {
-			return nil, fmt.Errorf("control values must be valid JSON")
-		}
-		return json.RawMessage(raw), nil
+// form fields posted by the step editor, delegating to the step-type registry.
+// An unknown/legacy type falls back to the free-form control_values_json
+// textarea (the old default editor arm) so an editor save for a retired type
+// still round-trips.
+func (c *Console) controlValuesFromForm(stepType string, r *http.Request) (json.RawMessage, error) {
+	if st := c.stepTypes.Get(stepType); st != nil {
+		return st.ParseForm(r.Form)
 	}
-	b, err := json.Marshal(m)
-	if err != nil {
-		return nil, fmt.Errorf("marshal control values: %w", err)
+	raw := strings.TrimSpace(r.FormValue("control_values_json"))
+	if raw == "" {
+		return json.RawMessage(`{}`), nil
 	}
-	return b, nil
+	if !json.Valid([]byte(raw)) {
+		return nil, fmt.Errorf("control values must be valid JSON")
+	}
+	return json.RawMessage(raw), nil
 }
 
 // controlMap flattens a step's controlValues JSON into a string map for form

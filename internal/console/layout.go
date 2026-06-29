@@ -122,6 +122,10 @@ func staticFuncMap() template.FuncMap {
 		// loadTemplates parseable in isolation (template.Funcs must know
 		// every name before Parse).
 		"runURL": func(string) string { return "" },
+		// partial is overridden in Console.funcMap with the registry-driven
+		// dynamic dispatcher; this parse-time stub keeps loadTemplates
+		// parseable (every helper name must exist before Parse).
+		"partial": func(string, any) (template.HTML, error) { return "", nil },
 		// assetURL returns the fingerprinted URL for a logical asset name
 		// (e.g. "app.css" → "/console/assets/app.<hash>.css").  Templates
 		// use it so the HTML never hard-codes bare asset paths.
@@ -289,7 +293,34 @@ func (c *Console) funcMap() template.FuncMap {
 	}
 	return template.FuncMap{
 		"runURL": c.runURL,
+		// partial executes a named template against data and returns its
+		// rendered HTML, enabling DYNAMIC dispatch (the editor renders the
+		// per-type step fields by the partial name the step-type registry
+		// supplies — Go templates cannot take a {{template}} name from a
+		// variable, so this helper bridges that). The output is trusted markup
+		// from our own template tree, already context-escaped by its own
+		// execution, so it is returned as template.HTML (not re-escaped).
+		"partial": c.renderPartial,
 	}
+}
+
+// renderPartial executes the named template in the console template tree
+// against data. It backs the "partial" template helper used for registry-driven
+// step-editor field dispatch. An unknown name is a programming error (the
+// registry and the parsed partial set must agree) and surfaces as an HTML
+// comment rather than a panic mid-render.
+func (c *Console) renderPartial(name string, data any) (template.HTML, error) {
+	if c == nil {
+		panic("Console.renderPartial: c is nil")
+	}
+	if c.ts.base.Lookup(name) == nil {
+		return "", fmt.Errorf("partial %q not registered", name)
+	}
+	var buf bytes.Buffer
+	if err := c.ts.base.ExecuteTemplate(&buf, name, data); err != nil {
+		return "", fmt.Errorf("execute partial %q: %w", name, err)
+	}
+	return template.HTML(buf.String()), nil //nolint:gosec // trusted internal template output
 }
 
 // runURL resolves a dagnats run id to its engine-console deep link

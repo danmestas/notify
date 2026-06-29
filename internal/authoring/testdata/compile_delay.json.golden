@@ -1,0 +1,13 @@
+{
+  "name": "env_golden-wf-delay",
+  "steps": [
+    {
+      "id": "delay-1",
+      "task": "",
+      "type": "sleep",
+      "config": {
+        "duration": 18000000000000
+      }
+    }
+  ]
+}

@@ -8,61 +8,7 @@
   {{if not $readOnly}}
   <form method="POST" action="/console/api/workflows/{{$slug}}/steps/{{$step.StepID}}/save">
     <input type="hidden" name="csrf_token" value="{{$csrf}}">
-    {{if eq $step.Type "email"}}
-    <div class="form-row">
-      <label class="form-label" for="cv-subject">Subject</label>
-      <input class="console-input" type="text" id="cv-subject" name="subject"
-             value="{{index $step.ControlMap "subject"}}">
-    </div>
-    {{template "wf-preview-split" (dict "BodyLabel" "Body" "Rows" 6 "Body" (index $step.ControlMap "body"))}}
-    {{else if eq $step.Type "in_app"}}
-    <div class="form-row">
-      <label class="form-label" for="cv-subject">Subject</label>
-      <input class="console-input" type="text" id="cv-subject" name="subject"
-             value="{{index $step.ControlMap "subject"}}">
-    </div>
-    {{template "wf-preview-split" (dict "BodyLabel" "Body" "Rows" 4 "Body" (index $step.ControlMap "body"))}}
-    {{else if eq $step.Type "push"}}
-    <div class="form-row">
-      <label class="form-label" for="cv-title">Title</label>
-      <input class="console-input" type="text" id="cv-title" name="title"
-             value="{{index $step.ControlMap "title"}}">
-    </div>
-    {{template "wf-preview-split" (dict "BodyLabel" "Body" "Rows" 4 "Body" (index $step.ControlMap "body"))}}
-    {{else if eq $step.Type "sms"}}
-    {{template "wf-preview-split" (dict "BodyLabel" "Message" "Rows" 4 "Body" (index $step.ControlMap "body"))}}
-    {{else if eq $step.Type "chat"}}
-    {{template "wf-preview-split" (dict "BodyLabel" "Message" "Rows" 4 "Body" (index $step.ControlMap "body"))}}
-    {{else if eq $step.Type "delay"}}
-    <div class="form-row">
-      <label class="form-label" for="cv-amount">Amount</label>
-      <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
-             value="{{index $step.ControlMap "amount"}}">
-    </div>
-    <div class="form-row">
-      <label class="form-label" for="delay-unit-trigger">Unit</label>
-      {{template "ui-select" (uiSelectForm "delay-unit" "unit" "delayUnit"
-        (uiSelectOptions "seconds" "Seconds" "minutes" "Minutes" "hours" "Hours" "days" "Days")
-        "Unit" "" false (index $step.ControlMap "unit") true)}}
-    </div>
-    {{else if eq $step.Type "digest"}}
-    <div class="form-row">
-      <label class="form-label" for="cv-amount">Window amount</label>
-      <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
-             value="{{index $step.ControlMap "amount"}}">
-    </div>
-    <div class="form-row">
-      <label class="form-label" for="digest-unit-trigger">Window unit</label>
-      {{template "ui-select" (uiSelectForm "digest-unit" "unit" "digestUnit"
-        (uiSelectOptions "seconds" "Seconds" "minutes" "Minutes" "hours" "Hours" "days" "Days")
-        "Window unit" "" false (index $step.ControlMap "unit") true)}}
-    </div>
-    {{else}}
-    <div class="form-row">
-      <label class="form-label">Control values (JSON)</label>
-      <textarea class="console-input" name="control_values_json" rows="4">{{$step.ControlValuesJSON}}</textarea>
-    </div>
-    {{end}}
+    {{partial $step.EditorPartial $step}}
     <fieldset class="wf-conditions">
       <legend class="form-label wf-conditions-legend">{{uiIcon "unplug"}} When should this step run?</legend>
       <p class="console-lede wf-conditions-hint">Leave conditions empty to always run this step.</p>
@@ -185,3 +131,73 @@
   </div>
 </div>
 {{end}}
+
+{{/*
+  Per-type step-editor field partials. The editor dispatches to one of these by
+  name via the step-type registry (workflowStepEditorStep.EditorPartial) and the
+  "partial" template helper — replacing the former inline {{if eq .Type ...}}
+  chain so a new step type adds its fields here without editing the editor body.
+  The data context is the workflowStepEditorStep (referenced as ".").
+*/}}
+{{define "wf-step-fields-email"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-subject">Subject</label>
+      <input class="console-input" type="text" id="cv-subject" name="subject"
+             value="{{index .ControlMap "subject"}}">
+    </div>
+    {{template "wf-preview-split" (dict "BodyLabel" "Body" "Rows" 6 "Body" (index .ControlMap "body"))}}
+    {{end}}
+{{define "wf-step-fields-in_app"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-subject">Subject</label>
+      <input class="console-input" type="text" id="cv-subject" name="subject"
+             value="{{index .ControlMap "subject"}}">
+    </div>
+    {{template "wf-preview-split" (dict "BodyLabel" "Body" "Rows" 4 "Body" (index .ControlMap "body"))}}
+    {{end}}
+{{define "wf-step-fields-push"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-title">Title</label>
+      <input class="console-input" type="text" id="cv-title" name="title"
+             value="{{index .ControlMap "title"}}">
+    </div>
+    {{template "wf-preview-split" (dict "BodyLabel" "Body" "Rows" 4 "Body" (index .ControlMap "body"))}}
+    {{end}}
+{{define "wf-step-fields-sms"}}
+    {{template "wf-preview-split" (dict "BodyLabel" "Message" "Rows" 4 "Body" (index .ControlMap "body"))}}
+    {{end}}
+{{define "wf-step-fields-chat"}}
+    {{template "wf-preview-split" (dict "BodyLabel" "Message" "Rows" 4 "Body" (index .ControlMap "body"))}}
+    {{end}}
+{{define "wf-step-fields-delay"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-amount">Amount</label>
+      <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
+             value="{{index .ControlMap "amount"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="delay-unit-trigger">Unit</label>
+      {{template "ui-select" (uiSelectForm "delay-unit" "unit" "delayUnit"
+        (uiSelectOptions "seconds" "Seconds" "minutes" "Minutes" "hours" "Hours" "days" "Days")
+        "Unit" "" false (index .ControlMap "unit") true)}}
+    </div>
+    {{end}}
+{{define "wf-step-fields-digest"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-amount">Window amount</label>
+      <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
+             value="{{index .ControlMap "amount"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="digest-unit-trigger">Window unit</label>
+      {{template "ui-select" (uiSelectForm "digest-unit" "unit" "digestUnit"
+        (uiSelectOptions "seconds" "Seconds" "minutes" "Minutes" "hours" "Hours" "days" "Days")
+        "Window unit" "" false (index .ControlMap "unit") true)}}
+    </div>
+    {{end}}
+{{define "wf-step-fields-default"}}
+    <div class="form-row">
+      <label class="form-label">Control values (JSON)</label>
+      <textarea class="console-input" name="control_values_json" rows="4">{{.ControlValuesJSON}}</textarea>
+    </div>
+    {{end}}

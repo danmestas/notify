@@ -28,6 +28,7 @@ import (
 	"github.com/danmestas/notify/internal/inbounddomains"
 	"github.com/danmestas/notify/internal/inboxapi"
 	"github.com/danmestas/notify/internal/realtime"
+	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/version"
@@ -798,7 +799,9 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 }
 
 // allowedStepTypes enumerates the step types the authoring layer understands.
-var allowedStepTypes = []string{"in_app", "email", "push", "chat", "sms", "delay", "digest"}
+// It is derived from the step-type registry (the ONE source of truth) so it can
+// never drift from the console's offered set the way two hand-kept lists did.
+var allowedStepTypes = steptype.Default().Names()
 
 // workflowStepRequest is one element of the POST /v1/workflows steps array.
 type workflowStepRequest struct {

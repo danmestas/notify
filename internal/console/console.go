@@ -25,6 +25,7 @@ import (
 	"github.com/danmestas/notify/internal/preferences"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/webhooksout"
@@ -204,9 +205,10 @@ type Deps struct {
 // Console is the operator-console handler factory. Construct with New;
 // mount Routes() at /console on the public listener.
 type Console struct {
-	deps Deps
-	gcm  cipher.AEAD
-	ts   *templateSet
+	deps      Deps
+	gcm       cipher.AEAD
+	ts        *templateSet
+	stepTypes *steptype.Registry
 }
 
 // New builds a Console from deps. It panics on programmer errors (nil
@@ -255,7 +257,7 @@ func New(deps Deps) *Console {
 	if err != nil {
 		panic(fmt.Sprintf("console.New: load templates: %v", err))
 	}
-	c := &Console{deps: deps, gcm: gcm, ts: ts}
+	c := &Console{deps: deps, gcm: gcm, ts: ts, stepTypes: steptype.Default()}
 	// Bind the Console-carrying helpers (runURL) once, before any request
 	// executes a template — Funcs during render would race concurrent
 	// executions.

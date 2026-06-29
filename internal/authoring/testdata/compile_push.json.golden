@@ -1,0 +1,10 @@
+{
+  "name": "env_golden-wf-push",
+  "steps": [
+    {
+      "id": "push-1",
+      "task": "send.push",
+      "type": "normal"
+    }
+  ]
+}
