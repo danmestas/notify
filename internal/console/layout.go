@@ -147,6 +147,10 @@ func staticFuncMap() template.FuncMap {
 		// uiSelectOptions packs alternating value/label pairs into the
 		// []uiSelectOption a uiSelect call ranges over (dict/list idiom).
 		"uiSelectOptions": uiSelectOptions,
+		// condRemoveExpr builds the per-row condition remove (×) handler: a
+		// positional shift that moves later rows up into the vacated slot so the
+		// visible rows stay a dense, hole-free block (see workflows.go).
+		"condRemoveExpr": condRemoveExpr,
 		// actionArgs packs the action-button partial's inputs so callers
 		// (templates and Go views alike) bind the one actionButton shape.
 		"actionArgs": func(label, href string, readOnly bool) actionButton {

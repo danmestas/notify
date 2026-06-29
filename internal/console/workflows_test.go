@@ -2320,6 +2320,140 @@ func TestWorkflowStepEditor_AddConditionControlPresent(t *testing.T) {
 	}
 }
 
+// TestStepConditionRow_ValueBindsSignal proves every per-row condition input is
+// bound to a per-row signal (condOn{i}, condField{i}, condOperator{i},
+// condValue{i}) so the remove handler's positional shift can move all four
+// values up a slot. The Value input historically had no signal; the shift
+// requires one. The submit name="cond_value_{i}" must remain so the server-side
+// parse keeps reading the current value.
+func TestStepConditionRow_ValueBindsSignal(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, _ := tc.login(t)
+
+	body := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/in_app-1", cookie).Body.String()
+
+	// Value input keeps its submit name AND now binds a per-row signal.
+	if !strings.Contains(body, `name="cond_value_0"`) {
+		t.Errorf("Value input lost its submit name=cond_value_0; body: %s", body)
+	}
+	if !strings.Contains(body, `data-bind="condValue0"`) {
+		t.Errorf("Value input must bind per-row signal data-bind=\"condValue0\"; body: %s", body)
+	}
+	// The condValue0 signal must be seeded (declared) so the shift can read it.
+	if !strings.Contains(body, "condValue0:") {
+		t.Errorf("condValue0 signal not seeded; body: %s", body)
+	}
+}
+
+// TestStepConditionRemove_UsesPositionalShift proves the per-row remove (×)
+// button performs a dense positional shift via Datastar signal assignments
+// rather than the old blank-in-place behavior. Removing row 0 must copy row 1's
+// four signals into row 0 (condField0 = condField1, etc.) and decrement the
+// visible-row count. Without the shift a removed middle row leaves a visible
+// hole and the wrong trailing slot collapses.
+func TestStepConditionRemove_UsesPositionalShift(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, _ := tc.login(t)
+
+	body := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/in_app-1", cookie).Body.String()
+
+	// Row 0's remove handler shifts row 1 up into row 0 for all four signals.
+	for _, frag := range []string{
+		"$condField0 = $condField1",
+		"$condOn0 = $condOn1",
+		"$condOperator0 = $condOperator1",
+		"$condValue0 = $condValue1",
+	} {
+		if !strings.Contains(body, frag) {
+			t.Errorf("remove handler missing shift assignment %q; body: %s", frag, body)
+		}
+	}
+	// And it still decrements the visible-row count. The ">" is HTML-escaped to
+	// "&gt;" in the attribute (the browser decodes it back); assert the rendered
+	// form.
+	if !strings.Contains(body, "condRowCount = ($condRowCount &gt; 1 ? $condRowCount - 1 : 1)") {
+		t.Errorf("remove handler must still decrement condRowCount; body: %s", body)
+	}
+	// The old blank-in-place-only handler ($condFieldN = '' as the whole action)
+	// must be gone; the shift replaces it.
+	if strings.Contains(body, `data-on:click="$condField0 = ''; $condRowCount`) {
+		t.Errorf("remove handler still uses the old blank-in-place form; body: %s", body)
+	}
+}
+
+// TestWorkflowStepSave_RemoveMiddleRowDenseOrderPersists proves the round-trip
+// contract the client-side shift produces: when the operator removes a MIDDLE
+// row, the browser shifts later rows up into the vacated slot and clears the
+// trailing slot, then submits a dense 1..N block. The server must persist those
+// conditions in order with the removed one gone. This simulates the post-shift
+// form state for rows [a,b,c] after removing the middle (b): [a,c,blank].
+func TestWorkflowStepSave_RemoveMiddleRowDenseOrderPersists(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	// Post-shift state after removing middle row b from [a,b,c]: row0=a, row1=c,
+	// row2 cleared. This is exactly what the dense positional shift submits.
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/in_app-1/save", url.Values{
+		"csrf_token":      {csrf},
+		"subject":         {"Hi"},
+		"body":            {"Body"},
+		"cond_combinator": {"AND"},
+		"cond_on_0":       {"payload"},
+		"cond_field_0":    {"data.a"},
+		"cond_operator_0": {"EQUAL"},
+		"cond_value_0":    {"av"},
+		"cond_on_1":       {"payload"},
+		"cond_field_1":    {"data.c"}, // c shifted up into the vacated middle slot
+		"cond_operator_1": {"NOT_EQUAL"},
+		"cond_value_1":    {"cv"},
+		"cond_on_2":       {"payload"}, // trailing slot cleared by the shift
+		"cond_field_2":    {""},
+		"cond_operator_2": {"EQUAL"},
+		"cond_value_2":    {""},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("save: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	wf, err := tc.deps.Authoring.GetBySlug(context.Background(), tc.scope, "my-wf")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	steps, err := decodeSteps(wf.Steps)
+	if err != nil {
+		t.Fatalf("decodeSteps: %v", err)
+	}
+	var saved domain.Step
+	for _, s := range steps {
+		if s.StepID == "in_app-1" {
+			saved = s
+		}
+	}
+	var groups []filter.Group
+	if err := json.Unmarshal(saved.Filters, &groups); err != nil {
+		t.Fatalf("step.Filters is not []filter.Group: %v (raw: %s)", err, saved.Filters)
+	}
+	if len(groups) != 1 || len(groups[0].Conditions) != 2 {
+		t.Fatalf("want one group with 2 dense conditions after middle-remove, got %+v", groups)
+	}
+	got := groups[0].Conditions
+	if got[0].Field != "data.a" || got[0].Operator != filter.OpEqual {
+		t.Errorf("row 0 = %+v, want data.a/EQUAL", got[0])
+	}
+	if got[1].Field != "data.c" || got[1].Operator != filter.OpNotEqual {
+		t.Errorf("row 1 = %+v, want data.c/NOT_EQUAL (the row shifted up, b removed)", got[1])
+	}
+}
+
 // TestWorkflowStepSave_BlankRowBetweenFilledSkipped proves a blank Field row
 // sandwiched between two filled rows is skipped, leaving two conditions saved.
 func TestWorkflowStepSave_BlankRowBetweenFilledSkipped(t *testing.T) {

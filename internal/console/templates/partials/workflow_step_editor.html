@@ -75,9 +75,12 @@
       {{range $i, $c := $step.Conditions}}
       {{/*
         Fixed pool of stepConditionRows rows. Row 0 always shows; each later row
-        shows only while $condRowCount has grown past its index. The Field input
-        binds a per-row signal so "remove" can blank it (blank-Field rows are
-        skipped on save) independent of which row the operator drops.
+        shows only while $condRowCount has grown past its index. Every field
+        (On/Field/Operator/Value) binds a per-row signal so "remove" can do a
+        POSITIONAL SHIFT (condRemoveExpr): later rows' values move up into the
+        vacated slot, the trailing slot is cleared, and $condRowCount is
+        decremented — keeping the visible rows a dense, hole-free block so the
+        decrement hides the now-empty trailing slot.
       */}}
       <div class="wf-condition-row"{{if gt $i 0}} data-show="$condRowCount > {{$i}}"{{end}}>
         <div class="form-row wf-condition-on">
@@ -116,13 +119,14 @@
         <div class="form-row wf-condition-value">
           <label class="form-label" for="cond-value-{{$i}}">Value</label>
           <input class="console-input" type="text" id="cond-value-{{$i}}" name="cond_value_{{$i}}"
+                 data-signals="{condValue{{$i}}:{{jsEscape $c.Value}}}" data-bind="condValue{{$i}}"
                  placeholder="premium" value="{{$c.Value}}">
           <p class="form-hint">Comma-separated for in / all in / any in; min,max for between.</p>
         </div>
         <div class="form-row wf-condition-remove">
           <button type="button" class="btn btn-ghost btn-icon wf-condition-remove-btn"
                   aria-label="Remove condition"
-                  data-on:click="$condField{{$i}} = ''; $condRowCount = ($condRowCount > 1 ? $condRowCount - 1 : 1)">{{uiIcon "x"}}</button>
+                  data-on:click="{{condRemoveExpr $i}}">{{uiIcon "x"}}</button>
         </div>
       </div>
       {{end}}

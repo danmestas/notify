@@ -188,6 +188,53 @@ type stepConditionRow struct {
 // visible count up to this pool size. No nested groups.
 const stepConditionRows = 10
 
+// condRowSignals are the four per-row condition signals the editor binds:
+// condOn{i} / condField{i} / condOperator{i} / condValue{i}. The remove
+// handler's positional shift moves all four up a slot so the visible rows stay
+// a dense 1..count block.
+var condRowSignals = [...]string{"condOn", "condField", "condOperator", "condValue"}
+
+// condRemoveExpr builds the Datastar data-on:click expression for row k's
+// remove (×) button. A naive "blank row k + decrement count" leaves a visible
+// hole when k is a MIDDLE row: the count only hides the trailing slot, so the
+// blanked middle row stays on screen and the wrong row collapses. Instead this
+// does a POSITIONAL SHIFT — every later filled row's four signals move up one
+// slot (row j gets row j+1's values), the trailing visible slot is cleared, and
+// the count is decremented. The result is always a dense, hole-free 1..count
+// block so the decrement correctly hides the now-empty trailing slot.
+//
+// The pool size is static, so the full shift chain is generated at render time;
+// each step is guarded by $condRowCount so only the in-range rows shift:
+//   - $condRowCount > j+1  → copy row j+1 into row j
+//   - $condRowCount === j+1 → row j is the last visible row being vacated, blank it
+//
+// The j===k, count===k+1 branch covers removing the last row (blank in place).
+func condRemoveExpr(k int) template.JS {
+	var b strings.Builder
+	for j := k; j < stepConditionRows-1; j++ {
+		// Copy row j+1 → row j when a later row exists.
+		copies := make([]string, 0, len(condRowSignals))
+		blanks := make([]string, 0, len(condRowSignals))
+		for _, sig := range condRowSignals {
+			cur := fmt.Sprintf("$%s%d", sig, j)
+			next := fmt.Sprintf("$%s%d", sig, j+1)
+			copies = append(copies, cur+" = "+next)
+			blanks = append(blanks, cur+" = ''")
+		}
+		// Guarded ternary: shift-up when more rows follow, else blank when this
+		// is the last visible row, else no-op.
+		fmt.Fprintf(
+			&b,
+			"$condRowCount > %d ? (%s) : ($condRowCount === %d ? (%s) : null); ",
+			j+1, strings.Join(copies, ", "),
+			j+1, strings.Join(blanks, ", "),
+		)
+	}
+	// Decrement the visible-row count (floor at 1).
+	b.WriteString("$condRowCount = ($condRowCount > 1 ? $condRowCount - 1 : 1)")
+	return template.JS(b.String())
+}
+
 // workflowStepEditorView is what the workflow-step-editor fragment binds.
 type workflowStepEditorView struct {
 	// Step is nil when no step is selected / found.
