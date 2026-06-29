@@ -47,7 +47,7 @@
             <button type="submit" class="btn btn-outline btn-sm">Set default</button>
           </form>
           {{end}}
-          <button type="button" class="btn btn-outline btn-sm"
+          <button type="button" class="btn btn-outline btn-sm btn-danger"
                   data-on:click="@get('/console/api/fragments/layouts-list?confirmDelete={{.Key | urlquery}}')">Delete</button>
           {{end}}
         </td>

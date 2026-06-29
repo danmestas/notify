@@ -14,9 +14,10 @@
        causes NO layout shift; the /new route just seeds envNewOpen=true. */}}
   <div id="environment-slideover">
     {{if not $page.ReadOnly}}
-    <div class="console-slideover" role="dialog" aria-labelledby="env-create-heading"
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="env-create-heading"
          data-component="env-create"
-         data-show="$envNewOpen">
+         data-show="$envNewOpen"
+         data-on:keydown__window="evt.key === 'Escape' && ($envNewOpen = false)">
       <div class="console-slideover-header">
         <h2 id="env-create-heading" class="console-card-title">Add environment</h2>
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
@@ -27,7 +28,7 @@
         <div class="form-row">
           <label class="form-label" for="new-env-name">Name *</label>
           <input class="console-input" type="text" id="new-env-name" name="name"
-                 placeholder="e.g. staging" required autofocus>
+                 placeholder="e.g. staging" required aria-required="true" autofocus>
         </div>
         <div class="form-row">
           <label class="form-label" for="new-env-type-trigger">Type</label>
@@ -51,9 +52,10 @@
        by the fragment. Opening causes NO layout shift. */}}
   <div id="environment-edit-slideover">
     {{if not $page.ReadOnly}}
-    <div class="console-slideover" role="dialog" aria-labelledby="env-edit-heading"
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="env-edit-heading"
          data-component="env-edit"
-         data-show="$envEditOpen">
+         data-show="$envEditOpen"
+         data-on:keydown__window="evt.key === 'Escape' && ($envEditOpen = false)">
       <div class="console-slideover-header">
         <h2 id="env-edit-heading" class="console-card-title">Rename environment</h2>
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
@@ -65,7 +67,7 @@
           <label class="form-label" for="edit-env-name">Name *</label>
           <input class="console-input" type="text" id="edit-env-name" name="name"
                  data-bind="envEditName"
-                 placeholder="e.g. staging" required>
+                 placeholder="e.g. staging" required aria-required="true">
         </div>
         <div class="console-slideover-actions">
           <button type="button" class="btn btn-outline" data-on:click="$envEditOpen = false">Cancel</button>

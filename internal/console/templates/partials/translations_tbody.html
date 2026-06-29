@@ -40,7 +40,7 @@
         <td class="console-action-row">
           <a href="/console/translations/{{.Locale}}" class="btn btn-outline btn-sm">Edit</a>
           {{if not $v.ReadOnly}}
-          <button type="button" class="btn btn-outline btn-sm"
+          <button type="button" class="btn btn-outline btn-sm btn-danger"
                   data-on:click="@get('/console/api/fragments/translations-list?confirmDelete={{.Locale | urlquery}}')">Delete</button>
           {{end}}
         </td>

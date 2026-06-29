@@ -124,7 +124,7 @@
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           {{if $page.Active}}
           <input type="hidden" name="active" value="0">
-          <button type="submit" class="btn btn-outline">Deactivate</button>
+          <button type="submit" class="btn btn-outline btn-danger">Deactivate</button>
           {{else}}
           <input type="hidden" name="active" value="1">
           <button type="submit" class="btn btn-primary">Activate</button>

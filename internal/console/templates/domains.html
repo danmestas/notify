@@ -11,6 +11,7 @@
   <div class="console-filter-bar">
     <input type="text" class="console-input"
            placeholder="Search domains…"
+           aria-label="Search domains"
            data-bind="domainsSearch"
            data-on:input__debounce.300ms="@get('/console/api/fragments/domains-list')">
     {{if not $page.ReadOnly}}
@@ -23,9 +24,10 @@
        causes NO layout shift; the /new route just seeds domainNewOpen=true. */}}
   <div id="domain-slideover">
     {{if not $page.ReadOnly}}
-    <div class="console-slideover" role="dialog" aria-labelledby="domain-create-heading"
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="domain-create-heading"
          data-component="domain-create"
-         data-show="$domainNewOpen">
+         data-show="$domainNewOpen"
+         data-on:keydown__window="evt.key === 'Escape' && ($domainNewOpen = false)">
       <div class="console-slideover-header">
         <h2 id="domain-create-heading" class="console-card-title">Add domain</h2>
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
@@ -39,7 +41,7 @@
         <div class="form-row">
           <label class="form-label" for="domain-name">Domain name *</label>
           <input class="console-input" type="text" id="domain-name" name="name"
-                 placeholder="mail.example.com" required autofocus>
+                 placeholder="mail.example.com" required aria-required="true" autofocus>
         </div>
         <div class="console-slideover-actions">
           <button type="button" class="btn btn-outline" data-on:click="$domainNewOpen = false">Cancel</button>

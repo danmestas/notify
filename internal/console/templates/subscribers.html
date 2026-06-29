@@ -12,10 +12,13 @@
     {{/* Name/ID search */}}
     <input type="text" class="console-input"
            placeholder="Search by name…"
+           aria-label="Search subscribers by name"
            data-bind="subscribersName"
            data-on:input__debounce.300ms="@get('/console/api/fragments/subscribers-list')">
-    <input type="text" class="console-input"
+    <input type="search" class="console-input"
            placeholder="Search by email…"
+           aria-label="Search subscribers by email"
+           inputmode="email"
            data-bind="subscribersEmail"
            data-on:input__debounce.300ms="@get('/console/api/fragments/subscribers-list')">
     {{if not $page.ReadOnly}}
@@ -28,9 +31,10 @@
        causes NO layout shift; the /new route just seeds subNewOpen=true. */}}
   <div id="subscriber-slideover">
     {{if not $page.ReadOnly}}
-    <div class="console-slideover" role="dialog" aria-labelledby="sub-create-heading"
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="sub-create-heading"
          data-component="subscriber-create"
-         data-show="$subNewOpen">
+         data-show="$subNewOpen"
+         data-on:keydown__window="evt.key === 'Escape' && ($subNewOpen = false)">
       <div class="console-slideover-header">
         <h2 id="sub-create-heading" class="console-card-title">Add subscriber</h2>
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
@@ -50,6 +54,7 @@
         <div class="form-row">
           <label class="form-label" for="new-email">Email</label>
           <input class="console-input" type="email" id="new-email" name="email"
+                 inputmode="email" autocomplete="email"
                  placeholder="email@example.com">
         </div>
         <div class="form-row">
@@ -64,7 +69,8 @@
         </div>
         <div class="form-row">
           <label class="form-label" for="new-phone">Phone</label>
-          <input class="console-input" type="text" id="new-phone" name="phone"
+          <input class="console-input" type="tel" id="new-phone" name="phone"
+                 inputmode="tel" autocomplete="tel"
                  placeholder="+1234567890">
         </div>
         <div class="form-row">

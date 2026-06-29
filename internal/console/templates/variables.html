@@ -6,6 +6,7 @@
   <div class="console-filter-bar">
     <input type="text" class="console-input"
            placeholder="Filter by key…"
+           aria-label="Filter variables by key"
            data-bind="variablesSearch"
            data-on:input__debounce.300ms="@get('/console/api/fragments/variables-list')">
     {{if not $page.ReadOnly}}
@@ -18,9 +19,10 @@
        causes NO layout shift; the /new route just seeds variableNewOpen=true. */}}
   <div id="variable-slideover">
     {{if not $page.ReadOnly}}
-    <div class="console-slideover" role="dialog" aria-labelledby="variable-create-heading"
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="variable-create-heading"
          data-component="variable-create"
-         data-show="$variableNewOpen">
+         data-show="$variableNewOpen"
+         data-on:keydown__window="evt.key === 'Escape' && ($variableNewOpen = false)">
       <div class="console-slideover-header">
         <h2 id="variable-create-heading" class="console-card-title">New variable</h2>
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
@@ -31,7 +33,7 @@
         <div class="form-row">
           <label class="form-label" for="var-key">Key *</label>
           <input class="console-input" type="text" id="var-key" name="key"
-                 placeholder="API_KEY" required autofocus>
+                 placeholder="API_KEY" required aria-required="true" autofocus>
         </div>
         <div class="form-row">
           <label class="form-label" for="var-value">Value</label>

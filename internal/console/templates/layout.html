@@ -81,7 +81,7 @@
       <div class="console-topbar-utils">
         <div class="console-env" data-signals="{envMenuOpen: false}">
           <button type="button" class="console-env-trigger" aria-haspopup="menu"
-                  data-attr:aria-expanded="$envMenuOpen"
+                  data-attr:aria-expanded="$envMenuOpen ? 'true' : 'false'"
                   data-on:click="$envMenuOpen = !$envMenuOpen">
             <span class="console-env-dot" aria-hidden="true"></span>
             <span class="console-env-name">{{if .Scope.EnvID}}{{.Scope.EnvID}}{{else}}production{{end}}</span>

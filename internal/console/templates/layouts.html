@@ -12,8 +12,9 @@
   {{/* Layout create slide-over — rendered on /console/layouts/new */}}
   <div id="layout-slideover">
     {{if $page.ShowCreate}}
-    <div class="console-slideover" role="dialog" aria-labelledby="layout-create-heading"
-         data-component="layout-create">
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="layout-create-heading"
+         data-component="layout-create"
+         data-on:keydown__window="evt.key === 'Escape' && (window.location = '/console/layouts')">
       <div class="console-slideover-header">
         <h2 id="layout-create-heading" class="console-card-title">Create layout</h2>
         <a class="btn-icon console-slideover-close" href="/console/layouts" aria-label="Close">{{ uiIcon "x" }}</a>
@@ -23,12 +24,12 @@
         <div class="form-row">
           <label class="form-label" for="new-layout-name">Name *</label>
           <input class="console-input" type="text" id="new-layout-name" name="name"
-                 placeholder="Default layout" required autofocus maxlength="128">
+                 placeholder="Default layout" required aria-required="true" autofocus maxlength="128">
         </div>
         <div class="form-row">
           <label class="form-label" for="new-layout-key">Key *</label>
           <input class="console-input" type="text" id="new-layout-key" name="key"
-                 placeholder="default-layout" required maxlength="64"
+                 placeholder="default-layout" required aria-required="true" maxlength="64"
                  pattern="[a-z0-9\-_]+"
                  title="lowercase letters, numbers, hyphens, underscores">
         </div>

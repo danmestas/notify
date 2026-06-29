@@ -44,9 +44,10 @@
        it causes NO layout shift; the /new route just seeds workflowNewOpen=true. */}}
   <div id="workflow-create-slideover">
     {{if not $page.ReadOnly}}
-    <div class="console-slideover" role="dialog" aria-labelledby="wf-create-heading"
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="wf-create-heading"
          data-component="workflow-create"
-         data-show="$workflowNewOpen">
+         data-show="$workflowNewOpen"
+         data-on:keydown__window="evt.key === 'Escape' && ($workflowNewOpen = false)">
       <div class="console-slideover-header">
         <h2 id="wf-create-heading" class="console-card-title">Create workflow</h2>
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
@@ -60,13 +61,13 @@
         <div class="form-row">
           <label class="form-label" for="new-wf-name">Name *</label>
           <input class="console-input" type="text" id="new-wf-name" name="name"
-                 placeholder="Welcome Email" required autofocus>
+                 placeholder="Welcome Email" required aria-required="true" autofocus>
         </div>
         <div class="form-row">
           <label class="form-label" for="new-wf-trigger">Trigger identifier *</label>
           <input class="console-input console-input-mono" type="text" id="new-wf-trigger"
                  name="trigger_identifier" placeholder="welcome-email"
-                 pattern="[a-z0-9_-]+" title="lowercase letters, digits, hyphens, underscores" required>
+                 pattern="[a-z0-9_-]+" title="lowercase letters, digits, hyphens, underscores" required aria-required="true">
         </div>
         <div class="console-slideover-actions">
           <button type="button" class="btn btn-outline" data-on:click="$workflowNewOpen = false">Cancel</button>
@@ -80,8 +81,9 @@
   {{/* Duplicate slide-over — rendered on /console/workflows/{slug}/duplicate */}}
   <div id="workflow-duplicate-slideover">
     {{if $page.ShowDuplicate}}
-    <div class="console-slideover" role="dialog" aria-labelledby="wf-dup-heading"
-         data-component="workflow-duplicate">
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="wf-dup-heading"
+         data-component="workflow-duplicate"
+         data-on:keydown__window="evt.key === 'Escape' && (window.location = '/console/workflows/{{$page.SourceSlug}}')">
       <div class="console-slideover-header">
         <h2 id="wf-dup-heading" class="console-card-title">Duplicate workflow</h2>
         <a class="btn-icon console-slideover-close" href="/console/workflows/{{$page.SourceSlug}}" aria-label="Close">{{ uiIcon "x" }}</a>
@@ -94,13 +96,13 @@
         <div class="form-row">
           <label class="form-label" for="dup-wf-name">Name *</label>
           <input class="console-input" type="text" id="dup-wf-name" name="name"
-                 value="{{$page.SuggestedName}}" required autofocus>
+                 value="{{$page.SuggestedName}}" required aria-required="true" autofocus>
         </div>
         <div class="form-row">
           <label class="form-label" for="dup-wf-trigger">Trigger identifier *</label>
           <input class="console-input console-input-mono" type="text" id="dup-wf-trigger"
                  name="trigger_identifier" value="{{$page.SuggestedTrigger}}"
-                 pattern="[a-z0-9_-]+" required>
+                 pattern="[a-z0-9_-]+" required aria-required="true">
         </div>
         <div class="console-slideover-actions">
           <a class="btn btn-outline" href="/console/workflows/{{$page.SourceSlug}}">Cancel</a>

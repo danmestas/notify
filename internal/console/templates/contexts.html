@@ -6,6 +6,7 @@
   <div class="console-filter-bar">
     <input type="text" class="console-input"
            placeholder="Filter by type…"
+           aria-label="Filter contexts by type"
            data-bind="contextsType"
            data-on:input__debounce.300ms="@get('/console/api/fragments/contexts-list')">
     {{if not $page.ReadOnly}}
@@ -18,9 +19,10 @@
        the /new route just seeds contextNewOpen=true. */}}
   <div id="context-slideover">
     {{if not $page.ReadOnly}}
-    <div class="console-slideover" role="dialog" aria-labelledby="context-create-heading"
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="context-create-heading"
          data-component="context-create"
-         data-show="$contextNewOpen">
+         data-show="$contextNewOpen"
+         data-on:keydown__window="evt.key === 'Escape' && ($contextNewOpen = false)">
       <div class="console-slideover-header">
         <h2 id="context-create-heading" class="console-card-title">New context</h2>
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
@@ -34,12 +36,12 @@
         <div class="form-row">
           <label class="form-label" for="ctx-type">Context type *</label>
           <input class="console-input" type="text" id="ctx-type" name="type"
-                 placeholder="tenant" required autofocus>
+                 placeholder="tenant" required aria-required="true" autofocus>
         </div>
         <div class="form-row">
           <label class="form-label" for="ctx-id">Identifier *</label>
           <input class="console-input" type="text" id="ctx-id" name="id"
-                 placeholder="acme-org" required>
+                 placeholder="acme-org" required aria-required="true">
           <span id="context-form-id-error" class="form-error"></span>
         </div>
         <div class="form-row">

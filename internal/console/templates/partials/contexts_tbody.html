@@ -40,7 +40,7 @@
         <td class="console-action-row">
           {{if not $v.ReadOnly}}
           <a class="btn btn-outline btn-sm" href="/console/contexts/{{.Type}}/{{.ExternalID}}">Edit</a>
-          <button type="button" class="btn btn-outline btn-sm"
+          <button type="button" class="btn btn-outline btn-sm btn-danger"
                   data-on:click="@get('/console/api/fragments/contexts-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
           {{end}}
         </td>

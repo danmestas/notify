@@ -15,6 +15,7 @@
   <div class="console-filter-bar">
     <input type="text" class="console-input"
            placeholder="Search by identifier or name…"
+           aria-label="Search agents by identifier or name"
            data-bind="agentsFilter"
            data-on:input__debounce.300ms="@get('/console/api/fragments/agents-list')">
     {{if not $page.ReadOnly}}
@@ -29,10 +30,11 @@
        causes NO layout shift; the /new route just seeds agentNewOpen=true. */}}
   <div id="agent-slideover">
     {{if not $page.ReadOnly}}
-    <div class="console-slideover" role="dialog" aria-labelledby="agent-create-heading"
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="agent-create-heading"
          data-component="agent-create"
          data-signals="{agentRuntime: ''}"
-         data-show="$agentNewOpen">
+         data-show="$agentNewOpen"
+         data-on:keydown__window="evt.key === 'Escape' && ($agentNewOpen = false)">
       <div class="console-slideover-header">
         <h2 id="agent-create-heading" class="console-card-title">New agent</h2>
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
@@ -43,7 +45,7 @@
         <div class="form-row">
           <label class="form-label" for="new-identifier">Identifier *</label>
           <input class="console-input" type="text" id="new-identifier" name="identifier"
-                 placeholder="my-agent" required autofocus
+                 placeholder="my-agent" required aria-required="true" autofocus
                  pattern="[a-z0-9][a-z0-9\-]*">
           <span class="form-hint">Lowercase letters, numbers, hyphens. Cannot be changed after creation.</span>
         </div>

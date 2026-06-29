@@ -1193,6 +1193,13 @@ a.activity-item-run { color: var(--accent); }
   cursor: pointer;
 }
 .ui-select-option:hover { background: var(--accent-soft); }
+/* Keyboard focus (roving tabindex) gets a clear ring so arrow-key users can
+   see which option is active — not just the hover/selected tint. */
+.ui-select-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--accent-soft);
+}
 .ui-select-option[aria-selected="true"] {
   background: var(--accent-soft);
   font-weight: 600;
@@ -1252,6 +1259,20 @@ a.activity-item-run { color: var(--accent); }
   border-color: var(--border);
   color: var(--accent);
   opacity: 1 !important;
+}
+/* Keyboard focus rings for all button variants — WCAG 2.4.7 (Focus Visible).
+   Specificity 0-2-0 wins over the global :focus-visible fallback (0-1-0).
+   Ring + glow matches the .console-input focus treatment so all interactive
+   controls are consistent across light and dark themes via --accent /
+   --accent-soft, which change value in the dark-mode palette block. */
+.btn:focus-visible,
+.btn-primary:focus-visible,
+.btn-outline:focus-visible,
+.btn-danger:focus-visible,
+.btn-icon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 /* ===== inline ui-icons ============================================= */
@@ -2653,4 +2674,94 @@ a.activity-item-run { color: var(--accent); }
   color: var(--danger, #e53e3e);
   overflow-y: auto;
   margin: 0;
+}
+
+/* ===== accessibility utilities ====================================== */
+
+/*
+ * .sr-only / .visually-hidden — hide content visually while keeping it in
+ * the accessibility tree (the standard pattern). Use it to give every
+ * search/filter input a real <label> without changing the layout.
+ */
+.sr-only,
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * Global :focus-visible fallback — guarantees a visible keyboard-focus
+ * ring on every interactive element. Component rules above that set
+ * `outline: none` pair it with their own box-shadow ring; this default
+ * catches anything that doesn't, so keyboard users never lose the focus
+ * indicator. Mouse clicks (which don't match :focus-visible) stay clean.
+ */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/*
+ * Minimum 44×44px hit targets for the small interactive affordances
+ * Norman/WCAG flag as too small to reliably tap: the checkbox and the
+ * drawer close button. The checkbox keeps its 16px visual box but grows
+ * its clickable area via a transparent pseudo-element; the close button
+ * gets real min dimensions.
+ */
+input[type="checkbox"] {
+  position: relative;
+}
+input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+.console-slideover-close {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Secret field with an inline show/hide toggle (login API key). The toggle
+   is a real button with aria-pressed; it reads as text, not color alone. */
+.console-secret-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.console-secret-field input {
+  flex: 1;
+  padding-right: 4rem;
+}
+.console-secret-toggle {
+  position: absolute;
+  right: var(--space-2);
+  min-height: 28px;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.console-secret-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.console-secret-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
 }

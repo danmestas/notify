@@ -28,9 +28,10 @@
   {{end}}
 
   <button type="button" class="ui-select-trigger" id="{{.ID}}-trigger"
-          aria-haspopup="listbox"
+          aria-haspopup="listbox" aria-controls="{{.ID}}-popover"
           data-attr:aria-expanded="{{.ExpandedExpr}}"
           data-on:click="{{.ToggleExpr}}"
+          data-on:keydown="{{.TriggerKeydownExpr}}"
           data-on:keydown__window="{{.EscapeExpr}}">
     <span class="ui-select-trigger-label" data-text="{{.SelectedLabel}}">{{.Placeholder}}</span>
     <span class="ui-select-trigger-chevron" aria-hidden="true">{{ uiIcon "chevron-down" }}</span>
@@ -41,6 +42,7 @@
        opens it (the trigger is outside the popover), toggling it shut in the
        same event so it never visibly opens. */}}
   <div class="ui-select-popover" id="{{.ID}}-popover" role="listbox"
+       aria-label="{{.ListboxLabel}}"
        data-show="{{.ShowExpr}}">
 
     {{if .Searchable}}
@@ -55,11 +57,12 @@
     <div class="ui-select-options">
       {{$searchable := .Searchable}}
       {{range .Rows}}
-      <div class="ui-select-option" role="option"
+      <div class="ui-select-option" role="option" tabindex="0"
            data-value="{{.Value}}"
-           data-attr:aria-selected="{{.SelectedExpr}}"
+           data-attr:aria-selected="{{.SelectedARIAExpr}}"
            {{if $searchable}}data-show="{{.FilterExpr}}"{{end}}
-           data-on:click="{{.ClickExpr}}">
+           data-on:click="{{.ClickExpr}}"
+           data-on:keydown="{{.KeydownExpr}}">
         <span class="ui-select-option-label">{{.Label}}</span>
         <span class="ui-select-option-check" aria-hidden="true"
               data-show="{{.SelectedExpr}}">{{ uiIcon "check" }}</span>

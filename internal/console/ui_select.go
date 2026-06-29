@@ -16,11 +16,13 @@ const uiSelectThreshold = 6
 // JS context (it would otherwise rewrite a bare "${{.Signal}}" into "$\"...\"",
 // corrupting the expression — see the package note on Datastar escaping).
 type uiSelectRow struct {
-	Value        string
-	Label        string
-	SelectedExpr template.JS // truthy when this row is the selected value
-	ClickExpr    template.JS // sets the value, closes the popover, runs OnChange
-	FilterExpr   template.JS // data-show filter match (empty when not searchable)
+	Value            string
+	Label            string
+	SelectedExpr     template.JS // truthy when this row is the selected value (data-show)
+	SelectedARIAExpr template.JS // "true"/"false" string for data-attr:aria-selected
+	ClickExpr        template.JS // sets the value, closes the popover, runs OnChange
+	FilterExpr       template.JS // data-show filter match (empty when not searchable)
+	KeydownExpr      template.JS // option keyboard nav: Enter/Space select, arrows move
 }
 
 // uiSelectOption is the caller-facing (value,label) pair packed by
@@ -54,6 +56,17 @@ type uiSelect struct {
 	Placeholder  string
 	Required     bool
 	Searchable   bool
+
+	// ListboxLabel is the accessible name announced for the popover
+	// listbox (a screen reader otherwise reads an unnamed listbox). It
+	// mirrors the field's purpose — the placeholder text, which describes
+	// what the select chooses (e.g. "All statuses", "Pick a layout").
+	ListboxLabel string
+
+	// TriggerKeydownExpr opens the popover from the keyboard: ArrowDown,
+	// Enter, or Space on the closed trigger opens it (in addition to the
+	// existing Escape-closes wiring carried by EscapeExpr).
+	TriggerKeydownExpr template.JS
 
 	// DeclareValue is true for form selects (Name set): the component owns the
 	// value signal and declares it in its own data-signals seeded to the
@@ -121,6 +134,7 @@ func newUISelectForm(
 		Required:     required,
 		Searchable:   searchable,
 		DeclareValue: declareValue,
+		ListboxLabel: placeholder,
 	}
 
 	signalsDecl := "{" + openSig + ": false, " + filterSig + ": ''"
@@ -129,9 +143,25 @@ func newUISelectForm(
 	}
 	signalsDecl += "}"
 	s.SignalsAttr = template.JS(signalsDecl)
-	s.ExpandedExpr = template.JS("$" + openSig)
+	s.ExpandedExpr = template.JS("$" + openSig + " ? 'true' : 'false'")
 	s.ToggleExpr = template.JS("$" + openSig + " = !$" + openSig)
 	s.EscapeExpr = template.JS("evt.key === 'Escape' && ($" + openSig + " = false)")
+	// Trigger keyboard support: ArrowDown / Enter / Space open the popover
+	// and move focus to the first visible option; Escape (handled in the
+	// same handler) closes it. preventDefault stops Space/ArrowDown from
+	// scrolling the page when the trigger has focus.
+	// The first-visible-option search uses a JS .style.display property
+	// check (robust to "none" written with or without a space) rather than
+	// the fragile CSS attribute-substring selector [style*="display: none"].
+	s.TriggerKeydownExpr = template.JS(
+		"if (evt.key === 'Escape') { $" + openSig + " = false }" +
+			" else if (evt.key === 'ArrowDown' || evt.key === 'Enter' || evt.key === ' ') {" +
+			" evt.preventDefault(); $" + openSig + " = true;" +
+			" const opts = Array.from(evt.target.closest('.ui-select')" +
+			".querySelectorAll('.ui-select-option'));" +
+			" const o = opts.find(el => el.style.display !== 'none');" +
+			" if (o) requestAnimationFrame(() => o.focus()) }",
+	)
 	s.ShowExpr = template.JS("$" + openSig)
 	s.OutsideExpr = template.JS("$" + openSig + " = false")
 	s.HiddenValueExpr = template.JS("$" + signal)
@@ -144,11 +174,30 @@ func newUISelectForm(
 		if onChange != "" {
 			click += "; " + onChange
 		}
+		// Option keyboard nav (roving focus): Enter/Space select (same as
+		// click); ArrowDown/ArrowUp move focus to the next/previous VISIBLE
+		// option so filtered-out rows are skipped; Escape closes and returns
+		// focus to the trigger.
+		keydown := "if (evt.key === 'Enter' || evt.key === ' ') {" +
+			" evt.preventDefault(); " + click + " }" +
+			" else if (evt.key === 'ArrowDown' || evt.key === 'ArrowUp') {" +
+			" evt.preventDefault();" +
+			" const dir = evt.key === 'ArrowDown' ? 'nextElementSibling' : 'previousElementSibling';" +
+			" let n = evt.target[dir];" +
+			" while (n && (!n.classList.contains('ui-select-option') ||" +
+			" n.style.display === 'none')) { n = n[dir] }" +
+			" if (n) n.focus() }" +
+			" else if (evt.key === 'Escape') {" +
+			" $" + openSig + " = false;" +
+			" const t = evt.target.closest('.ui-select').querySelector('.ui-select-trigger');" +
+			" if (t) t.focus() }"
 		row := uiSelectRow{
-			Value:        opt.Value,
-			Label:        opt.Label,
-			SelectedExpr: template.JS("$" + signal + " === " + val),
-			ClickExpr:    template.JS(click),
+			Value:            opt.Value,
+			Label:            opt.Label,
+			SelectedExpr:     template.JS("$" + signal + " === " + val),
+			SelectedARIAExpr: template.JS("($" + signal + " === " + val + ") ? 'true' : 'false'"),
+			ClickExpr:        template.JS(click),
+			KeydownExpr:      template.JS(keydown),
 		}
 		if searchable {
 			row.FilterExpr = template.JS(

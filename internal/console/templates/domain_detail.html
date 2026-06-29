@@ -60,7 +60,7 @@
     </div>
     <div class="console-card-body">
       {{if not $page.ConfirmDelete}}
-      <a href="/console/domains/{{$page.Dom.Name}}?confirmDelete=true" class="btn btn-danger-outline">Delete domain</a>
+      <a href="/console/domains/{{$page.Dom.Name}}?confirmDelete=true" class="btn btn-outline btn-danger">Delete domain</a>
       {{else}}
       <p>Are you sure you want to delete <strong>{{$page.Dom.Name}}</strong>? This cannot be undone.</p>
       <div class="console-button-row">

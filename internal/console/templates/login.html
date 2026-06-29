@@ -21,11 +21,32 @@
     {{end}}
     <form method="post" action="/console/login">
       <label for="api_key">API key</label>
-      <input type="password" id="api_key" name="api_key"
-             autocomplete="off" autofocus required
-             placeholder="paste your API key">
+      <div class="console-secret-field">
+        <input type="password" id="api_key" name="api_key"
+               autocomplete="off" autofocus required
+               placeholder="paste your API key">
+        <button type="button" id="api_key_toggle" class="console-secret-toggle"
+                aria-pressed="false" aria-controls="api_key"
+                aria-label="Show API key">Show</button>
+      </div>
       <button type="submit" class="btn btn-primary">Sign in</button>
     </form>
+    <script>
+      // Show/hide toggle for the API-key field. aria-pressed reflects the
+      // reveal state so assistive tech announces it (not a color-only cue).
+      (function () {
+        var btn = document.getElementById("api_key_toggle");
+        var input = document.getElementById("api_key");
+        if (!btn || !input) return;
+        btn.addEventListener("click", function () {
+          var show = input.type === "password";
+          input.type = show ? "text" : "password";
+          btn.setAttribute("aria-pressed", show ? "true" : "false");
+          btn.setAttribute("aria-label", show ? "Hide API key" : "Show API key");
+          btn.textContent = show ? "Hide" : "Show";
+        });
+      })();
+    </script>
     <p class="console-login-hint">
       Keys are minted by <code class="console-mono">notify bootstrap</code>.
       The session lives in an encrypted cookie scoped to /console.

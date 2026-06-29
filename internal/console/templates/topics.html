@@ -6,10 +6,12 @@
   <div class="console-filter-bar">
     <input type="text" class="console-input"
            placeholder="Search by name…"
+           aria-label="Search topics by name"
            data-bind="topicsName"
            data-on:input__debounce.300ms="@get('/console/api/fragments/topics-list')">
     <input type="text" class="console-input"
            placeholder="Search by key…"
+           aria-label="Search topics by key"
            data-bind="topicsKey"
            data-on:input__debounce.300ms="@get('/console/api/fragments/topics-list')">
     {{if not $page.ReadOnly}}
@@ -22,9 +24,10 @@
        causes NO layout shift; the /new route just seeds topicNewOpen=true. */}}
   <div id="topic-slideover">
     {{if not $page.ReadOnly}}
-    <div class="console-slideover" role="dialog" aria-labelledby="topic-create-heading"
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="topic-create-heading"
          data-component="topic-create"
-         data-show="$topicNewOpen">
+         data-show="$topicNewOpen"
+         data-on:keydown__window="evt.key === 'Escape' && ($topicNewOpen = false)">
       <div class="console-slideover-header">
         <h2 id="topic-create-heading" class="console-card-title">Create topic</h2>
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
@@ -35,7 +38,7 @@
         <div class="form-row">
           <label class="form-label" for="new-topic-key">Key *</label>
           <input class="console-input" type="text" id="new-topic-key" name="key"
-                 placeholder="weekly-digest" required autofocus>
+                 placeholder="weekly-digest" required aria-required="true" autofocus>
         </div>
         <div class="form-row">
           <label class="form-label" for="new-topic-name">Name</label>

@@ -127,8 +127,10 @@
   <aside class="console-slideover integration-connect-drawer"
          data-show="$integrationProviderFormOpen"
          role="dialog"
+         aria-modal="true"
          aria-labelledby="connect-drawer-heading"
-         aria-label="Connect integration">
+         aria-label="Connect integration"
+         data-on:keydown__window="evt.key === 'Escape' && ($integrationProviderFormOpen = false)">
     <div class="console-slideover-header">
       <div class="integration-connect-heading">
         <h2 id="connect-drawer-heading" class="console-card-title">Connect Integration</h2>

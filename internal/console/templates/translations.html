@@ -13,8 +13,9 @@
   {{/* Add-locale slide-over — rendered on /console/translations/new */}}
   <div id="translation-slideover">
     {{if $page.ShowCreate}}
-    <div class="console-slideover" role="dialog" aria-labelledby="translation-create-heading"
-         data-component="translation-create">
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="translation-create-heading"
+         data-component="translation-create"
+         data-on:keydown__window="evt.key === 'Escape' && (window.location = '/console/translations')">
       <div class="console-slideover-header">
         <h2 id="translation-create-heading" class="console-card-title">Add locale</h2>
         <a class="btn-icon console-slideover-close" href="/console/translations" aria-label="Close">{{ uiIcon "x" }}</a>
@@ -24,7 +25,7 @@
         <div class="form-row">
           <label class="form-label" for="new-locale">Locale code *</label>
           <input class="console-input" type="text" id="new-locale" name="locale"
-                 placeholder="en" required autofocus maxlength="20"
+                 placeholder="en" required aria-required="true" autofocus maxlength="20"
                  pattern="[a-zA-Z0-9_\-]+"
                  title="BCP-47 locale code (e.g. en, en-US, es)">
         </div>

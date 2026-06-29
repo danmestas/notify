@@ -44,7 +44,7 @@
       </form>
       <a class="btn btn-outline" href="/console/contexts/{{$page.Ctx.Type}}/{{$page.Ctx.ExternalID}}">Cancel</a>
       {{else}}
-      <a class="btn btn-outline" href="/console/contexts/{{$page.Ctx.Type}}/{{$page.Ctx.ExternalID}}?confirmDelete=true">Delete this context</a>
+      <a class="btn btn-outline btn-danger" href="/console/contexts/{{$page.Ctx.Type}}/{{$page.Ctx.ExternalID}}?confirmDelete=true">Delete this context</a>
       {{end}}
     </div>
   </div>

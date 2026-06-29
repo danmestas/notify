@@ -41,7 +41,7 @@
              name="identifier"
              class="console-input"
              placeholder="e.g. smtp-primary"
-             required>
+             required aria-required="true">
     </div>
 
     <div class="console-form-field">
@@ -55,16 +55,20 @@
     <fieldset class="integration-cred-fieldset">
       <legend class="integration-cred-legend">Credentials</legend>
       {{range .CredFields}}
+      {{$secret := or (eq .Key "password") (eq .Key "token") (eq .Key "api_token") (eq .Key "api_key") (eq .Key "bot_token") (eq .Key "access_token") (eq .Key "secret_access_key") (eq .Key "auth_token")}}
       <div class="console-form-field">
         <label class="console-form-label" for="create-{{.Key}}">
           {{.Label}}{{if .Required}} <span aria-hidden="true">*</span>{{end}}
         </label>
-        <input type="{{if or (eq .Key "password") (eq .Key "token") (eq .Key "api_token") (eq .Key "api_key") (eq .Key "bot_token") (eq .Key "access_token") (eq .Key "secret_access_key") (eq .Key "auth_token")}}password{{else}}text{{end}}"
+        {{/* autocomplete=new-password only on the actual secret fields so the
+             browser never offers to autofill/save a non-secret host/username
+             as a password; non-secret fields opt out of autofill entirely. */}}
+        <input type="{{if $secret}}password{{else}}text{{end}}"
                id="create-{{.Key}}"
                name="{{.Key}}"
                class="console-input"
-               autocomplete="new-password"
-               {{if .Required}}required{{end}}>
+               autocomplete="{{if $secret}}new-password{{else}}off{{end}}"
+               {{if .Required}}required aria-required="true"{{end}}>
       </div>
       {{end}}
     </fieldset>
@@ -105,16 +109,18 @@
             data-on:click="$connectChannel='chat'"><span>Chat</span></button>
   </nav>
 
-  <div class="integration-provider-list" role="list">
+  {{/* A group of action buttons, NOT a list: keep native <button> semantics
+       (role="listitem" on a button clobbers them) so each row is announced as
+       a button that opens the provider's credential form. */}}
+  <div class="integration-provider-list" role="group" aria-label="Available providers">
     {{range .Catalog}}
     <button type="button"
             class="integration-provider-row"
-            role="listitem"
             data-show="$connectChannel === '{{.Channel}}'"
             data-on:click="$integrationProviderPick='{{.ID}}';@get('/console/api/fragments/integration-provider-form')">
       <span class="integration-provider-icon">{{providerIcon .ID}}</span>
       <span class="integration-provider-row-label">{{.Label}}</span>
-      <span class="integration-provider-row-chevron" aria-hidden="true">›</span>
+      <span class="integration-provider-row-chevron" aria-hidden="true">{{ uiIcon "arrow-right" }}</span>
     </button>
     {{end}}
   </div>

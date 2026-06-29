@@ -52,7 +52,7 @@
               {{if .Active}}Disable{{else}}Enable{{end}}
             </button>
           </form>
-          <button type="button" class="btn btn-outline btn-sm"
+          <button type="button" class="btn btn-outline btn-sm btn-danger"
                   data-on:click="@get('/console/api/fragments/webhooks-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
           {{end}}
         </td>

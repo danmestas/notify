@@ -18,7 +18,7 @@
     <form method="POST" action="/console/agents/{{$page.Agent.Identifier}}/activate" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
       {{if $page.Agent.Active}}
-      <button type="submit" class="btn btn-outline">Deactivate</button>
+      <button type="submit" class="btn btn-outline btn-danger">Deactivate</button>
       {{else}}
       <button type="submit" class="btn btn-primary">Activate</button>
       {{end}}
@@ -142,8 +142,9 @@
       {{/* Link picker — rendered inline on ?link=true. Offers only the scope's
            integrations that are not yet linked to this agent. */}}
       {{if $page.ShowLink}}
-      <div class="console-slideover" role="dialog" aria-labelledby="agent-link-heading"
-           data-component="agent-channel-link">
+      <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="agent-link-heading"
+           data-component="agent-channel-link"
+           data-on:keydown__window="evt.key === 'Escape' && (window.location = '/console/agents/{{$page.Agent.Identifier}}/tabs/channels')">
         <div class="console-slideover-header">
           <h2 id="agent-link-heading" class="console-card-title">Link channel</h2>
           <a class="btn-icon console-slideover-close"

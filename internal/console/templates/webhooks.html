@@ -14,9 +14,10 @@
        causes NO layout shift; the /new route just seeds webhookNewOpen=true. */}}
   <div id="webhook-slideover">
     {{if not $page.ReadOnly}}
-    <div class="console-slideover" role="dialog" aria-labelledby="webhook-create-heading"
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="webhook-create-heading"
          data-component="webhook-create"
-         data-show="$webhookNewOpen">
+         data-show="$webhookNewOpen"
+         data-on:keydown__window="evt.key === 'Escape' && ($webhookNewOpen = false)">
       <div class="console-slideover-header">
         <h2 id="webhook-create-heading" class="console-card-title">Add endpoint</h2>
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
@@ -27,7 +28,7 @@
         <div class="form-row">
           <label class="form-label" for="new-webhook-url">URL *</label>
           <input class="console-input" type="url" id="new-webhook-url" name="url"
-                 placeholder="https://example.com/hooks/notify" required autofocus>
+                 placeholder="https://example.com/hooks/notify" required aria-required="true" autofocus>
         </div>
         <div class="form-row">
           <label class="form-label">
