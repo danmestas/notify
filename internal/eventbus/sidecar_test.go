@@ -31,7 +31,11 @@ func startSidecar(t *testing.T) (natsURL string) {
 		httpAddr := fmt.Sprintf("127.0.0.1:%d", freePort(t))
 		dataDir := t.TempDir()
 
-		cmd := exec.Command(bin, "serve")
+		// --die-with-parent (dagnats #476): the sidecar self-terminates when
+		// this test process dies — including hard `-timeout`/SIGKILL where
+		// t.Cleanup never runs — so interrupted `go test` runs don't orphan a
+		// dagnats child (notify #121).
+		cmd := exec.Command(bin, "serve", "--die-with-parent")
 		// Run in the data dir so no stray ./dagnats.yaml from the test
 		// package is picked up, and point XDG elsewhere for the same reason.
 		cmd.Dir = dataDir
