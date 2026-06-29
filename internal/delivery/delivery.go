@@ -138,7 +138,7 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	// self-source path sets digestKey, so the Input-present path is unchanged.
 	if digestKey != "" && h.digester != nil {
 		events, _ := h.digester.DigestDrain(digestKey)
-		data["digest"] = map[string]any{"count": len(events)}
+		data["digest"] = digestData(events)
 	}
 	translate := storeTranslator(ctx, h.store, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, subMap)
 	subject := template.RenderI18n(env.Step.SubjectTemplate, data, translate)

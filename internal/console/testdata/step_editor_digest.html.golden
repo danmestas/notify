@@ -10,13 +10,81 @@
     <input type="hidden" name="csrf_token" value="csrf-golden">
     
     <div class="form-row">
-      <label class="form-label" for="cv-amount">Window amount</label>
-      <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
-             value="2">
+      <label class="form-label" for="digest-type-trigger">Window type</label>
+      
+<div class="ui-select" id="digest-type" data-signals="{uiSelOpen_digest_type: false, uiSelFilter_digest_type: &#39;&#39;, digestType: &#34;&#34;}"
+     data-on:click__outside="$uiSelOpen_digest_type = false">
+
+  
+  <input type="hidden" name="type" data-attr:value="$digestType">
+  
+
+  <button type="button" class="ui-select-trigger" id="digest-type-trigger"
+          aria-haspopup="listbox" aria-controls="digest-type-popover"
+          data-attr:aria-expanded="$uiSelOpen_digest_type ? &#39;true&#39; : &#39;false&#39;"
+          data-on:click="$uiSelOpen_digest_type = !$uiSelOpen_digest_type"
+          data-on:keydown="if (evt.key === &#39;Escape&#39;) { $uiSelOpen_digest_type = false } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $uiSelOpen_digest_type = true; const opts = Array.from(evt.target.closest(&#39;.ui-select&#39;).querySelectorAll(&#39;.ui-select-option&#39;)); const o = opts.find(el =&gt; el.style.display !== &#39;none&#39;); if (o) requestAnimationFrame(() =&gt; o.focus()) }"
+          data-on:keydown__window="evt.key === &#39;Escape&#39; &amp;&amp; ($uiSelOpen_digest_type = false)">
+    <span class="ui-select-trigger-label" data-text="$digestType === &#34;regular&#34; ? &#34;Regular (time window)&#34; : ($digestType === &#34;scheduled&#34; ? &#34;Scheduled (cron)&#34; : (&#34;Window type&#34;))">Window type</span>
+    <span class="ui-select-trigger-chevron" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+</span>
+  </button>
+
+  
+  <div class="ui-select-popover" id="digest-type-popover" role="listbox"
+       aria-label="Window type"
+       data-show="$uiSelOpen_digest_type">
+
+    
+
+    <div class="ui-select-options">
+      
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="regular"
+           data-attr:aria-selected="($digestType === &#34;regular&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$digestType = &#34;regular&#34;; $uiSelOpen_digest_type = false; $uiSelFilter_digest_type = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $digestType = &#34;regular&#34;; $uiSelOpen_digest_type = false; $uiSelFilter_digest_type = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_digest_type = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Regular (time window)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$digestType === &#34;regular&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="scheduled"
+           data-attr:aria-selected="($digestType === &#34;scheduled&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$digestType = &#34;scheduled&#34;; $uiSelOpen_digest_type = false; $uiSelFilter_digest_type = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $digestType = &#34;scheduled&#34;; $uiSelOpen_digest_type = false; $uiSelFilter_digest_type = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_digest_type = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Scheduled (cron)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$digestType === &#34;scheduled&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      
+    </div>
+  </div>
+</div>
+
     </div>
     <div class="form-row">
-      <label class="form-label" for="digest-unit-trigger">Window unit</label>
-      
+      <label class="form-label" for="cv-digest-key">Digest key</label>
+      <input class="console-input" type="text" id="cv-digest-key" name="digestKey"
+             placeholder="payload.orderId" value="">
+      <p class="form-hint">Optional dot-path (e.g. <code>{{payload.orderId}}</code> as <code>payload.orderId</code>) to batch events into separate digests. Leave empty to group all of a subscriber's events together.</p>
+    </div>
+    <div data-show="$digestType !== 'scheduled'">
+      <div class="form-row">
+        <label class="form-label" for="cv-amount">Window amount</label>
+        <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
+               value="2">
+      </div>
+      <div class="form-row">
+        <label class="form-label" for="digest-unit-trigger">Window unit</label>
+        
 <div class="ui-select" id="digest-unit" data-signals="{uiSelOpen_digest_unit: false, uiSelFilter_digest_unit: &#39;&#39;, digestUnit: &#34;days&#34;}"
      data-on:click__outside="$uiSelOpen_digest_unit = false">
 
@@ -98,6 +166,13 @@
   </div>
 </div>
 
+      </div>
+    </div>
+    <div class="form-row" data-show="$digestType === 'scheduled'">
+      <label class="form-label" for="cv-cron">Cron expression</label>
+      <input class="console-input console-input-mono" type="text" id="cv-cron" name="cron"
+             placeholder="0 * * * *" value="">
+      <p class="form-hint">Standard 5-field cron (<code>0 * * * *</code> = hourly) or 6-field with seconds. The digest delivers at each tick.</p>
     </div>
     
     <fieldset class="wf-conditions">

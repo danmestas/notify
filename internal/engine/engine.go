@@ -166,6 +166,14 @@ func (e *Engine) Handle(taskType string, fn HandlerFunc) {
 	e.handlers[taskType] = fn
 }
 
+// Handles reports whether a handler is registered for taskType. It is a
+// read-only introspection used by wiring smoke tests (e.g. asserting the
+// digest.wait task handler was registered before StartWorkers).
+func (e *Engine) Handles(taskType string) bool {
+	_, ok := e.handlers[taskType]
+	return ok
+}
+
 // StartWorkers launches one long-poll loop per registered task type. Loops run
 // until ctx is cancelled or Stop is called.
 func (e *Engine) StartWorkers(ctx context.Context) {

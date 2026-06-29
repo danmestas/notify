@@ -7,8 +7,11 @@ package trigger
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/danmestas/notify/internal/audience"
@@ -107,6 +110,85 @@ type stepControls struct {
 	Priority int      `json:"priority"`
 	Tags     []string `json:"tags"`
 	Markdown bool     `json:"markdown"`
+}
+
+// digestKeyPath extracts the optional digestKey dot-path from a digest step's
+// controlValues (e.g. "payload.orderId"). An absent/empty field means "group by
+// the per-subscriber base key", preserving the original behaviour.
+func digestKeyPath(controlValues json.RawMessage) string {
+	if len(controlValues) == 0 {
+		return ""
+	}
+	var cv struct {
+		DigestKey string `json:"digestKey"`
+	}
+	if err := json.Unmarshal(controlValues, &cv); err != nil {
+		return ""
+	}
+	return cv.DigestKey
+}
+
+// resolveDigestKeyValue walks a dot-path (e.g. "payload.orderId" or
+// "subscriber.data.plan") against the event payload or subscriber JSON and
+// returns the scalar value as a string. The first segment selects the root
+// ("payload" or "subscriber"); a missing intermediate or leaf, a non-object
+// node, an unknown root, or a single-segment path all resolve to "" — which the
+// caller treats as "no grouping value" (fall back to the base key).
+func resolveDigestKeyValue(path string, payload, subscriber json.RawMessage) string {
+	if path == "" {
+		return ""
+	}
+	parts := strings.Split(path, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	var root json.RawMessage
+	switch parts[0] {
+	case "payload":
+		root = payload
+	case "subscriber":
+		root = subscriber
+	default:
+		return ""
+	}
+	var node map[string]any
+	if len(root) == 0 || json.Unmarshal(root, &node) != nil {
+		return ""
+	}
+	var cur any = node
+	for _, p := range parts[1:] {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return ""
+		}
+		cur, ok = m[p]
+		if !ok {
+			return ""
+		}
+	}
+	switch v := cur.(type) {
+	case string:
+		return v
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(v)
+	default:
+		return ""
+	}
+}
+
+// buildDigestKey appends the resolved grouping value to the base window key. An
+// empty value returns the bare base (so absent-field events merge into the
+// per-subscriber bucket). A non-empty value is base64url-encoded before being
+// appended so the NATS-KV key sanitizer (which collapses ':' and '_' alike to
+// '_') cannot silently merge two distinct values such as "order:001" and
+// "order_001" — the encoded segment keeps the mapping injective.
+func buildDigestKey(base, value string) string {
+	if value == "" {
+		return base
+	}
+	return base + ":" + base64.RawURLEncoding.EncodeToString([]byte(value))
 }
 
 // Ingest processes one trigger end-to-end. On an unknown workflow it returns a
@@ -238,24 +320,6 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 		}
 	}
 
-	// Digest coordination: when the workflow's first step is "digest" and a
-	// digester is attached, append this event to the (env, subscriber,
-	// workflow) window and claim ownership. Exactly one trigger wins the claim
-	// and starts the run; the rest merge silently (no new run) and are drained
-	// + rendered by the owning run after the Sleep window fires.
-	var digestKey string
-	if step.Type == "digest" && svc.digester != nil {
-		digestKey = scope.EnvID + ":" + subscriberID + ":" + wf.ID
-		if err := svc.digester.DigestAppend(digestKey, req.Payload); err != nil {
-			return "", err
-		}
-		isOwner, _ := svc.digester.DigestClaim(digestKey)
-		if !isOwner {
-			return "", nil
-		}
-	}
-	notificationID := store.NewULID()
-
 	sub, err := svc.aud.Get(ctx, scope, subscriberID)
 	if err != nil {
 		return "", err
@@ -273,6 +337,29 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 	if err != nil {
 		return "", err
 	}
+
+	// Digest coordination: when the workflow's first step is "digest" and a
+	// digester is attached, append this event to the digest window and claim
+	// ownership. The window key is the (env, subscriber, workflow) base,
+	// optionally extended by a configured digestKey value resolved from the
+	// event payload or subscriber profile (so e.g. orders with distinct orderId
+	// values batch into separate digests). Exactly one trigger wins the claim
+	// and starts the run; the rest merge silently (no new run) and are drained
+	// + rendered by the owning run after the window fires.
+	var digestKey string
+	if step.Type == "digest" && svc.digester != nil {
+		base := scope.EnvID + ":" + subscriberID + ":" + wf.ID
+		value := resolveDigestKeyValue(digestKeyPath(step.ControlValues), req.Payload, subscriberJSON)
+		digestKey = buildDigestKey(base, value)
+		if err := svc.digester.DigestAppend(digestKey, req.Payload); err != nil {
+			return "", err
+		}
+		isOwner, _ := svc.digester.DigestClaim(digestKey)
+		if !isOwner {
+			return "", nil
+		}
+	}
+	notificationID := store.NewULID()
 
 	envelope := runenv.InAppEnvelope{
 		Scope:          runenv.Scope{OrgID: scope.OrgID, EnvID: scope.EnvID},

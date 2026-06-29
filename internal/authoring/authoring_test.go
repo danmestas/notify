@@ -144,6 +144,79 @@ func TestCompile_DigestThenInApp(t *testing.T) {
 	}
 }
 
+// TestCompile_DigestScheduledThenInApp proves a scheduled (cron) digest
+// compiles to a normal digest.wait task (no static sleep Config) with the
+// downstream channel step depending on it.
+func TestCompile_DigestScheduledThenInApp(t *testing.T) {
+	wf := domain.Workflow{
+		EnvID:             "env_1",
+		TriggerIdentifier: "scheduled",
+		Steps: mustSteps(t, []domain.Step{
+			{StepID: "dg", Type: "digest", ControlValues: json.RawMessage(`{"type":"scheduled","cron":"0 * * * *"}`)},
+			{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"subject":"Digest","body":"You have {{digest.count}} new items"}`)},
+		}),
+	}
+	def, err := authoring.Compile(wf)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	d := def.Steps[0]
+	if d.ID != "dg" || d.Type != "normal" || d.Task != "digest.wait" {
+		t.Fatalf("scheduled digest step = %+v, want {ID:dg Type:normal Task:digest.wait}", d)
+	}
+	if d.Config != nil {
+		t.Fatalf("scheduled digest Config = %s, want nil", d.Config)
+	}
+	c := def.Steps[1]
+	if len(c.DependsOn) != 1 || c.DependsOn[0] != "dg" {
+		t.Fatalf("channel DependsOn = %v, want [dg]", c.DependsOn)
+	}
+}
+
+// TestCompile_DigestScheduled_InvalidCron proves an unparseable cron expression
+// fails compilation so authoring never registers a broken DAG.
+func TestCompile_DigestScheduled_InvalidCron(t *testing.T) {
+	wf := domain.Workflow{
+		EnvID:             "env_1",
+		TriggerIdentifier: "scheduled",
+		Steps: mustSteps(t, []domain.Step{
+			{StepID: "dg", Type: "digest", ControlValues: json.RawMessage(`{"type":"scheduled","cron":"not-a-cron"}`)},
+		}),
+	}
+	if _, err := authoring.Compile(wf); err == nil {
+		t.Fatal("Compile invalid scheduled cron: want error, got nil")
+	}
+}
+
+// TestCreate_RejectsInvalidScheduledCron proves authoring.Create maps a bad
+// scheduled-digest cron to ErrCompileFailure (HTTP 422) BEFORE any workflow row
+// is written — the 422 gate fires at save time, not at run time.
+func TestCreate_RejectsInvalidScheduledCron(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, nil)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+	_, err = svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Bad",
+		TriggerIdentifier: "bad-cron",
+		Steps: []domain.Step{
+			{StepID: "dg", Type: "digest", ControlValues: json.RawMessage(`{"type":"scheduled","cron":"nope"}`)},
+		},
+	})
+	var ce *authoring.ErrCompileFailure
+	if !errors.As(err, &ce) {
+		t.Fatalf("Create error = %v, want *authoring.ErrCompileFailure", err)
+	}
+	if _, gErr := svc.GetBySlug(ctx, scope, "bad-cron"); gErr == nil {
+		t.Fatal("workflow row was written despite compile failure; want no row")
+	}
+}
+
 func TestCompile_DelayUnits(t *testing.T) {
 	wf := domain.Workflow{
 		EnvID:             "env_1",

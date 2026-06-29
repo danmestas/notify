@@ -176,6 +176,12 @@ func runServe(args []string) error {
 	eng.Handle("send.push", delivery.NewPush(st, conn).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandlePush)
 	eng.Handle("send.chat", delivery.NewChat(st, conn).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandleChat)
 	eng.Handle("send.sms", delivery.NewSMS(st, conn).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandleSMS)
+	// Scheduled (cron) digest window: a digest.wait task sleeps until the next
+	// cron tick, then the downstream channel step self-sources and drains the
+	// accumulated events. Regular (amount+unit) digests use the engine's native
+	// sleep and need no handler. Registration is explicit (the step-type registry
+	// is import-light and carries no runtime delivery wiring).
+	eng.Handle("digest.wait", delivery.NewDigestWait(st).HandleDigestWait)
 
 	// W4 ADR-013 (#55): durable credential-verify action. The verify task runs
 	// in this worker pool (registered before StartWorkers); the workflow is

@@ -141,7 +141,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	// self-source path sets digestKey, so the Input-present path is unchanged.
 	if digestKey != "" && h.digester != nil {
 		events, _ := h.digester.DigestDrain(digestKey)
-		data["digest"] = map[string]any{"count": len(events)}
+		data["digest"] = digestData(events)
 	}
 	scope := domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
 	translate := storeTranslator(ctx, h.store, scope, subMap)

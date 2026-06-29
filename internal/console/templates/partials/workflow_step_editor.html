@@ -184,15 +184,35 @@
     {{end}}
 {{define "wf-step-fields-digest"}}
     <div class="form-row">
-      <label class="form-label" for="cv-amount">Window amount</label>
-      <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
-             value="{{index .ControlMap "amount"}}">
+      <label class="form-label" for="digest-type-trigger">Window type</label>
+      {{template "ui-select" (uiSelectForm "digest-type" "type" "digestType"
+        (uiSelectOptions "regular" "Regular (time window)" "scheduled" "Scheduled (cron)")
+        "Window type" "" false (index .ControlMap "type") true)}}
     </div>
     <div class="form-row">
-      <label class="form-label" for="digest-unit-trigger">Window unit</label>
-      {{template "ui-select" (uiSelectForm "digest-unit" "unit" "digestUnit"
-        (uiSelectOptions "seconds" "Seconds" "minutes" "Minutes" "hours" "Hours" "days" "Days")
-        "Window unit" "" false (index .ControlMap "unit") true)}}
+      <label class="form-label" for="cv-digest-key">Digest key</label>
+      <input class="console-input" type="text" id="cv-digest-key" name="digestKey"
+             placeholder="payload.orderId" value="{{index .ControlMap "digestKey"}}">
+      <p class="form-hint">Optional dot-path (e.g. <code>{{"{{payload.orderId}}"}}</code> as <code>payload.orderId</code>) to batch events into separate digests. Leave empty to group all of a subscriber's events together.</p>
+    </div>
+    <div data-show="$digestType !== 'scheduled'">
+      <div class="form-row">
+        <label class="form-label" for="cv-amount">Window amount</label>
+        <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
+               value="{{index .ControlMap "amount"}}">
+      </div>
+      <div class="form-row">
+        <label class="form-label" for="digest-unit-trigger">Window unit</label>
+        {{template "ui-select" (uiSelectForm "digest-unit" "unit" "digestUnit"
+          (uiSelectOptions "seconds" "Seconds" "minutes" "Minutes" "hours" "Hours" "days" "Days")
+          "Window unit" "" false (index .ControlMap "unit") true)}}
+      </div>
+    </div>
+    <div class="form-row" data-show="$digestType === 'scheduled'">
+      <label class="form-label" for="cv-cron">Cron expression</label>
+      <input class="console-input console-input-mono" type="text" id="cv-cron" name="cron"
+             placeholder="0 * * * *" value="{{index .ControlMap "cron"}}">
+      <p class="form-hint">Standard 5-field cron (<code>0 * * * *</code> = hourly) or 6-field with seconds. The digest delivers at each tick.</p>
     </div>
     {{end}}
 {{define "wf-step-fields-default"}}

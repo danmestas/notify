@@ -1,0 +1,58 @@
+package delivery
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/steptype"
+	"github.com/danmestas/notify/internal/store"
+)
+
+// DigestWait is the engine handler for a scheduled (cron) digest window. Unlike
+// a regular digest — which the engine times itself via a static "sleep" StepDef
+// — a scheduled window's wait duration depends on wall-clock time, so it cannot
+// be baked into the DAG. The digest.wait task instead resolves the step's cron
+// expression at dispatch time and sleeps until the next tick; the downstream
+// channel step then self-sources and drains the accumulated events.
+type DigestWait struct {
+	store *store.Store
+}
+
+// NewDigestWait constructs a DigestWait backed by s.
+func NewDigestWait(s *store.Store) *DigestWait { return &DigestWait{store: s} }
+
+// HandleDigestWait is registered via engine.Handle("digest.wait", ...). It
+// loads the scheduled-digest step's cron expression (by run id + step id),
+// computes the time until the next cron tick, sleeps for that duration, and
+// returns a nil output so the downstream channel step fires. The sleep honours
+// context cancellation so a shutting-down worker does not block.
+//
+// Goroutine budget: the handler holds its worker goroutine for the entire
+// window. The engine dispatches up to its poll batch per cycle in separate
+// goroutines with no semaphore, so many concurrent long-window digests hold
+// many goroutines — acceptable at current scale (see real-digest risks).
+func (d *DigestWait) HandleDigestWait(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
+	cronExpr, err := stepCron(ctx, d.store, t.RunID, t.StepID)
+	if err != nil {
+		return nil, err
+	}
+	schedule, err := steptype.ParseCron(cronExpr)
+	if err != nil {
+		return nil, fmt.Errorf("digest.wait: invalid cron %q: %w", cronExpr, err)
+	}
+	wait := time.Until(schedule.Next(time.Now()))
+	if wait <= 0 {
+		return nil, nil
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		return nil, nil
+	}
+}

@@ -123,6 +123,63 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 	}, notif.DigestKey, nil
 }
 
+// stepCron loads the cron expression authored on a scheduled-digest step,
+// keyed by run id + step id. It is the digest.wait handler's narrow lookup —
+// rebuildEnvelope keeps its frozen 3-return shape (a cron string is useless to
+// the channel handlers), so this standalone helper resolves the
+// notification -> workflow -> step controlValues and returns controlValues.cron.
+func stepCron(ctx context.Context, s *store.Store, runID, stepID string) (string, error) {
+	notif, err := s.Notifications().GetByRunID(ctx, runID)
+	if err != nil {
+		return "", fmt.Errorf("stepCron: notification by run %q: %w", runID, err)
+	}
+	scope := domain.Scope{OrgID: notif.OrgID, EnvID: notif.EnvID}
+	wf, err := s.Workflows().GetByID(ctx, scope, notif.WorkflowID)
+	if err != nil {
+		return "", fmt.Errorf("stepCron: workflow %q: %w", notif.WorkflowID, err)
+	}
+	var steps []domain.Step
+	if len(wf.Steps) > 0 {
+		if err := json.Unmarshal(wf.Steps, &steps); err != nil {
+			return "", fmt.Errorf("stepCron: unmarshal steps: %w", err)
+		}
+	}
+	for i := range steps {
+		if steps[i].StepID != stepID {
+			continue
+		}
+		var cv struct {
+			Cron string `json:"cron"`
+		}
+		if len(steps[i].ControlValues) > 0 {
+			if err := json.Unmarshal(steps[i].ControlValues, &cv); err != nil {
+				return "", fmt.Errorf("stepCron: unmarshal controlValues: %w", err)
+			}
+		}
+		return cv.Cron, nil
+	}
+	return "", fmt.Errorf("stepCron: step %q not found in workflow %q", stepID, notif.WorkflowID)
+}
+
+// digestData builds the {{digest}} render namespace from a window's drained
+// events: {{digest.count}} is the raw accumulated total and {{digest.events}}
+// is an iterable slice of the event payloads (each unmarshalled to a map so a
+// Handlebars {{#each digest.events}}{{this.field}}{{/each}} can read its
+// fields). A non-object event (a bare array or scalar that is not a JSON object)
+// is dropped from events but still counted, since count reflects how many
+// triggers merged into the window.
+func digestData(events []json.RawMessage) map[string]any {
+	items := make([]map[string]any, 0, len(events))
+	for _, ev := range events {
+		var m map[string]any
+		if err := json.Unmarshal(ev, &m); err != nil || m == nil {
+			continue
+		}
+		items = append(items, m)
+	}
+	return map[string]any{"count": len(events), "events": items}
+}
+
 // storeTranslator builds the {{t}} translate func for a render. The locale is
 // read from subMap["locale"] (default "en" when absent/empty); the lookup map
 // is the store's translations for that locale within scope. A key with no
