@@ -756,3 +756,101 @@ func TestSetActive_TogglesActiveFlag(t *testing.T) {
 		t.Fatal("expected active=true after SetActive(true)")
 	}
 }
+
+// TestCompile_ThrottleStep_Valid verifies a throttle step compiles to the
+// check.throttle normal task (guard: must match the eng.Handle key in main.go).
+func TestCompile_ThrottleStep_Valid(t *testing.T) {
+	wf := domain.Workflow{
+		EnvID:             "env_1",
+		TriggerIdentifier: "throttle-test",
+		Steps: mustSteps(t, []domain.Step{
+			{StepID: "T1", Type: "throttle", ControlValues: json.RawMessage(`{"limit":5,"windowSec":60}`)},
+		}),
+	}
+	def, err := authoring.Compile(wf)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(def.Steps) != 1 {
+		t.Fatalf("got %d steps, want 1", len(def.Steps))
+	}
+	s := def.Steps[0]
+	if s.Task != "check.throttle" {
+		t.Errorf("Task = %q, want check.throttle", s.Task)
+	}
+	if s.Type != "normal" {
+		t.Errorf("Type = %q, want normal", s.Type)
+	}
+	if s.ID != "T1" {
+		t.Errorf("ID = %q, want T1", s.ID)
+	}
+	if len(s.DependsOn) != 0 {
+		t.Errorf("root throttle DependsOn = %v, want empty", s.DependsOn)
+	}
+}
+
+// TestCompile_ThrottleStep_ZeroLimit verifies that limit=0 produces a compile
+// error, mapping to HTTP 422 when submitted via the console.
+func TestCompile_ThrottleStep_ZeroLimit(t *testing.T) {
+	wf := domain.Workflow{
+		EnvID:             "env_1",
+		TriggerIdentifier: "throttle-zero-limit",
+		Steps: mustSteps(t, []domain.Step{
+			{StepID: "T1", Type: "throttle", ControlValues: json.RawMessage(`{"limit":0,"windowSec":60}`)},
+		}),
+	}
+	_, err := authoring.Compile(wf)
+	if err == nil {
+		t.Fatal("Compile: expected error for limit=0, got nil")
+	}
+}
+
+// TestCompile_ThrottleStep_ZeroWindow verifies that windowSec=0 produces a
+// compile error.
+func TestCompile_ThrottleStep_ZeroWindow(t *testing.T) {
+	wf := domain.Workflow{
+		EnvID:             "env_1",
+		TriggerIdentifier: "throttle-zero-window",
+		Steps: mustSteps(t, []domain.Step{
+			{StepID: "T1", Type: "throttle", ControlValues: json.RawMessage(`{"limit":1,"windowSec":0}`)},
+		}),
+	}
+	_, err := authoring.Compile(wf)
+	if err == nil {
+		t.Fatal("Compile: expected error for windowSec=0, got nil")
+	}
+}
+
+// TestCompile_ThrottleBeforeChannel verifies a [throttle, in_app] workflow
+// compiles to [check.throttle (no DependsOn), send.in_app (DependsOn=[T1])].
+func TestCompile_ThrottleBeforeChannel(t *testing.T) {
+	wf := domain.Workflow{
+		EnvID:             "env_1",
+		TriggerIdentifier: "throttle-then-channel",
+		Steps: mustSteps(t, []domain.Step{
+			{StepID: "T1", Type: "throttle", ControlValues: json.RawMessage(`{"limit":1,"windowSec":3600}`)},
+			{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"subject":"hi","body":"there"}`)},
+		}),
+	}
+	def, err := authoring.Compile(wf)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(def.Steps) != 2 {
+		t.Fatalf("got %d steps, want 2", len(def.Steps))
+	}
+	thr := def.Steps[0]
+	if thr.Task != "check.throttle" || thr.Type != "normal" {
+		t.Errorf("throttle step = %+v, want {Task:check.throttle Type:normal}", thr)
+	}
+	if len(thr.DependsOn) != 0 {
+		t.Errorf("throttle DependsOn = %v, want empty", thr.DependsOn)
+	}
+	ch := def.Steps[1]
+	if ch.Task != "send.in_app" || ch.Type != "normal" {
+		t.Errorf("channel step = %+v, want {Task:send.in_app Type:normal}", ch)
+	}
+	if len(ch.DependsOn) != 1 || ch.DependsOn[0] != "T1" {
+		t.Errorf("channel DependsOn = %v, want [T1]", ch.DependsOn)
+	}
+}

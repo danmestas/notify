@@ -25,6 +25,14 @@ const (
 	digestBucket      = "notify_digest"
 	analyticsStream   = "NOTIFY_ANALYTICS"
 	analyticsSubject  = "notify.analytics.>"
+
+	// maxThrottleBucketTTL is the per-key TTL on the notify_throttle bucket.
+	// Throttle counters are keyed per (compositeKey, windowEpoch); without a
+	// TTL they accumulate indefinitely — one key per distinct window boundary
+	// per subscriber/workflow pair, forever. 30 days covers the largest
+	// practical throttle window; the extra day of grace ensures a counter is
+	// never evicted mid-window even for a full 30-day window configuration.
+	maxThrottleBucketTTL = 31 * 24 * time.Hour
 )
 
 // Bus is notify's handle on the event bus. It holds the client connection
@@ -65,6 +73,7 @@ func Connect(ctx context.Context, natsURL string) (*Bus, error) {
 	throttle, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
 		Bucket:  throttleBucket,
 		History: 1,
+		TTL:     maxThrottleBucketTTL,
 	})
 	if err != nil {
 		nc.Close()

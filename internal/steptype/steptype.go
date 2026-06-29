@@ -113,6 +113,7 @@ func Default() *Registry {
 	r.Register(sms{})
 	r.Register(delay{})
 	r.Register(digest{})
+	r.Register(throttle{})
 	return r
 }
 

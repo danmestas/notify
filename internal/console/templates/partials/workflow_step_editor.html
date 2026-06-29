@@ -215,6 +215,20 @@
       <p class="form-hint">Standard 5-field cron (<code>0 * * * *</code> = hourly) or 6-field with seconds. The digest delivers at each tick.</p>
     </div>
     {{end}}
+{{define "wf-step-fields-throttle"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-limit">Limit</label>
+      <input class="console-input" type="number" id="cv-limit" name="limit" min="1"
+             value="{{index .ControlMap "limit"}}">
+      <p class="form-hint">Maximum number of runs allowed within the window.</p>
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-windowSec">Window (seconds)</label>
+      <input class="console-input" type="number" id="cv-windowSec" name="windowSec" min="1"
+             value="{{index .ControlMap "windowSec"}}">
+      <p class="form-hint">Fixed window duration in seconds (e.g. 3600 = 1 hour).</p>
+    </div>
+    {{end}}
 {{define "wf-step-fields-default"}}
     <div class="form-row">
       <label class="form-label">Control values (JSON)</label>

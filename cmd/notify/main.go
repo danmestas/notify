@@ -182,6 +182,9 @@ func runServe(args []string) error {
 	// sleep and need no handler. Registration is explicit (the step-type registry
 	// is import-light and carries no runtime delivery wiring).
 	eng.Handle("digest.wait", delivery.NewDigestWait(st).HandleDigestWait)
+	// check.throttle: gate a run by a fixed-window counter; must be registered
+	// whenever steptype.Default() includes "throttle" (see delivery.TaskThrottle).
+	eng.Handle(delivery.TaskThrottle, delivery.NewThrottleHandler(st, bus).Handle)
 
 	// W4 ADR-013 (#55): durable credential-verify action. The verify task runs
 	// in this worker pool (registered before StartWorkers); the workflow is

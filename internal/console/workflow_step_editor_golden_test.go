@@ -20,7 +20,7 @@ type stepEditorGoldenCase struct {
 	step domain.Step
 }
 
-// stepEditorGoldenCases covers all 7 migrated step types. The golden captures
+// stepEditorGoldenCases covers all 8 migrated step types. The golden captures
 // the byte-exact rendered "workflow-step-editor" fragment so the step-type
 // registry refactor (which moves per-type field markup behind EditorPartial)
 // can be proven byte-identical (NO behavior change).
@@ -32,6 +32,7 @@ var stepEditorGoldenCases = []stepEditorGoldenCase{
 	{"chat", domain.Step{StepID: "chat-1", Type: "chat", ControlValues: json.RawMessage(`{"body":"Chat body {{payload.x}}"}`)}},
 	{"delay", domain.Step{StepID: "delay-1", Type: "delay", ControlValues: json.RawMessage(`{"amount":5,"unit":"hours"}`)}},
 	{"digest", domain.Step{StepID: "digest-1", Type: "digest", ControlValues: json.RawMessage(`{"amount":2,"unit":"days"}`)}},
+	{"throttle", domain.Step{StepID: "throttle-1", Type: "throttle", ControlValues: json.RawMessage(`{"limit":5,"windowSec":3600}`)}},
 }
 
 // TestStepEditorGolden pins the rendered per-type step-editor HTML. It mirrors
