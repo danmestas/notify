@@ -17,9 +17,11 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/starfederation/datastar-go/datastar"
 
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/domain"
@@ -34,6 +36,11 @@ var subscriberSignalKeys = []string{
 	"subscribersName",
 	"subscribersId",
 }
+
+const (
+	subscribersDefaultLimit = 50
+	subscribersMaxLimit     = 200
+)
 
 // ─── view structs ─────────────────────────────────────────────────────────────
 
@@ -54,6 +61,7 @@ type subscribersListView struct {
 	Rows       []subscriberRow
 	NextCursor string
 	TotalCount int
+	Limit      int
 	HasFilters bool
 	ReadOnly   bool
 	// filter echoes
@@ -234,8 +242,9 @@ func (c *Console) buildSubscribersListView(r *http.Request) (subscribersListView
 	filterPhone := strings.TrimSpace(first("subscribersPhone"))
 	filterID := strings.TrimSpace(first("subscribersId"))
 	after := first("after")
+	limit := parseSubscribersLimit(params)
 
-	page, err := c.deps.Audience.ListSubscribers(r.Context(), scope, after, 50)
+	page, err := c.deps.Audience.ListSubscribers(r.Context(), scope, after, limit)
 	if err != nil {
 		return subscribersListView{}, err
 	}
@@ -278,6 +287,7 @@ func (c *Console) buildSubscribersListView(r *http.Request) (subscribersListView
 		Rows:          rows,
 		NextCursor:    nextCursor,
 		TotalCount:    page.TotalCount,
+		Limit:         limit,
 		HasFilters:    hasFilters,
 		ReadOnly:      c.deps.ReadOnly,
 		FilterEmail:   filterEmail,
@@ -287,6 +297,20 @@ func (c *Console) buildSubscribersListView(r *http.Request) (subscribersListView
 		ConfirmDelete: r.URL.Query().Get("confirmDelete"),
 		CSRF:          s.CSRF,
 	}, nil
+}
+
+// parseSubscribersLimit reads ?limit= from a merged query; defaults to
+// subscribersDefaultLimit, capped at subscribersMaxLimit.
+func parseSubscribersLimit(q map[string][]string) int {
+	if vs := q["limit"]; len(vs) > 0 {
+		if n, err := strconv.Atoi(vs[0]); err == nil && n > 0 {
+			if n > subscribersMaxLimit {
+				return subscribersMaxLimit
+			}
+			return n
+		}
+	}
+	return subscribersDefaultLimit
 }
 
 // ─── page handlers ────────────────────────────────────────────────────────────
@@ -371,6 +395,8 @@ func (c *Console) serveSubscriberNew(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveFragmentSubscribersList handles GET /console/api/fragments/subscribers-list.
+// Filter signals + cursor come from the merged query map; the response is one
+// PatchElements SSE event repainting #subscribers-tbody.
 func (c *Console) serveFragmentSubscribersList(w http.ResponseWriter, r *http.Request) {
 	if w == nil {
 		panic("serveFragmentSubscribersList: w is nil")
@@ -382,10 +408,27 @@ func (c *Console) serveFragmentSubscribersList(w http.ResponseWriter, r *http.Re
 		panic("serveFragmentSubscribersList: no scope in context")
 	}
 
+	// Read the after= cursor directly from the URL query — mergeFragmentParams
+	// folds signal values but `after` is a one-shot pagination token, not a
+	// persistent signal, so the raw query value is authoritative.
+	cursor := r.URL.Query().Get("after")
+
 	view, err := c.buildSubscribersListView(r)
 	if err != nil {
 		c.deps.Logger.Error("console: subscribers fragment", "err", err)
 		http.Error(w, "list failed", http.StatusInternalServerError)
+		return
+	}
+
+	// When a cursor is present the request is a "Load more" click: append new
+	// rows before the existing pagination footer rather than replacing the
+	// whole subscribers-tbody wrapper.  Two SSE events are sent:
+	//   1. new <tr> rows   — mode=before targeting #subscribers-pagination
+	//   2. pagination <tr> — mode=outer (morph) to advance the cursor
+	// When cursor is empty (initial load or filter change) a single outer
+	// replace of the full #subscribers-tbody is the correct behavior.
+	if cursor != "" {
+		c.patchSubscribersAppend(w, r, view)
 		return
 	}
 
@@ -396,6 +439,49 @@ func (c *Console) serveFragmentSubscribersList(w http.ResponseWriter, r *http.Re
 		return
 	}
 	c.patchHTML(w, r, html)
+}
+
+// patchSubscribersAppend sends two Datastar SSE events for a "Load more" response:
+//  1. The new data rows (subscribers-rows template) inserted before
+//     #subscribers-pagination via mode=before — the rows land above the footer
+//     while existing rows stay in place.
+//  2. The updated pagination footer (subscribers-pagination template) morphed in
+//     place via mode=outer so the cursor advances to the next page.
+func (c *Console) patchSubscribersAppend(w http.ResponseWriter, r *http.Request, lv subscribersListView) {
+	if w == nil {
+		panic("patchSubscribersAppend: w is nil")
+	}
+	if r == nil {
+		panic("patchSubscribersAppend: r is nil")
+	}
+
+	rowsHTML, err := renderFragment(c.ts.base, "subscribers-rows", lv)
+	if err != nil {
+		c.deps.Logger.Error("console: render subscribers-rows fragment", "err", err)
+		http.Error(w, "render failed", http.StatusInternalServerError)
+		return
+	}
+	paginHTML, err := renderFragment(c.ts.base, "subscribers-pagination", lv)
+	if err != nil {
+		c.deps.Logger.Error("console: render subscribers-pagination fragment", "err", err)
+		http.Error(w, "render failed", http.StatusInternalServerError)
+		return
+	}
+
+	sse := datastar.NewSSE(w, r)
+	// Event 1: insert new rows before the pagination row so they accumulate above it.
+	if err := sse.PatchElements(
+		rowsHTML,
+		datastar.WithSelector("#subscribers-pagination"),
+		datastar.WithMode(datastar.ElementPatchModeBefore),
+	); err != nil {
+		c.deps.Logger.Error("console: patch subscribers rows (append)", "err", err)
+		return
+	}
+	// Event 2: morph the pagination row in place to advance the cursor.
+	if err := sse.PatchElements(paginHTML); err != nil {
+		c.deps.Logger.Error("console: patch subscribers pagination", "err", err)
+	}
 }
 
 // serveSubscriberDetail renders GET /console/subscribers/{subscriberId}.

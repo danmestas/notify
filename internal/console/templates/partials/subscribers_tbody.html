@@ -1,8 +1,87 @@
 {{/*
   subscribers-tbody — PatchElements fragment target for the subscribers list.
-  The outer element carries the stable id so the default outer-mode patch
-  lines up. Binds subscribersListView.
+  Binds subscribersListView.
+
+  Three named templates are defined here:
+
+    subscribers-tbody      — full outer wrapper replacement (initial load, filter change).
+    subscribers-rows       — raw <tr> rows only, no wrapper. Used for Load-more
+                             append patches (mode=before targeting #subscribers-pagination
+                             so new rows land above the footer).
+    subscribers-pagination — the pagination <tr> only (inside tbody). Replaces
+                             #subscribers-pagination in place after a Load-more
+                             so the cursor advances.
 */}}
+
+{{/* ── subscribers-rows: data rows only, no outer wrapper ─────────────── */}}
+{{define "subscribers-rows"}}
+{{range .Rows}}
+<tr class="console-table-row subscriber-table-row"
+    data-component="subscriber-row">
+  <td class="subscriber-col-name">
+    <div class="subscriber-avatar-cell">
+      <span class="subscriber-avatar" aria-hidden="true">{{.Initials}}</span>
+      <div class="subscriber-name-stack">
+        <a class="subscriber-display-name" href="/console/subscribers/{{.ID}}">{{.DisplayName}}</a>
+        <code class="subscriber-id-code">{{.SubscriberID}}</code>
+      </div>
+    </div>
+  </td>
+  <td class="subscriber-col-email">
+    {{if .Email}}<span>{{.Email}}</span>{{else}}<span class="console-muted">—</span>{{end}}
+  </td>
+  <td class="subscriber-col-phone">
+    {{if .Phone}}<span>{{.Phone}}</span>{{else}}<span class="console-muted">—</span>{{end}}
+  </td>
+  <td class="subscriber-col-actions">
+    <div class="subscriber-row-actions">
+      <a class="btn-icon" href="/console/subscribers/{{.ID}}" title="View subscriber">{{ uiIcon "arrow-up-right" }}</a>
+      {{if not $.ReadOnly}}
+      {{if eq $.ConfirmDelete .ID}}
+      {{/* Two-step inline confirm (chassis idiom): first click swapped
+           this row into confirm state via the fragment; Cancel
+           re-fetches the plain list, the POST form really deletes. */}}
+      <button type="button" class="btn btn-outline"
+              data-on:click="@get('/console/api/fragments/subscribers-list')">
+        Cancel
+      </button>
+      <form method="POST" action="/console/subscribers/{{.ID}}/delete" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <button type="submit" class="btn btn-danger">Confirm delete</button>
+      </form>
+      {{else}}
+      <button type="button" class="btn-icon" title="Delete subscriber"
+              data-on:click="@get('/console/api/fragments/subscribers-list?confirmDelete={{.ID}}')">
+        {{ uiIcon "x" }}
+      </button>
+      {{end}}
+      {{end}}
+    </div>
+  </td>
+</tr>
+{{end}}
+{{end}}
+
+{{/* ── subscribers-pagination: pagination footer row only ─────────────── */}}
+{{define "subscribers-pagination"}}
+<tr class="subscribers-pagination-row" id="subscribers-pagination">
+  <td colspan="4" class="subscribers-pagination-cell">
+    <div class="subscribers-pagination">
+      {{if .TotalCount}}
+      <span class="subscribers-pagination-count">{{.TotalCount}} total</span>
+      {{end}}
+      {{if .NextCursor}}
+      <button type="button" class="btn btn-outline subscribers-load-more"
+              data-on:click="@get('/console/api/fragments/subscribers-list?after={{.NextCursor}}&limit={{.Limit}}')">
+        Load more
+      </button>
+      {{end}}
+    </div>
+  </td>
+</tr>
+{{end}}
+
+{{/* ── subscribers-tbody: full replacement (initial load / filter change) ── */}}
 {{define "subscribers-tbody"}}
 <div id="subscribers-tbody">
   {{if and (eq (len .Rows) 0) (not .HasFilters)}}
@@ -33,67 +112,9 @@
         </tr>
       </thead>
       <tbody>
-        {{range .Rows}}
-        <tr class="console-table-row subscriber-table-row"
-            data-component="subscriber-row">
-          <td class="subscriber-col-name">
-            <div class="subscriber-avatar-cell">
-              <span class="subscriber-avatar" aria-hidden="true">{{.Initials}}</span>
-              <div class="subscriber-name-stack">
-                <a class="subscriber-display-name" href="/console/subscribers/{{.ID}}">{{.DisplayName}}</a>
-                <code class="subscriber-id-code">{{.SubscriberID}}</code>
-              </div>
-            </div>
-          </td>
-          <td class="subscriber-col-email">
-            {{if .Email}}<span>{{.Email}}</span>{{else}}<span class="console-muted">—</span>{{end}}
-          </td>
-          <td class="subscriber-col-phone">
-            {{if .Phone}}<span>{{.Phone}}</span>{{else}}<span class="console-muted">—</span>{{end}}
-          </td>
-          <td class="subscriber-col-actions">
-            <div class="subscriber-row-actions">
-              <a class="btn-icon" href="/console/subscribers/{{.ID}}" title="View subscriber">{{ uiIcon "arrow-up-right" }}</a>
-              {{if not $.ReadOnly}}
-              {{if eq $.ConfirmDelete .ID}}
-              {{/* Two-step inline confirm (chassis idiom): first click swapped
-                   this row into confirm state via the fragment; Cancel
-                   re-fetches the plain list, the POST form really deletes. */}}
-              <button type="button" class="btn btn-outline"
-                      data-on:click="@get('/console/api/fragments/subscribers-list')">
-                Cancel
-              </button>
-              <form method="POST" action="/console/subscribers/{{.ID}}/delete" style="display:inline">
-                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-                <button type="submit" class="btn btn-danger">Confirm delete</button>
-              </form>
-              {{else}}
-              <button type="button" class="btn-icon" title="Delete subscriber"
-                      data-on:click="@get('/console/api/fragments/subscribers-list?confirmDelete={{.ID}}')">
-                {{ uiIcon "x" }}
-              </button>
-              {{end}}
-              {{end}}
-            </div>
-          </td>
-        </tr>
-        {{end}}
+        {{template "subscribers-rows" .}}
+        {{template "subscribers-pagination" .}}
       </tbody>
-      {{if .NextCursor}}
-      <tfoot>
-        <tr>
-          <td colspan="4" class="activity-pagination-cell">
-            <div class="activity-pagination">
-              <span class="activity-pagination-count">{{.TotalCount}} total</span>
-              <a class="btn btn-outline activity-load-more"
-                 data-on:click="@get('/console/api/fragments/subscribers-list?after={{.NextCursor}}')">
-                Load more
-              </a>
-            </div>
-          </td>
-        </tr>
-      </tfoot>
-      {{end}}
     </table>
   </div>
   {{end}}

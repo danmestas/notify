@@ -1939,6 +1939,23 @@ a.activity-item-run { color: var(--accent); }
   color: var(--text-secondary);
 }
 .activity-load-more { font-size: 0.85rem; }
+
+/* Subscribers list — pagination footer row (mirrors activity-pagination rules) */
+.subscribers-pagination-cell {
+  padding: var(--space-3) var(--space-4) !important;
+  border-bottom: none !important;
+}
+.subscribers-pagination {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.subscribers-pagination-count {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+.subscribers-load-more { font-size: 0.85rem; }
+
 .activity-empty-row td {
   padding: var(--space-6) !important;
   border-bottom: none !important;

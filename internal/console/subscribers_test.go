@@ -32,6 +32,7 @@
 package console
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1321,5 +1322,131 @@ func TestFragment_SubscribersList_LoadMoreWithFilterKeepsFilter(t *testing.T) {
 	// the underlying cursor has more pages.
 	if strings.Contains(body, "Load more") {
 		t.Errorf("filtered list must NOT show 'Load more' (following the cursor silently discards the filter)")
+	}
+}
+
+// TestFragment_SubscribersList_LoadMoreAppends is the TDD regression for the
+// "Load more REPLACES rows" bug on the subscribers page. When the `after=`
+// cursor is present (a Load more click) the server must emit two SSE patches
+// that INSERT new rows before the pagination footer (mode before targeting
+// #subscribers-pagination) rather than replacing the whole subscribers-tbody
+// wrapper (which destroys the rows the user already loaded).
+//
+// Wire-format assertions:
+//   - page-1 (no after): one outer-replace event containing id="subscribers-tbody"
+//   - page-2 (after cursor): two events — first has `mode before` (insert new
+//     rows before #subscribers-pagination), second morphs the pagination row in
+//     place.  Neither event wraps rows in a new subscribers-tbody wrapper.
+//   - Rows from page 2 are present in the append payload; page-1 rows are NOT
+//     duplicated in the payload (they accumulated in the DOM, not in the wire).
+//
+// Fails against the current patchHTML (replace) behavior; passes after the
+// patchSubscribersAppend implementation.
+func TestFragment_SubscribersList_LoadMoreAppends(t *testing.T) {
+	tc := newTestConsole(t)
+
+	// Seed 8 subscribers so that limit=5 produces a non-empty page 1 with a
+	// cursor and page 2 with the remaining 3.
+	for i := 0; i < 8; i++ {
+		tc.seedSubscriber(t, audience.SubscriberInput{
+			SubscriberID: fmt.Sprintf("lm-sub-%02d", i),
+			Email:        fmt.Sprintf("lm-%02d@example.com", i),
+		})
+	}
+	cookie, _ := tc.login(t)
+
+	// Page 1: no after cursor — expect a full outer-replace (subscribers-tbody
+	// wrapper present, no mode before).
+	rr1 := tc.get(t, "/console/api/fragments/subscribers-list?limit=5", cookie)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("page1: status = %d (body: %s)", rr1.Code, rr1.Body.String())
+	}
+	body1 := rr1.Body.String()
+	if !strings.Contains(body1, `id="subscribers-tbody"`) {
+		t.Errorf("page1: missing subscribers-tbody wrapper (initial load must be a full replace)")
+	}
+	if strings.Contains(body1, "mode before") {
+		t.Errorf("page1 (no cursor): SSE must not use 'mode before' (first load is a full replace)")
+	}
+
+	// The Load more button must be visible (8 subscribers seeded > limit=5).
+	if !strings.Contains(body1, "Load more") {
+		t.Fatalf("page1: Load more button missing — not enough rows seeded or store limit mismatch (body: %s)",
+			body1[:min(500, len(body1))])
+	}
+
+	// Extract the cursor value from the Load more button URL (after=<cursor>).
+	const afterAttr = "after="
+	afterIdx := strings.Index(body1, afterAttr)
+	if afterIdx < 0 {
+		t.Fatalf("page1: missing after= in Load more button; body: %s", body1[:min(400, len(body1))])
+	}
+	cursorStart := afterIdx + len(afterAttr)
+	cursorEnd := strings.IndexAny(body1[cursorStart:], `&'"`)
+	if cursorEnd < 0 {
+		t.Fatalf("page1: could not parse cursor end from Load more URL")
+	}
+	cursor := body1[cursorStart : cursorStart+cursorEnd]
+	if cursor == "" {
+		t.Fatal("page1: parsed empty cursor from Load more URL")
+	}
+
+	// Page 2: with after cursor — this is the "Load more" click.
+	rr2 := tc.getWithQuery(t, "/console/api/fragments/subscribers-list",
+		url.Values{"after": {cursor}, "limit": {"5"}}.Encode(), cookie)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("page2: status = %d (body: %s)", rr2.Code, rr2.Body.String())
+	}
+	body2 := rr2.Body.String()
+
+	// Primary fix assertion: rows event must use mode=before, not outer-replace.
+	if !strings.Contains(body2, "mode before") {
+		t.Errorf("page2 (cursor set): SSE rows event must use `mode before` so existing rows are not replaced;\nbody:\n%s",
+			body2)
+	}
+
+	// The page-2 payload must NOT contain a fresh subscribers-tbody wrapper —
+	// wrapping in a new tbody would clobber the page-1 rows that are already
+	// in the DOM.
+	if strings.Contains(body2, `id="subscribers-tbody"`) {
+		t.Errorf("page2 (append): response must NOT contain a new id=\"subscribers-tbody\" wrapper;\nbody:\n%s",
+			body2)
+	}
+
+	// The pagination anchor that mode=before targets must be present.
+	if !strings.Contains(body2, `id="subscribers-pagination"`) {
+		t.Errorf("page2: response missing id=\"subscribers-pagination\" (the append target anchor);\nbody:\n%s",
+			body2)
+	}
+
+	// Content correctness: the page-2 payload must carry the rows that did NOT
+	// appear on page 1 (the next page) and must NOT re-send the page-1 rows
+	// (they already accumulated in the DOM — re-sending would duplicate them).
+	// Partition the 8 seeded ids by which page they landed on, derived from the
+	// actual page-1 body rather than assuming a fixed store sort order.
+	var page1IDs, page2IDs []string
+	for i := 0; i < 8; i++ {
+		id := fmt.Sprintf("lm-sub-%02d", i)
+		if strings.Contains(body1, id) {
+			page1IDs = append(page1IDs, id)
+		} else {
+			page2IDs = append(page2IDs, id)
+		}
+	}
+	if len(page2IDs) == 0 {
+		t.Fatalf("setup: no rows left for page 2 (page 1 already showed all 8); page1IDs=%v", page1IDs)
+	}
+	// Every page-2 id must be present in the append payload.
+	for _, id := range page2IDs {
+		if !strings.Contains(body2, id) {
+			t.Errorf("page2 append payload missing next-page row %q;\nbody:\n%s", id, body2)
+		}
+	}
+	// No page-1 id may reappear in the append payload (would duplicate rows).
+	for _, id := range page1IDs {
+		if strings.Contains(body2, id) {
+			t.Errorf("page2 append payload re-sent page-1 row %q (rows must accumulate, not repeat);\nbody:\n%s",
+				id, body2)
+		}
 	}
 }
