@@ -1,5 +1,5 @@
 {{define "workflow-step-editor"}}
-<div id="workflow-step-editor" data-signals="{wfPreviewTmpl:{{if .Step}}{{jsEscape (index .Step.ControlMap "body")}}{{else}}''{{end}},wfPreviewPayload:'{}'}">
+<div id="workflow-step-editor" data-signals="{wfPreviewTmpl:{{if .Step}}{{jsEscape (index .Step.ControlMap "body")}}{{else}}''{{end}},wfPreviewPayload:'{}',condRowCount:{{if .Step}}{{.Step.VisibleConditions}}{{else}}1{{end}}}">
   {{if .Step}}
   {{$step := .Step}}{{$slug := .Slug}}{{$csrf := .CSRF}}{{$readOnly := .ReadOnly}}
   <div class="wf-step-editor-header">
@@ -73,7 +73,13 @@
           "Match" "" false $step.Combinator true)}}
       </div>
       {{range $i, $c := $step.Conditions}}
-      <div class="wf-condition-row">
+      {{/*
+        Fixed pool of stepConditionRows rows. Row 0 always shows; each later row
+        shows only while $condRowCount has grown past its index. The Field input
+        binds a per-row signal so "remove" can blank it (blank-Field rows are
+        skipped on save) independent of which row the operator drops.
+      */}}
+      <div class="wf-condition-row"{{if gt $i 0}} data-show="$condRowCount > {{$i}}"{{end}}>
         <div class="form-row wf-condition-on">
           <label class="form-label" for="cond-on-{{$i}}-trigger">On</label>
           {{template "ui-select" (uiSelectForm (printf "cond-on-%d" $i) (printf "cond_on_%d" $i) (printf "condOn%d" $i)
@@ -83,6 +89,7 @@
         <div class="form-row wf-condition-field">
           <label class="form-label" for="cond-field-{{$i}}">Field</label>
           <input class="console-input" type="text" id="cond-field-{{$i}}" name="cond_field_{{$i}}"
+                 data-signals="{condField{{$i}}:{{jsEscape $c.Field}}}" data-bind="condField{{$i}}"
                  placeholder="data.plan" value="{{$c.Field}}">
         </div>
         <div class="form-row wf-condition-operator">
@@ -112,8 +119,18 @@
                  placeholder="premium" value="{{$c.Value}}">
           <p class="form-hint">Comma-separated for in / all in / any in; min,max for between.</p>
         </div>
+        <div class="form-row wf-condition-remove">
+          <button type="button" class="btn btn-ghost btn-icon wf-condition-remove-btn"
+                  aria-label="Remove condition"
+                  data-on:click="$condField{{$i}} = ''; $condRowCount = ($condRowCount > 1 ? $condRowCount - 1 : 1)">{{uiIcon "x"}}</button>
+        </div>
       </div>
       {{end}}
+      <div class="wf-conditions-actions">
+        <button type="button" class="btn btn-outline wf-condition-add-btn"
+                data-show="$condRowCount < {{len $step.Conditions}}"
+                data-on:click="$condRowCount = ($condRowCount < {{len $step.Conditions}} ? $condRowCount + 1 : {{len $step.Conditions}})">{{uiIcon "plus"}} Add condition</button>
+      </div>
     </fieldset>
     <div class="console-slideover-actions">
       <button type="submit" class="btn btn-primary">Save step</button>

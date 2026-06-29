@@ -2214,3 +2214,165 @@ func TestWorkflowStepSave_ListValueRoundTrips(t *testing.T) {
 		t.Errorf("BETWEEN range did not round-trip to \"1,10\"; body: %s", body2)
 	}
 }
+
+// TestWorkflowStepSave_FiveConditionsRoundTrip proves the conditions UI is no
+// longer capped at 3 rows: saving five condition rows persists a Group with
+// five conditions, and reloading the editor renders all five pre-filled rows
+// with the visible-row count signal seeded to 5.
+func TestWorkflowStepSave_FiveConditionsRoundTrip(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	form := url.Values{
+		"csrf_token":      {csrf},
+		"subject":         {"Hi"},
+		"body":            {"Body"},
+		"cond_combinator": {"AND"},
+	}
+	fields := []string{"data.a", "data.b", "data.c", "data.d", "data.e"}
+	for i, f := range fields {
+		s := strconv.Itoa(i)
+		form.Set("cond_on_"+s, "payload")
+		form.Set("cond_field_"+s, f)
+		form.Set("cond_operator_"+s, "EQUAL")
+		form.Set("cond_value_"+s, "v"+s)
+	}
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/in_app-1/save", form, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("save five conditions: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	wf, err := tc.deps.Authoring.GetBySlug(context.Background(), tc.scope, "my-wf")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	steps, err := decodeSteps(wf.Steps)
+	if err != nil {
+		t.Fatalf("decodeSteps: %v", err)
+	}
+	var saved domain.Step
+	for _, s := range steps {
+		if s.StepID == "in_app-1" {
+			saved = s
+		}
+	}
+	var groups []filter.Group
+	if err := json.Unmarshal(saved.Filters, &groups); err != nil {
+		t.Fatalf("step.Filters is not []filter.Group: %v (raw: %s)", err, saved.Filters)
+	}
+	if len(groups) != 1 || len(groups[0].Conditions) != 5 {
+		t.Fatalf("want one group with 5 conditions, got %+v", groups)
+	}
+
+	// Reload the editor: all five rows pre-filled.
+	body := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/in_app-1", cookie).Body.String()
+	for _, f := range fields {
+		if !strings.Contains(body, `value="`+f+`"`) {
+			t.Errorf("reload did not pre-fill condition Field %q; body: %s", f, body)
+		}
+	}
+	// Visible-row count signal seeded to 5.
+	if !strings.Contains(body, "condRowCount") {
+		t.Errorf("editor missing condRowCount signal")
+	}
+	if !strings.Contains(body, "condRowCount:5") && !strings.Contains(body, "condRowCount: 5") {
+		t.Errorf("condRowCount not seeded to 5; body: %s", body)
+	}
+}
+
+// TestWorkflowStepEditor_AddConditionControlPresent proves the editor exposes
+// an "Add condition" affordance and the visible-row count signal, seeded to 1
+// when a single condition was saved.
+func TestWorkflowStepEditor_AddConditionControlPresent(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/in_app-1/save", url.Values{
+		"csrf_token":      {csrf},
+		"subject":         {"Hi"},
+		"body":            {"Body"},
+		"cond_combinator": {"AND"},
+		"cond_on_0":       {"payload"},
+		"cond_field_0":    {"data.plan"},
+		"cond_operator_0": {"EQUAL"},
+		"cond_value_0":    {"premium"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("save: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	body := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/in_app-1", cookie).Body.String()
+	if !strings.Contains(body, "Add condition") {
+		t.Errorf("editor missing the Add condition control; body: %s", body)
+	}
+	if !strings.Contains(body, "condRowCount") {
+		t.Errorf("editor missing condRowCount signal")
+	}
+	if !strings.Contains(body, "condRowCount:1") && !strings.Contains(body, "condRowCount: 1") {
+		t.Errorf("condRowCount not seeded to 1; body: %s", body)
+	}
+}
+
+// TestWorkflowStepSave_BlankRowBetweenFilledSkipped proves a blank Field row
+// sandwiched between two filled rows is skipped, leaving two conditions saved.
+func TestWorkflowStepSave_BlankRowBetweenFilledSkipped(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/in_app-1/save", url.Values{
+		"csrf_token":      {csrf},
+		"subject":         {"Hi"},
+		"body":            {"Body"},
+		"cond_combinator": {"AND"},
+		"cond_on_0":       {"payload"},
+		"cond_field_0":    {"data.a"},
+		"cond_operator_0": {"EQUAL"},
+		"cond_value_0":    {"x"},
+		"cond_on_1":       {"payload"},
+		"cond_field_1":    {""}, // blank row in the middle
+		"cond_operator_1": {"EQUAL"},
+		"cond_value_1":    {""},
+		"cond_on_2":       {"payload"},
+		"cond_field_2":    {"data.c"},
+		"cond_operator_2": {"EQUAL"},
+		"cond_value_2":    {"z"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("save: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	wf, err := tc.deps.Authoring.GetBySlug(context.Background(), tc.scope, "my-wf")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	steps, err := decodeSteps(wf.Steps)
+	if err != nil {
+		t.Fatalf("decodeSteps: %v", err)
+	}
+	var saved domain.Step
+	for _, s := range steps {
+		if s.StepID == "in_app-1" {
+			saved = s
+		}
+	}
+	var groups []filter.Group
+	if err := json.Unmarshal(saved.Filters, &groups); err != nil {
+		t.Fatalf("step.Filters is not []filter.Group: %v (raw: %s)", err, saved.Filters)
+	}
+	if len(groups) != 1 || len(groups[0].Conditions) != 2 {
+		t.Fatalf("want one group with 2 conditions (blank middle skipped), got %+v", groups)
+	}
+	if groups[0].Conditions[0].Field != "data.a" || groups[0].Conditions[1].Field != "data.c" {
+		t.Errorf("filled rows wrong: %+v", groups[0].Conditions)
+	}
+}

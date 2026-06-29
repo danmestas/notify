@@ -160,9 +160,16 @@ type workflowStepEditorStep struct {
 	// pre-filling the conditions fieldset (defaults to "AND").
 	Combinator string
 	// Conditions are the step's filter conditions (the first Group's
-	// Conditions), flattened for the per-row form pre-fill. Always has at
-	// least one row so the editor renders an empty row to author into.
+	// Conditions), flattened for the per-row form pre-fill. The slice is
+	// padded to stepConditionRows so the editor renders a fixed pool of rows;
+	// rows beyond VisibleConditions are hidden client-side until "Add
+	// condition" reveals them.
 	Conditions []stepConditionRow
+	// VisibleConditions seeds the $condRowCount signal: how many condition
+	// rows are shown on load. It is the count of saved (non-blank) conditions,
+	// clamped to at least 1 so an unconfigured step still shows one empty row
+	// to author into.
+	VisibleConditions int
 }
 
 // stepConditionRow is a single CONDITIONS authoring row, flattened from a
@@ -175,9 +182,11 @@ type stepConditionRow struct {
 	Value    string
 }
 
-// stepConditionRows is how many condition rows the editor renders (MVP: a
-// fixed handful of repeatable rows; no nested groups).
-const stepConditionRows = 3
+// stepConditionRows is the size of the fixed pool of condition rows the editor
+// renders server-side and the iteration cap conditionsFromForm reads up to. The
+// editor shows the first $condRowCount of them; "Add condition" grows the
+// visible count up to this pool size. No nested groups.
+const stepConditionRows = 10
 
 // workflowStepEditorView is what the workflow-step-editor fragment binds.
 type workflowStepEditorView struct {
@@ -1280,7 +1289,7 @@ func (c *Console) serveFragmentWorkflowStepEditor(w http.ResponseWriter, r *http
 	for _, st := range steps {
 		if st.StepID == stepID {
 			st := st
-			combinator, conditions := conditionsFromFilters(st.Filters)
+			combinator, conditions, visible := conditionsFromFilters(st.Filters)
 			view.Step = &workflowStepEditorStep{
 				StepID:            st.StepID,
 				Type:              st.Type,
@@ -1289,6 +1298,7 @@ func (c *Console) serveFragmentWorkflowStepEditor(w http.ResponseWriter, r *http
 				ControlMap:        controlMap(st.ControlValues),
 				Combinator:        combinator,
 				Conditions:        conditions,
+				VisibleConditions: visible,
 			}
 			break
 		}
@@ -1818,11 +1828,13 @@ func controlMap(raw json.RawMessage) map[string]string {
 // conditionsFromFilters decodes step.Filters ([]filter.Group) back into the
 // editor's combinator + per-row form model. Only the first Group is surfaced
 // (the UI authors a single AND/OR group; no nested groups). The returned rows
-// are padded to stepConditionRows so the editor always renders blank rows to
-// author into. Combinator defaults to "AND" when absent.
-func conditionsFromFilters(raw json.RawMessage) (string, []stepConditionRow) {
-	combinator := "AND"
-	rows := make([]stepConditionRow, 0, stepConditionRows)
+// are padded to stepConditionRows so the editor renders a fixed pool of rows
+// (the trailing blanks are hidden client-side until "Add condition" reveals
+// them). visible is the count of saved conditions, clamped to at least 1, and
+// seeds the $condRowCount signal. Combinator defaults to "AND" when absent.
+func conditionsFromFilters(raw json.RawMessage) (combinator string, rows []stepConditionRow, visible int) {
+	combinator = "AND"
+	rows = make([]stepConditionRow, 0, stepConditionRows)
 	if len(raw) > 0 {
 		var groups []filter.Group
 		if err := json.Unmarshal(raw, &groups); err == nil && len(groups) > 0 {
@@ -1840,10 +1852,17 @@ func conditionsFromFilters(raw json.RawMessage) (string, []stepConditionRow) {
 			}
 		}
 	}
+	visible = len(rows)
+	if visible < 1 {
+		visible = 1
+	}
+	if visible > stepConditionRows {
+		visible = stepConditionRows
+	}
 	for len(rows) < stepConditionRows {
 		rows = append(rows, stepConditionRow{})
 	}
-	return combinator, rows
+	return combinator, rows, visible
 }
 
 // listValueOperators are the operators whose form Value is a single text field
