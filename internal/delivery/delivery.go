@@ -197,6 +197,7 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 		Read:           false,
 		Archived:       false,
 		TransactionID:  env.TransactionID,
+		Extras:         inAppExtras(env.Step),
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
 
@@ -320,4 +321,30 @@ func (h *Handler) publishDelivery(envID string, data []byte) {
 	if h.pub != nil {
 		_ = h.pub.PublishDelivery(envID, data)
 	}
+}
+
+// inAppExtras snapshots the in_app rich fields authored on the step into the
+// message extras blob, using the reference platform's inAppOutputSchema field names so the inbox
+// API output is wire-compatible. Absent fields are omitted; a step with no rich
+// fields yields "{}". Only the sent path snapshots extras — skipped/throttled/
+// errored messages leave Extras nil and the repo coerces it to "{}".
+func inAppExtras(step runenv.Step) json.RawMessage {
+	payload := struct {
+		Avatar          string                `json:"avatar,omitempty"`
+		PrimaryAction   *runenv.InAppAction   `json:"primaryAction,omitempty"`
+		SecondaryAction *runenv.InAppAction   `json:"secondaryAction,omitempty"`
+		Redirect        *runenv.InAppRedirect `json:"redirect,omitempty"`
+		Data            json.RawMessage       `json:"data,omitempty"`
+	}{
+		Avatar:          step.Avatar,
+		PrimaryAction:   step.PrimaryAction,
+		SecondaryAction: step.SecondaryAction,
+		Redirect:        step.Redirect,
+		Data:            step.InAppData,
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return b
 }

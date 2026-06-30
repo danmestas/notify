@@ -143,6 +143,12 @@ type Message struct {
 	TransactionID string `db:"transaction_id"`
 	ErrorText     string `db:"error_text"`
 	CreatedAt     string `db:"created_at"`
+	// Extras is the in_app rich-field snapshot (avatar, primaryAction,
+	// secondaryAction, redirect, data) captured at send time, mirroring the reference
+	// inbox notification shape. Non-in_app messages and rows written before
+	// migration 0022 carry "{}". The column is NOT NULL; messageRepo.Create
+	// coerces a nil value to "{}" so the constraint-less callers stay nil-safe.
+	Extras json.RawMessage `db:"extras" json:"extras"`
 }
 
 type Preference struct {

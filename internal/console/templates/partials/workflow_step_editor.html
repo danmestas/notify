@@ -177,6 +177,66 @@
       <input class="console-input" type="text" id="cv-subject" name="subject"
              value="{{index .ControlMap "subject"}}">
     </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-avatar">Avatar URL <span class="form-hint-inline">(optional)</span></label>
+      <input class="console-input" type="text" id="cv-avatar" name="avatar"
+             placeholder="https://example.com/avatar.png"
+             value="{{index .ControlMap "avatar"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-primary-action-label">Primary action label <span class="form-hint-inline">(optional)</span></label>
+      <input class="console-input" type="text" id="cv-primary-action-label" name="primary_action_label"
+             placeholder="View order"
+             value="{{index .ControlMap "primaryAction.label"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-primary-action-redirect-url">Primary action redirect URL</label>
+      <input class="console-input" type="text" id="cv-primary-action-redirect-url" name="primary_action_redirect_url"
+             placeholder="/orders/{{"{{payload.orderId}}"}}"
+             value="{{index .ControlMap "primaryAction.redirect.url"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-primary-action-redirect-target-trigger">Primary action redirect target</label>
+      {{template "ui-select" (uiSelectForm "cv-primary-action-redirect-target" "primary_action_redirect_target" "cvPrimaryActionRedirectTarget"
+        (uiSelectOptions "" "Default (_self)" "_self" "Same tab (_self)" "_blank" "New tab (_blank)" "_parent" "Parent frame (_parent)" "_top" "Top frame (_top)")
+        "Primary action redirect target" "" false (index .ControlMap "primaryAction.redirect.target") true)}}
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-secondary-action-label">Secondary action label <span class="form-hint-inline">(optional)</span></label>
+      <input class="console-input" type="text" id="cv-secondary-action-label" name="secondary_action_label"
+             placeholder="Dismiss"
+             value="{{index .ControlMap "secondaryAction.label"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-secondary-action-redirect-url">Secondary action redirect URL</label>
+      <input class="console-input" type="text" id="cv-secondary-action-redirect-url" name="secondary_action_redirect_url"
+             placeholder="/dismiss"
+             value="{{index .ControlMap "secondaryAction.redirect.url"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-secondary-action-redirect-target-trigger">Secondary action redirect target</label>
+      {{template "ui-select" (uiSelectForm "cv-secondary-action-redirect-target" "secondary_action_redirect_target" "cvSecondaryActionRedirectTarget"
+        (uiSelectOptions "" "Default (_self)" "_self" "Same tab (_self)" "_blank" "New tab (_blank)" "_parent" "Parent frame (_parent)" "_top" "Top frame (_top)")
+        "Secondary action redirect target" "" false (index .ControlMap "secondaryAction.redirect.target") true)}}
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-redirect-url">Redirect URL <span class="form-hint-inline">(optional — clicking the message body navigates here)</span></label>
+      <input class="console-input" type="text" id="cv-redirect-url" name="redirect_url"
+             placeholder="/inbox"
+             value="{{index .ControlMap "redirect.url"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-redirect-target-trigger">Redirect target</label>
+      {{template "ui-select" (uiSelectForm "cv-redirect-target" "redirect_target" "cvRedirectTarget"
+        (uiSelectOptions "" "Default (_self)" "_self" "Same tab (_self)" "_blank" "New tab (_blank)" "_parent" "Parent frame (_parent)" "_top" "Top frame (_top)")
+        "Redirect target" "" false (index .ControlMap "redirect.target") true)}}
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-data-json">Data payload (JSON, optional)</label>
+      <textarea class="console-input console-input-mono" id="cv-data-json" name="data_json" rows="3"
+                placeholder='{"orderId":"123"}'>{{index .ControlMap "data"}}</textarea>
+      <p class="form-hint">Free-form JSON object stored with the in-app message and returned verbatim by the inbox API.</p>
+    </div>
     {{template "wf-preview-split" (dict "BodyLabel" "Body" "Rows" 4 "Body" (index .ControlMap "body"))}}
     {{end}}
 {{define "wf-step-fields-push"}}

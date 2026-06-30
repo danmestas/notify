@@ -97,8 +97,8 @@ func businessTables(t *testing.T, s *Store) []string {
 func TestMigrate_0005_AppliesDigestKey(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 21 {
-		t.Fatalf("expected 21 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 22 {
+		t.Fatalf("expected 22 recorded migrations, got %d", n)
 	}
 
 	var found bool

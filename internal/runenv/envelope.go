@@ -13,6 +13,22 @@ type Scope struct {
 	EnvID string `json:"envId"`
 }
 
+// InAppRedirect is the navigation target of an in-app CTA or of the message
+// itself (the reference platform inAppOutputSchema redirect: {url, target?}). Target is an
+// optional anchor target (_self/_blank/_parent/_top); url is required when the
+// redirect is present at all.
+type InAppRedirect struct {
+	URL    string `json:"url"`
+	Target string `json:"target,omitempty"`
+}
+
+// InAppAction is an in-app CTA button (the reference platform primaryAction / secondaryAction:
+// {label, redirect?}). Redirect is omitted when the action has no navigation.
+type InAppAction struct {
+	Label    string         `json:"label"`
+	Redirect *InAppRedirect `json:"redirect,omitempty"`
+}
+
 // StepControls is the decoded shape of domain.Step.ControlValues. It is the
 // single exported definition shared by both internal/trigger (ingest path) and
 // internal/delivery/rebuild (self-source path), so the compiler enforces sync
@@ -36,6 +52,14 @@ type StepControls struct {
 	// (written by push.ParseForm). Unmarshaled to map[string]string at
 	// envelope-build time and forwarded as runenv.Step.Data.
 	DataJSON string `json:"data_json,omitempty"`
+	// In-app rich fields (the reference platform inAppOutputSchema parity). Authored in the in_app
+	// editor; snapshotted onto the persisted message's extras blob at send time.
+	// Absent on every other channel.
+	Avatar          string          `json:"avatar,omitempty"`
+	PrimaryAction   *InAppAction    `json:"primaryAction,omitempty"`
+	SecondaryAction *InAppAction    `json:"secondaryAction,omitempty"`
+	Redirect        *InAppRedirect  `json:"redirect,omitempty"`
+	Data            json.RawMessage `json:"data,omitempty"`
 }
 
 // Step is the per-step authored config the handler needs at runtime. Templates
@@ -62,6 +86,15 @@ type Step struct {
 	From       string `json:"from,omitempty"`
 	ReplyTo    string `json:"replyTo,omitempty"`
 	EditorType string `json:"editorType,omitempty"` // "html" \u2192 HTML body; "" or "block" \u2192 Text body
+	// In-app rich fields carried to the in_app send handler, which snapshots them
+	// onto the persisted message's extras blob (the reference platform field names). Non-in_app
+	// handlers ignore them. InAppData is named distinctly from the push Data map
+	// above to avoid the field collision while keeping a free-form JSON object.
+	Avatar          string          `json:"avatar,omitempty"`
+	PrimaryAction   *InAppAction    `json:"primaryAction,omitempty"`
+	SecondaryAction *InAppAction    `json:"secondaryAction,omitempty"`
+	Redirect        *InAppRedirect  `json:"redirect,omitempty"`
+	InAppData       json.RawMessage `json:"inAppData,omitempty"`
 	// Filters is the step's per-step condition (a JSON array of filter.Group,
 	// copied verbatim from domain.Step.Filters). Empty/absent => no condition =>
 	// the step always runs. When present, the send handler evaluates it against

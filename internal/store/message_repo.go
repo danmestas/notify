@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -34,15 +35,18 @@ type messageRepo struct {
 // constant and the corresponding Scan call.
 const messageColumns = `id, org_id, environment_id, workflow_id, notification_id, run_id, step_id,
 	subscriber_id, channel, provider_id, integration_id, content, subject, status, seen, read,
-	archived, transaction_id, error_text, created_at`
+	archived, transaction_id, error_text, created_at, extras`
 
 func scanMessage(rows *sql.Rows) (domain.Message, error) {
 	var m domain.Message
+	var extras []byte
 	err := rows.Scan(
 		&m.ID, &m.OrgID, &m.EnvID, &m.WorkflowID, &m.NotificationID, &m.RunID, &m.StepID,
 		&m.SubscriberID, &m.Channel, &m.ProviderID, &m.IntegrationID, &m.Content, &m.Subject,
 		&m.Status, &m.Seen, &m.Read, &m.Archived, &m.TransactionID, &m.ErrorText, &m.CreatedAt,
+		&extras,
 	)
+	m.Extras = json.RawMessage(extras)
 	return m, err
 }
 
@@ -55,16 +59,24 @@ func (repo *messageRepo) Create(ctx context.Context, scope domain.Scope, m domai
 	if m.CreatedAt == "" {
 		m.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
+	// Nil-safety contract: extras is a NOT NULL column (migration 0022). Callers
+	// that build a domain.Message without rich fields — including the
+	// persistSkipped/persistThrottled/persistError delivery paths — leave Extras
+	// nil; coerce it here so the INSERT never violates the constraint and silently
+	// drops the row.
+	if len(m.Extras) == 0 {
+		m.Extras = json.RawMessage("{}")
+	}
 	_, err := repo.w.ExecContext(
 		ctx,
 		`INSERT INTO messages
 		   (id, org_id, environment_id, workflow_id, notification_id, run_id, step_id, subscriber_id,
 		    channel, provider_id, integration_id, content, subject, status, seen, read, archived,
-		    transaction_id, error_text, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    transaction_id, error_text, created_at, extras)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.OrgID, m.EnvID, m.WorkflowID, m.NotificationID, m.RunID, m.StepID, m.SubscriberID,
 		m.Channel, m.ProviderID, m.IntegrationID, m.Content, m.Subject, m.Status, m.Seen, m.Read,
-		m.Archived, m.TransactionID, m.ErrorText, m.CreatedAt,
+		m.Archived, m.TransactionID, m.ErrorText, m.CreatedAt, []byte(m.Extras),
 	)
 	if err != nil {
 		return domain.Message{}, err

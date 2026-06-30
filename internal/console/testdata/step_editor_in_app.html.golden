@@ -14,6 +14,339 @@
       <input class="console-input" type="text" id="cv-subject" name="subject"
              value="In-app subject">
     </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-avatar">Avatar URL <span class="form-hint-inline">(optional)</span></label>
+      <input class="console-input" type="text" id="cv-avatar" name="avatar"
+             placeholder="https://example.com/avatar.png"
+             value="">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-primary-action-label">Primary action label <span class="form-hint-inline">(optional)</span></label>
+      <input class="console-input" type="text" id="cv-primary-action-label" name="primary_action_label"
+             placeholder="View order"
+             value="">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-primary-action-redirect-url">Primary action redirect URL</label>
+      <input class="console-input" type="text" id="cv-primary-action-redirect-url" name="primary_action_redirect_url"
+             placeholder="/orders/{{payload.orderId}}"
+             value="">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-primary-action-redirect-target-trigger">Primary action redirect target</label>
+      
+<div class="ui-select" id="cv-primary-action-redirect-target" data-signals="{uiSelOpen_cv_primary_action_redirect_target: false, uiSelFilter_cv_primary_action_redirect_target: &#39;&#39;, cvPrimaryActionRedirectTarget: &#34;&#34;}"
+     data-on:click__outside="$uiSelOpen_cv_primary_action_redirect_target = false">
+
+  
+  <input type="hidden" name="primary_action_redirect_target" data-attr:value="$cvPrimaryActionRedirectTarget">
+  
+
+  <button type="button" class="ui-select-trigger" id="cv-primary-action-redirect-target-trigger"
+          aria-haspopup="listbox" aria-controls="cv-primary-action-redirect-target-popover"
+          data-attr:aria-expanded="$uiSelOpen_cv_primary_action_redirect_target ? &#39;true&#39; : &#39;false&#39;"
+          data-on:click="$uiSelOpen_cv_primary_action_redirect_target = !$uiSelOpen_cv_primary_action_redirect_target"
+          data-on:keydown="if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_primary_action_redirect_target = false } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $uiSelOpen_cv_primary_action_redirect_target = true; const opts = Array.from(evt.target.closest(&#39;.ui-select&#39;).querySelectorAll(&#39;.ui-select-option&#39;)); const o = opts.find(el =&gt; el.style.display !== &#39;none&#39;); if (o) requestAnimationFrame(() =&gt; o.focus()) }"
+          data-on:keydown__window="evt.key === &#39;Escape&#39; &amp;&amp; ($uiSelOpen_cv_primary_action_redirect_target = false)">
+    <span class="ui-select-trigger-label" data-text="$cvPrimaryActionRedirectTarget === &#34;_self&#34; ? &#34;Same tab (_self)&#34; : ($cvPrimaryActionRedirectTarget === &#34;_blank&#34; ? &#34;New tab (_blank)&#34; : ($cvPrimaryActionRedirectTarget === &#34;_parent&#34; ? &#34;Parent frame (_parent)&#34; : ($cvPrimaryActionRedirectTarget === &#34;_top&#34; ? &#34;Top frame (_top)&#34; : (&#34;Primary action redirect target&#34;))))">Primary action redirect target</span>
+    <span class="ui-select-trigger-chevron" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+</span>
+  </button>
+
+  
+  <div class="ui-select-popover" id="cv-primary-action-redirect-target-popover" role="listbox"
+       aria-label="Primary action redirect target"
+       data-show="$uiSelOpen_cv_primary_action_redirect_target">
+
+    
+
+    <div class="ui-select-options">
+      
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value=""
+           data-attr:aria-selected="($cvPrimaryActionRedirectTarget === &#34;&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvPrimaryActionRedirectTarget = &#34;&#34;; $uiSelOpen_cv_primary_action_redirect_target = false; $uiSelFilter_cv_primary_action_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvPrimaryActionRedirectTarget = &#34;&#34;; $uiSelOpen_cv_primary_action_redirect_target = false; $uiSelFilter_cv_primary_action_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_primary_action_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Default (_self)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvPrimaryActionRedirectTarget === &#34;&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="_self"
+           data-attr:aria-selected="($cvPrimaryActionRedirectTarget === &#34;_self&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvPrimaryActionRedirectTarget = &#34;_self&#34;; $uiSelOpen_cv_primary_action_redirect_target = false; $uiSelFilter_cv_primary_action_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvPrimaryActionRedirectTarget = &#34;_self&#34;; $uiSelOpen_cv_primary_action_redirect_target = false; $uiSelFilter_cv_primary_action_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_primary_action_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Same tab (_self)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvPrimaryActionRedirectTarget === &#34;_self&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="_blank"
+           data-attr:aria-selected="($cvPrimaryActionRedirectTarget === &#34;_blank&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvPrimaryActionRedirectTarget = &#34;_blank&#34;; $uiSelOpen_cv_primary_action_redirect_target = false; $uiSelFilter_cv_primary_action_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvPrimaryActionRedirectTarget = &#34;_blank&#34;; $uiSelOpen_cv_primary_action_redirect_target = false; $uiSelFilter_cv_primary_action_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_primary_action_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">New tab (_blank)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvPrimaryActionRedirectTarget === &#34;_blank&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="_parent"
+           data-attr:aria-selected="($cvPrimaryActionRedirectTarget === &#34;_parent&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvPrimaryActionRedirectTarget = &#34;_parent&#34;; $uiSelOpen_cv_primary_action_redirect_target = false; $uiSelFilter_cv_primary_action_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvPrimaryActionRedirectTarget = &#34;_parent&#34;; $uiSelOpen_cv_primary_action_redirect_target = false; $uiSelFilter_cv_primary_action_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_primary_action_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Parent frame (_parent)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvPrimaryActionRedirectTarget === &#34;_parent&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="_top"
+           data-attr:aria-selected="($cvPrimaryActionRedirectTarget === &#34;_top&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvPrimaryActionRedirectTarget = &#34;_top&#34;; $uiSelOpen_cv_primary_action_redirect_target = false; $uiSelFilter_cv_primary_action_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvPrimaryActionRedirectTarget = &#34;_top&#34;; $uiSelOpen_cv_primary_action_redirect_target = false; $uiSelFilter_cv_primary_action_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_primary_action_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Top frame (_top)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvPrimaryActionRedirectTarget === &#34;_top&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      
+    </div>
+  </div>
+</div>
+
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-secondary-action-label">Secondary action label <span class="form-hint-inline">(optional)</span></label>
+      <input class="console-input" type="text" id="cv-secondary-action-label" name="secondary_action_label"
+             placeholder="Dismiss"
+             value="">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-secondary-action-redirect-url">Secondary action redirect URL</label>
+      <input class="console-input" type="text" id="cv-secondary-action-redirect-url" name="secondary_action_redirect_url"
+             placeholder="/dismiss"
+             value="">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-secondary-action-redirect-target-trigger">Secondary action redirect target</label>
+      
+<div class="ui-select" id="cv-secondary-action-redirect-target" data-signals="{uiSelOpen_cv_secondary_action_redirect_target: false, uiSelFilter_cv_secondary_action_redirect_target: &#39;&#39;, cvSecondaryActionRedirectTarget: &#34;&#34;}"
+     data-on:click__outside="$uiSelOpen_cv_secondary_action_redirect_target = false">
+
+  
+  <input type="hidden" name="secondary_action_redirect_target" data-attr:value="$cvSecondaryActionRedirectTarget">
+  
+
+  <button type="button" class="ui-select-trigger" id="cv-secondary-action-redirect-target-trigger"
+          aria-haspopup="listbox" aria-controls="cv-secondary-action-redirect-target-popover"
+          data-attr:aria-expanded="$uiSelOpen_cv_secondary_action_redirect_target ? &#39;true&#39; : &#39;false&#39;"
+          data-on:click="$uiSelOpen_cv_secondary_action_redirect_target = !$uiSelOpen_cv_secondary_action_redirect_target"
+          data-on:keydown="if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_secondary_action_redirect_target = false } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $uiSelOpen_cv_secondary_action_redirect_target = true; const opts = Array.from(evt.target.closest(&#39;.ui-select&#39;).querySelectorAll(&#39;.ui-select-option&#39;)); const o = opts.find(el =&gt; el.style.display !== &#39;none&#39;); if (o) requestAnimationFrame(() =&gt; o.focus()) }"
+          data-on:keydown__window="evt.key === &#39;Escape&#39; &amp;&amp; ($uiSelOpen_cv_secondary_action_redirect_target = false)">
+    <span class="ui-select-trigger-label" data-text="$cvSecondaryActionRedirectTarget === &#34;_self&#34; ? &#34;Same tab (_self)&#34; : ($cvSecondaryActionRedirectTarget === &#34;_blank&#34; ? &#34;New tab (_blank)&#34; : ($cvSecondaryActionRedirectTarget === &#34;_parent&#34; ? &#34;Parent frame (_parent)&#34; : ($cvSecondaryActionRedirectTarget === &#34;_top&#34; ? &#34;Top frame (_top)&#34; : (&#34;Secondary action redirect target&#34;))))">Secondary action redirect target</span>
+    <span class="ui-select-trigger-chevron" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+</span>
+  </button>
+
+  
+  <div class="ui-select-popover" id="cv-secondary-action-redirect-target-popover" role="listbox"
+       aria-label="Secondary action redirect target"
+       data-show="$uiSelOpen_cv_secondary_action_redirect_target">
+
+    
+
+    <div class="ui-select-options">
+      
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value=""
+           data-attr:aria-selected="($cvSecondaryActionRedirectTarget === &#34;&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvSecondaryActionRedirectTarget = &#34;&#34;; $uiSelOpen_cv_secondary_action_redirect_target = false; $uiSelFilter_cv_secondary_action_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvSecondaryActionRedirectTarget = &#34;&#34;; $uiSelOpen_cv_secondary_action_redirect_target = false; $uiSelFilter_cv_secondary_action_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_secondary_action_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Default (_self)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvSecondaryActionRedirectTarget === &#34;&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="_self"
+           data-attr:aria-selected="($cvSecondaryActionRedirectTarget === &#34;_self&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvSecondaryActionRedirectTarget = &#34;_self&#34;; $uiSelOpen_cv_secondary_action_redirect_target = false; $uiSelFilter_cv_secondary_action_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvSecondaryActionRedirectTarget = &#34;_self&#34;; $uiSelOpen_cv_secondary_action_redirect_target = false; $uiSelFilter_cv_secondary_action_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_secondary_action_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Same tab (_self)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvSecondaryActionRedirectTarget === &#34;_self&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="_blank"
+           data-attr:aria-selected="($cvSecondaryActionRedirectTarget === &#34;_blank&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvSecondaryActionRedirectTarget = &#34;_blank&#34;; $uiSelOpen_cv_secondary_action_redirect_target = false; $uiSelFilter_cv_secondary_action_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvSecondaryActionRedirectTarget = &#34;_blank&#34;; $uiSelOpen_cv_secondary_action_redirect_target = false; $uiSelFilter_cv_secondary_action_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_secondary_action_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">New tab (_blank)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvSecondaryActionRedirectTarget === &#34;_blank&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="_parent"
+           data-attr:aria-selected="($cvSecondaryActionRedirectTarget === &#34;_parent&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvSecondaryActionRedirectTarget = &#34;_parent&#34;; $uiSelOpen_cv_secondary_action_redirect_target = false; $uiSelFilter_cv_secondary_action_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvSecondaryActionRedirectTarget = &#34;_parent&#34;; $uiSelOpen_cv_secondary_action_redirect_target = false; $uiSelFilter_cv_secondary_action_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_secondary_action_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Parent frame (_parent)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvSecondaryActionRedirectTarget === &#34;_parent&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="_top"
+           data-attr:aria-selected="($cvSecondaryActionRedirectTarget === &#34;_top&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvSecondaryActionRedirectTarget = &#34;_top&#34;; $uiSelOpen_cv_secondary_action_redirect_target = false; $uiSelFilter_cv_secondary_action_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvSecondaryActionRedirectTarget = &#34;_top&#34;; $uiSelOpen_cv_secondary_action_redirect_target = false; $uiSelFilter_cv_secondary_action_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_secondary_action_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Top frame (_top)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvSecondaryActionRedirectTarget === &#34;_top&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      
+    </div>
+  </div>
+</div>
+
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-redirect-url">Redirect URL <span class="form-hint-inline">(optional — clicking the message body navigates here)</span></label>
+      <input class="console-input" type="text" id="cv-redirect-url" name="redirect_url"
+             placeholder="/inbox"
+             value="">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-redirect-target-trigger">Redirect target</label>
+      
+<div class="ui-select" id="cv-redirect-target" data-signals="{uiSelOpen_cv_redirect_target: false, uiSelFilter_cv_redirect_target: &#39;&#39;, cvRedirectTarget: &#34;&#34;}"
+     data-on:click__outside="$uiSelOpen_cv_redirect_target = false">
+
+  
+  <input type="hidden" name="redirect_target" data-attr:value="$cvRedirectTarget">
+  
+
+  <button type="button" class="ui-select-trigger" id="cv-redirect-target-trigger"
+          aria-haspopup="listbox" aria-controls="cv-redirect-target-popover"
+          data-attr:aria-expanded="$uiSelOpen_cv_redirect_target ? &#39;true&#39; : &#39;false&#39;"
+          data-on:click="$uiSelOpen_cv_redirect_target = !$uiSelOpen_cv_redirect_target"
+          data-on:keydown="if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_redirect_target = false } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $uiSelOpen_cv_redirect_target = true; const opts = Array.from(evt.target.closest(&#39;.ui-select&#39;).querySelectorAll(&#39;.ui-select-option&#39;)); const o = opts.find(el =&gt; el.style.display !== &#39;none&#39;); if (o) requestAnimationFrame(() =&gt; o.focus()) }"
+          data-on:keydown__window="evt.key === &#39;Escape&#39; &amp;&amp; ($uiSelOpen_cv_redirect_target = false)">
+    <span class="ui-select-trigger-label" data-text="$cvRedirectTarget === &#34;_self&#34; ? &#34;Same tab (_self)&#34; : ($cvRedirectTarget === &#34;_blank&#34; ? &#34;New tab (_blank)&#34; : ($cvRedirectTarget === &#34;_parent&#34; ? &#34;Parent frame (_parent)&#34; : ($cvRedirectTarget === &#34;_top&#34; ? &#34;Top frame (_top)&#34; : (&#34;Redirect target&#34;))))">Redirect target</span>
+    <span class="ui-select-trigger-chevron" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+</span>
+  </button>
+
+  
+  <div class="ui-select-popover" id="cv-redirect-target-popover" role="listbox"
+       aria-label="Redirect target"
+       data-show="$uiSelOpen_cv_redirect_target">
+
+    
+
+    <div class="ui-select-options">
+      
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value=""
+           data-attr:aria-selected="($cvRedirectTarget === &#34;&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvRedirectTarget = &#34;&#34;; $uiSelOpen_cv_redirect_target = false; $uiSelFilter_cv_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvRedirectTarget = &#34;&#34;; $uiSelOpen_cv_redirect_target = false; $uiSelFilter_cv_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Default (_self)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvRedirectTarget === &#34;&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="_self"
+           data-attr:aria-selected="($cvRedirectTarget === &#34;_self&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvRedirectTarget = &#34;_self&#34;; $uiSelOpen_cv_redirect_target = false; $uiSelFilter_cv_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvRedirectTarget = &#34;_self&#34;; $uiSelOpen_cv_redirect_target = false; $uiSelFilter_cv_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Same tab (_self)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvRedirectTarget === &#34;_self&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="_blank"
+           data-attr:aria-selected="($cvRedirectTarget === &#34;_blank&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvRedirectTarget = &#34;_blank&#34;; $uiSelOpen_cv_redirect_target = false; $uiSelFilter_cv_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvRedirectTarget = &#34;_blank&#34;; $uiSelOpen_cv_redirect_target = false; $uiSelFilter_cv_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">New tab (_blank)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvRedirectTarget === &#34;_blank&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="_parent"
+           data-attr:aria-selected="($cvRedirectTarget === &#34;_parent&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvRedirectTarget = &#34;_parent&#34;; $uiSelOpen_cv_redirect_target = false; $uiSelFilter_cv_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvRedirectTarget = &#34;_parent&#34;; $uiSelOpen_cv_redirect_target = false; $uiSelFilter_cv_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Parent frame (_parent)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvRedirectTarget === &#34;_parent&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="_top"
+           data-attr:aria-selected="($cvRedirectTarget === &#34;_top&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvRedirectTarget = &#34;_top&#34;; $uiSelOpen_cv_redirect_target = false; $uiSelFilter_cv_redirect_target = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvRedirectTarget = &#34;_top&#34;; $uiSelOpen_cv_redirect_target = false; $uiSelFilter_cv_redirect_target = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_redirect_target = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Top frame (_top)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvRedirectTarget === &#34;_top&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      
+    </div>
+  </div>
+</div>
+
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-data-json">Data payload (JSON, optional)</label>
+      <textarea class="console-input console-input-mono" id="cv-data-json" name="data_json" rows="3"
+                placeholder='{"orderId":"123"}'></textarea>
+      <p class="form-hint">Free-form JSON object stored with the in-app message and returned verbatim by the inbox API.</p>
+    </div>
     
 <div class="wf-preview-split">
   <div class="wf-preview-split-editor">

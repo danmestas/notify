@@ -30,23 +30,17 @@ func marshalControlValues(m map[string]any) (json.RawMessage, error) {
 	return b, nil
 }
 
-// inApp is the in-app channel step type. Its editor authors a subject and a
-// Handlebars body.
+// inApp is the in-app channel step type. Its editor authors a subject, a
+// Handlebars body, and rich fields (avatar, primary/secondary CTA,
+// top-level redirect, free-form data). ParseForm and ControlMap live in
+// in_app_rich.go.
 type inApp struct{}
 
 func (inApp) Name() string                                     { return "in_app" }
 func (inApp) DefaultControlValues() json.RawMessage            { return emptyControlValues() }
-func (inApp) ControlMap(cv json.RawMessage) map[string]string  { return flattenControlValues(cv) }
 func (inApp) Compile(step domain.Step) (engine.StepDef, error) { return channelStepDef(step), nil }
 func (inApp) Validate(json.RawMessage) error                   { return nil }
 func (inApp) EditorPartial() string                            { return "wf-step-fields-in_app" }
-
-func (inApp) ParseForm(form url.Values) (json.RawMessage, error) {
-	return marshalControlValues(map[string]any{
-		"subject": formField(form, "subject"),
-		"body":    formField(form, "body"),
-	})
-}
 
 // email is the email channel step type (subject + body).
 type email struct{}
