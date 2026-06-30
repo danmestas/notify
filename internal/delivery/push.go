@@ -109,15 +109,19 @@ func (h *PushHandler) resolvePushIDs(ctx context.Context, scope domain.Scope) (p
 func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
 	var env runenv.InAppEnvelope
 	var digestKey string
-	if len(t.Input) == 0 {
+	var stepOutputs map[string]map[string]any
+	if len(t.Input) == 0 || !isRunEnvelope(t.Input) {
 		// Self-source: an empty input means an upstream step (e.g. a delay)
-		// produced no output, so rebuild the envelope from the store by run id.
-		rebuilt, dk, err := rebuildEnvelope(ctx, h.store, t)
+		// produced no output; a non-envelope input means an upstream action step
+		// (e.g. http_request) produced non-envelope output. Either way, rebuild
+		// the envelope from the store by run id.
+		rebuilt, dk, so, err := RebuildEnvelope(ctx, h.store, t)
 		if err != nil {
 			return h.persistPushError(ctx, env, t, "ntfy", "", err)
 		}
 		env = rebuilt
 		digestKey = dk
+		stepOutputs = so
 	} else if err := json.Unmarshal(t.Input, &env); err != nil {
 		return h.persistPushError(ctx, env, t, "ntfy", "", err)
 	}
@@ -135,7 +139,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 		}
 	}
 
-	data := map[string]any{"subscriber": subMap, "payload": payloadMap}
+	data := map[string]any{"subscriber": subMap, "payload": payloadMap, "steps": stepOutputs}
 	// Digest aggregate: a self-sourced notification with a DigestKey drains the
 	// merged events so the body can render {{digest.count}}. Only the
 	// self-source path sets digestKey, so the Input-present path is unchanged.
@@ -153,7 +157,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	// unevaluable) condition SKIPS the send. Absent/empty filters always run. A
 	// malformed condition fails closed (skip) so a broken condition never blasts
 	// a send to every subscriber.
-	if !conditionMet(env.Step.Filters, subMap, payloadMap) {
+	if !conditionMet(env.Step.Filters, subMap, payloadMap, stepOutputs) {
 		return h.persistPushSkipped(ctx, env, t, scope, subject, content)
 	}
 

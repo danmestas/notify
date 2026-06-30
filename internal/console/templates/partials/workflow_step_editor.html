@@ -229,6 +229,44 @@
       <p class="form-hint">Fixed window duration in seconds (e.g. 3600 = 1 hour).</p>
     </div>
     {{end}}
+{{define "wf-step-fields-http_request"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-url">URL</label>
+      <input class="console-input console-input-mono" type="text" id="cv-url" name="url"
+             placeholder="https://api.example.com/{{"{{payload.id}}"}}" value="{{index .ControlMap "url"}}">
+      <p class="form-hint">Outbound request URL. <code>{{"{{payload.*}}"}}</code> and <code>{{"{{subscriber.*}}"}}</code> are interpolated before the call.</p>
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="http-method-trigger">Method</label>
+      {{template "ui-select" (uiSelectForm "http-method" "method" "httpMethod"
+        (uiSelectOptions "GET" "GET" "POST" "POST" "PUT" "PUT" "PATCH" "PATCH" "DELETE" "DELETE")
+        "Method" "" false (index .ControlMap "method") true)}}
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-headers">Headers (JSON)</label>
+      <textarea class="console-input console-input-mono" id="cv-headers" name="headers" rows="3"
+                placeholder='{"Authorization":"Bearer {{"{{payload.token}}"}}"}'>{{index .ControlMap "headers"}}</textarea>
+      <p class="form-hint">A JSON object of header name to value. Values are interpolated. Stored as plain text &mdash; do not put high-value secrets here.</p>
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-http-body">Body</label>
+      <textarea class="console-input console-input-mono" id="cv-http-body" name="body" rows="4">{{index .ControlMap "body"}}</textarea>
+      <p class="form-hint">Raw request body. Interpolated like the URL and headers. Leave empty for no body.</p>
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-timeoutSec">Timeout (seconds)</label>
+      <input class="console-input" type="number" id="cv-timeoutSec" name="timeoutSec" min="1"
+             value="{{index .ControlMap "timeoutSec"}}">
+      <p class="form-hint">Per-call deadline. Defaults to 30 seconds when blank.</p>
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="http-failurePolicy-trigger">On failure</label>
+      {{template "ui-select" (uiSelectForm "http-failurePolicy" "failurePolicy" "httpFailurePolicy"
+        (uiSelectOptions "fail_closed" "Fail the run (fail closed)" "continue" "Continue with empty response")
+        "On failure" "" false (index .ControlMap "failurePolicy") true)}}
+      <p class="form-hint">A non-2xx response is always captured; this governs a connection error or timeout. Fail closed stops the run; continue records a zero-value response and proceeds.</p>
+    </div>
+    {{end}}
 {{define "wf-step-fields-default"}}
     <div class="form-row">
       <label class="form-label">Control values (JSON)</label>

@@ -11,8 +11,8 @@ import (
 func TestMigrate_0009_AppliesLayouts(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 20 {
-		t.Fatalf("expected 20 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 21 {
+		t.Fatalf("expected 21 recorded migrations, got %d", n)
 	}
 
 	var name string

@@ -15,9 +15,12 @@ import (
 // must equal the two hand-kept lists this registry replaced, or those surfaces
 // (add-step buttons, "allowed: ..." error text) would shift.
 // Updated: throttle appended after digest — intentional, matches PR adding throttle step type.
+// Updated: http_request appended after throttle — intentional, matches PR adding the
+// http_request action step type. Appending (not inserting) keeps every prior
+// surface's ordering stable; only the new type joins the tail of the list.
 func TestNames_CanonicalOrder(t *testing.T) {
 	got := steptype.Default().Names()
-	want := []string{"in_app", "email", "push", "chat", "sms", "delay", "digest", "throttle"}
+	want := []string{"in_app", "email", "push", "chat", "sms", "delay", "digest", "throttle", "http_request"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Names() = %v, want %v", got, want)
 	}

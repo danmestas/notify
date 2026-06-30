@@ -29,6 +29,7 @@ import (
 	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/credverify"
 	"github.com/danmestas/notify/internal/delivery"
+	"github.com/danmestas/notify/internal/delivery/httpaction"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/emailloop"
 	"github.com/danmestas/notify/internal/engine"
@@ -185,6 +186,10 @@ func runServe(args []string) error {
 	// check.throttle: gate a run by a fixed-window counter; must be registered
 	// whenever steptype.Default() includes "throttle" (see delivery.TaskThrottle).
 	eng.Handle(delivery.TaskThrottle, delivery.NewThrottleHandler(st, bus).Handle)
+	// http_request: outbound HTTP action step. Makes the interpolated call, then
+	// captures statusCode/body/headers into step_outputs for downstream steps;
+	// must be registered whenever steptype.Default() includes "http_request".
+	eng.Handle("http_request", httpaction.New(st).Handle)
 
 	// W4 ADR-013 (#55): durable credential-verify action. The verify task runs
 	// in this worker pool (registered before StartWorkers); the workflow is

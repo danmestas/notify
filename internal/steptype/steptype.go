@@ -114,6 +114,7 @@ func Default() *Registry {
 	r.Register(delay{})
 	r.Register(digest{})
 	r.Register(throttle{})
+	r.Register(httpRequest{})
 	return r
 }
 

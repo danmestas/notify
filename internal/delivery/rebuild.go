@@ -14,32 +14,39 @@ import (
 
 // rebuildEnvelope reconstructs the run envelope for a channel step from the
 // store, keyed by the run id. It is the self-source fallback used when a step's
-// TaskPayload.Input is empty — e.g. a channel step that DependsOn a delay/sleep
-// step, whose nil output leaves the downstream step's input empty. The
-// Input-present path never calls this.
-func (h *Handler) rebuildEnvelope(ctx context.Context, t engine.TaskPayload) (runenv.InAppEnvelope, string, error) {
-	return rebuildEnvelope(ctx, h.store, t)
+// TaskPayload.Input is empty (e.g. it DependsOn a delay/sleep step, whose nil
+// output leaves the downstream input empty) OR carries a non-envelope output
+// (e.g. an upstream http_request whose output is not an InAppEnvelope). The
+// envelope-input path never calls this.
+func (h *Handler) rebuildEnvelope(ctx context.Context, t engine.TaskPayload) (runenv.InAppEnvelope, string, map[string]map[string]any, error) {
+	return RebuildEnvelope(ctx, h.store, t)
 }
 
-// rebuildEnvelope is the shared self-source logic backing both Handler and
-// EmailHandler (each holds a *store.Store). It resolves the notification by run
-// id, loads the authored step config and subscriber, and rebuilds the envelope.
-func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) (runenv.InAppEnvelope, string, error) {
+// RebuildEnvelope is the shared self-source logic backing every channel handler
+// (each holds a *store.Store) and the httpaction action handler (which reads the
+// returned Subscriber/Payload for variable interpolation, ignoring the Step
+// field). It resolves the notification by run id, loads the authored step config
+// and subscriber, rebuilds the envelope, and returns the run's captured step
+// outputs so callers can thread them into template data and conditionMet.
+//
+// It is exported so internal/delivery/httpaction can reuse it without a parent
+// package import cycle; the channel handlers in this package call it directly.
+func RebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) (runenv.InAppEnvelope, string, map[string]map[string]any, error) {
 	notif, err := s.Notifications().GetByRunID(ctx, t.RunID)
 	if err != nil {
-		return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: notification by run %q: %w", t.RunID, err)
+		return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: notification by run %q: %w", t.RunID, err)
 	}
 	scope := domain.Scope{OrgID: notif.OrgID, EnvID: notif.EnvID}
 
 	wf, err := s.Workflows().GetByID(ctx, scope, notif.WorkflowID)
 	if err != nil {
-		return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: workflow %q: %w", notif.WorkflowID, err)
+		return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: workflow %q: %w", notif.WorkflowID, err)
 	}
 
 	var steps []domain.Step
 	if len(wf.Steps) > 0 {
 		if err := json.Unmarshal(wf.Steps, &steps); err != nil {
-			return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: unmarshal steps: %w", err)
+			return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: unmarshal steps: %w", err)
 		}
 	}
 	var found *domain.Step
@@ -50,7 +57,7 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 		}
 	}
 	if found == nil {
-		return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: step %q not found in workflow %q", t.StepID, notif.WorkflowID)
+		return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: step %q not found in workflow %q", t.StepID, notif.WorkflowID)
 	}
 	var controls struct {
 		Subject  string `json:"subject"`
@@ -67,13 +74,21 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 	}
 	if len(found.ControlValues) > 0 {
 		if err := json.Unmarshal(found.ControlValues, &controls); err != nil {
-			return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: unmarshal controlValues: %w", err)
+			return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: unmarshal controlValues: %w", err)
 		}
 	}
 
 	sub, err := s.Subscribers().GetByExternalID(ctx, scope, notif.SubscriberID)
 	if err != nil {
-		return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: subscriber %q: %w", notif.SubscriberID, err)
+		return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: subscriber %q: %w", notif.SubscriberID, err)
+	}
+
+	// Captured outputs of upstream action steps (e.g. http_request responses),
+	// keyed by step id. Empty for workflows with no action steps; threaded into
+	// the downstream template data ({{steps.<stepId>...}}) and filter sources.
+	stepOutputs, err := s.StepOutputs().ListByRun(ctx, t.RunID)
+	if err != nil {
+		return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: step outputs for run %q: %w", t.RunID, err)
 	}
 	// Same handlebars namespace shape the trigger marshals into the envelope.
 	subscriberJSON, err := json.Marshal(struct {
@@ -96,7 +111,7 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 		Data:         sub.Data,
 	})
 	if err != nil {
-		return runenv.InAppEnvelope{}, "", fmt.Errorf("rebuild: marshal subscriber: %w", err)
+		return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: marshal subscriber: %w", err)
 	}
 
 	return runenv.InAppEnvelope{
@@ -120,13 +135,28 @@ func rebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 			Markdown:          controls.Markdown,
 			Filters:           found.Filters,
 		},
-	}, notif.DigestKey, nil
+	}, notif.DigestKey, stepOutputs, nil
+}
+
+// isRunEnvelope reports whether data is a trigger-built InAppEnvelope rather
+// than some other step's output (a channel handler's domain.Message JSON or an
+// http_request response). It probes for both the "scope" and "subscriberId"
+// discriminators every envelope carries; a channel Message marshals with
+// db-tagged Go field names (OrgID/SubscriberID) and an http_request output is
+// {"statusCode":...}, so neither collides with this two-key probe. When false,
+// the channel handler self-sources (rebuilds) instead of decoding garbage.
+func isRunEnvelope(data []byte) bool {
+	var probe struct {
+		Scope        *json.RawMessage `json:"scope"`
+		SubscriberID *json.RawMessage `json:"subscriberId"`
+	}
+	return json.Unmarshal(data, &probe) == nil && probe.Scope != nil && probe.SubscriberID != nil
 }
 
 // stepCron loads the cron expression authored on a scheduled-digest step,
 // keyed by run id + step id. It is the digest.wait handler's narrow lookup —
-// rebuildEnvelope keeps its frozen 3-return shape (a cron string is useless to
-// the channel handlers), so this standalone helper resolves the
+// RebuildEnvelope returns the channel-handler envelope (a cron string is useless
+// to it), so this standalone helper resolves the
 // notification -> workflow -> step controlValues and returns controlValues.cron.
 func stepCron(ctx context.Context, s *store.Store, runID, stepID string) (string, error) {
 	notif, err := s.Notifications().GetByRunID(ctx, runID)

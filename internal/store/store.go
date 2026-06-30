@@ -119,6 +119,13 @@ func (s *Store) ChatThreads() ChatThreadRepo {
 	return &chatThreadRepo{w: s.writer, r: s.reader}
 }
 
+// StepOutputs vends the per-step action-output repository: an http_request step
+// writes its response here keyed by (run_id, step_id), and downstream channel
+// steps read every output for a run via ListByRun.
+func (s *Store) StepOutputs() StepOutputRepo {
+	return &stepOutputRepo{w: s.writer, r: s.reader}
+}
+
 // Pools exposes the writer/reader pairs so sibling bounded-context stores
 // (internal/agents/store) run their Scope-enforced queries over the same
 // SQLite database and migration set instead of opening parallel pools.

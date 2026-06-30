@@ -18,7 +18,12 @@ import (
 // error we FAIL CLOSED: the step is SKIPPED, never sent. A broken condition must
 // never silently blast a send to every subscriber, so the safe default for a
 // condition we cannot evaluate is "do not send" rather than "send to everyone".
-func conditionMet(filters json.RawMessage, subMap, payloadMap map[string]any) bool {
+//
+// stepOutputs adds each upstream action step's captured output (e.g. an
+// http_request response) as a named source keyed by its step id, so a condition
+// can test On='<httpRequestStepId>' Field='statusCode'. A nil/empty map simply
+// contributes no extra sources (the 99% no-action-step path is unchanged).
+func conditionMet(filters json.RawMessage, subMap, payloadMap map[string]any, stepOutputs map[string]map[string]any) bool {
 	if len(bytes.TrimSpace(filters)) == 0 {
 		// Absent, empty, or whitespace-only => no condition => always send.
 		return true
@@ -32,10 +37,16 @@ func conditionMet(filters json.RawMessage, subMap, payloadMap map[string]any) bo
 		// Explicit empty array is equivalent to no condition.
 		return true
 	}
-	ok, err := filter.Match(groups, filter.EvalContext{Sources: map[string]map[string]any{
+	sources := map[string]map[string]any{
 		"subscriber": subMap,
 		"payload":    payloadMap,
-	}})
+	}
+	for id, out := range stepOutputs {
+		// Step ids are authored separately and never collide with the reserved
+		// "subscriber"/"payload" source names, so a plain assignment is correct.
+		sources[id] = out
+	}
+	ok, err := filter.Match(groups, filter.EvalContext{Sources: sources})
 	if err != nil {
 		// Evaluation error: fail closed (skip), do not send.
 		return false
