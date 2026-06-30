@@ -38,12 +38,15 @@ type Client struct {
 }
 
 // emailPayload is the wire JSON shape POSTed to /emails.
+// reply_to is a []string per the Resend v2 schema (accepts string or []string;
+// []string is forward-compatible with multi-address Reply-To).
 type emailPayload struct {
-	From    string `json:"from"`
-	To      string `json:"to"`
-	Subject string `json:"subject"`
-	HTML    string `json:"html"`
-	Text    string `json:"text"`
+	From    string   `json:"from"`
+	To      string   `json:"to"`
+	Subject string   `json:"subject"`
+	HTML    string   `json:"html"`
+	Text    string   `json:"text"`
+	ReplyTo []string `json:"reply_to,omitempty"`
 }
 
 // Send POSTs a JSON body to {BaseURL}/emails with Bearer auth (APIKey),
@@ -72,13 +75,17 @@ func (c *Client) Send(ctx context.Context, msg providers.EmailMessage) (provider
 	}
 	endpoint := strings.TrimRight(base, "/") + "/emails"
 
-	body, err := json.Marshal(emailPayload{
+	p := emailPayload{
 		From:    from,
 		To:      msg.To,
 		Subject: msg.Subject,
 		HTML:    msg.HTML,
 		Text:    msg.Text,
-	})
+	}
+	if msg.ReplyTo != "" {
+		p.ReplyTo = []string{msg.ReplyTo}
+	}
+	body, err := json.Marshal(p)
 	if err != nil {
 		return providers.Result{}, fmt.Errorf("resend: marshal body: %w", err)
 	}

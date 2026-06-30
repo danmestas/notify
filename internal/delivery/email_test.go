@@ -172,6 +172,154 @@ func TestHandleEmail_SkipsWhenChannelDisabled(t *testing.T) {
 	}
 }
 
+// --- email overrides (Phase-A Wave 2) ---
+
+func TestHandleEmail_StepFromOverridesIntegration(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	cap := providers.NewCapture()
+	// Integration-level from is "noreply@acme.io"; step-level from is "custom@acme.io".
+	env := emailEnvelope()
+	env.Step.From = "custom@acme.io"
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	h := NewEmail(s, stubResolver{provider: cap, from: "noreply@acme.io"})
+	if _, err := h.HandleEmail(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleEmail: %v", err)
+	}
+	sent := cap.Sent()
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 sent email, got %d", len(sent))
+	}
+	if sent[0].From != "custom@acme.io" {
+		t.Errorf("From = %q, want custom@acme.io (step wins)", sent[0].From)
+	}
+}
+
+func TestHandleEmail_StepFromEmptyUsesIntegration(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	cap := providers.NewCapture()
+	env := emailEnvelope()
+	// env.Step.From is "" (zero value) — integration-level from must be used.
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	h := NewEmail(s, stubResolver{provider: cap, from: "noreply@acme.io"})
+	if _, err := h.HandleEmail(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleEmail: %v", err)
+	}
+	sent := cap.Sent()
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 sent email, got %d", len(sent))
+	}
+	if sent[0].From != "noreply@acme.io" {
+		t.Errorf("From = %q, want noreply@acme.io (integration default)", sent[0].From)
+	}
+}
+
+func TestHandleEmail_ReplyToForwarded(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	cap := providers.NewCapture()
+	env := emailEnvelope()
+	env.Step.ReplyTo = "support@acme.io"
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	h := NewEmail(s, stubResolver{provider: cap, from: "noreply@acme.io"})
+	if _, err := h.HandleEmail(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleEmail: %v", err)
+	}
+	sent := cap.Sent()
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 sent email, got %d", len(sent))
+	}
+	if sent[0].ReplyTo != "support@acme.io" {
+		t.Errorf("ReplyTo = %q, want support@acme.io", sent[0].ReplyTo)
+	}
+}
+
+func TestHandleEmail_ReplyToEmpty(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	cap := providers.NewCapture()
+	env := emailEnvelope()
+	// ReplyTo is "" (zero value); must not appear on the wire.
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	h := NewEmail(s, stubResolver{provider: cap, from: "noreply@acme.io"})
+	if _, err := h.HandleEmail(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleEmail: %v", err)
+	}
+	sent := cap.Sent()
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 sent email, got %d", len(sent))
+	}
+	if sent[0].ReplyTo != "" {
+		t.Errorf("ReplyTo = %q, want empty", sent[0].ReplyTo)
+	}
+}
+
+func TestHandleEmail_EditorTypeHTML_SetsHTMLField(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	cap := providers.NewCapture()
+	env := emailEnvelope()
+	env.Step.EditorType = "html"
+	env.Step.BodyTemplate = "<h1>Hi</h1>"
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	h := NewEmail(s, stubResolver{provider: cap, from: "noreply@acme.io"})
+	if _, err := h.HandleEmail(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleEmail: %v", err)
+	}
+	sent := cap.Sent()
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 sent email, got %d", len(sent))
+	}
+	if sent[0].HTML != "<h1>Hi</h1>" {
+		t.Errorf("HTML = %q, want <h1>Hi</h1>", sent[0].HTML)
+	}
+	if sent[0].Text != "" {
+		t.Errorf("Text = %q, want empty when editorType=html", sent[0].Text)
+	}
+}
+
+func TestHandleEmail_EditorTypeBlock_SetsTextField(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	cap := providers.NewCapture()
+	env := emailEnvelope()
+	env.Step.EditorType = "block"
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	h := NewEmail(s, stubResolver{provider: cap, from: "noreply@acme.io"})
+	if _, err := h.HandleEmail(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleEmail: %v", err)
+	}
+	sent := cap.Sent()
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 sent email, got %d", len(sent))
+	}
+	if sent[0].Text == "" {
+		t.Errorf("Text is empty, want non-empty when editorType=block")
+	}
+	if sent[0].HTML != "" {
+		t.Errorf("HTML = %q, want empty when editorType=block", sent[0].HTML)
+	}
+}
+
 func TestHandleEmail_PublishesDeliveryOnSent(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)

@@ -3,14 +3,16 @@ package trigger
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/danmestas/notify/internal/runenv"
 )
 
-// TestStepControls_DataJSON_Unmarshal verifies that stepControls correctly
-// deserializes data_json as a raw JSON string from the ControlValues blob,
-// and that the resulting string can be round-tripped to map[string]string.
+// TestStepControls_DataJSON_Unmarshal verifies that runenv.StepControls
+// correctly deserializes data_json as a raw JSON string from the ControlValues
+// blob, and that the resulting string can be round-tripped to map[string]string.
 func TestStepControls_DataJSON_Unmarshal(t *testing.T) {
 	raw := json.RawMessage(`{"title":"Alert","body":"Body","data_json":"{\"screen\":\"home\",\"badge\":\"3\"}"}`)
-	var controls stepControls
+	var controls runenv.StepControls
 	if err := json.Unmarshal(raw, &controls); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
@@ -34,7 +36,7 @@ func TestStepControls_DataJSON_Unmarshal(t *testing.T) {
 // DataJSON as empty string (zero value).
 func TestStepControls_DataJSON_EmptyOmitted(t *testing.T) {
 	raw := json.RawMessage(`{"title":"Alert","body":"Body"}`)
-	var controls stepControls
+	var controls runenv.StepControls
 	if err := json.Unmarshal(raw, &controls); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}

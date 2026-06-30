@@ -184,3 +184,46 @@ func TestClient_Send_TimeoutIsTransient(t *testing.T) {
 		t.Errorf("timeout classified permanent, want transient: %v", err)
 	}
 }
+
+// TestClient_Send_ReplyTo verifies that msg.ReplyTo is sent as reply_to in the
+// Resend wire payload (as a JSON array per Resend v2 schema).
+func TestClient_Send_ReplyTo(t *testing.T) {
+	srv, got := stubServer(t, http.StatusOK, `{"id":"re_reply"}`)
+
+	c := &Client{APIKey: "k", From: "a@b.com", BaseURL: srv.URL}
+	if _, err := c.Send(context.Background(), providers.EmailMessage{
+		To:      "x@y.com",
+		Text:    "body",
+		ReplyTo: "support@x.io",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	var payload map[string]any
+	_ = json.Unmarshal([]byte(got.body), &payload)
+	raw, ok := payload["reply_to"]
+	if !ok {
+		t.Fatalf("reply_to field missing from wire body: %s", got.body)
+	}
+	arr, ok := raw.([]any)
+	if !ok || len(arr) != 1 || arr[0] != "support@x.io" {
+		t.Errorf("reply_to = %v, want [\"support@x.io\"]", raw)
+	}
+}
+
+// TestClient_Send_ReplyToEmpty_OmittedFromWire verifies that an empty
+// msg.ReplyTo does not emit a reply_to key in the wire body.
+func TestClient_Send_ReplyToEmpty_OmittedFromWire(t *testing.T) {
+	srv, got := stubServer(t, http.StatusOK, `{"id":"re_no_reply"}`)
+
+	c := &Client{APIKey: "k", From: "a@b.com", BaseURL: srv.URL}
+	if _, err := c.Send(context.Background(), providers.EmailMessage{
+		To:   "x@y.com",
+		Text: "body",
+		// ReplyTo is empty — must not appear in wire body.
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if strings.Contains(got.body, "reply_to") {
+		t.Errorf("reply_to unexpectedly present in body: %s", got.body)
+	}
+}

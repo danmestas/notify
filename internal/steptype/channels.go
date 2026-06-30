@@ -59,10 +59,25 @@ func (email) Validate(json.RawMessage) error                   { return nil }
 func (email) EditorPartial() string                            { return "wf-step-fields-email" }
 
 func (email) ParseForm(form url.Values) (json.RawMessage, error) {
-	return marshalControlValues(map[string]any{
+	m := map[string]any{
 		"subject": formField(form, "subject"),
 		"body":    formField(form, "body"),
-	})
+	}
+	// Optional email overrides: omit keys whose trimmed value is empty so the
+	// JSON stays compact and does not corrupt controlValues on new/unset steps.
+	if v := formField(form, "from"); v != "" {
+		m["from"] = v
+	}
+	if v := formField(form, "reply_to"); v != "" {
+		m["replyTo"] = v
+	}
+	if v := formField(form, "editor_type"); v != "" {
+		m["editorType"] = v
+	}
+	if v := formField(form, "layout_key"); v != "" {
+		m["layoutKey"] = v
+	}
+	return marshalControlValues(m)
 }
 
 // push is the push channel step type (title + body).

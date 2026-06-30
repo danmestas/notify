@@ -13,6 +13,31 @@ type Scope struct {
 	EnvID string `json:"envId"`
 }
 
+// StepControls is the decoded shape of domain.Step.ControlValues. It is the
+// single exported definition shared by both internal/trigger (ingest path) and
+// internal/delivery/rebuild (self-source path), so the compiler enforces sync
+// between the two paths instead of relying on developer discipline.
+type StepControls struct {
+	Subject  string `json:"subject"`
+	Body     string `json:"body"`
+	Throttle struct {
+		Limit     int `json:"limit"`
+		WindowSec int `json:"windowSec"`
+	} `json:"throttle"`
+	LayoutKey string   `json:"layoutKey"`
+	Priority  int      `json:"priority"`
+	Tags      []string `json:"tags"`
+	Markdown  bool     `json:"markdown"`
+	// Email-specific per-step overrides. Empty string means "use integration default".
+	From       string `json:"from,omitempty"`
+	ReplyTo    string `json:"replyTo,omitempty"`
+	EditorType string `json:"editorType,omitempty"`
+	// DataJSON is the raw JSON string stored under "data_json" in controlValues
+	// (written by push.ParseForm). Unmarshaled to map[string]string at
+	// envelope-build time and forwarded as runenv.Step.Data.
+	DataJSON string `json:"data_json,omitempty"`
+}
+
 // Step is the per-step authored config the handler needs at runtime. Templates
 // travel here because dagnats StepDef config does NOT reach the worker \u2014 only
 // TaskPayload.Input does (verified against dag.ResolveInput).
@@ -32,6 +57,11 @@ type Step struct {
 	// Data is the optional key-value map forwarded as native data to FCM and
 	// Expo (deep-links, badges). Absent/nil sends no data payload.
 	Data map[string]string `json:"data,omitempty"`
+	// Email-only per-step overrides. Empty means "use integration-level default".
+	// Non-email handlers must ignore these fields.
+	From       string `json:"from,omitempty"`
+	ReplyTo    string `json:"replyTo,omitempty"`
+	EditorType string `json:"editorType,omitempty"` // "html" \u2192 HTML body; "" or "block" \u2192 Text body
 	// Filters is the step's per-step condition (a JSON array of filter.Group,
 	// copied verbatim from domain.Step.Filters). Empty/absent => no condition =>
 	// the step always runs. When present, the send handler evaluates it against

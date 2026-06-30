@@ -233,3 +233,54 @@ func TestClient_Send_TimeoutIsTransient(t *testing.T) {
 		t.Errorf("timeout classified permanent, want transient: %v", err)
 	}
 }
+
+// TestClient_Send_ReplyTo verifies that msg.ReplyTo is wired into
+// ReplyToAddresses in the SESv2 outbound-emails payload.
+func TestClient_Send_ReplyTo(t *testing.T) {
+	srv, got := stubServer(t, http.StatusOK, `{"MessageId":"ses_reply"}`)
+
+	c := &Client{
+		AccessKeyID: "k", SecretAccessKey: "s",
+		Region: "us-east-1", From: "a@b.com",
+		BaseURL: srv.URL, now: fixedClock(),
+	}
+	if _, err := c.Send(context.Background(), providers.EmailMessage{
+		To:      "x@y.com",
+		Text:    "body",
+		ReplyTo: "support@x.io",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	var payload map[string]any
+	_ = json.Unmarshal([]byte(got.body), &payload)
+	raw, ok := payload["ReplyToAddresses"]
+	if !ok {
+		t.Fatalf("ReplyToAddresses missing from wire body: %s", got.body)
+	}
+	arr, ok := raw.([]any)
+	if !ok || len(arr) != 1 || arr[0] != "support@x.io" {
+		t.Errorf("ReplyToAddresses = %v, want [\"support@x.io\"]", raw)
+	}
+}
+
+// TestClient_Send_ReplyToEmpty_OmittedFromWire verifies that an empty
+// msg.ReplyTo does not emit ReplyToAddresses in the wire body.
+func TestClient_Send_ReplyToEmpty_OmittedFromWire(t *testing.T) {
+	srv, got := stubServer(t, http.StatusOK, `{"MessageId":"ses_no_reply"}`)
+
+	c := &Client{
+		AccessKeyID: "k", SecretAccessKey: "s",
+		Region: "us-east-1", From: "a@b.com",
+		BaseURL: srv.URL, now: fixedClock(),
+	}
+	if _, err := c.Send(context.Background(), providers.EmailMessage{
+		To:   "x@y.com",
+		Text: "body",
+		// ReplyTo is empty — must not appear in wire body.
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if strings.Contains(got.body, "ReplyToAddresses") {
+		t.Errorf("ReplyToAddresses unexpectedly present in body: %s", got.body)
+	}
+}

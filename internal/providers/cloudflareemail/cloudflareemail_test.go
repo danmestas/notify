@@ -320,3 +320,43 @@ func TestClient_Send_TimeoutIsTransient(t *testing.T) {
 		t.Errorf("error %q leaks the endpoint URL / account ID", err)
 	}
 }
+
+// TestClient_Send_HonorsMsgFrom verifies that a non-empty msg.From overrides
+// Client.From in the wire payload (bug fix: previously the code hardcoded c.From).
+func TestClient_Send_HonorsMsgFrom(t *testing.T) {
+	const respBody = `{"success":true,"result":{"delivered":["x@e.com"],"permanent_bounces":[],"queued":[]},"errors":[]}`
+	srv, got := stubServer(t, http.StatusOK, respBody)
+
+	c := &Client{AccountID: "a1", APIToken: "t1", From: "default@x.io", BaseURL: srv.URL}
+	if _, err := c.Send(context.Background(), providers.EmailMessage{
+		To:      "x@e.com",
+		Subject: "override test",
+		Text:    "body",
+		From:    "override@x.io",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if got.parsedBody.From != "override@x.io" {
+		t.Errorf("from = %q, want override@x.io (msg.From must win)", got.parsedBody.From)
+	}
+}
+
+// TestClient_Send_MsgFromEmpty_FallsBackToClientFrom verifies that an empty
+// msg.From falls back to Client.From (integration-level default).
+func TestClient_Send_MsgFromEmpty_FallsBackToClientFrom(t *testing.T) {
+	const respBody = `{"success":true,"result":{"delivered":["x@e.com"],"permanent_bounces":[],"queued":[]},"errors":[]}`
+	srv, got := stubServer(t, http.StatusOK, respBody)
+
+	c := &Client{AccountID: "a1", APIToken: "t1", From: "default@x.io", BaseURL: srv.URL}
+	if _, err := c.Send(context.Background(), providers.EmailMessage{
+		To:      "x@e.com",
+		Subject: "fallback test",
+		Text:    "body",
+		// From is empty → should fall back to c.From
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if got.parsedBody.From != "default@x.io" {
+		t.Errorf("from = %q, want default@x.io (Client.From fallback)", got.parsedBody.From)
+	}
+}

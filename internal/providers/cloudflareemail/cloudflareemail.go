@@ -103,9 +103,14 @@ func (c *Client) Send(ctx context.Context, msg providers.EmailMessage) (provider
 	endpoint := strings.TrimRight(baseURL, "/") +
 		"/accounts/" + url.PathEscape(c.AccountID) + "/email/sending/send"
 
+	// Per-message From override: msg.From wins over Client.From (integration default).
+	from := msg.From
+	if from == "" {
+		from = c.From
+	}
 	body := cfSendRequest{
 		To:      msg.To,
-		From:    c.From,
+		From:    from,
 		Subject: msg.Subject,
 	}
 	if msg.HTML != "" {

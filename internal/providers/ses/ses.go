@@ -70,6 +70,7 @@ type sesPayload struct {
 	FromEmailAddress string         `json:"FromEmailAddress"`
 	Destination      sesDestination `json:"Destination"`
 	Content          sesContent     `json:"Content"`
+	ReplyToAddresses []string       `json:"ReplyToAddresses,omitempty"`
 }
 
 // Send SigV4-signs and POSTs an SESv2 outbound-emails request. msg.From
@@ -100,7 +101,7 @@ func (c *Client) Send(ctx context.Context, msg providers.EmailMessage) (provider
 	}
 	endpoint := strings.TrimRight(base, "/") + "/v2/email/outbound-emails"
 
-	body, err := json.Marshal(sesPayload{
+	sp := sesPayload{
 		FromEmailAddress: from,
 		Destination:      sesDestination{ToAddresses: []string{msg.To}},
 		Content: sesContent{Simple: sesSimple{
@@ -110,7 +111,11 @@ func (c *Client) Send(ctx context.Context, msg providers.EmailMessage) (provider
 				HTML: sesData{Data: msg.HTML},
 			},
 		}},
-	})
+	}
+	if msg.ReplyTo != "" {
+		sp.ReplyToAddresses = []string{msg.ReplyTo}
+	}
+	body, err := json.Marshal(sp)
 	if err != nil {
 		return providers.Result{}, fmt.Errorf("ses: marshal body: %w", err)
 	}

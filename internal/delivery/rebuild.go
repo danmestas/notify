@@ -59,22 +59,16 @@ func RebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 	if found == nil {
 		return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: step %q not found in workflow %q", t.StepID, notif.WorkflowID)
 	}
-	var controls struct {
-		Subject  string `json:"subject"`
-		Body     string `json:"body"`
-		Throttle struct {
-			Limit     int `json:"limit"`
-			WindowSec int `json:"windowSec"`
-		} `json:"throttle"`
-		LayoutKey string `json:"layoutKey"`
-		// Push extras (ntfy): forwarded verbatim into runenv.Step.
-		Priority int      `json:"priority"`
-		Tags     []string `json:"tags"`
-		Markdown bool     `json:"markdown"`
-	}
+	var controls runenv.StepControls
 	if len(found.ControlValues) > 0 {
 		if err := json.Unmarshal(found.ControlValues, &controls); err != nil {
 			return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: unmarshal controlValues: %w", err)
+		}
+	}
+	var stepData map[string]string
+	if controls.DataJSON != "" {
+		if err := json.Unmarshal([]byte(controls.DataJSON), &stepData); err != nil {
+			return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: unmarshal data_json for step %s: %w", t.StepID, err)
 		}
 	}
 
@@ -133,6 +127,10 @@ func RebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 			Priority:          controls.Priority,
 			Tags:              controls.Tags,
 			Markdown:          controls.Markdown,
+			Data:              stepData,
+			From:              controls.From,
+			ReplyTo:           controls.ReplyTo,
+			EditorType:        controls.EditorType,
 			Filters:           found.Filters,
 		},
 	}, notif.DigestKey, stepOutputs, nil

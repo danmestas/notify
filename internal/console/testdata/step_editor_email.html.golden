@@ -14,6 +14,85 @@
       <input class="console-input" type="text" id="cv-subject" name="subject"
              value="Email subject">
     </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-from">From address <span class="form-hint-inline">(optional — overrides integration default)</span></label>
+      <input class="console-input" type="text" id="cv-from" name="from"
+             placeholder="sender@example.com"
+             value="">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-reply-to">Reply-To address <span class="form-hint-inline">(optional)</span></label>
+      <input class="console-input" type="text" id="cv-reply-to" name="reply_to"
+             placeholder="support@example.com"
+             value="">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-editor-type-trigger">Editor type</label>
+      
+<div class="ui-select" id="cv-editor-type" data-signals="{uiSelOpen_cv_editor_type: false, uiSelFilter_cv_editor_type: &#39;&#39;, cvEditorType: &#34;&#34;}"
+     data-on:click__outside="$uiSelOpen_cv_editor_type = false">
+
+  
+  <input type="hidden" name="editor_type" data-attr:value="$cvEditorType">
+  
+
+  <button type="button" class="ui-select-trigger" id="cv-editor-type-trigger"
+          aria-haspopup="listbox" aria-controls="cv-editor-type-popover"
+          data-attr:aria-expanded="$uiSelOpen_cv_editor_type ? &#39;true&#39; : &#39;false&#39;"
+          data-on:click="$uiSelOpen_cv_editor_type = !$uiSelOpen_cv_editor_type"
+          data-on:keydown="if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_editor_type = false } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $uiSelOpen_cv_editor_type = true; const opts = Array.from(evt.target.closest(&#39;.ui-select&#39;).querySelectorAll(&#39;.ui-select-option&#39;)); const o = opts.find(el =&gt; el.style.display !== &#39;none&#39;); if (o) requestAnimationFrame(() =&gt; o.focus()) }"
+          data-on:keydown__window="evt.key === &#39;Escape&#39; &amp;&amp; ($uiSelOpen_cv_editor_type = false)">
+    <span class="ui-select-trigger-label" data-text="$cvEditorType === &#34;block&#34; ? &#34;Block (plain text)&#34; : ($cvEditorType === &#34;html&#34; ? &#34;HTML&#34; : (&#34;Editor type&#34;))">Editor type</span>
+    <span class="ui-select-trigger-chevron" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+</span>
+  </button>
+
+  
+  <div class="ui-select-popover" id="cv-editor-type-popover" role="listbox"
+       aria-label="Editor type"
+       data-show="$uiSelOpen_cv_editor_type">
+
+    
+
+    <div class="ui-select-options">
+      
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="block"
+           data-attr:aria-selected="($cvEditorType === &#34;block&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvEditorType = &#34;block&#34;; $uiSelOpen_cv_editor_type = false; $uiSelFilter_cv_editor_type = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvEditorType = &#34;block&#34;; $uiSelOpen_cv_editor_type = false; $uiSelFilter_cv_editor_type = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_editor_type = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Block (plain text)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvEditorType === &#34;block&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="html"
+           data-attr:aria-selected="($cvEditorType === &#34;html&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$cvEditorType = &#34;html&#34;; $uiSelOpen_cv_editor_type = false; $uiSelFilter_cv_editor_type = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $cvEditorType = &#34;html&#34;; $uiSelOpen_cv_editor_type = false; $uiSelFilter_cv_editor_type = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_cv_editor_type = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">HTML</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$cvEditorType === &#34;html&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      
+    </div>
+  </div>
+</div>
+
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-layout-key">Layout key <span class="form-hint-inline">(optional)</span></label>
+      <input class="console-input" type="text" id="cv-layout-key" name="layout_key"
+             placeholder="main-layout"
+             value="">
+    </div>
     
 <div class="wf-preview-split">
   <div class="wf-preview-split-editor">

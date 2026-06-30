@@ -186,11 +186,27 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 		return h.persistEmailError(ctx, env, t, "", "", err)
 	}
 
+	// Per-step From override: step-level address wins over the integration default.
+	effectiveFrom := from
+	if env.Step.From != "" {
+		effectiveFrom = env.Step.From
+	}
+
+	// EditorType selects the body field: "html" → HTML body, "" or "block" → Text body.
+	var msgHTML, msgText string
+	if env.Step.EditorType == "html" {
+		msgHTML = content
+	} else {
+		msgText = content
+	}
+
 	if _, err := provider.Send(ctx, providers.EmailMessage{
-		From:    from,
+		From:    effectiveFrom,
 		To:      to,
 		Subject: subject,
-		Text:    content,
+		Text:    msgText,
+		HTML:    msgHTML,
+		ReplyTo: env.Step.ReplyTo,
 	}); err != nil {
 		return h.persistEmailError(ctx, env, t, providerID, integrationID, err)
 	}

@@ -271,3 +271,62 @@ func TestPush_ParseForm_EmptyDataJSON(t *testing.T) {
 		t.Errorf("data_json present in output when form field is empty, want absent")
 	}
 }
+
+// TestEmailParseForm_Overrides verifies that from, reply_to, editor_type, and
+// layout_key are captured from the form and written to the ControlValues JSON.
+func TestEmailParseForm_Overrides(t *testing.T) {
+	r := steptype.Default()
+	form := url.Values{
+		"subject":     {"Hello"},
+		"body":        {"World"},
+		"from":        {"custom@acme.io"},
+		"reply_to":    {"support@acme.io"},
+		"editor_type": {"html"},
+		"layout_key":  {"main-layout"},
+	}
+	got, err := r.Get("email").ParseForm(form)
+	if err != nil {
+		t.Fatalf("ParseForm: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m["from"] != "custom@acme.io" {
+		t.Errorf("from = %v, want custom@acme.io", m["from"])
+	}
+	if m["replyTo"] != "support@acme.io" {
+		t.Errorf("replyTo = %v, want support@acme.io", m["replyTo"])
+	}
+	if m["editorType"] != "html" {
+		t.Errorf("editorType = %v, want html", m["editorType"])
+	}
+	if m["layoutKey"] != "main-layout" {
+		t.Errorf("layoutKey = %v, want main-layout", m["layoutKey"])
+	}
+}
+
+// TestEmailParseForm_EmptyOptionalOmitted verifies that empty from, reply_to,
+// editor_type, and layout_key are not written to the ControlValues JSON so that
+// the output stays compact and does not corrupt existing steps.
+func TestEmailParseForm_EmptyOptionalOmitted(t *testing.T) {
+	r := steptype.Default()
+	form := url.Values{
+		"subject": {"Hello"},
+		"body":    {"World"},
+		// from, reply_to, editor_type, layout_key deliberately absent.
+	}
+	got, err := r.Get("email").ParseForm(form)
+	if err != nil {
+		t.Fatalf("ParseForm: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, key := range []string{"from", "replyTo", "editorType", "layoutKey"} {
+		if _, exists := m[key]; exists {
+			t.Errorf("key %q present but should be omitted when form value is empty", key)
+		}
+	}
+}

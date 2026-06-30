@@ -145,6 +145,30 @@
       <input class="console-input" type="text" id="cv-subject" name="subject"
              value="{{index .ControlMap "subject"}}">
     </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-from">From address <span class="form-hint-inline">(optional — overrides integration default)</span></label>
+      <input class="console-input" type="text" id="cv-from" name="from"
+             placeholder="sender@example.com"
+             value="{{index .ControlMap "from"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-reply-to">Reply-To address <span class="form-hint-inline">(optional)</span></label>
+      <input class="console-input" type="text" id="cv-reply-to" name="reply_to"
+             placeholder="support@example.com"
+             value="{{index .ControlMap "replyTo"}}">
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-editor-type-trigger">Editor type</label>
+      {{template "ui-select" (uiSelectForm "cv-editor-type" "editor_type" "cvEditorType"
+        (uiSelectOptions "block" "Block (plain text)" "html" "HTML")
+        "Editor type" "" false (index .ControlMap "editorType") true)}}
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-layout-key">Layout key <span class="form-hint-inline">(optional)</span></label>
+      <input class="console-input" type="text" id="cv-layout-key" name="layout_key"
+             placeholder="main-layout"
+             value="{{index .ControlMap "layoutKey"}}">
+    </div>
     {{template "wf-preview-split" (dict "BodyLabel" "Body" "Rows" 6 "Body" (index .ControlMap "body"))}}
     {{end}}
 {{define "wf-step-fields-in_app"}}

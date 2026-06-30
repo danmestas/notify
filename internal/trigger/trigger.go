@@ -97,26 +97,6 @@ type wireSubscriber struct {
 	Data         json.RawMessage `json:"data,omitempty"`
 }
 
-// stepControls is the {subject, body} ControlValues shape notify reads from a
-// workflow step, regardless of channel.
-type stepControls struct {
-	Subject  string `json:"subject"`
-	Body     string `json:"body"`
-	Throttle struct {
-		Limit     int `json:"limit"`
-		WindowSec int `json:"windowSec"`
-	} `json:"throttle"`
-	LayoutKey string `json:"layoutKey"`
-	// Push extras (ntfy): forwarded verbatim into runenv.Step.
-	Priority int      `json:"priority"`
-	Tags     []string `json:"tags"`
-	Markdown bool     `json:"markdown"`
-	// DataJSON is the raw JSON string stored under "data_json" in controlValues
-	// (written by push.ParseForm). Unmarshaled to map[string]string at
-	// envelope-build time and forwarded as runenv.Step.Data.
-	DataJSON string `json:"data_json,omitempty"`
-}
-
 // digestKeyPath extracts the optional digestKey dot-path from a digest step's
 // controlValues (e.g. "payload.orderId"). An absent/empty field means "group by
 // the per-subscriber base key", preserving the original behaviour.
@@ -318,7 +298,7 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 		return "", err
 	}
 	step := steps[0]
-	var controls stepControls
+	var controls runenv.StepControls
 	if len(step.ControlValues) > 0 {
 		if err := json.Unmarshal(step.ControlValues, &controls); err != nil {
 			return "", err
@@ -393,6 +373,9 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 			Tags:              controls.Tags,
 			Markdown:          controls.Markdown,
 			Data:              stepData,
+			From:              controls.From,
+			ReplyTo:           controls.ReplyTo,
+			EditorType:        controls.EditorType,
 			Filters:           step.Filters,
 		},
 	}
