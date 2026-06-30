@@ -17,7 +17,8 @@ import (
 // downstream channel steps execute and no message row is written.
 type throttle struct{}
 
-func (throttle) Name() string { return "throttle" }
+func (throttle) Name() string        { return "throttle" }
+func (throttle) DisplayName() string { return "Throttle" }
 
 func (throttle) DefaultControlValues() json.RawMessage {
 	return json.RawMessage(`{"limit":10,"windowSec":3600}`)

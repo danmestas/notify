@@ -75,11 +75,11 @@
       <div class="wf-add-step">
         <h3 class="console-card-title" style="margin-top:var(--space-4)">Add step</h3>
         <div class="wf-step-type-buttons">
-          {{range $type := list "in_app" "email" "push" "sms" "delay" "digest"}}
+          {{range $entry := $page.StepCatalog}}
           <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/steps" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-            <input type="hidden" name="type" value="{{$type}}">
-            <button type="submit" class="btn btn-outline btn-sm">+ {{$type}}</button>
+            <input type="hidden" name="type" value="{{$entry.Name}}">
+            <button type="submit" class="btn btn-outline btn-sm">+ {{$entry.Label}}</button>
           </form>
           {{end}}
         </div>

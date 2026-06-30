@@ -28,6 +28,9 @@ import (
 type StepType interface {
 	// Name is the wire/type identifier (e.g. "in_app", "delay").
 	Name() string
+	// DisplayName is the human-friendly label shown in the console UI (e.g.
+	// "In-App", "HTTP Request").
+	DisplayName() string
 	// DefaultControlValues is the minimal valid controlValues blob seeded into
 	// a freshly added step of this type.
 	DefaultControlValues() json.RawMessage
@@ -45,6 +48,13 @@ type StepType interface {
 	// EditorPartial is the html/template partial name rendering this type's
 	// editor fields.
 	EditorPartial() string
+}
+
+// StepEntry pairs a type's wire name with its human label for use in UI lists
+// such as the console's add-step menu.
+type StepEntry struct {
+	Name  string
+	Label string
 }
 
 // Registry is an ordered, name-keyed set of step types. It is built once and
@@ -97,6 +107,18 @@ func (r *Registry) All() []StepType {
 	out := make([]StepType, 0, len(r.order))
 	for _, name := range r.order {
 		out = append(out, r.byName[name])
+	}
+	return out
+}
+
+// Catalog returns a (Name, Label) entry for each registered type in
+// registration order. Consumers such as the console's add-step menu range over
+// this instead of maintaining a parallel hardcoded list.
+func (r *Registry) Catalog() []StepEntry {
+	out := make([]StepEntry, 0, len(r.order))
+	for _, name := range r.order {
+		st := r.byName[name]
+		out = append(out, StepEntry{Name: name, Label: st.DisplayName()})
 	}
 	return out
 }

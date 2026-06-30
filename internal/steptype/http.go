@@ -23,7 +23,8 @@ import (
 // json.Unmarshal on the string.
 type httpRequest struct{}
 
-func (httpRequest) Name() string { return "http_request" }
+func (httpRequest) Name() string        { return "http_request" }
+func (httpRequest) DisplayName() string { return "HTTP Request" }
 
 func (httpRequest) DefaultControlValues() json.RawMessage {
 	return json.RawMessage(`{"url":"","method":"GET","headers":"{}","body":"","timeoutSec":30,"failurePolicy":"fail_closed"}`)

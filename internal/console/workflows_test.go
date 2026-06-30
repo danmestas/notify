@@ -218,6 +218,35 @@ func TestWorkflowDetail_RendersDefinition(t *testing.T) {
 	}
 }
 
+// TestWorkflowDetail_AddStepMenuContainsAllRegisteredTypes asserts that the
+// add-step button list is driven by the steptype registry and includes every
+// registered type — specifically the three that were missing from the previous
+// hardcoded list: chat, throttle, and http_request.
+func TestWorkflowDetail_AddStepMenuContainsAllRegisteredTypes(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "MyFlow", "my-flow")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/my-flow", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/workflows/my-flow: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// All nine registered types must appear as hidden type inputs in the add-step
+	// form buttons. Three were missing from the old hardcoded list.
+	wantTypes := []string{
+		"in_app", "email", "push", "chat", "sms",
+		"delay", "digest", "throttle", "http_request",
+	}
+	for _, typ := range wantTypes {
+		needle := `name="type" value="` + typ + `"`
+		if !strings.Contains(body, needle) {
+			t.Errorf("add-step menu missing type %q (needle %q not found)", typ, needle)
+		}
+	}
+}
+
 func TestWorkflowDetail_NotFoundSlugReturns404(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)

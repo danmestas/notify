@@ -204,6 +204,7 @@ func delayRetryPolicy() *engine.RetryPolicy {
 type delay struct{}
 
 func (delay) Name() string                          { return "delay" }
+func (delay) DisplayName() string                   { return "Delay" }
 func (delay) DefaultControlValues() json.RawMessage { return sleepControlValues() }
 func (delay) EditorPartial() string                 { return "wf-step-fields-delay" }
 
@@ -368,6 +369,7 @@ func parseMonthDays(s string) ([]int, error) {
 type digest struct{}
 
 func (digest) Name() string                                    { return "digest" }
+func (digest) DisplayName() string                             { return "Digest" }
 func (digest) ControlMap(cv json.RawMessage) map[string]string { return flattenControlValues(cv) }
 func (digest) EditorPartial() string                           { return "wf-step-fields-digest" }
 

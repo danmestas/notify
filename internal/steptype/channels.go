@@ -37,6 +37,7 @@ func marshalControlValues(m map[string]any) (json.RawMessage, error) {
 type inApp struct{}
 
 func (inApp) Name() string                                     { return "in_app" }
+func (inApp) DisplayName() string                              { return "In-App" }
 func (inApp) DefaultControlValues() json.RawMessage            { return emptyControlValues() }
 func (inApp) Compile(step domain.Step) (engine.StepDef, error) { return channelStepDef(step), nil }
 func (inApp) Validate(json.RawMessage) error                   { return nil }
@@ -46,6 +47,7 @@ func (inApp) EditorPartial() string                            { return "wf-step
 type email struct{}
 
 func (email) Name() string                                     { return "email" }
+func (email) DisplayName() string                              { return "Email" }
 func (email) DefaultControlValues() json.RawMessage            { return emptyControlValues() }
 func (email) ControlMap(cv json.RawMessage) map[string]string  { return flattenControlValues(cv) }
 func (email) Compile(step domain.Step) (engine.StepDef, error) { return channelStepDef(step), nil }
@@ -78,6 +80,7 @@ func (email) ParseForm(form url.Values) (json.RawMessage, error) {
 type push struct{}
 
 func (push) Name() string                                     { return "push" }
+func (push) DisplayName() string                              { return "Push" }
 func (push) DefaultControlValues() json.RawMessage            { return emptyControlValues() }
 func (push) ControlMap(cv json.RawMessage) map[string]string  { return flattenControlValues(cv) }
 func (push) Compile(step domain.Step) (engine.StepDef, error) { return channelStepDef(step), nil }
@@ -134,6 +137,7 @@ func validateDataJSON(s string) error {
 type sms struct{}
 
 func (sms) Name() string                                     { return "sms" }
+func (sms) DisplayName() string                              { return "SMS" }
 func (sms) DefaultControlValues() json.RawMessage            { return emptyControlValues() }
 func (sms) ControlMap(cv json.RawMessage) map[string]string  { return flattenControlValues(cv) }
 func (sms) Compile(step domain.Step) (engine.StepDef, error) { return channelStepDef(step), nil }
@@ -148,6 +152,7 @@ func (sms) ParseForm(form url.Values) (json.RawMessage, error) {
 type chat struct{}
 
 func (chat) Name() string                                     { return "chat" }
+func (chat) DisplayName() string                              { return "Chat" }
 func (chat) DefaultControlValues() json.RawMessage            { return emptyControlValues() }
 func (chat) ControlMap(cv json.RawMessage) map[string]string  { return flattenControlValues(cv) }
 func (chat) Compile(step domain.Step) (engine.StepDef, error) { return channelStepDef(step), nil }

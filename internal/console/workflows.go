@@ -18,6 +18,7 @@ import (
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/delivery/filter"
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
 )
@@ -140,6 +141,10 @@ type workflowEditorView struct {
 	// future activity tab.
 	ActiveTab string
 	Signals   template.JS
+	// StepCatalog is the ordered list of step types from the registry, used to
+	// render the add-step button menu. Driven from steptype.Default().Catalog()
+	// so all registered types appear without manual list maintenance.
+	StepCatalog []steptype.StepEntry
 }
 
 // workflowStepEditorStep carries one step's decoded config for the
@@ -716,6 +721,7 @@ func (c *Console) serveWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 		FormError:         r.URL.Query().Get("error"),
 		ActiveTab:         "editor",
 		Signals:           workflowsSignalsJSON(false),
+		StepCatalog:       c.stepTypes.Catalog(),
 	}
 	c.renderPage(w, r, http.StatusOK, "workflow-detail", wf.Name, view)
 }
