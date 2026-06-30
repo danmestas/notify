@@ -371,8 +371,12 @@ func runServe(args []string) error {
 		ChatStatus:        chatStatus{chat: chat, scope: chatScope},
 		MasterKey:         mk,
 		DagnatsConsoleURL: os.Getenv("NOTIFY_DAGNATS_CONSOLE_URL"),
-		ReadOnly:          os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",
-		HTTPAddr:          *addr,
+		// B2: AI workflow builder (Guided create tab). An unset key leaves the
+		// feature gracefully disabled (the tab shows a not-configured note).
+		AnthropicKey:    os.Getenv("ANTHROPIC_API_KEY"),
+		BuilderSessions: st.BuilderSessions(),
+		ReadOnly:        os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",
+		HTTPAddr:        *addr,
 		// #104: public origin used to render ready-to-register inbound webhook
 		// URLs on the agent channels tab. Empty falls back to a "{base_url}"
 		// placeholder the operator fills in.

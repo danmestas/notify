@@ -12,6 +12,8 @@ package aibuilder
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -101,10 +103,16 @@ type anthropicClient struct {
 	sdk anthropic.Client
 }
 
+// anthropicHTTPTimeout bounds individual HTTP calls to the Anthropic API.
+// The builder loop enforces its own overall bound via ctx; this is a per-call
+// backstop against a permanently stalled TCP connection.
+const anthropicHTTPTimeout = 120 * time.Second
+
 // NewAnthropicClient builds a Client over the Anthropic Messages API using the
 // given key. An empty key falls back to the SDK's ANTHROPIC_API_KEY lookup.
 func NewAnthropicClient(apiKey string) Client {
-	var opts []option.RequestOption
+	httpClient := &http.Client{Timeout: anthropicHTTPTimeout}
+	opts := []option.RequestOption{option.WithHTTPClient(httpClient)}
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
 	}

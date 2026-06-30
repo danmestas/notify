@@ -126,6 +126,14 @@ func (s *Store) StepOutputs() StepOutputRepo {
 	return &stepOutputRepo{w: s.writer, r: s.reader}
 }
 
+// BuilderSessions vends the AI workflow-builder session repository: the Guided
+// create flow persists each generate run (prompt + proposed draft) here, scoped
+// by org + environment, and the confirm step reads the draft back before
+// compiling it through authoring.
+func (s *Store) BuilderSessions() BuilderSessionRepo {
+	return &builderSessionRepo{w: s.writer, r: s.reader}
+}
+
 // Pools exposes the writer/reader pairs so sibling bounded-context stores
 // (internal/agents/store) run their Scope-enforced queries over the same
 // SQLite database and migration set instead of opening parallel pools.

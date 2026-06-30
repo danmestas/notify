@@ -53,10 +53,25 @@
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
                 data-on:click="$workflowNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
+
+      {{/* Mode tabs: Manual (unchanged) vs Guided (AI builder, B2). */}}
+      <div class="console-tabs" role="tablist" aria-label="Create mode">
+        <button type="button" class="console-tab" role="tab"
+                data-attr:aria-selected="$wfCreateMode === 'manual'"
+                data-class:console-tab-active="$wfCreateMode === 'manual'"
+                data-on:click="$wfCreateMode = 'manual'">Manual</button>
+        <button type="button" class="console-tab" role="tab"
+                data-attr:aria-selected="$wfCreateMode === 'guided'"
+                data-class:console-tab-active="$wfCreateMode === 'guided'"
+                data-on:click="$wfCreateMode = 'guided'">Guided</button>
+      </div>
+
       {{if $page.FormError}}
       <p id="wf-form-error" class="console-form-error" role="alert">{{$page.FormError}}</p>
       {{end}}
-      <form method="POST" action="/console/api/workflows">
+
+      {{/* Manual create — the unchanged path. */}}
+      <form method="POST" action="/console/api/workflows" data-show="$wfCreateMode === 'manual'">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="new-wf-name">Name *</label>
@@ -74,6 +89,32 @@
           <button type="submit" class="btn btn-primary">Create workflow</button>
         </div>
       </form>
+
+      {{/* Guided create — describe the workflow, the AI builder proposes one. */}}
+      <div data-show="$wfCreateMode === 'guided'">
+        {{if $page.AIConfigured}}
+        <form id="wf-ai-form">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <div class="form-row">
+            <label class="form-label" for="wf-ai-prompt">Describe your workflow</label>
+            <textarea class="console-input" id="wf-ai-prompt" name="prompt" rows="4"
+                      placeholder="When a user signs up, send a welcome in-app message, wait a day, then email them onboarding tips."></textarea>
+          </div>
+          <div class="console-slideover-actions">
+            <button type="button" class="btn btn-outline" data-on:click="$workflowNewOpen = false">Cancel</button>
+            <button type="button" class="btn btn-primary"
+                    data-on:click="@post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#wf-ai-form'})">Generate</button>
+          </div>
+        </form>
+        {{else}}
+        <p class="console-empty" role="note">
+          The AI workflow builder is not configured. Set <code>ANTHROPIC_API_KEY</code> on the
+          server to enable Guided creation.
+        </p>
+        {{end}}
+        {{/* Preview region — patched by the ai-generate SSE response. */}}
+        <div id="ai-builder-preview"></div>
+      </div>
     </div>
     {{end}}
   </div>

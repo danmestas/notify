@@ -47,7 +47,7 @@ func TestStore_Migrate_IsIdempotent(t *testing.T) {
 	}
 
 	want := []string{
-		"agent_links", "agents", "analytics_deliveries", "api_keys", "chat_threads", "contexts", "conversation_activities", "conversations",
+		"agent_links", "agents", "analytics_deliveries", "api_keys", "builder_messages", "builder_sessions", "chat_threads", "contexts", "conversation_activities", "conversations",
 		"email_threads", "env_var_values", "env_vars",
 		"environments", "inbound_domains", "integrations", "layouts", "messages", "notifications",
 		"organizations", "preferences", "step_outputs", "subscriber_channels", "subscribers", "topic_subscribers", "topic_triggers", "topics", "translations", "webhook_endpoints", "workflows",
@@ -97,8 +97,8 @@ func businessTables(t *testing.T, s *Store) []string {
 func TestMigrate_0005_AppliesDigestKey(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 22 {
-		t.Fatalf("expected 22 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 23 {
+		t.Fatalf("expected 23 recorded migrations, got %d", n)
 	}
 
 	var found bool

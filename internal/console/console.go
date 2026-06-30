@@ -9,10 +9,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	agentstore "github.com/danmestas/notify/internal/agents/store"
+	"github.com/danmestas/notify/internal/aibuilder"
 	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
@@ -101,6 +103,16 @@ type Deps struct {
 	// degrade to plain text instead of dead links. Plumbed here for the
 	// activity feed slice (W1-6).
 	DagnatsConsoleURL string
+	// AnthropicKey is the Anthropic API key (ANTHROPIC_API_KEY) that powers the
+	// AI workflow builder's Guided create tab (B2). Empty means "AI builder not
+	// configured": New leaves the aiBuilder nil, the Guided tab shows a
+	// not-configured note, and the ai-generate endpoint returns a clear message
+	// instead of panicking. Wired from os.Getenv at cmd/notify/main.go.
+	AnthropicKey string
+	// BuilderSessions persists AI workflow-builder sessions (prompt + proposed
+	// draft) for the Guided create flow's generate -> preview -> confirm loop.
+	// Nil disables the AI builder endpoints (treated as not configured).
+	BuilderSessions store.BuilderSessionRepo
 	// Notifications provides the NotificationRepo for the activity feed
 	// (W1-6). Nil is allowed only when no activity routes are mounted;
 	// in practice New panics when Notifications is nil (activity page
@@ -209,6 +221,21 @@ type Console struct {
 	gcm       cipher.AEAD
 	ts        *templateSet
 	stepTypes *steptype.Registry
+	// aiBuilder drives the Guided create tab (B2). It is non-nil only when
+	// deps.AnthropicKey is set; a nil aiBuilder gracefully disables the feature
+	// (the Guided tab shows a not-configured note, the endpoints return a clear
+	// message). Tests inject a Builder backed by a scripted mock Client.
+	aiBuilder aiWorkflowBuilder
+	// aiGenerateTimeoutOverride, when non-zero, replaces aiGenerateTimeout as the
+	// wall-clock cap on a single AI generation run (tests only).
+	aiGenerateTimeoutOverride time.Duration
+}
+
+// aiWorkflowBuilder is the subset of *aibuilder.Builder the console drives. The
+// production wiring constructs a real Builder over the Anthropic client; tests
+// inject a Builder backed by a scripted mock aibuilder.Client (no API key).
+type aiWorkflowBuilder interface {
+	Run(ctx context.Context, scope domain.Scope, draft *aibuilder.WorkflowDraft, userPrompt string, emit func(aibuilder.Event)) error
 }
 
 // New builds a Console from deps. It panics on programmer errors (nil
@@ -264,6 +291,15 @@ func New(deps Deps) *Console {
 	c.ts.base.Funcs(c.funcMap())
 	for _, tmpl := range c.ts.pageTemplates {
 		tmpl.Funcs(c.funcMap())
+	}
+	// Wire the AI workflow builder only when a key and the integration lister are
+	// available. An unset key leaves aiBuilder nil — the Guided tab and endpoints
+	// degrade gracefully rather than panic (B2).
+	if deps.AnthropicKey != "" && deps.Integrations != nil {
+		c.aiBuilder = aibuilder.NewBuilder(
+			aibuilder.NewAnthropicClient(deps.AnthropicKey),
+			deps.Integrations,
+		)
 	}
 	return c
 }
@@ -340,6 +376,12 @@ func (c *Console) Routes() http.Handler {
 		pr.Get("/console/workflows/{slug}/duplicate", c.serveWorkflowDuplicate)
 		pr.Get("/console/workflows/{slug}", c.serveWorkflowDetail)
 		pr.Post("/console/api/workflows", c.handleWorkflowCreate)
+		// B2: AI workflow builder (Guided create tab). ai-generate runs the
+		// builder synchronously and patches a preview; ai-confirm compiles +
+		// persists the drafted workflow; ai-discard drops the draft.
+		pr.Post("/console/api/workflows/ai-generate", c.handleWorkflowAIGenerate)
+		pr.Post("/console/api/workflows/ai-confirm/{sessionID}", c.handleWorkflowAIConfirm)
+		pr.Post("/console/api/workflows/ai-discard/{sessionID}", c.handleWorkflowAIDiscard)
 		pr.Post("/console/api/workflows/{slug}/duplicate", c.handleWorkflowDuplicate)
 		// W2-A4: editor mutations. `steps/reorder` is registered before the
 		// `steps/{stepId}/...` wildcards so the literal `reorder` segment wins.

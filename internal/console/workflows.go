@@ -103,6 +103,10 @@ type workflowsPageView struct {
 	ShowDuplicate bool
 	// FormError is an inline validation error surfaced above the form.
 	FormError string
+	// AIConfigured reports whether the AI workflow builder is wired (an
+	// ANTHROPIC_API_KEY is set). When false the Guided create tab shows a
+	// not-configured note instead of the prompt form.
+	AIConfigured bool
 	// Source workflow info for the duplicate slide-over pre-fill.
 	SourceName       string
 	SourceSlug       string
@@ -332,6 +336,10 @@ func workflowsSignalsJSON(newOpen bool) template.JS {
 	b, err := json.Marshal(map[string]any{
 		"wfTab":           "editor",
 		"workflowNewOpen": newOpen,
+		// wfCreateMode toggles the create slide-over between the Manual form and
+		// the Guided (AI builder) tab. Defaults to manual so the unchanged path
+		// is the first thing an operator sees (B2).
+		"wfCreateMode": "manual",
 	})
 	if err != nil {
 		return template.JS("{}")
@@ -488,10 +496,11 @@ func (c *Console) serveWorkflowsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := workflowsPageView{
-		Header:   header,
-		Fragment: frag,
-		Signals:  workflowsSignalsJSON(false),
-		ReadOnly: c.deps.ReadOnly,
+		Header:       header,
+		Fragment:     frag,
+		Signals:      workflowsSignalsJSON(false),
+		ReadOnly:     c.deps.ReadOnly,
+		AIConfigured: c.aiBuilder != nil,
 	}
 	c.renderPage(w, r, http.StatusOK, "workflows", "Workflows", view)
 }
@@ -533,11 +542,12 @@ func (c *Console) serveWorkflowNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := workflowsPageView{
-		Header:    header,
-		Fragment:  frag,
-		Signals:   workflowsSignalsJSON(!c.deps.ReadOnly),
-		ReadOnly:  c.deps.ReadOnly,
-		FormError: r.URL.Query().Get("error"),
+		Header:       header,
+		Fragment:     frag,
+		Signals:      workflowsSignalsJSON(!c.deps.ReadOnly),
+		ReadOnly:     c.deps.ReadOnly,
+		FormError:    r.URL.Query().Get("error"),
+		AIConfigured: c.aiBuilder != nil,
 	}
 	c.renderPage(w, r, http.StatusOK, "workflows", "Workflows", view)
 }
@@ -584,6 +594,7 @@ func (c *Console) serveWorkflowDuplicate(w http.ResponseWriter, r *http.Request)
 		Fragment:         frag,
 		Signals:          workflowsSignalsJSON(false),
 		ReadOnly:         c.deps.ReadOnly,
+		AIConfigured:     c.aiBuilder != nil,
 		ShowDuplicate:    !c.deps.ReadOnly,
 		FormError:        r.URL.Query().Get("error"),
 		SourceName:       src.Name,

@@ -1,0 +1,38 @@
+{{/* ai-builder-preview — the proposed workflow the AI builder produced, patched
+     into #ai-builder-preview by the ai-generate SSE response. Renders an inline
+     error banner when generation/confirmation failed, the proposed name +
+     ordered steps otherwise, with a confirm (native POST -> redirect) and a
+     discard (datastar @post -> clears this region) action pair. */}}
+{{define "ai-builder-preview"}}
+<div id="ai-builder-preview">
+  {{if .Error}}
+  <p class="console-form-error" role="alert">{{.Error}}</p>
+  {{end}}
+  {{if and .SessionID .Steps}}
+  <div class="console-card ai-preview" data-component="ai-builder-preview">
+    <div class="ai-preview-head">
+      <h3 class="console-card-title">{{.Name}}</h3>
+      <p class="ai-preview-trigger console-input-mono">trigger: {{.TriggerIdentifier}}</p>
+    </div>
+    <ol class="ai-preview-steps">
+      {{range .Steps}}
+      <li class="ai-preview-step">
+        <span class="ai-preview-step-index">{{.Index}}</span>
+        <span class="ai-preview-step-type">{{.Label}}</span>
+        {{if .Name}}<span class="ai-preview-step-name">{{.Name}}</span>{{end}}
+        {{if .Summary}}<span class="ai-preview-step-summary">{{.Summary}}</span>{{end}}
+      </li>
+      {{end}}
+    </ol>
+    <div class="console-slideover-actions">
+      <button type="button" class="btn btn-outline"
+              data-on:click="@post('/console/api/workflows/ai-discard/{{.SessionID}}', {headers: {'X-CSRF-Token': '{{.CSRF}}'}})">Discard</button>
+      <form method="POST" action="/console/api/workflows/ai-confirm/{{.SessionID}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <button type="submit" class="btn btn-primary">Use this workflow</button>
+      </form>
+    </div>
+  </div>
+  {{end}}
+</div>
+{{end}}
