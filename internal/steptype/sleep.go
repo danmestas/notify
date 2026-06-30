@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -62,6 +63,30 @@ func sleepControlValues() json.RawMessage {
 	return json.RawMessage(`{"amount":1,"unit":"minutes"}`)
 }
 
+// UnitDuration maps a delay/digest unit token to its time.Duration. It is the
+// single source of unit semantics shared by the compile-time sleep duration
+// (sleepConfig) and the run-time dynamic-delay {amount,unit} resolver, so both
+// honour weeks/months identically. "months" is a 30-day approximation (a
+// calendar month is not a fixed duration); the editor labels it as such.
+func UnitDuration(unit string) (time.Duration, error) {
+	switch unit {
+	case "", "seconds":
+		return time.Second, nil
+	case "minutes":
+		return time.Minute, nil
+	case "hours":
+		return time.Hour, nil
+	case "days":
+		return 24 * time.Hour, nil
+	case "weeks":
+		return 7 * 24 * time.Hour, nil
+	case "months":
+		return 30 * 24 * time.Hour, nil // 30-day approximation
+	default:
+		return 0, fmt.Errorf("unknown delay unit %q", unit)
+	}
+}
+
 // sleepConfig parses a delay/digest step's controlValues
 // ({"amount":<int>,"unit":...}) into a dag.SleepConfig JSON
 // ({"duration":<int64 ns>}). Unit defaults to seconds; amount must be positive.
@@ -80,18 +105,9 @@ func sleepConfig(controlValues json.RawMessage) (json.RawMessage, error) {
 	if cv.Amount <= 0 {
 		return nil, fmt.Errorf("delay amount must be positive, got %d", cv.Amount)
 	}
-	var unit time.Duration
-	switch cv.Unit {
-	case "", "seconds":
-		unit = time.Second
-	case "minutes":
-		unit = time.Minute
-	case "hours":
-		unit = time.Hour
-	case "days":
-		unit = 24 * time.Hour
-	default:
-		return nil, fmt.Errorf("unknown delay unit %q", cv.Unit)
+	unit, err := UnitDuration(cv.Unit)
+	if err != nil {
+		return nil, err
 	}
 	cfg, err := json.Marshal(struct {
 		Duration time.Duration `json:"duration"`
@@ -126,18 +142,224 @@ func parseSleepForm(form url.Values) (json.RawMessage, error) {
 	return marshalControlValues(map[string]any{"amount": amount, "unit": unit})
 }
 
-// delay is the delay step type: it compiles to an engine sleep the engine times
-// itself. It has its OWN Compile (rather than sharing one branch with digest)
-// so a future digest-specific change cannot silently alter delay's output.
+// delayControlValues is the persisted shape of a delay step's controlValues
+// across its three sub-types. A regular delay (type absent or "regular") carries
+// amount+unit and compiles to the engine's native sleep. A scheduled delay
+// carries a structured calendar (atTime + weekDays/monthDays) and a dynamic
+// delay carries a dynamicKey dot-path; both compile to a normal task whose wait
+// the delay worker computes per-run (the duration depends on wall-clock time or
+// the trigger payload, so it cannot be baked into a static sleep StepDef).
+type delayControlValues struct {
+	Type       string   `json:"type"`
+	AtTime     string   `json:"atTime"`
+	WeekDays   []string `json:"weekDays"`
+	MonthDays  []int    `json:"monthDays"`
+	DynamicKey string   `json:"dynamicKey"`
+}
+
+// delayType decodes a delay step's sub-type discriminator, defaulting an
+// absent/empty type to "regular" so legacy {amount,unit} blobs keep compiling
+// to a sleep.
+func delayType(controlValues json.RawMessage) (delayControlValues, error) {
+	var cv delayControlValues
+	if len(controlValues) > 0 {
+		if err := json.Unmarshal(controlValues, &cv); err != nil {
+			return cv, fmt.Errorf("unmarshal delay controlValues: %w", err)
+		}
+	}
+	if cv.Type == "" {
+		cv.Type = "regular"
+	}
+	return cv, nil
+}
+
+// maxDelayResumeAttempts is the attempt cap on scheduled/dynamic delay tasks.
+// It is intentionally large: these waits are always safely resumable (the
+// handler recomputes the remaining duration from time.Now() on every dispatch),
+// so the cap is a runaway backstop, NOT a wait-duration limit. A value of 3
+// would dead-letter the task after just three process restarts — silently
+// dropping the notification if the delay spans multiple deploys.
+const maxDelayResumeAttempts = 1000
+
+// delayRetryPolicy is attached to the scheduled/dynamic StepDef so dagnats
+// requeues the task when its handler returns a RetryableError. The delay
+// handlers return RetryableError on context cancellation (shutdown): the
+// requeue re-dispatches the wait after restart, where a scheduled delay
+// recomputes the next occurrence and an ISO-8601 dynamic delay recomputes the
+// remaining duration. Without a RetryPolicy the requeue would never fire.
+func delayRetryPolicy() *engine.RetryPolicy {
+	return &engine.RetryPolicy{
+		MaxAttempts:  maxDelayResumeAttempts,
+		Strategy:     "fixed",
+		InitialDelay: time.Second,
+		MaxDelay:     time.Second,
+	}
+}
+
+// delay is the delay step type. A regular delay compiles to an engine sleep the
+// engine times itself; scheduled and dynamic delays compile to a normal task
+// (delay.scheduled / delay.dynamic) handled by the delivery delay worker. It has
+// its OWN Compile (rather than sharing one branch with digest) so the
+// type-discriminator here cannot contaminate digest's output.
 type delay struct{}
 
-func (delay) Name() string                                       { return "delay" }
-func (delay) DefaultControlValues() json.RawMessage              { return sleepControlValues() }
-func (delay) ControlMap(cv json.RawMessage) map[string]string    { return flattenControlValues(cv) }
-func (delay) ParseForm(form url.Values) (json.RawMessage, error) { return parseSleepForm(form) }
-func (delay) Validate(cv json.RawMessage) error                  { _, err := sleepConfig(cv); return err }
-func (delay) EditorPartial() string                              { return "wf-step-fields-delay" }
-func (delay) Compile(step domain.Step) (engine.StepDef, error)   { return sleepStepDef(step) }
+func (delay) Name() string                          { return "delay" }
+func (delay) DefaultControlValues() json.RawMessage { return sleepControlValues() }
+func (delay) EditorPartial() string                 { return "wf-step-fields-delay" }
+
+// ControlMap flattens controlValues for editor pre-fill and additionally seeds
+// the type discriminator (default "regular") and expands the weekDays/monthDays
+// arrays (which flattenControlValues drops) into editor-friendly keys: a
+// "weekDay_MON" presence flag per selected day and a comma-joined "monthDays".
+func (delay) ControlMap(cv json.RawMessage) map[string]string {
+	m := flattenControlValues(cv)
+	if m["type"] == "" {
+		m["type"] = "regular"
+	}
+	var raw struct {
+		WeekDays  []string `json:"weekDays"`
+		MonthDays []int    `json:"monthDays"`
+	}
+	if len(cv) > 0 {
+		_ = json.Unmarshal(cv, &raw)
+	}
+	for _, d := range raw.WeekDays {
+		m["weekDay_"+strings.ToUpper(strings.TrimSpace(d))] = "true"
+	}
+	if len(raw.MonthDays) > 0 {
+		parts := make([]string, len(raw.MonthDays))
+		for i, d := range raw.MonthDays {
+			parts[i] = strconv.Itoa(d)
+		}
+		m["monthDays"] = strings.Join(parts, ",")
+	}
+	return m
+}
+
+// ParseForm builds delay controlValues from the editor's type/amount/unit
+// (regular), atTime/weekDays/monthDays (scheduled), or dynamicKey (dynamic)
+// fields. A scheduled delay requires a valid calendar; a dynamic delay requires
+// a non-empty dynamicKey.
+func (delay) ParseForm(form url.Values) (json.RawMessage, error) {
+	typ := formField(form, "type")
+	if typ == "" {
+		typ = "regular"
+	}
+	switch typ {
+	case "regular":
+		return parseSleepForm(form)
+	case "scheduled":
+		monthDays, err := parseMonthDays(formField(form, "monthDays"))
+		if err != nil {
+			return nil, err
+		}
+		cfg := ScheduledConfig{
+			AtTime:    formField(form, "atTime"),
+			WeekDays:  formWeekDays(form),
+			MonthDays: monthDays,
+		}
+		if _, err := ParseScheduled(cfg); err != nil {
+			return nil, err
+		}
+		out := map[string]any{"type": "scheduled", "atTime": cfg.AtTime}
+		if len(cfg.WeekDays) > 0 {
+			out["weekDays"] = cfg.WeekDays
+		}
+		if len(cfg.MonthDays) > 0 {
+			out["monthDays"] = cfg.MonthDays
+		}
+		return marshalControlValues(out)
+	case "dynamic":
+		key := formField(form, "dynamicKey")
+		if key == "" {
+			return nil, fmt.Errorf("dynamic delay requires a dynamicKey")
+		}
+		return marshalControlValues(map[string]any{"type": "dynamic", "dynamicKey": key})
+	default:
+		return nil, fmt.Errorf("unknown delay type %q", typ)
+	}
+}
+
+// Validate accepts a regular delay with a positive amount, a scheduled delay
+// with a valid calendar, or a dynamic delay with a non-empty dynamicKey.
+func (delay) Validate(cv json.RawMessage) error {
+	dcv, err := delayType(cv)
+	if err != nil {
+		return err
+	}
+	switch dcv.Type {
+	case "scheduled":
+		_, err := ParseScheduled(ScheduledConfig{AtTime: dcv.AtTime, WeekDays: dcv.WeekDays, MonthDays: dcv.MonthDays})
+		return err
+	case "dynamic":
+		if dcv.DynamicKey == "" {
+			return fmt.Errorf("dynamic delay requires a dynamicKey")
+		}
+		return nil
+	default:
+		_, err := sleepConfig(cv)
+		return err
+	}
+}
+
+// Compile routes a regular delay to the native sleep StepDef and a
+// scheduled/dynamic delay to a normal task. Invalid scheduled/dynamic config
+// returns an error so authoring rejects the workflow with HTTP 422.
+func (delay) Compile(step domain.Step) (engine.StepDef, error) {
+	dcv, err := delayType(step.ControlValues)
+	if err != nil {
+		return engine.StepDef{}, err
+	}
+	switch dcv.Type {
+	case "scheduled":
+		if _, perr := ParseScheduled(ScheduledConfig{AtTime: dcv.AtTime, WeekDays: dcv.WeekDays, MonthDays: dcv.MonthDays}); perr != nil {
+			return engine.StepDef{}, fmt.Errorf("invalid scheduled delay: %w", perr)
+		}
+		return engine.StepDef{ID: step.StepID, Type: "normal", Task: "delay.scheduled", Retry: delayRetryPolicy()}, nil
+	case "dynamic":
+		if dcv.DynamicKey == "" {
+			return engine.StepDef{}, fmt.Errorf("dynamic delay requires a dynamicKey")
+		}
+		return engine.StepDef{ID: step.StepID, Type: "normal", Task: "delay.dynamic", Retry: delayRetryPolicy()}, nil
+	default:
+		return sleepStepDef(step)
+	}
+}
+
+// formWeekDays reads the multi-valued weekDays checkbox field, normalising each
+// token to upper-case and dropping blanks.
+func formWeekDays(form url.Values) []string {
+	var out []string
+	for _, v := range form["weekDays"] {
+		v = strings.ToUpper(strings.TrimSpace(v))
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// parseMonthDays parses the comma-separated monthDays field ("1,15") into a
+// []int. Blank segments are ignored; a non-numeric segment is an error.
+func parseMonthDays(s string) ([]int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	var out []int
+	for _, seg := range strings.Split(s, ",") {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		n, err := strconv.Atoi(seg)
+		if err != nil {
+			return nil, fmt.Errorf("scheduled delay monthDays %q must be comma-separated whole numbers", s)
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
 
 // digest is the digest step type. A regular window (type absent or "regular")
 // compiles to the SAME engine sleep as delay; a scheduled window

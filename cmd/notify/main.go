@@ -183,6 +183,16 @@ func runServe(args []string) error {
 	// sleep and need no handler. Registration is explicit (the step-type registry
 	// is import-light and carries no runtime delivery wiring).
 	eng.Handle("digest.wait", delivery.NewDigestWait(st).HandleDigestWait)
+	// Scheduled (calendar) and dynamic (payload-sourced) delays: like digest.wait
+	// the wait duration depends on wall-clock time or the trigger payload, so it
+	// cannot be baked into a static sleep StepDef. The handler computes the wait
+	// at dispatch and blocks context-aware; on shutdown it returns a
+	// RetryableError so dagnats requeues (per the StepDef's RetryPolicy) and the
+	// wait resumes after restart. Regular delays (amount+unit, incl. weeks/months)
+	// use the engine's native sleep and need no handler.
+	dw := delivery.NewDelayWait(st)
+	eng.Handle("delay.scheduled", dw.HandleScheduled)
+	eng.Handle("delay.dynamic", dw.HandleDynamic)
 	// check.throttle: gate a run by a fixed-window counter; must be registered
 	// whenever steptype.Default() includes "throttle" (see delivery.TaskThrottle).
 	eng.Handle(delivery.TaskThrottle, delivery.NewThrottleHandler(st, bus).Handle)

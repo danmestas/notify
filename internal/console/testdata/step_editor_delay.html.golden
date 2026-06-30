@@ -10,13 +10,87 @@
     <input type="hidden" name="csrf_token" value="csrf-golden">
     
     <div class="form-row">
-      <label class="form-label" for="cv-amount">Amount</label>
-      <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
-             value="5">
-    </div>
-    <div class="form-row">
-      <label class="form-label" for="delay-unit-trigger">Unit</label>
+      <label class="form-label" for="delay-type-trigger">Delay type</label>
       
+<div class="ui-select" id="delay-type" data-signals="{uiSelOpen_delay_type: false, uiSelFilter_delay_type: &#39;&#39;, delayType: &#34;regular&#34;}"
+     data-on:click__outside="$uiSelOpen_delay_type = false">
+
+  
+  <input type="hidden" name="type" data-attr:value="$delayType">
+  
+
+  <button type="button" class="ui-select-trigger" id="delay-type-trigger"
+          aria-haspopup="listbox" aria-controls="delay-type-popover"
+          data-attr:aria-expanded="$uiSelOpen_delay_type ? &#39;true&#39; : &#39;false&#39;"
+          data-on:click="$uiSelOpen_delay_type = !$uiSelOpen_delay_type"
+          data-on:keydown="if (evt.key === &#39;Escape&#39;) { $uiSelOpen_delay_type = false } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $uiSelOpen_delay_type = true; const opts = Array.from(evt.target.closest(&#39;.ui-select&#39;).querySelectorAll(&#39;.ui-select-option&#39;)); const o = opts.find(el =&gt; el.style.display !== &#39;none&#39;); if (o) requestAnimationFrame(() =&gt; o.focus()) }"
+          data-on:keydown__window="evt.key === &#39;Escape&#39; &amp;&amp; ($uiSelOpen_delay_type = false)">
+    <span class="ui-select-trigger-label" data-text="$delayType === &#34;regular&#34; ? &#34;Regular (fixed duration)&#34; : ($delayType === &#34;scheduled&#34; ? &#34;Scheduled (calendar)&#34; : ($delayType === &#34;dynamic&#34; ? &#34;Dynamic (from payload)&#34; : (&#34;Delay type&#34;)))">Delay type</span>
+    <span class="ui-select-trigger-chevron" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+</span>
+  </button>
+
+  
+  <div class="ui-select-popover" id="delay-type-popover" role="listbox"
+       aria-label="Delay type"
+       data-show="$uiSelOpen_delay_type">
+
+    
+
+    <div class="ui-select-options">
+      
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="regular"
+           data-attr:aria-selected="($delayType === &#34;regular&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$delayType = &#34;regular&#34;; $uiSelOpen_delay_type = false; $uiSelFilter_delay_type = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $delayType = &#34;regular&#34;; $uiSelOpen_delay_type = false; $uiSelFilter_delay_type = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_delay_type = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Regular (fixed duration)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$delayType === &#34;regular&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="scheduled"
+           data-attr:aria-selected="($delayType === &#34;scheduled&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$delayType = &#34;scheduled&#34;; $uiSelOpen_delay_type = false; $uiSelFilter_delay_type = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $delayType = &#34;scheduled&#34;; $uiSelOpen_delay_type = false; $uiSelFilter_delay_type = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_delay_type = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Scheduled (calendar)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$delayType === &#34;scheduled&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="dynamic"
+           data-attr:aria-selected="($delayType === &#34;dynamic&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$delayType = &#34;dynamic&#34;; $uiSelOpen_delay_type = false; $uiSelFilter_delay_type = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $delayType = &#34;dynamic&#34;; $uiSelOpen_delay_type = false; $uiSelFilter_delay_type = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_delay_type = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Dynamic (from payload)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$delayType === &#34;dynamic&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      
+    </div>
+  </div>
+</div>
+
+    </div>
+    <div data-show="$delayType === 'regular'">
+      <div class="form-row">
+        <label class="form-label" for="cv-amount">Amount</label>
+        <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
+               value="5">
+      </div>
+      <div class="form-row">
+        <label class="form-label" for="delay-unit-trigger">Unit</label>
+        
 <div class="ui-select" id="delay-unit" data-signals="{uiSelOpen_delay_unit: false, uiSelFilter_delay_unit: &#39;&#39;, delayUnit: &#34;hours&#34;}"
      data-on:click__outside="$uiSelOpen_delay_unit = false">
 
@@ -30,7 +104,7 @@
           data-on:click="$uiSelOpen_delay_unit = !$uiSelOpen_delay_unit"
           data-on:keydown="if (evt.key === &#39;Escape&#39;) { $uiSelOpen_delay_unit = false } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $uiSelOpen_delay_unit = true; const opts = Array.from(evt.target.closest(&#39;.ui-select&#39;).querySelectorAll(&#39;.ui-select-option&#39;)); const o = opts.find(el =&gt; el.style.display !== &#39;none&#39;); if (o) requestAnimationFrame(() =&gt; o.focus()) }"
           data-on:keydown__window="evt.key === &#39;Escape&#39; &amp;&amp; ($uiSelOpen_delay_unit = false)">
-    <span class="ui-select-trigger-label" data-text="$delayUnit === &#34;seconds&#34; ? &#34;Seconds&#34; : ($delayUnit === &#34;minutes&#34; ? &#34;Minutes&#34; : ($delayUnit === &#34;hours&#34; ? &#34;Hours&#34; : ($delayUnit === &#34;days&#34; ? &#34;Days&#34; : (&#34;Unit&#34;))))">Unit</span>
+    <span class="ui-select-trigger-label" data-text="$delayUnit === &#34;seconds&#34; ? &#34;Seconds&#34; : ($delayUnit === &#34;minutes&#34; ? &#34;Minutes&#34; : ($delayUnit === &#34;hours&#34; ? &#34;Hours&#34; : ($delayUnit === &#34;days&#34; ? &#34;Days&#34; : ($delayUnit === &#34;weeks&#34; ? &#34;Weeks&#34; : ($delayUnit === &#34;months&#34; ? &#34;Months (30 days)&#34; : (&#34;Unit&#34;))))))">Unit</span>
     <span class="ui-select-trigger-chevron" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
 </span>
   </button>
@@ -93,11 +167,97 @@
 </span>
       </div>
       
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="weeks"
+           data-attr:aria-selected="($delayUnit === &#34;weeks&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$delayUnit = &#34;weeks&#34;; $uiSelOpen_delay_unit = false; $uiSelFilter_delay_unit = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $delayUnit = &#34;weeks&#34;; $uiSelOpen_delay_unit = false; $uiSelFilter_delay_unit = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_delay_unit = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Weeks</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$delayUnit === &#34;weeks&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
+      <div class="ui-select-option" role="option" tabindex="0"
+           data-value="months"
+           data-attr:aria-selected="($delayUnit === &#34;months&#34;) ? &#39;true&#39; : &#39;false&#39;"
+           
+           data-on:click="$delayUnit = &#34;months&#34;; $uiSelOpen_delay_unit = false; $uiSelFilter_delay_unit = &#39;&#39;"
+           data-on:keydown="if (evt.key === &#39;Enter&#39; || evt.key === &#39; &#39;) { evt.preventDefault(); $delayUnit = &#34;months&#34;; $uiSelOpen_delay_unit = false; $uiSelFilter_delay_unit = &#39;&#39; } else if (evt.key === &#39;ArrowDown&#39; || evt.key === &#39;ArrowUp&#39;) { evt.preventDefault(); const dir = evt.key === &#39;ArrowDown&#39; ? &#39;nextElementSibling&#39; : &#39;previousElementSibling&#39;; let n = evt.target[dir]; while (n &amp;&amp; (!n.classList.contains(&#39;ui-select-option&#39;) || n.style.display === &#39;none&#39;)) { n = n[dir] } if (n) n.focus() } else if (evt.key === &#39;Escape&#39;) { $uiSelOpen_delay_unit = false; const t = evt.target.closest(&#39;.ui-select&#39;).querySelector(&#39;.ui-select-trigger&#39;); if (t) t.focus() }">
+        <span class="ui-select-option-label">Months (30 days)</span>
+        <span class="ui-select-option-check" aria-hidden="true"
+              data-show="$delayUnit === &#34;months&#34;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+</span>
+      </div>
+      
       
     </div>
   </div>
 </div>
 
+      </div>
+    </div>
+    <div data-show="$delayType === 'scheduled'">
+      <div class="form-row">
+        <label class="form-label" for="cv-at-time">At time (UTC)</label>
+        <input class="console-input" type="time" id="cv-at-time" name="atTime"
+               value="">
+        <p class="form-hint">Time of day in 24-hour UTC (e.g. <code>09:00</code>). The step waits until the next matching day at this time.</p>
+      </div>
+      <div class="form-row">
+        <span class="form-label">On week days</span>
+        <div class="checkbox-row">
+          
+          <label class="checkbox-pill">
+            <input type="checkbox" name="weekDays" value="MON">
+            MON
+          </label>
+          
+          <label class="checkbox-pill">
+            <input type="checkbox" name="weekDays" value="TUE">
+            TUE
+          </label>
+          
+          <label class="checkbox-pill">
+            <input type="checkbox" name="weekDays" value="WED">
+            WED
+          </label>
+          
+          <label class="checkbox-pill">
+            <input type="checkbox" name="weekDays" value="THU">
+            THU
+          </label>
+          
+          <label class="checkbox-pill">
+            <input type="checkbox" name="weekDays" value="FRI">
+            FRI
+          </label>
+          
+          <label class="checkbox-pill">
+            <input type="checkbox" name="weekDays" value="SAT">
+            SAT
+          </label>
+          
+          <label class="checkbox-pill">
+            <input type="checkbox" name="weekDays" value="SUN">
+            SUN
+          </label>
+          
+        </div>
+      </div>
+      <div class="form-row">
+        <label class="form-label" for="cv-month-days">On month days</label>
+        <input class="console-input" type="text" id="cv-month-days" name="monthDays"
+               placeholder="1,15" value="">
+        <p class="form-hint">Comma-separated days of the month (1–31). Combine with week days for an intersection, or leave both empty to fire daily at the time above.</p>
+      </div>
+    </div>
+    <div class="form-row" data-show="$delayType === 'dynamic'">
+      <label class="form-label" for="cv-dynamic-key">Payload key</label>
+      <input class="console-input console-input-mono" type="text" id="cv-dynamic-key" name="dynamicKey"
+             placeholder="payload.sendAt" value="">
+      <p class="form-hint">Dot-path into the trigger payload (e.g. <code>payload.sendAt</code>) holding an ISO-8601 timestamp to wait until, or an <code>{"amount":N,"unit":"hours"}</code> object.</p>
     </div>
     
     <fieldset class="wf-conditions">

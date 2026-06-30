@@ -261,15 +261,54 @@
     {{end}}
 {{define "wf-step-fields-delay"}}
     <div class="form-row">
-      <label class="form-label" for="cv-amount">Amount</label>
-      <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
-             value="{{index .ControlMap "amount"}}">
+      <label class="form-label" for="delay-type-trigger">Delay type</label>
+      {{template "ui-select" (uiSelectForm "delay-type" "type" "delayType"
+        (uiSelectOptions "regular" "Regular (fixed duration)" "scheduled" "Scheduled (calendar)" "dynamic" "Dynamic (from payload)")
+        "Delay type" "" false (index .ControlMap "type") true)}}
     </div>
-    <div class="form-row">
-      <label class="form-label" for="delay-unit-trigger">Unit</label>
-      {{template "ui-select" (uiSelectForm "delay-unit" "unit" "delayUnit"
-        (uiSelectOptions "seconds" "Seconds" "minutes" "Minutes" "hours" "Hours" "days" "Days")
-        "Unit" "" false (index .ControlMap "unit") true)}}
+    <div data-show="$delayType === 'regular'">
+      <div class="form-row">
+        <label class="form-label" for="cv-amount">Amount</label>
+        <input class="console-input" type="number" id="cv-amount" name="amount" min="1"
+               value="{{index .ControlMap "amount"}}">
+      </div>
+      <div class="form-row">
+        <label class="form-label" for="delay-unit-trigger">Unit</label>
+        {{template "ui-select" (uiSelectForm "delay-unit" "unit" "delayUnit"
+          (uiSelectOptions "seconds" "Seconds" "minutes" "Minutes" "hours" "Hours" "days" "Days" "weeks" "Weeks" "months" "Months (30 days)")
+          "Unit" "" false (index .ControlMap "unit") true)}}
+      </div>
+    </div>
+    <div data-show="$delayType === 'scheduled'">
+      <div class="form-row">
+        <label class="form-label" for="cv-at-time">At time (UTC)</label>
+        <input class="console-input" type="time" id="cv-at-time" name="atTime"
+               value="{{index .ControlMap "atTime"}}">
+        <p class="form-hint">Time of day in 24-hour UTC (e.g. <code>09:00</code>). The step waits until the next matching day at this time.</p>
+      </div>
+      <div class="form-row">
+        <span class="form-label">On week days</span>
+        <div class="checkbox-row">
+          {{range $d := list "MON" "TUE" "WED" "THU" "FRI" "SAT" "SUN"}}
+          <label class="checkbox-pill">
+            <input type="checkbox" name="weekDays" value="{{$d}}"{{if index $.ControlMap (printf "weekDay_%s" $d)}} checked{{end}}>
+            {{$d}}
+          </label>
+          {{end}}
+        </div>
+      </div>
+      <div class="form-row">
+        <label class="form-label" for="cv-month-days">On month days</label>
+        <input class="console-input" type="text" id="cv-month-days" name="monthDays"
+               placeholder="1,15" value="{{index .ControlMap "monthDays"}}">
+        <p class="form-hint">Comma-separated days of the month (1–31). Combine with week days for an intersection, or leave both empty to fire daily at the time above.</p>
+      </div>
+    </div>
+    <div class="form-row" data-show="$delayType === 'dynamic'">
+      <label class="form-label" for="cv-dynamic-key">Payload key</label>
+      <input class="console-input console-input-mono" type="text" id="cv-dynamic-key" name="dynamicKey"
+             placeholder="payload.sendAt" value="{{index .ControlMap "dynamicKey"}}">
+      <p class="form-hint">Dot-path into the trigger payload (e.g. <code>payload.sendAt</code>) holding an ISO-8601 timestamp to wait until, or an <code>{{"{"}}"amount":N,"unit":"hours"{{"}"}}</code> object.</p>
     </div>
     {{end}}
 {{define "wf-step-fields-digest"}}
