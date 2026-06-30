@@ -1,0 +1,360 @@
+package aibuilder
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/steptype"
+	"github.com/danmestas/notify/internal/store"
+)
+
+// Agent-loop wiring constants. The builder runs as a single agent_loop step
+// whose task is driven iteratively by the dagnats engine; one model turn per
+// iteration. DefaultMaxIterations mirrors the synchronous Builder's maxRounds —
+// the engine MaxIterations bound is the durable equivalent of "exceeded max
+// rounds" and the hard cap on a runaway self-correct.
+const (
+	AgentLoopTask        = "ai.build"
+	AgentLoopWorkflow    = "ai-builder"
+	AgentLoopStepID      = "build"
+	DefaultMaxIterations = 24
+)
+
+// SessionStore is the slice of store.BuilderSessionRepo the agent-loop handler
+// needs: load the originating session (prompt + scope) and persist the final
+// draft. store.Store.BuilderSessions() satisfies it directly.
+type SessionStore interface {
+	Get(ctx context.Context, scope domain.Scope, id string) (store.BuilderSession, error)
+	UpdateDraft(ctx context.Context, scope domain.Scope, id string, draft json.RawMessage, status string) error
+}
+
+// loopContext is the subset of *engine.AgentLoopContext the per-iteration
+// handler drives. Modeling it as an interface lets handle() be unit-tested with
+// a fake that records terminal actions and feeds the Continue checkpoint back as
+// the next iteration's Checkpoint() — no live engine or NATS required.
+// *engine.AgentLoopContext satisfies it structurally.
+type loopContext interface {
+	Iteration() int
+	Checkpoint() []byte
+	Input() json.RawMessage
+	Continue(checkpoint []byte) error
+	Complete(output json.RawMessage) error
+	Stream(data []byte) error
+}
+
+// loopState is the full agent-loop checkpoint: it round-trips verbatim through
+// the engine's checkpoint KV between iterations, so each dispatch reconstructs
+// the conversation and the in-progress draft without any other persisted state.
+// Scope, SessionID and GatedTypes are frozen on iteration 0 (the tool enum stays
+// stable across the run, matching the synchronous Builder which gates once).
+type loopState struct {
+	SessionID  string        `json:"sessionId"`
+	Scope      domain.Scope  `json:"scope"`
+	GatedTypes []string      `json:"gatedTypes"`
+	Messages   []Message     `json:"messages"`
+	Draft      WorkflowDraft `json:"draft"`
+}
+
+// runInput is the StartRun payload: the session to build into plus its tenancy
+// scope (needed to load the scope-filtered session on iteration 0).
+type runInput struct {
+	SessionID string `json:"sessionId"`
+	OrgID     string `json:"orgId"`
+	EnvID     string `json:"envId"`
+}
+
+// streamEvent is the JSON-on-the-wire form of a builder Event published to
+// stream.{runID}.{stepID}. It mirrors Event's shape but renders Err as a string
+// (an error value does not marshal). The console (next unit) decodes these.
+type streamEvent struct {
+	Kind     EventKind      `json:"kind"`
+	Text     string         `json:"text,omitempty"`
+	ToolName string         `json:"toolName,omitempty"`
+	Draft    *WorkflowDraft `json:"draft,omitempty"`
+	Error    string         `json:"error,omitempty"`
+}
+
+// AgentLoopBuilder hosts the AI workflow builder as a durable dagnats agent-loop
+// handler. It owns the same reusable pieces as the synchronous Builder (Client,
+// registry, integration gating) plus the engine and session store needed to
+// trigger runs and persist results. It is added alongside Builder.Run, not a
+// replacement.
+type AgentLoopBuilder struct {
+	eng      *engine.Engine
+	client   Client
+	reg      *steptype.Registry
+	ints     IntegrationLister
+	sessions SessionStore
+	model    string
+	maxSteps int
+	maxIters int
+}
+
+// AgentLoopOption configures an AgentLoopBuilder.
+type AgentLoopOption func(*AgentLoopBuilder)
+
+// WithAgentLoopModel overrides the default Claude model.
+func WithAgentLoopModel(model string) AgentLoopOption {
+	return func(b *AgentLoopBuilder) {
+		if model != "" {
+			b.model = model
+		}
+	}
+}
+
+// WithAgentLoopMaxIterations caps the engine-side iteration bound declared on
+// the workflow's agent_loop step. Non-positive values are ignored.
+func WithAgentLoopMaxIterations(n int) AgentLoopOption {
+	return func(b *AgentLoopBuilder) {
+		if n > 0 {
+			b.maxIters = n
+		}
+	}
+}
+
+// WithAgentLoopMaxSteps caps how many steps a single draft may hold. Non-positive
+// values are ignored.
+func WithAgentLoopMaxSteps(n int) AgentLoopOption {
+	return func(b *AgentLoopBuilder) {
+		if n > 0 {
+			b.maxSteps = n
+		}
+	}
+}
+
+// WithAgentLoopRegistry overrides the step-type registry (defaults to
+// steptype.Default()).
+func WithAgentLoopRegistry(reg *steptype.Registry) AgentLoopOption {
+	return func(b *AgentLoopBuilder) {
+		if reg != nil {
+			b.reg = reg
+		}
+	}
+}
+
+// NewAgentLoopBuilder constructs an AgentLoopBuilder over the engine, a Client,
+// the integration lister (provider gating) and the builder-session store.
+func NewAgentLoopBuilder(eng *engine.Engine, client Client, ints IntegrationLister, sessions SessionStore, opts ...AgentLoopOption) *AgentLoopBuilder {
+	b := &AgentLoopBuilder{
+		eng:      eng,
+		client:   client,
+		reg:      steptype.Default(),
+		ints:     ints,
+		sessions: sessions,
+		model:    DefaultModel,
+		maxSteps: DefaultMaxSteps,
+		maxIters: DefaultMaxIterations,
+	}
+	for _, opt := range opts {
+		opt(b)
+	}
+	return b
+}
+
+// Register registers the per-iteration handler for AgentLoopTask. It must be
+// called before the engine's StartWorkers (HandleAgentLoop panics otherwise).
+func (b *AgentLoopBuilder) Register() {
+	b.eng.HandleAgentLoop(AgentLoopTask, func(ctx context.Context, lc *engine.AgentLoopContext) error {
+		return b.handle(ctx, lc)
+	})
+}
+
+// RegisterWorkflow declares the one-step agent-loop workflow with the engine.
+// Call it after StartWorkers (mirroring credverify's register-after-start).
+func (b *AgentLoopBuilder) RegisterWorkflow(ctx context.Context) error {
+	def := engine.WorkflowDef{
+		Name: AgentLoopWorkflow,
+		Steps: []engine.StepDef{
+			engine.AgentLoopStep(AgentLoopStepID, AgentLoopTask, engine.AgentLoopConfig{
+				MaxIterations: b.maxIters,
+			}),
+		},
+	}
+	return b.eng.RegisterWorkflow(ctx, def)
+}
+
+// Dispatch triggers an ai-build run for sessionID in scope and returns the new
+// run id. The console (next unit) calls this to start a durable build; the run
+// id keys the stream subscription for live events.
+func (b *AgentLoopBuilder) Dispatch(ctx context.Context, scope domain.Scope, sessionID string) (string, error) {
+	raw, err := json.Marshal(runInput{
+		SessionID: sessionID,
+		OrgID:     scope.OrgID,
+		EnvID:     scope.EnvID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("aibuilder: marshal run input: %w", err)
+	}
+	return b.eng.StartRun(ctx, AgentLoopWorkflow, raw)
+}
+
+// handle runs exactly one iteration of the builder loop. It loads the prior
+// checkpoint (or initializes from the session on iteration 0), calls the model
+// once, applies any tool calls to the draft, streams an event per call, and ends
+// with one terminal action: Complete (the draft validated, persisted to the
+// session) or Continue (more work, or a self-correct round after a compile
+// failure). A model/transport error fails the iteration. The engine's
+// MaxIterations bound caps a runaway self-correct.
+func (b *AgentLoopBuilder) handle(ctx context.Context, lc loopContext) error {
+	st, err := b.loadState(ctx, lc)
+	if err != nil {
+		return err
+	}
+
+	sys := systemPrompt(b.reg.Catalog(), st.GatedTypes)
+	tools := buildTools(st.GatedTypes)
+	gatedSet := make(map[string]bool, len(st.GatedTypes))
+	for _, t := range st.GatedTypes {
+		gatedSet[t] = true
+	}
+
+	resp, err := b.client.Message(ctx, MessageRequest{
+		Model:      b.model,
+		System:     sys,
+		Messages:   st.Messages,
+		Tools:      tools,
+		ToolChoice: "auto",
+		MaxTokens:  DefaultMaxTokens,
+	})
+	if err != nil {
+		b.emit(lc, Event{Kind: KindError, Err: err})
+		return fmt.Errorf("aibuilder: model call: %w", err)
+	}
+
+	// Record the assistant turn verbatim so the next iteration carries the
+	// model's own tool_use blocks (the API requires tool_result to follow the
+	// matching tool_use).
+	st.Messages = append(st.Messages, Message{
+		Role:      RoleAssistant,
+		Text:      resp.Text,
+		ToolCalls: resp.ToolCalls,
+	})
+
+	if resp.Text != "" {
+		b.emit(lc, Event{Kind: KindReasoning, Text: resp.Text, Draft: st.Draft.clone()})
+	}
+
+	// No tool calls => the model believes it is done. Validate and finalize, or
+	// feed the compile error back as a self-correct round on the next iteration.
+	if len(resp.ToolCalls) == 0 {
+		if vErr := validateDraft(st.Scope, &st.Draft); vErr != nil {
+			st.Messages = append(st.Messages, Message{
+				Role: RoleUser,
+				Text: "The workflow failed validation: " + vErr.Error() +
+					". Fix the offending step, then stop.",
+			})
+			return b.continueLoop(lc, st)
+		}
+		return b.finish(ctx, lc, st, resp.Text)
+	}
+
+	// Apply each tool call, streaming events and collecting results to feed back
+	// to the model on the next iteration.
+	var results []ToolResult
+	for _, tc := range resp.ToolCalls {
+		ev, content, applyErr := applyGatedToolCall(&st.Draft, b.reg, gatedSet, b.maxSteps, newStepID, tc)
+		if applyErr != nil {
+			results = append(results, ToolResult{
+				ToolCallID: tc.ID,
+				Content:    applyErr.Error(),
+				IsError:    true,
+			})
+			continue
+		}
+		switch ev.Kind {
+		case KindReasoning:
+			ev.Draft = st.Draft.clone()
+			b.emit(lc, ev)
+		case KindCanvas:
+			b.emit(lc, Event{Kind: KindTool, ToolName: tc.Name, Draft: st.Draft.clone()})
+			ev.Draft = st.Draft.clone()
+			b.emit(lc, ev)
+		}
+		results = append(results, ToolResult{ToolCallID: tc.ID, Content: content})
+	}
+	st.Messages = append(st.Messages, Message{Role: RoleUser, ToolResults: results})
+	return b.continueLoop(lc, st)
+}
+
+// loadState decodes the prior checkpoint, or builds the initial state from the
+// run input on iteration 0: it loads the scope-filtered session for its prompt,
+// computes the provider-gated step types, and seeds the conversation with the
+// user prompt over an empty draft.
+func (b *AgentLoopBuilder) loadState(ctx context.Context, lc loopContext) (*loopState, error) {
+	if cp := lc.Checkpoint(); cp != nil {
+		var st loopState
+		if err := json.Unmarshal(cp, &st); err != nil {
+			return nil, fmt.Errorf("aibuilder: decode checkpoint: %w", err)
+		}
+		return &st, nil
+	}
+
+	var in runInput
+	if err := json.Unmarshal(lc.Input(), &in); err != nil {
+		return nil, fmt.Errorf("aibuilder: decode run input: %w", err)
+	}
+	scope := domain.Scope{OrgID: in.OrgID, EnvID: in.EnvID}
+	sess, err := b.sessions.Get(ctx, scope, in.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("aibuilder: load session %q: %w", in.SessionID, err)
+	}
+	integrations, err := b.ints.List(ctx, scope)
+	if err != nil {
+		return nil, fmt.Errorf("aibuilder: list integrations: %w", err)
+	}
+	return &loopState{
+		SessionID:  in.SessionID,
+		Scope:      scope,
+		GatedTypes: AvailableStepTypes(b.reg, integrations),
+		Messages:   []Message{{Role: RoleUser, Text: sess.Prompt}},
+		Draft:      WorkflowDraft{},
+	}, nil
+}
+
+// finish persists the validated draft on the session (the durable result the run
+// output cannot be trusted to carry), streams a terminal done event, and
+// completes the agent-loop step.
+func (b *AgentLoopBuilder) finish(ctx context.Context, lc loopContext, st *loopState, summary string) error {
+	draftJSON, err := json.Marshal(st.Draft)
+	if err != nil {
+		return fmt.Errorf("aibuilder: marshal draft: %w", err)
+	}
+	if err := b.sessions.UpdateDraft(ctx, st.Scope, st.SessionID, draftJSON, store.BuilderSessionDraft); err != nil {
+		return fmt.Errorf("aibuilder: persist draft: %w", err)
+	}
+	b.emit(lc, Event{Kind: KindDone, Text: summary, Draft: st.Draft.clone()})
+	return lc.Complete(draftJSON)
+}
+
+// continueLoop checkpoints the full loop state and asks the engine for another
+// iteration.
+func (b *AgentLoopBuilder) continueLoop(lc loopContext, st *loopState) error {
+	cp, err := json.Marshal(st)
+	if err != nil {
+		return fmt.Errorf("aibuilder: marshal checkpoint: %w", err)
+	}
+	return lc.Continue(cp)
+}
+
+// emit streams ev to the run's stream subject as JSON. Streaming is
+// fire-and-forget (the console subscribes opportunistically); a publish failure
+// must not derail the build, so the error is dropped.
+func (b *AgentLoopBuilder) emit(lc loopContext, ev Event) {
+	se := streamEvent{
+		Kind:     ev.Kind,
+		Text:     ev.Text,
+		ToolName: ev.ToolName,
+		Draft:    ev.Draft,
+	}
+	if ev.Err != nil {
+		se.Error = ev.Err.Error()
+	}
+	data, err := json.Marshal(se)
+	if err != nil {
+		return
+	}
+	_ = lc.Stream(data)
+}

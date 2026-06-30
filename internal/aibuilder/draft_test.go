@@ -23,7 +23,7 @@ func reg() *steptype.Registry { return steptype.Default() }
 
 func mustApply(t *testing.T, d *WorkflowDraft, next idGen, tool, args string) Event {
 	t.Helper()
-	ev, err := applyToolCall(d, reg(), next, tool, json.RawMessage(args))
+	ev, _, err := applyToolCall(d, reg(), next, tool, json.RawMessage(args))
 	if err != nil {
 		t.Fatalf("applyToolCall(%s) unexpected error: %v", tool, err)
 	}
@@ -70,7 +70,7 @@ func TestSetWorkflowMetadata_PreservesExistingTrigger(t *testing.T) {
 
 func TestSetWorkflowMetadata_RequiresName(t *testing.T) {
 	d := &WorkflowDraft{}
-	if _, err := applyToolCall(d, reg(), counter(), toolSetWorkflowMetadata, json.RawMessage(`{}`)); err == nil {
+	if _, _, err := applyToolCall(d, reg(), counter(), toolSetWorkflowMetadata, json.RawMessage(`{}`)); err == nil {
 		t.Fatal("expected error for missing name")
 	}
 }
@@ -102,7 +102,7 @@ func TestAddStep_AppendsWithDefaultControls(t *testing.T) {
 
 func TestAddStep_UnknownTypeErrors(t *testing.T) {
 	d := &WorkflowDraft{}
-	if _, err := applyToolCall(d, reg(), counter(), toolAddStep, json.RawMessage(`{"type":"telepathy"}`)); err == nil {
+	if _, _, err := applyToolCall(d, reg(), counter(), toolAddStep, json.RawMessage(`{"type":"telepathy"}`)); err == nil {
 		t.Fatal("expected error for unknown step type")
 	}
 	if len(d.Steps) != 0 {
@@ -131,7 +131,7 @@ func TestAddStepInBetween_SplicesAfterTarget(t *testing.T) {
 
 func TestAddStepInBetween_UnknownAfterErrors(t *testing.T) {
 	d := &WorkflowDraft{}
-	if _, err := applyToolCall(d, reg(), counter(), toolAddStepInBetween,
+	if _, _, err := applyToolCall(d, reg(), counter(), toolAddStepInBetween,
 		json.RawMessage(`{"type":"email","afterStepId":"nope"}`)); err == nil {
 		t.Fatal("expected error for unknown afterStepId")
 	}
@@ -154,7 +154,7 @@ func TestEditStepContent_SetsControlValues(t *testing.T) {
 
 func TestEditStepContent_UnknownStepErrors(t *testing.T) {
 	d := &WorkflowDraft{}
-	if _, err := applyToolCall(d, reg(), counter(), toolEditStepContent,
+	if _, _, err := applyToolCall(d, reg(), counter(), toolEditStepContent,
 		json.RawMessage(`{"stepId":"ghost","controlValues":{}}`)); err == nil {
 		t.Fatal("expected error for unknown stepId")
 	}
@@ -166,7 +166,7 @@ func TestEditStepContent_RejectsNonObjectControlValues(t *testing.T) {
 		next := counter()
 		mustApply(t, d, next, toolAddStep, `{"type":"email"}`)
 		args := fmt.Sprintf(`{"stepId":"s1","controlValues":%s}`, cv)
-		if _, err := applyToolCall(d, reg(), next, toolEditStepContent, json.RawMessage(args)); err == nil {
+		if _, _, err := applyToolCall(d, reg(), next, toolEditStepContent, json.RawMessage(args)); err == nil {
 			t.Errorf("controlValues=%s: expected error for non-object controlValues", cv)
 		}
 		// The rejected edit must not have mutated the step's control values.
@@ -197,7 +197,7 @@ func TestUpdateStepConditions_SetsFilters(t *testing.T) {
 
 func TestUpdateStepConditions_UnknownStepErrors(t *testing.T) {
 	d := &WorkflowDraft{}
-	if _, err := applyToolCall(d, reg(), counter(), toolUpdateStepConditions,
+	if _, _, err := applyToolCall(d, reg(), counter(), toolUpdateStepConditions,
 		json.RawMessage(`{"stepId":"ghost","filters":[]}`)); err == nil {
 		t.Fatal("expected error for unknown stepId")
 	}
@@ -216,7 +216,7 @@ func TestRemoveStep_DeletesByID(t *testing.T) {
 
 func TestRemoveStep_UnknownErrors(t *testing.T) {
 	d := &WorkflowDraft{}
-	if _, err := applyToolCall(d, reg(), counter(), toolRemoveStep,
+	if _, _, err := applyToolCall(d, reg(), counter(), toolRemoveStep,
 		json.RawMessage(`{"stepId":"ghost"}`)); err == nil {
 		t.Fatal("expected error for unknown stepId")
 	}
@@ -251,7 +251,7 @@ func TestMoveStep_Reorders(t *testing.T) {
 
 func TestMoveStep_UnknownErrors(t *testing.T) {
 	d := &WorkflowDraft{}
-	if _, err := applyToolCall(d, reg(), counter(), toolMoveStep,
+	if _, _, err := applyToolCall(d, reg(), counter(), toolMoveStep,
 		json.RawMessage(`{"stepId":"ghost","newIndex":0}`)); err == nil {
 		t.Fatal("expected error for unknown stepId")
 	}

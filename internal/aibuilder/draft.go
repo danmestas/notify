@@ -73,12 +73,20 @@ func slugify(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// applyToolCall mutates draft per one tool call and returns the Event to emit.
-// It is pure over (draft, registry, id generator): no I/O, no model access. An
-// unknown step id, an unregistered step type, or malformed args returns an
-// error the caller feeds back to the model. reg gates addStep's registration
-// check; channel availability gating is enforced one layer up in the loop.
-func applyToolCall(draft *WorkflowDraft, reg *steptype.Registry, nextID idGen, toolName string, args json.RawMessage) (Event, error) {
+// applyToolCall mutates draft per one tool call and returns the Event to emit
+// plus the tool_result content the caller feeds back to the model. It is pure
+// over (draft, registry, id generator): no I/O, no model access. An unknown step
+// id, an unregistered step type, or malformed args returns an error the caller
+// feeds back to the model. reg gates addStep's registration check; channel
+// availability gating is enforced one layer up in the loop.
+//
+// The result content is what lets a real model make progress: addStep /
+// addStepInBetween return the newly minted stepId (which the model could not
+// otherwise know) plus the current ordered step list, so the very next turn can
+// target it with editStepContent / moveStep / updateStepConditions / removeStep.
+// The other mutating tools echo the ordered step list; the non-step tools return
+// a bare "ok".
+func applyToolCall(draft *WorkflowDraft, reg *steptype.Registry, nextID idGen, toolName string, args json.RawMessage) (Event, string, error) {
 	switch toolName {
 	case toolReasoning:
 		var a struct {
@@ -90,23 +98,23 @@ func applyToolCall(draft *WorkflowDraft, reg *steptype.Registry, nextID idGen, t
 		if text == "" {
 			text = a.Label
 		}
-		return Event{Kind: KindReasoning, ToolName: toolName, Text: text}, nil
+		return Event{Kind: KindReasoning, ToolName: toolName, Text: text}, "ok", nil
 
 	case toolSetWorkflowMetadata:
 		var a struct {
 			Name string `json:"name"`
 		}
 		if err := json.Unmarshal(args, &a); err != nil {
-			return Event{}, fmt.Errorf("setWorkflowMetadata: %w", err)
+			return Event{}, "", fmt.Errorf("setWorkflowMetadata: %w", err)
 		}
 		if a.Name == "" {
-			return Event{}, fmt.Errorf("setWorkflowMetadata: name is required")
+			return Event{}, "", fmt.Errorf("setWorkflowMetadata: name is required")
 		}
 		draft.Name = a.Name
 		if draft.TriggerIdentifier == "" {
 			draft.TriggerIdentifier = slugify(a.Name)
 		}
-		return Event{Kind: KindCanvas, ToolName: toolName}, nil
+		return Event{Kind: KindCanvas, ToolName: toolName}, "ok", nil
 
 	case toolAddStep:
 		var a struct {
@@ -114,14 +122,14 @@ func applyToolCall(draft *WorkflowDraft, reg *steptype.Registry, nextID idGen, t
 			Name string `json:"name"`
 		}
 		if err := json.Unmarshal(args, &a); err != nil {
-			return Event{}, fmt.Errorf("addStep: %w", err)
+			return Event{}, "", fmt.Errorf("addStep: %w", err)
 		}
 		st, err := newStep(reg, nextID, a.Type, a.Name)
 		if err != nil {
-			return Event{}, err
+			return Event{}, "", err
 		}
 		draft.Steps = append(draft.Steps, st)
-		return Event{Kind: KindCanvas, ToolName: toolName}, nil
+		return Event{Kind: KindCanvas, ToolName: toolName}, addStepResult(st.StepID, draft.Steps), nil
 
 	case toolAddStepInBetween:
 		var a struct {
@@ -130,18 +138,18 @@ func applyToolCall(draft *WorkflowDraft, reg *steptype.Registry, nextID idGen, t
 			AfterStepID string `json:"afterStepId"`
 		}
 		if err := json.Unmarshal(args, &a); err != nil {
-			return Event{}, fmt.Errorf("addStepInBetween: %w", err)
+			return Event{}, "", fmt.Errorf("addStepInBetween: %w", err)
 		}
 		idx, ok := indexOf(draft.Steps, a.AfterStepID)
 		if !ok {
-			return Event{}, fmt.Errorf("addStepInBetween: unknown afterStepId %q", a.AfterStepID)
+			return Event{}, "", fmt.Errorf("addStepInBetween: unknown afterStepId %q", a.AfterStepID)
 		}
 		st, err := newStep(reg, nextID, a.Type, a.Name)
 		if err != nil {
-			return Event{}, err
+			return Event{}, "", err
 		}
 		draft.Steps = insertAt(draft.Steps, idx+1, st)
-		return Event{Kind: KindCanvas, ToolName: toolName}, nil
+		return Event{Kind: KindCanvas, ToolName: toolName}, addStepResult(st.StepID, draft.Steps), nil
 
 	case toolEditStepContent:
 		var a struct {
@@ -149,17 +157,17 @@ func applyToolCall(draft *WorkflowDraft, reg *steptype.Registry, nextID idGen, t
 			ControlValues json.RawMessage `json:"controlValues"`
 		}
 		if err := json.Unmarshal(args, &a); err != nil {
-			return Event{}, fmt.Errorf("editStepContent: %w", err)
+			return Event{}, "", fmt.Errorf("editStepContent: %w", err)
 		}
 		if !isJSONObject(a.ControlValues) {
-			return Event{}, fmt.Errorf("editStepContent: controlValues must be a JSON object")
+			return Event{}, "", fmt.Errorf("editStepContent: controlValues must be a JSON object")
 		}
 		idx, ok := indexOf(draft.Steps, a.StepID)
 		if !ok {
-			return Event{}, fmt.Errorf("editStepContent: unknown stepId %q", a.StepID)
+			return Event{}, "", fmt.Errorf("editStepContent: unknown stepId %q", a.StepID)
 		}
 		draft.Steps[idx].ControlValues = a.ControlValues
-		return Event{Kind: KindCanvas, ToolName: toolName}, nil
+		return Event{Kind: KindCanvas, ToolName: toolName}, stepsResult(draft.Steps), nil
 
 	case toolUpdateStepConditions:
 		var a struct {
@@ -167,32 +175,32 @@ func applyToolCall(draft *WorkflowDraft, reg *steptype.Registry, nextID idGen, t
 			Filters []filter.Group `json:"filters"`
 		}
 		if err := json.Unmarshal(args, &a); err != nil {
-			return Event{}, fmt.Errorf("updateStepConditions: %w", err)
+			return Event{}, "", fmt.Errorf("updateStepConditions: %w", err)
 		}
 		idx, ok := indexOf(draft.Steps, a.StepID)
 		if !ok {
-			return Event{}, fmt.Errorf("updateStepConditions: unknown stepId %q", a.StepID)
+			return Event{}, "", fmt.Errorf("updateStepConditions: unknown stepId %q", a.StepID)
 		}
 		raw, err := json.Marshal(a.Filters)
 		if err != nil {
-			return Event{}, fmt.Errorf("updateStepConditions: %w", err)
+			return Event{}, "", fmt.Errorf("updateStepConditions: %w", err)
 		}
 		draft.Steps[idx].Filters = raw
-		return Event{Kind: KindCanvas, ToolName: toolName}, nil
+		return Event{Kind: KindCanvas, ToolName: toolName}, stepsResult(draft.Steps), nil
 
 	case toolRemoveStep:
 		var a struct {
 			StepID string `json:"stepId"`
 		}
 		if err := json.Unmarshal(args, &a); err != nil {
-			return Event{}, fmt.Errorf("removeStep: %w", err)
+			return Event{}, "", fmt.Errorf("removeStep: %w", err)
 		}
 		idx, ok := indexOf(draft.Steps, a.StepID)
 		if !ok {
-			return Event{}, fmt.Errorf("removeStep: unknown stepId %q", a.StepID)
+			return Event{}, "", fmt.Errorf("removeStep: unknown stepId %q", a.StepID)
 		}
 		draft.Steps = append(draft.Steps[:idx], draft.Steps[idx+1:]...)
-		return Event{Kind: KindCanvas, ToolName: toolName}, nil
+		return Event{Kind: KindCanvas, ToolName: toolName}, stepsResult(draft.Steps), nil
 
 	case toolMoveStep:
 		var a struct {
@@ -200,31 +208,74 @@ func applyToolCall(draft *WorkflowDraft, reg *steptype.Registry, nextID idGen, t
 			NewIndex int    `json:"newIndex"`
 		}
 		if err := json.Unmarshal(args, &a); err != nil {
-			return Event{}, fmt.Errorf("moveStep: %w", err)
+			return Event{}, "", fmt.Errorf("moveStep: %w", err)
 		}
 		idx, ok := indexOf(draft.Steps, a.StepID)
 		if !ok {
-			return Event{}, fmt.Errorf("moveStep: unknown stepId %q", a.StepID)
+			return Event{}, "", fmt.Errorf("moveStep: unknown stepId %q", a.StepID)
 		}
 		st := draft.Steps[idx]
 		rest := append(draft.Steps[:idx:idx], draft.Steps[idx+1:]...)
 		dest := clamp(a.NewIndex, 0, len(rest))
 		draft.Steps = insertAt(rest, dest, st)
-		return Event{Kind: KindCanvas, ToolName: toolName}, nil
+		return Event{Kind: KindCanvas, ToolName: toolName}, stepsResult(draft.Steps), nil
 
 	case toolUpdatePayloadSchema:
 		var a struct {
 			Schema json.RawMessage `json:"schema"`
 		}
 		if err := json.Unmarshal(args, &a); err != nil {
-			return Event{}, fmt.Errorf("updatePayloadSchema: %w", err)
+			return Event{}, "", fmt.Errorf("updatePayloadSchema: %w", err)
 		}
 		draft.PayloadSchema = a.Schema
-		return Event{Kind: KindCanvas, ToolName: toolName}, nil
+		return Event{Kind: KindCanvas, ToolName: toolName}, "ok", nil
 
 	default:
-		return Event{}, fmt.Errorf("unknown tool %q", toolName)
+		return Event{}, "", fmt.Errorf("unknown tool %q", toolName)
 	}
+}
+
+// stepRef is the model-facing summary of one draft step: the opaque id plus
+// enough context (type, name) to identify it. It is the unit the mutating-tool
+// results echo so the model can target any step in a follow-up call.
+type stepRef struct {
+	StepID string `json:"stepId"`
+	Type   string `json:"type"`
+	Name   string `json:"name"`
+}
+
+// stepsResult renders the current ordered step list as the JSON tool_result
+// content a mutating tool feeds back to the model.
+func stepsResult(steps []domain.Step) string {
+	refs := make([]stepRef, len(steps))
+	for i, s := range steps {
+		refs[i] = stepRef{StepID: s.StepID, Type: s.Type, Name: s.Name}
+	}
+	out, err := json.Marshal(struct {
+		Steps []stepRef `json:"steps"`
+	}{Steps: refs})
+	if err != nil {
+		return "ok"
+	}
+	return string(out)
+}
+
+// addStepResult renders the tool_result for addStep / addStepInBetween: the
+// newly created stepId (which the model has no other way to learn) plus the
+// current ordered step list.
+func addStepResult(stepID string, steps []domain.Step) string {
+	refs := make([]stepRef, len(steps))
+	for i, s := range steps {
+		refs[i] = stepRef{StepID: s.StepID, Type: s.Type, Name: s.Name}
+	}
+	out, err := json.Marshal(struct {
+		StepID string    `json:"stepId"`
+		Steps  []stepRef `json:"steps"`
+	}{StepID: stepID, Steps: refs})
+	if err != nil {
+		return "ok"
+	}
+	return string(out)
 }
 
 // newStep builds a fresh step of typ seeded with its registry default control

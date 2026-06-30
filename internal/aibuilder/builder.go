@@ -190,7 +190,7 @@ func (b *Builder) Run(ctx context.Context, scope domain.Scope, draft *WorkflowDr
 		// back to the model.
 		var results []ToolResult
 		for _, tc := range resp.ToolCalls {
-			ev, applyErr := b.applyOne(draft, gatedSet, tc)
+			ev, content, applyErr := b.applyOne(draft, gatedSet, tc)
 			if applyErr != nil {
 				results = append(results, ToolResult{
 					ToolCallID: tc.ID,
@@ -208,7 +208,7 @@ func (b *Builder) Run(ctx context.Context, scope domain.Scope, draft *WorkflowDr
 				ev.Draft = draft.clone()
 				emit(ev)
 			}
-			results = append(results, ToolResult{ToolCallID: tc.ID, Content: "ok"})
+			results = append(results, ToolResult{ToolCallID: tc.ID, Content: content})
 		}
 		conversation = append(conversation, Message{Role: RoleUser, ToolResults: results})
 	}
@@ -219,23 +219,32 @@ func (b *Builder) Run(ctx context.Context, scope domain.Scope, draft *WorkflowDr
 }
 
 // applyOne enforces provider gating for add-step tools (the runtime mirror of
-// the tool-schema enum) and then applies the tool call to the draft.
-func (b *Builder) applyOne(draft *WorkflowDraft, gatedSet map[string]bool, tc ToolCall) (Event, error) {
+// the tool-schema enum) and then applies the tool call to the draft. It returns
+// the Event to emit and the tool_result content to feed back to the model.
+func (b *Builder) applyOne(draft *WorkflowDraft, gatedSet map[string]bool, tc ToolCall) (Event, string, error) {
+	return applyGatedToolCall(draft, b.reg, gatedSet, b.maxSteps, newStepID, tc)
+}
+
+// applyGatedToolCall enforces provider gating + the step cap for add-step tools
+// (the runtime mirror of the tool-schema enum), then applies the tool call to
+// the draft. It is the single apply path shared by the synchronous Builder.Run
+// loop and the durable agent-loop handler so both gate identically.
+func applyGatedToolCall(draft *WorkflowDraft, reg *steptype.Registry, gatedSet map[string]bool, maxSteps int, nextID idGen, tc ToolCall) (Event, string, error) {
 	if tc.Name == toolAddStep || tc.Name == toolAddStepInBetween {
-		if len(draft.Steps) >= b.maxSteps {
-			return Event{}, fmt.Errorf("%s: step limit reached (%d); remove a step before adding another", tc.Name, b.maxSteps)
+		if len(draft.Steps) >= maxSteps {
+			return Event{}, "", fmt.Errorf("%s: step limit reached (%d); remove a step before adding another", tc.Name, maxSteps)
 		}
 		var a struct {
 			Type string `json:"type"`
 		}
 		if err := json.Unmarshal(tc.Input, &a); err != nil {
-			return Event{}, fmt.Errorf("%s: %w", tc.Name, err)
+			return Event{}, "", fmt.Errorf("%s: %w", tc.Name, err)
 		}
 		if !gatedSet[a.Type] {
-			return Event{}, fmt.Errorf("%s: step type %q is not available in this environment", tc.Name, a.Type)
+			return Event{}, "", fmt.Errorf("%s: step type %q is not available in this environment", tc.Name, a.Type)
 		}
 	}
-	return applyToolCall(draft, b.reg, newStepID, tc.Name, tc.Input)
+	return applyToolCall(draft, reg, nextID, tc.Name, tc.Input)
 }
 
 // validate compiles the draft through the pure authoring path. It builds no
@@ -243,6 +252,12 @@ func (b *Builder) applyOne(draft *WorkflowDraft, gatedSet map[string]bool, tc To
 // is wrapped as *authoring.ErrCompileFailure so callers and the self-correct
 // round see the same shape the HTTP layer maps to 422.
 func (b *Builder) validate(scope domain.Scope, draft *WorkflowDraft) error {
+	return validateDraft(scope, draft)
+}
+
+// validateDraft is the pure draft-validation path shared by the synchronous
+// Builder loop and the durable agent-loop handler.
+func validateDraft(scope domain.Scope, draft *WorkflowDraft) error {
 	// Shape checks the compile path does not cover: an unnamed, untriggered, or
 	// stepless draft compiles to a degenerate workflow rather than an error.
 	// Wrapping them as ErrCompileFailure keeps the self-correct round and the

@@ -21,6 +21,7 @@ import (
 	"github.com/danmestas/notify/internal/agents/ingress"
 	"github.com/danmestas/notify/internal/agents/runtime/mesh"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
+	"github.com/danmestas/notify/internal/aibuilder"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/chatloop"
@@ -280,6 +281,23 @@ func runServe(args []string) error {
 	ing = ing.WithReplyHook(replyhook.Combine(slog.Default(), eml.ReplyHook, chat.ReplyHook))
 	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
 
+	// B3: durable AI workflow-builder loop, hosted as a dagnats agent-loop
+	// handler alongside the synchronous console path (console.Builder.Run). Wired
+	// only when both the Anthropic key and the integration lister are present, so
+	// an unset key gracefully disables the durable builder (mirroring B2). The
+	// handler must be registered before StartWorkers; the workflow is declared
+	// after (below), like credverify.
+	var aiLoop *aibuilder.AgentLoopBuilder
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		aiLoop = aibuilder.NewAgentLoopBuilder(
+			eng,
+			aibuilder.NewAnthropicClient(key),
+			st.Integrations(),
+			st.BuilderSessions(),
+		)
+		aiLoop.Register()
+	}
+
 	eng.StartWorkers(ctx)
 
 	// Launch the chat inbound pollers now that the engine worker pool is live.
@@ -291,6 +309,15 @@ func runServe(args []string) error {
 	// disabled if the run later cannot start, rather than refusing to boot.
 	if err := credVerify.Register(ctx); err != nil {
 		slog.Default().Error("credverify: register workflow", "err", err)
+	}
+
+	// Declare the AI-builder agent-loop workflow now that the engine is live. A
+	// failure here is non-fatal: the durable builder simply cannot be triggered
+	// until a later boot succeeds, rather than refusing to start the binary.
+	if aiLoop != nil {
+		if err := aiLoop.RegisterWorkflow(ctx); err != nil {
+			slog.Default().Error("aibuilder: register agent-loop workflow", "err", err)
+		}
 	}
 
 	whStop, err := webhooksout.New(bus, st).Start(ctx)

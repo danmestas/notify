@@ -96,6 +96,77 @@ func TestRun_AddEmailStep_ThenEditThenStop_Compiles(t *testing.T) {
 	}
 }
 
+// stepIDFromToolResult extracts the "stepId" a mutating tool_result surfaced for
+// the given tool-call id from the latest user turn in req. It fails the test if
+// no such result is present or it carries no stepId — the whole point is that a
+// real model learns the id of a step it just added from the tool_result alone,
+// not from any out-of-band draft snapshot.
+func stepIDFromToolResult(t *testing.T, req MessageRequest, callID string) string {
+	t.Helper()
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		for _, r := range req.Messages[i].ToolResults {
+			if r.ToolCallID != callID {
+				continue
+			}
+			var payload struct {
+				StepID string `json:"stepId"`
+			}
+			if err := json.Unmarshal([]byte(r.Content), &payload); err != nil {
+				t.Fatalf("tool_result for %q is not JSON: %q (%v)", callID, r.Content, err)
+			}
+			if payload.StepID == "" {
+				t.Fatalf("tool_result for %q surfaced no stepId: %q", callID, r.Content)
+			}
+			return payload.StepID
+		}
+	}
+	t.Fatalf("no tool_result found for call id %q", callID)
+	return ""
+}
+
+// TestRun_AddStep_SurfacesStepIDForEdit proves the id of a freshly added step is
+// surfaced to the model in the addStep tool_result: the scripted client reads
+// the stepId FROM THE TOOL_RESULT (never from the draft) and targets it with
+// editStepContent. This is the non-cheating mirror of the checkpoint-fed test
+// above and is the behavior a real LLM depends on.
+func TestRun_AddStep_SurfacesStepIDForEdit(t *testing.T) {
+	draft := &WorkflowDraft{Name: "Welcome", TriggerIdentifier: "welcome"}
+	client := &fnClient{fn: func(call int, req MessageRequest) MessageResponse {
+		switch call {
+		case 1:
+			return MessageResponse{StopReason: "tool_use", ToolCalls: []ToolCall{
+				tc("t1", toolAddStep, `{"type":"email","name":"Welcome"}`),
+			}}
+		case 2:
+			sid := stepIDFromToolResult(t, req, "t1")
+			return MessageResponse{StopReason: "tool_use", ToolCalls: []ToolCall{
+				tc("t2", toolEditStepContent,
+					fmt.Sprintf(`{"stepId":%q,"controlValues":{"subject":"Hi","body":"Welcome aboard"}}`, sid)),
+			}}
+		default:
+			return MessageResponse{StopReason: "end_turn", Text: "Built a one-step welcome email workflow."}
+		}
+	}}
+
+	b := NewBuilder(client, emailActive())
+	var events []Event
+	if err := b.Run(context.Background(), domain.Scope{EnvID: "env1"}, draft, "welcome new users by email", collect(&events)); err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+
+	if len(draft.Steps) != 1 {
+		t.Fatalf("len(Steps) = %d, want 1", len(draft.Steps))
+	}
+	var cv map[string]string
+	_ = json.Unmarshal(draft.Steps[0].ControlValues, &cv)
+	if cv["subject"] != "Hi" || cv["body"] != "Welcome aboard" {
+		t.Errorf("controlValues = %v, want subject/body set via the surfaced id", cv)
+	}
+	if last := events[len(events)-1]; last.Kind != KindDone {
+		t.Errorf("last event = %+v, want done", last)
+	}
+}
+
 func TestRun_EmitsReasoningToolCanvasDoneInOrder(t *testing.T) {
 	draft := &WorkflowDraft{Name: "Welcome", TriggerIdentifier: "welcome"}
 	client := &fnClient{fn: func(call int, _ MessageRequest) MessageResponse {
