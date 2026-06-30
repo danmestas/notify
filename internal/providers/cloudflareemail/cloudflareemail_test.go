@@ -127,8 +127,9 @@ func TestClient_Send_Wire(t *testing.T) {
 	}
 }
 
-// TestClient_Send_ReplyToSnakeCase verifies reply_to is serialised as snake_case.
-func TestClient_Send_ReplyToSnakeCase(t *testing.T) {
+// TestClient_Send_ReplyToEmpty_OmittedFromBody verifies that an empty ReplyTo
+// produces no reply_to field in the Cloudflare wire body (omitempty behaviour).
+func TestClient_Send_ReplyToEmpty_OmittedFromBody(t *testing.T) {
 	const respBody = `{"success":true,"result":{"delivered":["bob@example.com"],"permanent_bounces":[],"queued":[]},"errors":[]}`
 	srv, got := stubServer(t, http.StatusOK, respBody)
 
@@ -137,13 +138,41 @@ func TestClient_Send_ReplyToSnakeCase(t *testing.T) {
 		To:      "bob@example.com",
 		Subject: "Reply test",
 		Text:    "body",
+		// ReplyTo is "" (zero value) — must be absent from the wire body.
 	})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	// reply_to should not be present when not set.
 	if strings.Contains(got.body, "reply_to") {
-		t.Errorf("reply_to unexpectedly present in body: %s", got.body)
+		t.Errorf("reply_to unexpectedly present in body when ReplyTo is empty: %s", got.body)
+	}
+}
+
+// TestClient_Send_ReplyToPresent_InWireBody verifies that a non-empty ReplyTo
+// appears in the Cloudflare wire body as the snake_case field "reply_to".
+// Cloudflare uses snake_case for this field (unlike some providers that use
+// camelCase). The resend and ses providers have an equivalent test; this pins
+// the CF wire shape.
+func TestClient_Send_ReplyToPresent_InWireBody(t *testing.T) {
+	const respBody = `{"success":true,"result":{"delivered":["charlie@example.com"],"permanent_bounces":[],"queued":[]},"errors":[]}`
+	srv, got := stubServer(t, http.StatusOK, respBody)
+
+	c := &Client{AccountID: "a1", APIToken: "t1", From: "f@e.com", BaseURL: srv.URL}
+	_, err := c.Send(context.Background(), providers.EmailMessage{
+		To:      "charlie@example.com",
+		Subject: "Reply test",
+		Text:    "body",
+		ReplyTo: "support@example.com",
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	// reply_to must appear in the wire body with the snake_case key.
+	if !strings.Contains(got.body, `"reply_to"`) {
+		t.Errorf("reply_to absent from wire body: %s", got.body)
+	}
+	if got.parsedBody.ReplyTo != "support@example.com" {
+		t.Errorf("reply_to = %q, want support@example.com", got.parsedBody.ReplyTo)
 	}
 }
 

@@ -294,6 +294,37 @@ func TestHandleEmail_EditorTypeHTML_SetsHTMLField(t *testing.T) {
 	}
 }
 
+// TestHandleEmail_EditorTypeEmpty_DefaultsToTextField asserts that an absent
+// editorType (zero value "") routes the rendered body to the Text field and
+// leaves HTML empty. The handler comment says "" or "block" both map to Text;
+// this test pins the empty-string path specifically so it can never silently
+// change to HTML routing.
+func TestHandleEmail_EditorTypeEmpty_DefaultsToTextField(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	cap := providers.NewCapture()
+	env := emailEnvelope()
+	// EditorType deliberately left as "" (zero value).
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	h := NewEmail(s, stubResolver{provider: cap, from: "noreply@acme.io"})
+	if _, err := h.HandleEmail(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleEmail: %v", err)
+	}
+	sent := cap.Sent()
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 sent email, got %d", len(sent))
+	}
+	if sent[0].Text == "" {
+		t.Errorf("Text is empty, want non-empty when editorType is absent")
+	}
+	if sent[0].HTML != "" {
+		t.Errorf("HTML = %q, want empty when editorType is absent", sent[0].HTML)
+	}
+}
+
 func TestHandleEmail_EditorTypeBlock_SetsTextField(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)

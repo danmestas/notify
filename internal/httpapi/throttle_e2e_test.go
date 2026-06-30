@@ -132,10 +132,12 @@ func TestCheckThrottle_StepHandler_SecondRunDropped(t *testing.T) {
 		return page.Items[0].RunID
 	}
 
-	// pollRunTerminal waits up to 20 s for a run to reach a terminal state.
+	// pollRunTerminal waits up to 60 s for a run to reach a terminal state.
+	// 60 s is generous enough to absorb the ~10x overhead of -race on a
+	// heavily-loaded CI runner while still being finite.
 	pollRunTerminal := func(runID string) engine.RunSnapshot {
 		t.Helper()
-		deadline := time.Now().Add(20 * time.Second)
+		deadline := time.Now().Add(60 * time.Second)
 		var snap engine.RunSnapshot
 		for time.Now().Before(deadline) {
 			s, gerr := eng.GetRun(ctx, runID)

@@ -2,6 +2,7 @@ package eventbus
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 	"time"
@@ -88,6 +89,32 @@ func TestBus_DigestClaim_OnlyOneOwner(t *testing.T) {
 	}
 	if !owner {
 		t.Fatalf("DigestClaim after drain: got isOwner=false, want true (claim cleared)")
+	}
+}
+
+// TestDigestKey_SanitizeInjectivity pins that two digest keys produced from
+// the same base but differing only in ':' vs '_' within the value segment
+// remain DISTINCT after sanitizeKey. The trigger package encodes the grouping
+// value with base64.RawURLEncoding before appending it to the base key; this
+// test replicates that encoding to verify the sanitizer does not accidentally
+// collapse two logically distinct keys into one NATS-KV bucket key.
+//
+// base64url encodes ':' (0x3a) and '_' (0x5f) to different bit patterns, so
+// their encoded representations differ even after sanitizeKey replaces the ':'
+// separators in the base with '_'. This is the load-bearing property the
+// trigger.buildDigestKey design relies on.
+func TestDigestKey_SanitizeInjectivity(t *testing.T) {
+	const base = "env1:sub1:wf1"
+	// Replicate trigger.buildDigestKey's encoding (base64.RawURLEncoding) so the
+	// test does not import the trigger package and stays self-contained.
+	buildKey := func(v string) string {
+		return base + ":" + base64.RawURLEncoding.EncodeToString([]byte(v))
+	}
+	k1 := sanitizeKey(buildKey("order:001"))
+	k2 := sanitizeKey(buildKey("order_001"))
+	if k1 == k2 {
+		t.Fatalf("sanitized digest keys collided: %q == %q — "+
+			"base64url encoding must produce distinct suffixes after sanitizeKey", k1, k2)
 	}
 }
 

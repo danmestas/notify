@@ -438,7 +438,7 @@ func (digest) Compile(step domain.Step) (engine.StepDef, error) {
 		if _, perr := ParseCron(dcv.Cron); perr != nil {
 			return engine.StepDef{}, fmt.Errorf("invalid digest cron %q: %w", dcv.Cron, perr)
 		}
-		return engine.StepDef{ID: step.StepID, Type: "normal", Task: "digest.wait"}, nil
+		return engine.StepDef{ID: step.StepID, Type: "normal", Task: "digest.wait", Retry: delayRetryPolicy()}, nil
 	}
 	return sleepStepDef(step)
 }

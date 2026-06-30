@@ -75,6 +75,23 @@ func TestCompile_DigestScheduled(t *testing.T) {
 	}
 }
 
+// TestCompile_DigestScheduled_HasRetryPolicy pins that a scheduled-digest
+// StepDef carries a RetryPolicy with a large MaxAttempts so that a process
+// restart during a cron wait requeues the digest.wait task rather than
+// dead-lettering it. Mirrors TestDelayRetryPolicy_SurvivesRestarts for delay.
+func TestCompile_DigestScheduled_HasRetryPolicy(t *testing.T) {
+	def, err := steptype.Default().Get("digest").Compile(domain.Step{
+		StepID: "dg", Type: "digest",
+		ControlValues: json.RawMessage(`{"type":"scheduled","cron":"0 * * * *"}`),
+	})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if def.Retry == nil || def.Retry.MaxAttempts < 100 {
+		t.Fatalf("scheduled digest Retry = %+v: MaxAttempts must be >= 100 to survive routine deploys", def.Retry)
+	}
+}
+
 // TestCompile_DigestScheduled_InvalidCron proves an unparseable cron expression
 // fails compilation (which authoring maps to ErrCompileFailure / HTTP 422),
 // so no bad DAG is ever registered.
