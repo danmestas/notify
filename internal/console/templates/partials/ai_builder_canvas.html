@@ -1,0 +1,29 @@
+{{/* ai-builder-canvas — the workflow taking shape live, re-rendered in place on
+     every canvas/tool stream event from the ai-generate run. Shows the proposed
+     name so far and the ordered steps; empty until the model adds the first one.
+     The terminal done event replaces this with the ai-builder-preview fragment. */}}
+{{define "ai-builder-canvas"}}
+<div id="ai-builder-canvas">
+  {{if or .Name .Steps}}
+  <div class="console-card ai-canvas" data-component="ai-builder-canvas">
+    <h3 class="console-card-title">{{if .Name}}{{.Name}}{{else}}Building the workflow{{end}}</h3>
+    {{if .Steps}}
+    <ol class="ai-canvas-steps">
+      {{range .Steps}}
+      <li class="ai-canvas-step">
+        <span class="ai-canvas-step-index">{{.Index}}</span>
+        <span class="ai-canvas-step-type">{{.Label}}</span>
+        {{if .Name}}<span class="ai-canvas-step-name">{{.Name}}</span>{{end}}
+        {{if .Summary}}<span class="ai-canvas-step-summary">{{.Summary}}</span>{{end}}
+      </li>
+      {{end}}
+    </ol>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{/* ai-builder-reasoning-line — one chain-of-thought line appended into
+     #ai-builder-reasoning as the model narrates. Data is the line text. */}}
+{{define "ai-builder-reasoning-line"}}<p class="ai-reasoning-line">{{.}}</p>{{end}}

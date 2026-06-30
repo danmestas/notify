@@ -112,7 +112,13 @@
           server to enable Guided creation.
         </p>
         {{end}}
-        {{/* Preview region — patched by the ai-generate SSE response. */}}
+        {{/* Live chain-of-thought log — reasoning lines append here as the run
+             narrates its plan (streamed by the ai-generate SSE response). */}}
+        <div id="ai-builder-reasoning" class="ai-builder-reasoning" aria-live="polite" role="log"></div>
+        {{/* Live canvas — the workflow building in real time (name + ordered
+             steps), re-rendered on every canvas event. */}}
+        <div id="ai-builder-canvas"></div>
+        {{/* Preview region — patched with the final proposal when the run completes. */}}
         <div id="ai-builder-preview"></div>
       </div>
     </div>

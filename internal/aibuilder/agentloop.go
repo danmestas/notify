@@ -191,6 +191,20 @@ func (b *AgentLoopBuilder) Dispatch(ctx context.Context, scope domain.Scope, ses
 	return b.eng.StartRun(ctx, AgentLoopWorkflow, raw)
 }
 
+// RunFailed reports whether runID has reached a terminal, non-successful state
+// (failed / cancelled / compensated). The console polls it to resolve a stream
+// that ended without a terminal event — the iteration-cap path fails the run
+// with no KindError stream, visible only via the run snapshot. A non-terminal or
+// still-running run reports false; a snapshot-fetch error is surfaced so the
+// caller can fall back to its overall deadline rather than treat it as failed.
+func (b *AgentLoopBuilder) RunFailed(ctx context.Context, runID string) (bool, error) {
+	snap, err := b.eng.GetRun(ctx, runID)
+	if err != nil {
+		return false, fmt.Errorf("aibuilder: get run %q: %w", runID, err)
+	}
+	return snap.IsTerminal() && !snap.Succeeded(), nil
+}
+
 // handle runs exactly one iteration of the builder loop. It loads the prior
 // checkpoint (or initializes from the session on iteration 0), calls the model
 // once, applies any tool calls to the draft, streams an event per call, and ends

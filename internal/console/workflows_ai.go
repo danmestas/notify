@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/starfederation/datastar-go/datastar"
 
 	"github.com/danmestas/notify/internal/aibuilder"
 	"github.com/danmestas/notify/internal/authoring"
@@ -16,10 +17,16 @@ import (
 	"github.com/danmestas/notify/internal/store"
 )
 
-// aiGenerateTimeout caps the total wall time for one AI generation round-trip
-// (up to 24 LLM calls). A slow or wedged model hangs the handler indefinitely
-// without this guard.
+// aiGenerateTimeout caps the total wall time the ai-generate handler holds the
+// SSE stream open for one durable build run (up to DefaultMaxIterations model
+// turns). The iteration-cap path fails the run with no terminal stream event, so
+// this deadline is the backstop that resolves the request rather than hanging.
 const aiGenerateTimeout = 90 * time.Second
+
+// aiBuildPollInterval is how often the ai-generate handler polls the run status
+// while streaming, to resolve a run that ended (failed) without a terminal stream
+// event promptly rather than waiting out aiGenerateTimeout.
+const aiBuildPollInterval = 3 * time.Second
 
 // aiBuilderStepView is one proposed step in the AI builder preview: its type
 // label, optional name, and a short summary of the salient control values.
@@ -45,11 +52,31 @@ type aiBuilderPreviewView struct {
 	CSRF              string
 }
 
+// aiBuilderCanvasView binds the ai-builder-canvas fragment: the workflow taking
+// shape live as the model emits canvas events (its name so far plus its ordered
+// steps). Re-rendered in place on every canvas/tool stream event.
+type aiBuilderCanvasView struct {
+	Name  string
+	Steps []aiBuilderStepView
+}
+
+// aiStreamEvent is the console-side decode of one builder Event published on
+// stream.<runID>.build. It mirrors aibuilder's on-the-wire streamEvent (which is
+// unexported): kind routes the patch, Draft snapshots the workflow at emit time.
+type aiStreamEvent struct {
+	Kind  string                   `json:"kind"`
+	Text  string                   `json:"text"`
+	Draft *aibuilder.WorkflowDraft `json:"draft"`
+	Error string                   `json:"error"`
+}
+
 // handleWorkflowAIGenerate handles POST /console/api/workflows/ai-generate. It
-// creates a builder session, runs the AI builder synchronously over a fresh
-// draft (collecting the event stream into the session's message history),
-// stores the validated draft, and patches a preview fragment for review. A
-// builder failure renders inline, never a 500.
+// creates a builder session, dispatches a durable agent-loop build run, and
+// holds an SSE connection open relaying the run's live Events: reasoning lines
+// append to #ai-builder-reasoning, canvas snapshots re-render #ai-builder-canvas,
+// and the terminal done event renders the final preview into #ai-builder-preview.
+// A model/transport error event, a failed run, or the overall deadline each
+// resolve the stream with an inline failure — never a hung connection or a 500.
 func (c *Console) handleWorkflowAIGenerate(w http.ResponseWriter, r *http.Request) {
 	if w == nil {
 		panic("handleWorkflowAIGenerate: w is nil")
@@ -65,7 +92,7 @@ func (c *Console) handleWorkflowAIGenerate(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "console is read-only", http.StatusForbidden)
 		return
 	}
-	if c.aiBuilder == nil || c.deps.BuilderSessions == nil {
+	if c.aiBuilder == nil || c.buildStream == nil || c.deps.BuilderSessions == nil {
 		c.patchAIPreview(w, r, aiBuilderPreviewView{
 			Error: "AI builder not configured. Set ANTHROPIC_API_KEY to enable the Guided tab.",
 		})
@@ -90,23 +117,24 @@ func (c *Console) handleWorkflowAIGenerate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Run the builder synchronously, collecting events into the session history.
-	var (
-		draft     aibuilder.WorkflowDraft
-		reasoning []string
-	)
-	emit := func(ev aibuilder.Event) {
-		switch ev.Kind {
-		case aibuilder.KindReasoning:
-			if ev.Text != "" {
-				reasoning = append(reasoning, ev.Text)
-				_ = c.deps.BuilderSessions.AppendMessage(r.Context(), scope, sess.ID, "assistant", ev.Text, "")
-			}
-		case aibuilder.KindTool:
-			_ = c.deps.BuilderSessions.AppendMessage(r.Context(), scope, sess.ID, "tool", ev.ToolName, "")
-		}
+	runID, err := c.aiBuilder.Dispatch(r.Context(), scope, sess.ID)
+	if err != nil {
+		c.deps.Logger.Error("console: ai dispatch run", "err", err)
+		c.patchAIPreview(w, r, aiBuilderPreviewView{
+			SessionID: sess.ID,
+			Error:     "Could not start the builder. Please try again.",
+		})
+		return
 	}
 
+	c.streamAIBuild(w, r, scope, sess.ID, runID)
+}
+
+// streamAIBuild subscribes to the run's build stream and relays each Event to the
+// browser as a Datastar patch until a terminal event, a failed run, the overall
+// deadline, or a client disconnect resolves it. One SSE generator carries every
+// patch (reasoning appends, canvas re-renders, the final preview).
+func (c *Console) streamAIBuild(w http.ResponseWriter, r *http.Request, scope domain.Scope, sessionID, runID string) {
 	timeout := aiGenerateTimeout
 	if c.aiGenerateTimeoutOverride > 0 {
 		timeout = c.aiGenerateTimeoutOverride
@@ -114,34 +142,117 @@ func (c *Console) handleWorkflowAIGenerate(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	runErr := c.aiBuilder.Run(ctx, scope, &draft, prompt, emit)
-	if runErr != nil {
-		msg := "The builder could not produce a valid workflow: " + runErr.Error()
-		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
-			msg = "Generation timed out — please try again."
+	// Buffered so the bus callback never blocks; a slow client drops events
+	// rather than stalling the NATS delivery goroutine (live_tail idiom).
+	events := make(chan []byte, liveTailBuffer)
+	unsub, err := c.buildStream.SubscribeBuildStream(runID, func(d []byte) {
+		cp := make([]byte, len(d))
+		copy(cp, d)
+		select {
+		case events <- cp:
+		default: // buffer full — drop; the canvas/preview reconciles on the next event.
 		}
+	})
+	if err != nil {
+		c.deps.Logger.Error("console: ai subscribe build stream", "err", err)
 		c.patchAIPreview(w, r, aiBuilderPreviewView{
-			SessionID: sess.ID,
-			Reasoning: reasoning,
-			Error:     msg,
+			SessionID: sessionID,
+			Error:     "Could not start the builder. Please try again.",
 		})
 		return
 	}
+	defer func() { _ = unsub() }()
 
-	// Persist the validated draft on the session for the confirm step.
-	draftJSON, err := json.Marshal(draft)
-	if err != nil {
-		c.deps.Logger.Error("console: ai marshal draft", "err", err)
-		c.serveError(w, r)
-		return
+	poll := aiBuildPollInterval
+	if c.aiBuildPollOverride > 0 {
+		poll = c.aiBuildPollOverride
 	}
-	if err := c.deps.BuilderSessions.UpdateDraft(r.Context(), scope, sess.ID, draftJSON, store.BuilderSessionDraft); err != nil {
-		c.deps.Logger.Error("console: ai store draft", "err", err)
-		c.serveError(w, r)
-		return
-	}
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
 
-	c.patchAIPreview(w, r, c.aiPreviewFromDraft(sess.ID, &draft, reasoning))
+	sse := datastar.NewSSE(w, r)
+	for {
+		select {
+		case <-ctx.Done():
+			// Overall deadline (or client disconnect): the iteration-cap path fails
+			// the run with no terminal stream event, so resolve inline here.
+			c.emitAIPreview(sse, r, aiBuilderPreviewView{
+				SessionID: sessionID,
+				Error:     "Generation did not finish — please try again.",
+			})
+			return
+		case raw, ok := <-events:
+			if !ok {
+				return
+			}
+			if done := c.relayAIEvent(sse, r, scope, sessionID, raw); done {
+				return
+			}
+		case <-ticker.C:
+			if failed, err := c.aiBuilder.RunFailed(ctx, runID); err == nil && failed {
+				c.emitAIPreview(sse, r, aiBuilderPreviewView{
+					SessionID: sessionID,
+					Error:     "Generation did not finish — please try again.",
+				})
+				return
+			}
+		}
+	}
+}
+
+// relayAIEvent decodes one streamed Event and emits its patch. It returns true
+// when the event is terminal (done → final preview, error → inline failure) and
+// the stream should end; false to keep relaying. An undecodable payload is
+// dropped (defensive — never fail the stream on a malformed event).
+func (c *Console) relayAIEvent(sse *datastar.ServerSentEventGenerator, r *http.Request, scope domain.Scope, sessionID string, raw []byte) bool {
+	var ev aiStreamEvent
+	if err := json.Unmarshal(raw, &ev); err != nil {
+		c.deps.Logger.Debug("console: ai stream decode", "err", err)
+		return false
+	}
+	switch aibuilder.EventKind(ev.Kind) {
+	case aibuilder.KindReasoning:
+		if ev.Text != "" {
+			c.emitAIReasoning(sse, ev.Text)
+		}
+		return false
+	case aibuilder.KindTool, aibuilder.KindCanvas:
+		if ev.Draft != nil {
+			c.emitAICanvas(sse, c.aiCanvasFromDraft(ev.Draft))
+		}
+		return false
+	case aibuilder.KindDone:
+		c.emitAIPreview(sse, r, c.finalPreviewView(r, scope, sessionID, ev.Draft))
+		return true
+	case aibuilder.KindError:
+		// Surface a generic failure to the operator; keep the model/transport
+		// detail in the logs rather than the UI.
+		c.deps.Logger.Debug("console: ai build error event", "err", ev.Error)
+		c.emitAIPreview(sse, r, aiBuilderPreviewView{
+			SessionID: sessionID,
+			Error:     "The builder could not produce a valid workflow. Please try again.",
+		})
+		return true
+	default:
+		return false
+	}
+}
+
+// finalPreviewView builds the completion preview. The durable run persists the
+// validated draft on the session (finish → UpdateDraft) before streaming done, so
+// the session is the source of truth; the done event's draft is a defensive
+// fallback if the session read is empty.
+func (c *Console) finalPreviewView(r *http.Request, scope domain.Scope, sessionID string, fallback *aibuilder.WorkflowDraft) aiBuilderPreviewView {
+	var draft aibuilder.WorkflowDraft
+	if sess, err := c.deps.BuilderSessions.Get(r.Context(), scope, sessionID); err == nil && len(sess.DraftWorkflow) > 0 {
+		if uerr := json.Unmarshal(sess.DraftWorkflow, &draft); uerr != nil {
+			c.deps.Logger.Debug("console: ai final draft decode", "err", uerr)
+		}
+	}
+	if len(draft.Steps) == 0 && fallback != nil {
+		draft = *fallback
+	}
+	return c.aiPreviewFromDraft(sessionID, &draft, nil)
 }
 
 // handleWorkflowAIConfirm handles POST /console/api/workflows/ai-confirm/{sessionID}.
@@ -286,12 +397,32 @@ func (c *Console) aiPreviewFromDraft(sessionID string, draft *aibuilder.Workflow
 	if len(errMsg) > 0 {
 		v.Error = errMsg[0]
 	}
-	for i, st := range draft.Steps {
+	v.Steps = c.aiStepViews(draft.Steps)
+	return v
+}
+
+// aiCanvasFromDraft builds the live-canvas view from a draft snapshot: the
+// workflow's name so far plus its ordered steps.
+func (c *Console) aiCanvasFromDraft(draft *aibuilder.WorkflowDraft) aiBuilderCanvasView {
+	return aiBuilderCanvasView{
+		Name:  draft.Name,
+		Steps: c.aiStepViews(draft.Steps),
+	}
+}
+
+// aiStepViews projects draft steps into the index/label/name/summary rows the
+// preview and canvas fragments both render.
+func (c *Console) aiStepViews(steps []domain.Step) []aiBuilderStepView {
+	if len(steps) == 0 {
+		return nil
+	}
+	out := make([]aiBuilderStepView, 0, len(steps))
+	for i, st := range steps {
 		label := st.Type
 		if def := c.stepTypes.Get(st.Type); def != nil {
 			label = def.DisplayName()
 		}
-		v.Steps = append(v.Steps, aiBuilderStepView{
+		out = append(out, aiBuilderStepView{
 			Index:   i + 1,
 			Type:    st.Type,
 			Label:   label,
@@ -299,7 +430,7 @@ func (c *Console) aiPreviewFromDraft(sessionID string, draft *aibuilder.Workflow
 			Summary: c.aiStepSummary(st.Type, st.ControlValues),
 		})
 	}
-	return v
+	return out
 }
 
 // aiStepSummary renders a short, human-readable summary of a step's salient
@@ -341,4 +472,52 @@ func (c *Console) patchAIPreview(w http.ResponseWriter, r *http.Request, v aiBui
 		return
 	}
 	c.patchHTML(w, r, html)
+}
+
+// emitAIReasoning appends one chain-of-thought line into #ai-builder-reasoning on
+// the live SSE generator (the running log grows as the model narrates its plan).
+func (c *Console) emitAIReasoning(sse *datastar.ServerSentEventGenerator, text string) {
+	html, err := renderFragment(c.ts.base, "ai-builder-reasoning-line", text)
+	if err != nil {
+		c.deps.Logger.Error("console: render ai reasoning line", "err", err)
+		return
+	}
+	if err := sse.PatchElements(
+		html,
+		datastar.WithSelector("#ai-builder-reasoning"),
+		datastar.WithMode(datastar.ElementPatchModeAppend),
+	); err != nil {
+		c.deps.Logger.Debug("console: ai reasoning patch", "err", err)
+	}
+}
+
+// emitAICanvas re-renders #ai-builder-canvas in place from the latest draft
+// snapshot (the workflow building live). The fragment's outer #ai-builder-canvas
+// element makes the default outer-mode patch line up.
+func (c *Console) emitAICanvas(sse *datastar.ServerSentEventGenerator, v aiBuilderCanvasView) {
+	html, err := renderFragment(c.ts.base, "ai-builder-canvas", v)
+	if err != nil {
+		c.deps.Logger.Error("console: render ai canvas fragment", "err", err)
+		return
+	}
+	if err := sse.PatchElements(html); err != nil {
+		c.deps.Logger.Debug("console: ai canvas patch", "err", err)
+	}
+}
+
+// emitAIPreview renders the ai-builder-preview fragment (final preview or inline
+// failure) on the live SSE generator, wiring the per-session CSRF token for the
+// confirm/discard actions. The outer #ai-builder-preview element drives the patch.
+func (c *Console) emitAIPreview(sse *datastar.ServerSentEventGenerator, r *http.Request, v aiBuilderPreviewView) {
+	if s, ok := sessionFromContext(r.Context()); ok {
+		v.CSRF = s.CSRF
+	}
+	html, err := renderFragment(c.ts.base, "ai-builder-preview", v)
+	if err != nil {
+		c.deps.Logger.Error("console: render ai preview fragment", "err", err)
+		return
+	}
+	if err := sse.PatchElements(html); err != nil {
+		c.deps.Logger.Debug("console: ai preview patch", "err", err)
+	}
 }

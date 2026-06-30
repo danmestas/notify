@@ -368,7 +368,7 @@ func runServe(args []string) error {
 	// Operator console: same listener, mounted at /console ahead of the
 	// public API. All console reads go through the same Scope-carrying
 	// services in-process.
-	consoleRoutes := console.New(console.Deps{
+	consoleDeps := console.Deps{
 		Logger:         slog.Default(),
 		Identity:       id,
 		Authoring:      au,
@@ -415,7 +415,18 @@ func runServe(args []string) error {
 		// W4-W2: SSE live-tail for the activity views. The event bus is the
 		// delivery-status publisher the live-tail subscribes through.
 		LiveTail: bus,
-	}).Routes()
+		// B3: the ai-generate handler subscribes to the durable build run's live
+		// Events (stream.<runID>.build) through the event bus.
+		BuildStream: bus,
+	}
+	// B3: the durable AI workflow builder drives the Guided create tab. Assign the
+	// dispatcher only when it is wired (ANTHROPIC_API_KEY set) — a nil
+	// *aibuilder.AgentLoopBuilder boxed into the interface would read as non-nil and
+	// defeat the console's graceful not-configured fallback.
+	if aiLoop != nil {
+		consoleDeps.AIBuilder = aiLoop
+	}
+	consoleRoutes := console.New(consoleDeps).Routes()
 	root := http.NewServeMux()
 	root.Handle("/console", consoleRoutes)
 	root.Handle("/console/", consoleRoutes)

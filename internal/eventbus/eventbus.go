@@ -187,6 +187,31 @@ func (b *Bus) SubscribeAllDelivery(handler func([]byte)) (unsubscribe func() err
 	return sub.Unsubscribe, nil
 }
 
+// buildStreamSubject builds the dagnats run-stream subject the AI workflow
+// builder's agent-loop step publishes its live Events on: stream.<runID>.build.
+// "build" is the builder's single agent-loop step id (aibuilder.AgentLoopStepID);
+// the dagnats streaming convention is stream.<runID>.<stepID>.
+func buildStreamSubject(runID string) string {
+	return "stream." + runID + ".build"
+}
+
+// SubscribeBuildStream delivers each AI-builder streaming Event for the run to
+// handler until the returned unsubscribe func is called. Uses core NATS, so the
+// subscription is ephemeral (no replay) — the console subscribes for the life of
+// one generate request and drops it when the request ends.
+func (b *Bus) SubscribeBuildStream(runID string, handler func([]byte)) (unsubscribe func() error, err error) {
+	if runID == "" {
+		return nil, fmt.Errorf("eventbus: SubscribeBuildStream: runID must be non-empty")
+	}
+	sub, err := b.nc.Subscribe(buildStreamSubject(runID), func(m *nats.Msg) {
+		handler(m.Data)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("eventbus: SubscribeBuildStream: %w", err)
+	}
+	return sub.Unsubscribe, nil
+}
+
 // sanitizeKey replaces any character not allowed in a NATS KV key
 // (alnum, '-', '_', '.', '=') with '_' so an arbitrary caller-supplied key
 // is always a valid bucket key.

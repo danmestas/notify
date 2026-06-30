@@ -14,7 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	agentstore "github.com/danmestas/notify/internal/agents/store"
-	"github.com/danmestas/notify/internal/aibuilder"
 	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
@@ -212,6 +211,16 @@ type Deps struct {
 	// supply a stub. Nil disables the live-tail: the stream endpoint answers
 	// 503 and the activity pages degrade to manual-refresh pagination.
 	LiveTail DeliverySubscriber
+	// AIBuilder dispatches durable AI workflow-builder runs (the Guided create
+	// tab, B3) and reports their terminal run status. The production wiring passes
+	// *aibuilder.AgentLoopBuilder; nil disables the Guided tab (the tab shows a
+	// not-configured note and ai-generate returns a clear message).
+	AIBuilder aiBuildDispatcher
+	// BuildStream is the eventbus port the ai-generate handler subscribes through
+	// for a run's live build Events (stream.<runID>.build). The production wiring
+	// passes *eventbus.Bus; nil disables live streaming (ai-generate falls back to
+	// an inline "not configured" message rather than holding a dead connection).
+	BuildStream aiBuildStreamSubscriber
 }
 
 // Console is the operator-console handler factory. Construct with New;
@@ -221,21 +230,39 @@ type Console struct {
 	gcm       cipher.AEAD
 	ts        *templateSet
 	stepTypes *steptype.Registry
-	// aiBuilder drives the Guided create tab (B2). It is non-nil only when
-	// deps.AnthropicKey is set; a nil aiBuilder gracefully disables the feature
-	// (the Guided tab shows a not-configured note, the endpoints return a clear
-	// message). Tests inject a Builder backed by a scripted mock Client.
-	aiBuilder aiWorkflowBuilder
+	// aiBuilder drives the Guided create tab (B3): it dispatches a durable
+	// agent-loop run and reports its terminal status. It is non-nil only when the
+	// production wiring injects deps.AIBuilder; a nil aiBuilder gracefully disables
+	// the feature (the Guided tab shows a not-configured note, the endpoints return
+	// a clear message). Tests inject a scripted mock.
+	aiBuilder aiBuildDispatcher
+	// buildStream is the eventbus port the ai-generate handler subscribes through
+	// for a run's live build Events. Nil disables live streaming.
+	buildStream aiBuildStreamSubscriber
 	// aiGenerateTimeoutOverride, when non-zero, replaces aiGenerateTimeout as the
 	// wall-clock cap on a single AI generation run (tests only).
 	aiGenerateTimeoutOverride time.Duration
+	// aiBuildPollOverride, when non-zero, replaces aiBuildPollInterval as the
+	// run-status poll cadence the ai-generate handler uses to resolve a stream
+	// that ended without a terminal event (tests only).
+	aiBuildPollOverride time.Duration
 }
 
-// aiWorkflowBuilder is the subset of *aibuilder.Builder the console drives. The
-// production wiring constructs a real Builder over the Anthropic client; tests
-// inject a Builder backed by a scripted mock aibuilder.Client (no API key).
-type aiWorkflowBuilder interface {
-	Run(ctx context.Context, scope domain.Scope, draft *aibuilder.WorkflowDraft, userPrompt string, emit func(aibuilder.Event)) error
+// aiBuildDispatcher is the subset of *aibuilder.AgentLoopBuilder the console
+// drives: start a durable build run for a session, and report whether a run
+// reached a terminal failed state (to resolve a stream that ended without a
+// terminal event). Tests inject a scripted mock.
+type aiBuildDispatcher interface {
+	Dispatch(ctx context.Context, scope domain.Scope, sessionID string) (runID string, err error)
+	RunFailed(ctx context.Context, runID string) (failed bool, err error)
+}
+
+// aiBuildStreamSubscriber is the eventbus port the ai-generate handler subscribes
+// through for a run's live build Events (stream.<runID>.build). *eventbus.Bus
+// satisfies it structurally; tests supply a lightweight stub that replays a
+// scripted event sequence.
+type aiBuildStreamSubscriber interface {
+	SubscribeBuildStream(runID string, handler func([]byte)) (unsubscribe func() error, err error)
 }
 
 // New builds a Console from deps. It panics on programmer errors (nil
@@ -292,15 +319,13 @@ func New(deps Deps) *Console {
 	for _, tmpl := range c.ts.pageTemplates {
 		tmpl.Funcs(c.funcMap())
 	}
-	// Wire the AI workflow builder only when a key and the integration lister are
-	// available. An unset key leaves aiBuilder nil — the Guided tab and endpoints
-	// degrade gracefully rather than panic (B2).
-	if deps.AnthropicKey != "" && deps.Integrations != nil {
-		c.aiBuilder = aibuilder.NewBuilder(
-			aibuilder.NewAnthropicClient(deps.AnthropicKey),
-			deps.Integrations,
-		)
-	}
+	// Wire the durable AI workflow builder from the injected dispatcher + stream
+	// port (B3). An unwired dispatcher leaves aiBuilder nil — the Guided tab and
+	// endpoints degrade gracefully rather than panic. The dispatcher is constructed
+	// in cmd/notify with the engine; the console only drives Dispatch/RunFailed and
+	// the live stream.
+	c.aiBuilder = deps.AIBuilder
+	c.buildStream = deps.BuildStream
 	return c
 }
 
