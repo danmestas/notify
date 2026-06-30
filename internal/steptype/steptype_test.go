@@ -194,3 +194,80 @@ func TestThrottle_Has(t *testing.T) {
 		t.Errorf("Name() = %q, want throttle", r.Get("throttle").Name())
 	}
 }
+
+// TestPush_ParseForm_ValidDataJSON verifies that a well-formed JSON object with
+// string values round-trips through push.ParseForm into the data_json key.
+func TestPush_ParseForm_ValidDataJSON(t *testing.T) {
+	r := steptype.Default()
+	form := url.Values{
+		"title":     {"Alert"},
+		"body":      {"Something happened"},
+		"data_json": {`{"screen":"home","badge":"3"}`},
+	}
+	got, err := r.Get("push").ParseForm(form)
+	if err != nil {
+		t.Fatalf("ParseForm: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+	if m["title"] != "Alert" {
+		t.Errorf("title = %v, want Alert", m["title"])
+	}
+	dj, ok := m["data_json"].(string)
+	if !ok {
+		t.Fatalf("data_json is %T, want string", m["data_json"])
+	}
+	var data map[string]string
+	if err := json.Unmarshal([]byte(dj), &data); err != nil {
+		t.Fatalf("data_json not valid JSON: %v", err)
+	}
+	if data["screen"] != "home" {
+		t.Errorf("data_json[screen] = %q, want home", data["screen"])
+	}
+}
+
+// TestPush_ParseForm_InvalidDataJSON verifies that a non-JSON or non-object
+// data_json value is rejected with the canonical error message.
+func TestPush_ParseForm_InvalidDataJSON(t *testing.T) {
+	r := steptype.Default()
+	cases := []struct {
+		name string
+		val  string
+	}{
+		{"not json", `not json`},
+		{"array", `["a","b"]`},
+		{"non-string values", `{"count":3}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			form := url.Values{"title": {"T"}, "body": {"B"}, "data_json": {tc.val}}
+			_, err := r.Get("push").ParseForm(form)
+			if err == nil {
+				t.Fatalf("ParseForm(%q): expected error, got nil", tc.val)
+			}
+			if err.Error() != "data must be a JSON object with string values only" {
+				t.Errorf("error = %q, want canonical message", err.Error())
+			}
+		})
+	}
+}
+
+// TestPush_ParseForm_EmptyDataJSON verifies that an absent data_json field
+// produces no data_json key in the output (omitempty behaviour).
+func TestPush_ParseForm_EmptyDataJSON(t *testing.T) {
+	r := steptype.Default()
+	form := url.Values{"title": {"T"}, "body": {"B"}}
+	got, err := r.Get("push").ParseForm(form)
+	if err != nil {
+		t.Fatalf("ParseForm: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+	if _, ok := m["data_json"]; ok {
+		t.Errorf("data_json present in output when form field is empty, want absent")
+	}
+}

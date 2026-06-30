@@ -2,6 +2,7 @@ package steptype
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 
@@ -71,14 +72,53 @@ func (push) Name() string                                     { return "push" }
 func (push) DefaultControlValues() json.RawMessage            { return emptyControlValues() }
 func (push) ControlMap(cv json.RawMessage) map[string]string  { return flattenControlValues(cv) }
 func (push) Compile(step domain.Step) (engine.StepDef, error) { return channelStepDef(step), nil }
-func (push) Validate(json.RawMessage) error                   { return nil }
-func (push) EditorPartial() string                            { return "wf-step-fields-push" }
+func (push) Validate(cv json.RawMessage) error {
+	if len(cv) == 0 {
+		return nil
+	}
+	var m struct {
+		DataJSON string `json:"data_json"`
+	}
+	if err := json.Unmarshal(cv, &m); err != nil {
+		return err
+	}
+	return validateDataJSON(m.DataJSON)
+}
+func (push) EditorPartial() string { return "wf-step-fields-push" }
 
 func (push) ParseForm(form url.Values) (json.RawMessage, error) {
-	return marshalControlValues(map[string]any{
+	m := map[string]any{
 		"title": formField(form, "title"),
 		"body":  formField(form, "body"),
-	})
+	}
+	if dataJSON := formField(form, "data_json"); dataJSON != "" {
+		if err := validateDataJSON(dataJSON); err != nil {
+			return nil, err
+		}
+		m["data_json"] = dataJSON
+	}
+	return marshalControlValues(m)
+}
+
+// validateDataJSON checks that s is a JSON object whose every value is a JSON
+// string literal. It rejects null, numbers, booleans, arrays, and nested
+// objects. An empty s is accepted (means data_json is absent).
+func validateDataJSON(s string) error {
+	if s == "" {
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return errors.New("data must be a JSON object with string values only")
+	}
+	for _, v := range raw {
+		// A JSON string literal always starts with '"'; anything else (null,
+		// number, bool, array, object) is rejected.
+		if len(v) == 0 || v[0] != '"' {
+			return errors.New("data must be a JSON object with string values only")
+		}
+	}
+	return nil
 }
 
 // sms is the SMS channel step type (body only).

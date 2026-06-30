@@ -66,10 +66,18 @@ func (c *Client) Send(ctx context.Context, msg providers.PushMessage) (providers
 		return providers.Result{}, fmt.Errorf("expo: empty device token")
 	}
 
+	var expoData map[string]any
+	if len(msg.Data) > 0 {
+		expoData = make(map[string]any, len(msg.Data))
+		for k, v := range msg.Data {
+			expoData[k] = v
+		}
+	}
 	payload := []expoMessage{{
 		To:    msg.Topic,
 		Title: msg.Title,
 		Body:  msg.Body,
+		Data:  expoData,
 	}}
 	body, err := json.Marshal(payload)
 	if err != nil {

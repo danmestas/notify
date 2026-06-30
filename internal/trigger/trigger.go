@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -110,6 +111,10 @@ type stepControls struct {
 	Priority int      `json:"priority"`
 	Tags     []string `json:"tags"`
 	Markdown bool     `json:"markdown"`
+	// DataJSON is the raw JSON string stored under "data_json" in controlValues
+	// (written by push.ParseForm). Unmarshaled to map[string]string at
+	// envelope-build time and forwarded as runenv.Step.Data.
+	DataJSON string `json:"data_json,omitempty"`
 }
 
 // digestKeyPath extracts the optional digestKey dot-path from a digest step's
@@ -359,6 +364,12 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 			return "", nil
 		}
 	}
+	var stepData map[string]string
+	if controls.DataJSON != "" {
+		if err := json.Unmarshal([]byte(controls.DataJSON), &stepData); err != nil {
+			return "", fmt.Errorf("trigger: unmarshal data_json for step %s: %w", step.StepID, err)
+		}
+	}
 	notificationID := store.NewULID()
 
 	envelope := runenv.InAppEnvelope{
@@ -381,6 +392,7 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 			Priority:          controls.Priority,
 			Tags:              controls.Tags,
 			Markdown:          controls.Markdown,
+			Data:              stepData,
 			Filters:           step.Filters,
 		},
 	}

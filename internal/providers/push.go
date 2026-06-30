@@ -17,6 +17,9 @@ type PushMessage struct {
 	Priority int // 1 (min) .. 5 (max); 0 leaves the provider default
 	Tags     []string
 	Markdown bool
+	// Data is the optional key-value map forwarded as the native data payload
+	// to FCM and Expo (deep-links, badges). nil omits the data field entirely.
+	Data map[string]string
 }
 
 // PushProvider sends a push notification and reports the result.

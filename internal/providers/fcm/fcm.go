@@ -131,6 +131,7 @@ func (c *Client) Send(ctx context.Context, msg providers.PushMessage) (providers
 			Title: msg.Title,
 			Body:  msg.Body,
 		},
+		Data: msg.Data,
 	}}
 	body, err := json.Marshal(payload)
 	if err != nil {

@@ -204,3 +204,38 @@ func TestNewClient_InvalidServiceAccountIsError(t *testing.T) {
 		t.Fatal("NewClient with invalid SA JSON: expected error, got nil")
 	}
 }
+
+// TestFCMSend_DataFieldForwarded: msg.Data is forwarded as message.data in
+// the FCM v1 wire payload.
+func TestFCMSend_DataFieldForwarded(t *testing.T) {
+	srv, got := stubServer(t, http.StatusOK,
+		`{"name":"projects/test-proj/messages/0:data_test"}`)
+
+	c := &Client{
+		ProjectID: "test-proj",
+		Tokens:    stubTokenSource{tok: "tok"},
+		BaseURL:   srv.URL,
+	}
+	_, err := c.Send(context.Background(), providers.PushMessage{
+		Topic: "device-token",
+		Data:  map[string]string{"screen": "home", "badge": "3"},
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	var req struct {
+		Message struct {
+			Data map[string]string `json:"data"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(got.body), &req); err != nil {
+		t.Fatalf("unmarshal captured body: %v", err)
+	}
+	if req.Message.Data["screen"] != "home" {
+		t.Errorf("message.data[screen] = %q, want %q", req.Message.Data["screen"], "home")
+	}
+	if req.Message.Data["badge"] != "3" {
+		t.Errorf("message.data[badge] = %q, want %q", req.Message.Data["badge"], "3")
+	}
+}

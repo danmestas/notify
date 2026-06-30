@@ -29,6 +29,9 @@ type Step struct {
 	Priority int      `json:"priority,omitempty"` // 1 (min) .. 5 (max); 0 = provider default
 	Tags     []string `json:"tags,omitempty"`
 	Markdown bool     `json:"markdown,omitempty"`
+	// Data is the optional key-value map forwarded as native data to FCM and
+	// Expo (deep-links, badges). Absent/nil sends no data payload.
+	Data map[string]string `json:"data,omitempty"`
 	// Filters is the step's per-step condition (a JSON array of filter.Group,
 	// copied verbatim from domain.Step.Filters). Empty/absent => no condition =>
 	// the step always runs. When present, the send handler evaluates it against

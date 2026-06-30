@@ -214,6 +214,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 		Priority: env.Step.Priority,
 		Tags:     env.Step.Tags,
 		Markdown: env.Step.Markdown,
+		Data:     env.Step.Data,
 	}); err != nil {
 		if providers.IsTransient(err) {
 			// Transient (5xx/timeout): let the engine retry the task per its

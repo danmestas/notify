@@ -161,6 +161,12 @@
       <input class="console-input" type="text" id="cv-title" name="title"
              value="{{index .ControlMap "title"}}">
     </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-data-json">Data payload (JSON, optional)</label>
+      <textarea class="console-input console-input-mono" id="cv-data-json" name="data_json" rows="3"
+                placeholder='{"screen":"home","badge":"3"}'>{{index .ControlMap "data_json"}}</textarea>
+      <p class="form-hint">Optional key-value JSON object forwarded to FCM and Expo (deep-links, badges). Must contain only string values.</p>
+    </div>
     {{template "wf-preview-split" (dict "BodyLabel" "Body" "Rows" 4 "Body" (index .ControlMap "body"))}}
     {{end}}
 {{define "wf-step-fields-sms"}}

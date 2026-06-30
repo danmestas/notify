@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -335,6 +336,72 @@ func TestIngest_TopicFanout(t *testing.T) {
 	}
 	if withRun != 2 {
 		t.Fatalf("notifications with non-empty run_id = %d, want 2", withRun)
+	}
+}
+
+// TestIngest_PushDataJSONCorrupted_ReturnsError proves that a push workflow
+// whose control_values contain a corrupted (non-parseable) data_json string
+// causes Ingest to surface an error rather than silently sending a nil payload.
+func TestIngest_PushDataJSONCorrupted_ReturnsError(t *testing.T) {
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Stop() })
+
+	dbPath := filepath.Join(t.TempDir(), "trigger.db")
+	ctx := context.Background()
+	st, err := store.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+	const pushTrigger = "push-corrupt-flow"
+
+	// data_json is stored as a JSON string in controlValues; this value is
+	// deliberately malformed so json.Unmarshal into map[string]string fails.
+	steps, err := json.Marshal([]domain.Step{{
+		StepID: "P1",
+		Type:   "push",
+		ControlValues: json.RawMessage(
+			`{"title":"Alert","body":"Body","data_json":"not valid json {"}`,
+		),
+	}})
+	if err != nil {
+		t.Fatalf("marshal steps: %v", err)
+	}
+	if _, err := st.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "PushCorrupt",
+		TriggerIdentifier: pushTrigger,
+		Active:            true,
+		Steps:             steps,
+	}); err != nil {
+		t.Fatalf("Workflows().Create: %v", err)
+	}
+
+	dagName := scope.EnvID + "-" + pushTrigger
+	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
+		Name:  dagName,
+		Steps: []engine.StepDef{{ID: "P1", Task: "send.push", Type: "normal"}},
+	}); err != nil {
+		t.Fatalf("RegisterWorkflow: %v", err)
+	}
+
+	svc := trigger.New(audience.New(st), st, eng)
+	_, ingestErr := svc.Ingest(ctx, scope, trigger.TriggerRequest{
+		Name:          pushTrigger,
+		To:            trigger.ToField{SubscriberID: "user_push", FirstName: "Ada"},
+		Payload:       json.RawMessage(`{}`),
+		TransactionID: "tx-push-corrupt-1",
+	})
+	if ingestErr == nil {
+		t.Fatal("Ingest: expected error for corrupted data_json, got nil")
+	}
+	if !strings.Contains(ingestErr.Error(), "data_json") {
+		t.Errorf("error = %q, want mention of data_json", ingestErr.Error())
 	}
 }
 

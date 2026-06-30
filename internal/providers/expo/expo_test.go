@@ -2,6 +2,7 @@ package expo
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -177,5 +178,35 @@ func TestClient_Send_EmptyTokenIsPermanent(t *testing.T) {
 	}
 	if providers.IsTransient(err) {
 		t.Errorf("empty token classified transient, want permanent: %v", err)
+	}
+}
+
+// TestExpoSend_DataFieldForwarded: msg.Data is forwarded as [0].data in the
+// Expo wire payload (map[string]string -> map[string]any conversion).
+func TestExpoSend_DataFieldForwarded(t *testing.T) {
+	srv, got := stubServer(t, http.StatusOK,
+		`{"data":[{"status":"ok","id":"data-test-id"}]}`)
+
+	c := &Client{BaseURL: srv.URL}
+	_, err := c.Send(context.Background(), providers.PushMessage{
+		Topic: "ExponentPushToken[test]",
+		Data:  map[string]string{"screen": "home"},
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	var payload []struct {
+		Data map[string]any `json:"data"`
+	}
+	if uerr := json.Unmarshal([]byte(got.body), &payload); uerr != nil {
+		t.Fatalf("unmarshal captured body: %v", uerr)
+	}
+	if len(payload) == 0 {
+		t.Fatal("empty request array")
+	}
+	v, ok := payload[0].Data["screen"]
+	if !ok || v != "home" {
+		t.Errorf("[0].data[screen] = %v, want %q", v, "home")
 	}
 }

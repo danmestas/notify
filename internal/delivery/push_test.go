@@ -390,3 +390,34 @@ func TestHandlePush_TransientSendErrorIsRetryable(t *testing.T) {
 		t.Errorf("expected no terminal message before retry, got %d", len(msgs))
 	}
 }
+
+// TestHandlePush_DataThreadedEndToEnd: when Step.Data carries extra data, it
+// is forwarded verbatim to the provider's PushMessage.
+func TestHandlePush_DataThreadedEndToEnd(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	seedTopic(t, s, "agent-alerts")
+	capt := providers.NewCapturePush()
+	h := NewPush(s, stubPushResolver{p: capt, id: "ntfy"})
+
+	env := pushEnvelope()
+	env.Step.Data = map[string]string{"screen": "home", "badge": "3"}
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandlePush(ctx, engine.TaskPayload{RunID: "run_data1", StepID: "P1", Input: input}); err != nil {
+		t.Fatalf("HandlePush: %v", err)
+	}
+
+	sent := capt.Sent()
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 sent message, got %d", len(sent))
+	}
+	if sent[0].Data["screen"] != "home" {
+		t.Errorf("Data[screen] = %q, want %q", sent[0].Data["screen"], "home")
+	}
+	if sent[0].Data["badge"] != "3" {
+		t.Errorf("Data[badge] = %q, want %q", sent[0].Data["badge"], "3")
+	}
+}
