@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 // Control-plane subjects exposed by the dagnats NATS API.
@@ -59,7 +60,9 @@ type RetryPolicy struct {
 }
 
 // StepDef mirrors dagnats's dag.StepDef JSON. Type marshals as a string such as
-// "normal"; set it explicitly to be safe.
+// "normal" or "agent_loop"; set it explicitly to be safe. Timeout bounds a
+// single task dispatch (per agent-loop iteration) and marshals as nanoseconds
+// (Go time.Duration JSON), matching dagnats's dag.StepDef.Timeout.
 type StepDef struct {
 	ID        string          `json:"id"`
 	Task      string          `json:"task"`
@@ -67,17 +70,21 @@ type StepDef struct {
 	Config    json.RawMessage `json:"config,omitempty"`
 	DependsOn []string        `json:"depends_on,omitempty"`
 	Retry     *RetryPolicy    `json:"retry,omitempty"`
+	Timeout   time.Duration   `json:"timeout,omitempty"`
 }
 
 // TaskPayload mirrors dagnats's protocol.TaskPayload / bridge pollResponse JSON.
 // Attempt is the 1-based dispatch count; always ≥1 since danmestas/dagnats#384
 // fixed first-dispatch propagation (previously omitted, unmarshaling to 0).
 type TaskPayload struct {
-	TaskID  string          `json:"task_id"`
-	RunID   string          `json:"run_id"`
-	StepID  string          `json:"step_id"`
-	Attempt int             `json:"attempt"`
-	Input   json.RawMessage `json:"input,omitempty"`
+	TaskID string `json:"task_id"`
+	RunID  string `json:"run_id"`
+	StepID string `json:"step_id"`
+	// Iteration is the 0-based agent-loop iteration count: 0 on first dispatch,
+	// incremented by the engine on each Continue. Omitted (0) for normal steps.
+	Iteration int             `json:"iteration,omitempty"`
+	Attempt   int             `json:"attempt"`
+	Input     json.RawMessage `json:"input,omitempty"`
 }
 
 // RunSnapshot mirrors the run fields of dagnats's api.runs.get reply
@@ -135,8 +142,16 @@ type Engine struct {
 	bridgeURL string
 	http      *http.Client
 
-	handlers map[string]HandlerFunc
-	started  bool
+	handlers      map[string]HandlerFunc
+	agentHandlers map[string]AgentLoopFunc
+	started       bool
+
+	// checkpoints is the dagnats "checkpoints" KV bucket, opened lazily on the
+	// first agent-loop dispatch. Agent-loop handlers read/write durable state
+	// here at key {runID}.{stepID} (the bridge has no checkpoint-read endpoint).
+	kvOnce      sync.Once
+	checkpoints jetstream.KeyValue
+	kvErr       error
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -150,10 +165,11 @@ func New(natsURL, bridgeURL string) (*Engine, error) {
 		return nil, fmt.Errorf("connect nats %q: %w", natsURL, err)
 	}
 	return &Engine{
-		nc:        nc,
-		bridgeURL: bridgeURL,
-		http:      &http.Client{Timeout: 30 * time.Second},
-		handlers:  make(map[string]HandlerFunc),
+		nc:            nc,
+		bridgeURL:     bridgeURL,
+		http:          &http.Client{Timeout: 30 * time.Second},
+		handlers:      make(map[string]HandlerFunc),
+		agentHandlers: make(map[string]AgentLoopFunc),
 	}, nil
 }
 
@@ -181,6 +197,10 @@ func (e *Engine) StartWorkers(ctx context.Context) {
 	loopCtx, cancel := context.WithCancel(ctx)
 	e.cancel = cancel
 	for taskType := range e.handlers {
+		e.wg.Add(1)
+		go e.pollLoop(loopCtx, taskType)
+	}
+	for taskType := range e.agentHandlers {
 		e.wg.Add(1)
 		go e.pollLoop(loopCtx, taskType)
 	}
@@ -290,16 +310,29 @@ type resolveRequest struct {
 	FailureType string          `json:"failure_type,omitempty"`
 }
 
+// Long-poll timeouts for the worker bridge. Agent-loop steps re-enqueue their
+// next iteration the instant a handler Continues, and the re-enqueued task is
+// only picked up on a fresh poll cycle — so a short long-poll keeps
+// iteration-to-iteration latency low. Simple one-shot handlers favour a longer
+// poll to minimise idle request churn.
+const (
+	pollTimeoutMs          = 5000
+	pollTimeoutAgentLoopMs = 1000
+)
+
 // pollLoop long-polls the bridge for one task type and dispatches each task to
 // its handler in its own goroutine.
 func (e *Engine) pollLoop(ctx context.Context, taskType string) {
 	defer e.wg.Done()
-	fn := e.handlers[taskType]
+	timeoutMs := int64(pollTimeoutMs)
+	if _, ok := e.agentHandlers[taskType]; ok {
+		timeoutMs = pollTimeoutAgentLoopMs
+	}
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		tasks, err := e.poll(ctx, taskType)
+		tasks, err := e.poll(ctx, taskType, timeoutMs)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -323,18 +356,18 @@ func (e *Engine) pollLoop(ctx context.Context, taskType string) {
 			e.wg.Add(1)
 			go func(t TaskPayload) {
 				defer e.wg.Done()
-				e.runTask(ctx, fn, t)
+				e.dispatch(ctx, taskType, t)
 			}(task)
 		}
 	}
 }
 
 // poll issues one long-poll request for taskType and returns the tasks fetched.
-func (e *Engine) poll(ctx context.Context, taskType string) ([]TaskPayload, error) {
+func (e *Engine) poll(ctx context.Context, taskType string, timeoutMs int64) ([]TaskPayload, error) {
 	body, err := json.Marshal(pollRequest{
 		TaskTypes: []string{taskType},
 		MaxTasks:  10,
-		TimeoutMs: 5000,
+		TimeoutMs: timeoutMs,
 	})
 	if err != nil {
 		return nil, err
