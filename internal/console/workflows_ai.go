@@ -94,7 +94,7 @@ func (c *Console) handleWorkflowAIGenerate(w http.ResponseWriter, r *http.Reques
 	}
 	if c.aiBuilder == nil || c.buildStream == nil || c.deps.BuilderSessions == nil {
 		c.patchAIPreview(w, r, aiBuilderPreviewView{
-			Error: "AI builder not configured. Set ANTHROPIC_API_KEY to enable the Guided tab.",
+			Error: "AI builder not configured. Set NOTIFY_AI_API_KEY (or ANTHROPIC_API_KEY) to enable the Guided tab.",
 		})
 		return
 	}

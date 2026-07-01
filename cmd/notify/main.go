@@ -282,16 +282,20 @@ func runServe(args []string) error {
 	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
 
 	// B3: durable AI workflow-builder loop, hosted as a dagnats agent-loop
-	// handler alongside the synchronous console path (console.Builder.Run). Wired
-	// only when both the Anthropic key and the integration lister are present, so
-	// an unset key gracefully disables the durable builder (mirroring B2). The
-	// handler must be registered before StartWorkers; the workflow is declared
+	// handler alongside the synchronous console path (console.Builder.Run).
+	// Provider selection (in priority order):
+	//   NOTIFY_AI_API_KEY → OpenRouter (default) or any OpenAI-compatible endpoint
+	//     NOTIFY_AI_BASE_URL overrides the base URL (default: https://openrouter.ai/api/v1)
+	//     NOTIFY_AI_MODEL   overrides the model     (default: openai/gpt-4.1)
+	//   ANTHROPIC_API_KEY  → Anthropic directly (fallback)
+	//   Neither            → builder gracefully disabled (Guided tab shows a note)
+	// The handler must be registered before StartWorkers; the workflow is declared
 	// after (below), like credverify.
 	var aiLoop *aibuilder.AgentLoopBuilder
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+	if aiClient := aibuilder.NewClientFromEnv(os.Getenv); aiClient != nil {
 		aiLoop = aibuilder.NewAgentLoopBuilder(
 			eng,
-			aibuilder.NewAnthropicClient(key),
+			aiClient,
 			st.Integrations(),
 			st.BuilderSessions(),
 		)
@@ -398,9 +402,15 @@ func runServe(args []string) error {
 		ChatStatus:        chatStatus{chat: chat, scope: chatScope},
 		MasterKey:         mk,
 		DagnatsConsoleURL: os.Getenv("NOTIFY_DAGNATS_CONSOLE_URL"),
-		// B2: AI workflow builder (Guided create tab). An unset key leaves the
-		// feature gracefully disabled (the tab shows a not-configured note).
-		AnthropicKey:    os.Getenv("ANTHROPIC_API_KEY"),
+		// AI workflow builder key (Guided create tab). The console uses non-empty
+		// to decide display only; actual provider selection is done above via
+		// NewClientFromEnv. Prefer NOTIFY_AI_API_KEY; fall back to ANTHROPIC_API_KEY.
+		AnthropicKey: func() string {
+			if k := os.Getenv("NOTIFY_AI_API_KEY"); k != "" {
+				return k
+			}
+			return os.Getenv("ANTHROPIC_API_KEY")
+		}(),
 		BuilderSessions: st.BuilderSessions(),
 		ReadOnly:        os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",
 		HTTPAddr:        *addr,
