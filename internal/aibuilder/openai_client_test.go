@@ -268,3 +268,33 @@ func TestOpenAIClientMessage_ParsesTextResponse(t *testing.T) {
 		t.Errorf("ToolCalls = %v, want empty", resp.ToolCalls)
 	}
 }
+
+// TestOpenAIClientMessage_UsesConfiguredModel pins that the client always sends
+// its configured model, ignoring req.Model — the builder passes DefaultModel
+// ("claude-sonnet-4-6", an Anthropic id) which is not a valid OpenRouter slug
+// and would 404. Regression for the live-run failure.
+func TestOpenAIClientMessage_UsesConfiguredModel(t *testing.T) {
+	var captured []byte
+	srv := openAITestServer(t, &captured, func() map[string]any {
+		return chatCompletionFixture("stop", "hi", nil)
+	})
+	defer srv.Close()
+
+	c := NewOpenAIClient("sk-test", srv.URL, "moonshotai/kimi-k2.6")
+
+	// req.Model is the Anthropic-specific DefaultModel the builder passes.
+	if _, err := c.Message(context.Background(), MessageRequest{
+		Model:    "claude-sonnet-4-6",
+		Messages: []Message{{Role: RoleUser, Text: "hi"}},
+	}); err != nil {
+		t.Fatalf("Message: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(captured, &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["model"] != "moonshotai/kimi-k2.6" {
+		t.Fatalf("wire model = %q, want the CONFIGURED model %q (req.Model must be ignored)", body["model"], "moonshotai/kimi-k2.6")
+	}
+}

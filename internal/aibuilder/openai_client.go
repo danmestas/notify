@@ -62,10 +62,12 @@ func NewOpenAIClient(apiKey, baseURL, model string) Client {
 // Message translates the provider-agnostic request into an OpenAI Chat
 // Completions call, then flattens the response back into the neutral types.
 func (c *openaiClient) Message(ctx context.Context, req MessageRequest) (MessageResponse, error) {
-	model := req.Model
-	if model == "" {
-		model = c.model
-	}
+	// The client is configured for a specific OpenAI-compatible endpoint + model
+	// (NOTIFY_AI_MODEL / NewOpenAIClient's model arg). Always use it. req.Model
+	// may carry an Anthropic-specific id (the builder passes DefaultModel,
+	// "claude-sonnet-4-6") that is not a valid slug on OpenRouter/OpenAI and
+	// would 404. The provider client, not the caller, owns the model choice.
+	model := c.model
 
 	// Apply the same default-token backstop as anthropicClient.
 	maxTokens := req.MaxTokens
