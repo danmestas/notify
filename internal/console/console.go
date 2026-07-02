@@ -246,6 +246,10 @@ type Console struct {
 	// run-status poll cadence the ai-generate handler uses to resolve a stream
 	// that ended without a terminal event (tests only).
 	aiBuildPollOverride time.Duration
+	// aiLimiter enforces a per-scope fixed-window rate limit on AI generate and
+	// refine requests to protect OpenRouter spend. Shared across both endpoints;
+	// each scope has an independent window. Zero value is safe and ready to use.
+	aiLimiter aiRateLimiter
 }
 
 // aiBuildDispatcher is the subset of *aibuilder.AgentLoopBuilder the console

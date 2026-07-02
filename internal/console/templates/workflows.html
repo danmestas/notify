@@ -93,6 +93,18 @@
       {{/* Guided create — describe the workflow, the AI builder proposes one. */}}
       <div data-show="$wfCreateMode === 'guided'">
         {{if $page.AIConfigured}}
+        {{/* Suggestion cards — click to prefill the prompt textarea. */}}
+        {{if $page.AIBuilderSuggestions}}
+        <div class="ai-builder-suggestions" aria-label="Example prompts">
+          {{range $s := $page.AIBuilderSuggestions}}
+          <button type="button" class="ai-builder-suggestion-card"
+                  data-on:click="document.getElementById('wf-ai-prompt').value = {{jsEscape $s}}; document.getElementById('wf-ai-prompt').dispatchEvent(new Event('input'))">
+            {{uiIcon "star"}}
+            <span>{{$s}}</span>
+          </button>
+          {{end}}
+        </div>
+        {{end}}
         <form id="wf-ai-form">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           <div class="form-row">

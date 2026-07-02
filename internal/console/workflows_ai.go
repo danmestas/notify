@@ -28,6 +28,25 @@ const aiGenerateTimeout = 90 * time.Second
 // event promptly rather than waiting out aiGenerateTimeout.
 const aiBuildPollInterval = 3 * time.Second
 
+// aiBuilderCreateSuggestions are the example-prompt cards shown in the Guided
+// create tab. They represent common, real-world workflow patterns so operators
+// can start with a single click rather than composing a prompt from scratch.
+var aiBuilderCreateSuggestions = []string{
+	"Welcome series: send an in-app greeting immediately after signup, wait 2 days, then email onboarding tips",
+	"Payment failed: email the customer right away, wait 3 days, send an SMS retry reminder",
+	"Weekly digest: every Sunday collect the last 7 days of unread in-app notifications and send an email summary",
+	"Re-engagement: if a user hasn't logged in for 14 days, send an in-app nudge then an email 2 days later",
+}
+
+// aiBuilderRefineSuggestions are the example-prompt cards shown in the
+// Refine-with-AI sidebar on the workflow detail page.
+var aiBuilderRefineSuggestions = []string{
+	"Add an SMS reminder 24 hours after the first email if the user hasn't opened it",
+	"Insert a 2-day delay between the first and second steps",
+	"Change the email subject to mention the user's first name",
+	"Add a final in-app follow-up at the end of the workflow",
+}
+
 // aiBuilderStepView is one proposed step in the AI builder preview: its type
 // label, optional name, and a short summary of the salient control values.
 type aiBuilderStepView struct {
@@ -115,6 +134,18 @@ func (c *Console) handleWorkflowAIGenerate(w http.ResponseWriter, r *http.Reques
 		})
 		return
 	}
+	if len([]rune(prompt)) > aiPromptMaxLen {
+		c.patchAIPreview(w, r, aiBuilderPreviewView{
+			Error: "Prompt is too long — please keep it under 2 000 characters.",
+		})
+		return
+	}
+	if !c.aiLimiter.Allow(scope) {
+		c.patchAIPreview(w, r, aiBuilderPreviewView{
+			Error: "You're generating a lot right now — wait a moment and try again.",
+		})
+		return
+	}
 
 	sess, err := c.deps.BuilderSessions.Create(r.Context(), scope, prompt)
 	if err != nil {
@@ -180,8 +211,20 @@ func (c *Console) streamAIBuild(w http.ResponseWriter, r *http.Request, scope do
 	for {
 		select {
 		case <-ctx.Done():
-			// Overall deadline (or client disconnect): the iteration-cap path fails
-			// the run with no terminal stream event, so resolve inline here.
+			// Overall deadline (or client disconnect): check whether the run
+			// actually completed (terminal event was dropped or arrived after the
+			// context expired). Use a fresh background context for the session
+			// lookup — r.Context() and ctx may both be cancelled at this point.
+			lookupCtx, lookupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			sess, sessErr := c.deps.BuilderSessions.Get(lookupCtx, scope, sessionID)
+			lookupCancel()
+			if sessErr == nil && sess.Status == store.BuilderSessionReady {
+				// Run completed; the terminal event was dropped or arrived late.
+				// Serve the real draft so the user sees their result.
+				c.emitAICanvas(sse, aiBuilderCanvasView{})
+				c.emitAIPreview(sse, r, c.finalPreviewView(r, scope, sessionID, mode, slug, nil))
+				return
+			}
 			c.emitAIPreview(sse, r, aiBuilderPreviewView{
 				SessionID: sessionID,
 				Mode:      mode,

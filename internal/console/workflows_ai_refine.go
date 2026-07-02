@@ -64,6 +64,22 @@ func (c *Console) handleWorkflowAIRefine(w http.ResponseWriter, r *http.Request)
 		})
 		return
 	}
+	if len([]rune(prompt)) > aiPromptMaxLen {
+		c.patchAIPreview(w, r, aiBuilderPreviewView{
+			Mode:  store.BuilderSessionModeRefine,
+			Slug:  slug,
+			Error: "Prompt is too long — please keep it under 2 000 characters.",
+		})
+		return
+	}
+	if !c.aiLimiter.Allow(scope) {
+		c.patchAIPreview(w, r, aiBuilderPreviewView{
+			Mode:  store.BuilderSessionModeRefine,
+			Slug:  slug,
+			Error: "You're generating a lot right now — wait a moment and try again.",
+		})
+		return
+	}
 
 	// Load the workflow under scope; a missing or cross-tenant slug 404s (no seed,
 	// no session leaks into the caller's scope).

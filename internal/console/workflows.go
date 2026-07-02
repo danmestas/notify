@@ -107,6 +107,10 @@ type workflowsPageView struct {
 	// ANTHROPIC_API_KEY is set). When false the Guided create tab shows a
 	// not-configured note instead of the prompt form.
 	AIConfigured bool
+	// AIBuilderSuggestions are clickable example-prompt cards shown in the
+	// Guided create tab to help users get started. Each string is a complete
+	// example prompt; clicking a card prefills the prompt textarea.
+	AIBuilderSuggestions []string
 	// Source workflow info for the duplicate slide-over pre-fill.
 	SourceName       string
 	SourceSlug       string
@@ -153,6 +157,10 @@ type workflowEditorView struct {
 	// "Refine with AI" copilot sidebar (B4). When false the sidebar shows a
 	// not-configured note instead of the prompt form.
 	AIConfigured bool
+	// AIBuilderSuggestions are clickable example-prompt cards shown in the
+	// Refine-with-AI sidebar to help users get started. Each string is a
+	// complete example prompt; clicking a card prefills the prompt textarea.
+	AIBuilderSuggestions []string
 }
 
 // workflowStepEditorStep carries one step's decoded config for the
@@ -500,11 +508,12 @@ func (c *Console) serveWorkflowsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := workflowsPageView{
-		Header:       header,
-		Fragment:     frag,
-		Signals:      workflowsSignalsJSON(false),
-		ReadOnly:     c.deps.ReadOnly,
-		AIConfigured: c.aiBuilder != nil,
+		Header:               header,
+		Fragment:             frag,
+		Signals:              workflowsSignalsJSON(false),
+		ReadOnly:             c.deps.ReadOnly,
+		AIConfigured:         c.aiBuilder != nil,
+		AIBuilderSuggestions: aiBuilderCreateSuggestions,
 	}
 	c.renderPage(w, r, http.StatusOK, "workflows", "Workflows", view)
 }
@@ -546,12 +555,13 @@ func (c *Console) serveWorkflowNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := workflowsPageView{
-		Header:       header,
-		Fragment:     frag,
-		Signals:      workflowsSignalsJSON(!c.deps.ReadOnly),
-		ReadOnly:     c.deps.ReadOnly,
-		FormError:    r.URL.Query().Get("error"),
-		AIConfigured: c.aiBuilder != nil,
+		Header:               header,
+		Fragment:             frag,
+		Signals:              workflowsSignalsJSON(!c.deps.ReadOnly),
+		ReadOnly:             c.deps.ReadOnly,
+		FormError:            r.URL.Query().Get("error"),
+		AIConfigured:         c.aiBuilder != nil,
+		AIBuilderSuggestions: aiBuilderCreateSuggestions,
 	}
 	c.renderPage(w, r, http.StatusOK, "workflows", "Workflows", view)
 }
@@ -724,20 +734,21 @@ func (c *Console) serveWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := workflowEditorView{
-		Header:            header,
-		ID:                wf.ID,
-		Name:              wf.Name,
-		TriggerIdentifier: wf.TriggerIdentifier,
-		Active:            wf.Active,
-		Steps:             steps,
-		PayloadSchemaJSON: schemaJSON,
-		ReadOnly:          c.deps.ReadOnly,
-		ConfirmDelete:     r.URL.Query().Get("confirmDelete") == "true",
-		FormError:         r.URL.Query().Get("error"),
-		ActiveTab:         "editor",
-		Signals:           workflowsSignalsJSON(false),
-		StepCatalog:       c.stepTypes.Catalog(),
-		AIConfigured:      c.aiBuilder != nil,
+		Header:               header,
+		ID:                   wf.ID,
+		Name:                 wf.Name,
+		TriggerIdentifier:    wf.TriggerIdentifier,
+		Active:               wf.Active,
+		Steps:                steps,
+		PayloadSchemaJSON:    schemaJSON,
+		ReadOnly:             c.deps.ReadOnly,
+		ConfirmDelete:        r.URL.Query().Get("confirmDelete") == "true",
+		FormError:            r.URL.Query().Get("error"),
+		ActiveTab:            "editor",
+		Signals:              workflowsSignalsJSON(false),
+		StepCatalog:          c.stepTypes.Catalog(),
+		AIConfigured:         c.aiBuilder != nil,
+		AIBuilderSuggestions: aiBuilderRefineSuggestions,
 	}
 	c.renderPage(w, r, http.StatusOK, "workflow-detail", wf.Name, view)
 }
