@@ -57,6 +57,16 @@ type loopState struct {
 	GatedTypes []string      `json:"gatedTypes"`
 	Messages   []Message     `json:"messages"`
 	Draft      WorkflowDraft `json:"draft"`
+	// Mode is store.BuilderSessionModeCreate (build from empty) or
+	// store.BuilderSessionModeRefine (edit an existing workflow). Frozen on
+	// iteration 0 and carried in the checkpoint so every iteration picks the same
+	// system prompt.
+	Mode string `json:"mode,omitempty"`
+	// Original snapshots the refined workflow's starting shape so the refine
+	// system prompt keeps describing the pre-edit workflow (name + ordered steps
+	// with their stepIds) even as Draft mutates across iterations. Empty in
+	// create mode.
+	Original *WorkflowDraft `json:"original,omitempty"`
 }
 
 // runInput is the StartRun payload: the session to build into plus its tenancy
@@ -220,6 +230,9 @@ func (b *AgentLoopBuilder) handle(ctx context.Context, lc loopContext) error {
 	}
 
 	sys := systemPrompt(b.reg.Catalog(), st.GatedTypes)
+	if st.Mode == store.BuilderSessionModeRefine && st.Original != nil {
+		sys = refineSystemPrompt(b.reg.Catalog(), st.GatedTypes, st.Original)
+	}
 	tools := buildTools(st.GatedTypes)
 	gatedSet := make(map[string]bool, len(st.GatedTypes))
 	for _, t := range st.GatedTypes {
@@ -321,13 +334,29 @@ func (b *AgentLoopBuilder) loadState(ctx context.Context, lc loopContext) (*loop
 	if err != nil {
 		return nil, fmt.Errorf("aibuilder: list integrations: %w", err)
 	}
-	return &loopState{
+	st := &loopState{
 		SessionID:  in.SessionID,
 		Scope:      scope,
 		GatedTypes: AvailableStepTypes(b.reg, integrations),
 		Messages:   []Message{{Role: RoleUser, Text: sess.Prompt}},
 		Draft:      WorkflowDraft{},
-	}, nil
+		Mode:       store.BuilderSessionModeCreate,
+	}
+	// Refine mode: start from the existing workflow's shape (seeded on the
+	// session at dispatch) rather than an empty draft, and freeze that shape so
+	// the refine system prompt keeps describing the pre-edit workflow. The
+	// seeded TriggerIdentifier is immutable — setWorkflowMetadata only writes it
+	// when empty, so the model cannot repoint the refine at a new identifier.
+	if sess.Mode == store.BuilderSessionModeRefine {
+		var seeded WorkflowDraft
+		if err := json.Unmarshal(sess.DraftWorkflow, &seeded); err != nil {
+			return nil, fmt.Errorf("aibuilder: decode refine seed draft: %w", err)
+		}
+		st.Mode = store.BuilderSessionModeRefine
+		st.Draft = seeded
+		st.Original = seeded.clone()
+	}
+	return st, nil
 }
 
 // finish persists the validated draft on the session (the durable result the run
@@ -338,7 +367,12 @@ func (b *AgentLoopBuilder) finish(ctx context.Context, lc loopContext, st *loopS
 	if err != nil {
 		return fmt.Errorf("aibuilder: marshal draft: %w", err)
 	}
-	if err := b.sessions.UpdateDraft(ctx, st.Scope, st.SessionID, draftJSON, store.BuilderSessionDraft); err != nil {
+	// Persist the final validated draft AND flip to the terminal Ready status in
+	// one write — the console's confirm (create) and apply (refine) endpoints only
+	// act on a Ready session, so this is what makes the drafted workflow eligible
+	// to be committed. The status arg of UpdateDraft carries it (no second call,
+	// and the SessionStore interface stays minimal).
+	if err := b.sessions.UpdateDraft(ctx, st.Scope, st.SessionID, draftJSON, store.BuilderSessionReady); err != nil {
 		return fmt.Errorf("aibuilder: persist draft: %w", err)
 	}
 	b.emit(lc, Event{Kind: KindDone, Text: summary, Draft: st.Draft.clone()})

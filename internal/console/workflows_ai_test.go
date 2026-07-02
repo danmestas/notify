@@ -32,7 +32,10 @@ func (s *stubAIBuilder) Dispatch(ctx context.Context, scope domain.Scope, sessio
 		if err != nil {
 			return "", err
 		}
-		if err := s.repo.UpdateDraft(ctx, scope, sessionID, dj, store.BuilderSessionDraft); err != nil {
+		// The durable finish step persists the final draft AND flips the session to
+		// the terminal Ready status; the stub mirrors that so the confirm/apply
+		// happy path (which requires Ready) works.
+		if err := s.repo.UpdateDraft(ctx, scope, sessionID, dj, store.BuilderSessionReady); err != nil {
 			return "", err
 		}
 	}
@@ -104,7 +107,7 @@ func (tc *testConsole) seedBuilderDraft(t *testing.T, scope domain.Scope, draft 
 	if err != nil {
 		t.Fatalf("marshal seed draft: %v", err)
 	}
-	if err := tc.st.BuilderSessions().UpdateDraft(context.Background(), scope, sess.ID, dj, store.BuilderSessionDraft); err != nil {
+	if err := tc.st.BuilderSessions().UpdateDraft(context.Background(), scope, sess.ID, dj, store.BuilderSessionReady); err != nil {
 		t.Fatalf("seed draft: %v", err)
 	}
 	return sess.ID

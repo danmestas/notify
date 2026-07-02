@@ -1,6 +1,8 @@
 package aibuilder
 
 import (
+	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/danmestas/notify/internal/steptype"
@@ -93,4 +95,113 @@ func systemPrompt(catalog []steptype.StepEntry, gatedTypes []string) string {
 	w("reported back to you, fix the offending step and stop again.")
 
 	return b.String()
+}
+
+// refineSystemPrompt builds the builder's system prompt for the REFINE flow: it
+// reuses the same catalog/condition/how-to guidance as systemPrompt (so the
+// mutation tools behave identically) but replaces the role intro with an
+// EDITING preamble that names the existing workflow and lists its ordered steps
+// with their stepIds, types and salient control values, so the model can target
+// existing steps by id. The user's requested change arrives as the conversation's
+// first user message (the session prompt), so it is not embedded here.
+func refineSystemPrompt(catalog []steptype.StepEntry, gatedTypes []string, existing *WorkflowDraft) string {
+	gated := make(map[string]bool, len(gatedTypes))
+	for _, t := range gatedTypes {
+		gated[t] = true
+	}
+
+	var b strings.Builder
+	w := func(s string) { b.WriteString(s); b.WriteByte('\n') }
+
+	name := existing.Name
+	if name == "" {
+		name = "(unnamed)"
+	}
+	w("You are notify's AI workflow builder, EDITING an existing notification")
+	w("workflow named \"" + name + "\". Notify workflows are an ordered list of steps")
+	w("that run top to bottom for each triggered subscriber. Apply the user's")
+	w("requested change by calling the mutation tools; reference existing steps by")
+	w("their exact stepId. Do not rebuild the workflow from scratch and do not rename")
+	w("its trigger identifier — the identifier is immutable.")
+	w("")
+
+	w("## Existing workflow")
+	w("Trigger identifier: " + existing.TriggerIdentifier)
+	if len(existing.Steps) == 0 {
+		w("This workflow currently has no steps.")
+	} else {
+		w("Current steps, in order (reference these stepIds directly):")
+		for i, st := range existing.Steps {
+			line := "  " + strconv.Itoa(i+1) + ". stepId=" + st.StepID + " type=" + st.Type
+			if st.Name != "" {
+				line += " name=\"" + st.Name + "\""
+			}
+			if ctrl := controlsPreview(st.ControlValues); ctrl != "" {
+				line += " controls=" + ctrl
+			}
+			w(line)
+		}
+	}
+	w("")
+
+	w("## Available step types")
+	w("You may ONLY add steps of the types listed here. Channel steps appear only when")
+	w("the environment has an active provider for that channel; never assume an")
+	w("unavailable channel.")
+	for _, e := range catalog {
+		if !gated[e.Name] {
+			continue
+		}
+		fields := stepControlFields[e.Name]
+		w("- " + e.Name + " (" + e.Label + "): " + fields)
+	}
+	w("")
+
+	w("## Editing step content")
+	w("addStep and addStepInBetween seed a step with default control values ONLY and")
+	w("return a JSON tool_result of the form {\"stepId\":\"step_…\",\"steps\":[{\"stepId\",")
+	w("\"type\",\"name\"}, …]}. Use that exact returned stepId for every follow-up call")
+	w("that targets the step: editStepContent, moveStep, updateStepConditions, and")
+	w("removeStep all take a stepId — never invent or guess one. After adding a channel")
+	w("step you MUST set its required content (e.g. an email's subject and body) by")
+	w("calling editStepContent with the FULL control-values object for that step type")
+	w("(see the fields above); the defaults are not enough to pass validation. Channel")
+	w("bodies and subjects are Handlebars templates and may reference payload and")
+	w("subscriber variables. The other mutating tools echo back the current ordered")
+	w("steps list so you always know the live ids and order.")
+	w("")
+
+	w("## Step conditions")
+	w("updateStepConditions sets a step's filters: an array of condition groups, OR'd")
+	w("at the top level. Each group has a combinator (AND|OR) and conditions. A")
+	w("condition is {on, field, operator, value, negated?} where on is \"payload\" or")
+	w("\"subscriber\" and field is a dotted path. Available operators: " +
+		strings.Join(conditionOperators, ", ") + ".")
+	w("")
+
+	w("## How to work")
+	w("Work iteratively. Optionally call reasoning to note your plan. Apply the")
+	w("smallest set of mutations that satisfies the request, editing the existing")
+	w("steps in place where possible rather than replacing them. When the edit is")
+	w("complete, STOP calling tools and reply with a 1-3 sentence summary of what you")
+	w("changed. If a validation error is reported back to you, fix the offending step")
+	w("and stop again.")
+
+	return b.String()
+}
+
+// controlsPreview renders a compact one-line preview of a step's control values
+// for the refine prompt: a JSON object clipped to a short length so the model
+// sees the salient fields without the prompt ballooning on large controls. An
+// empty or non-object value renders as the empty string.
+func controlsPreview(cv json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(cv))
+	if trimmed == "" || trimmed == "{}" || trimmed == "null" {
+		return ""
+	}
+	const max = 160
+	if runes := []rune(trimmed); len(runes) > max {
+		return string(runes[:max]) + "…"
+	}
+	return trimmed
 }

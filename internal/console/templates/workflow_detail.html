@@ -165,5 +165,41 @@
     </div>
   </section>
 
+  {{/* B4: Refine-with-AI copilot. Describe a change; the AI proposes an edited
+       workflow the operator can Apply or Discard. The ai-refine SSE response
+       streams reasoning lines, the live canvas, and the final Apply/Discard
+       preview into the regions below. Gated on the builder being wired. */}}
+  {{if not $page.ReadOnly}}
+  <section class="console-card ai-copilot" aria-labelledby="wf-ai-refine-heading" id="wf-ai-refine">
+    <h2 id="wf-ai-refine-heading" class="console-card-title">{{ uiIcon "star" }} Refine with AI</h2>
+    {{if $page.AIConfigured}}
+    <p class="console-lede">Describe a change and the AI will propose an edited workflow to apply.</p>
+    <form id="wf-ai-refine-form">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <div class="form-row">
+        <label class="form-label" for="wf-ai-refine-prompt">What should change?</label>
+        <textarea class="console-input" id="wf-ai-refine-prompt" name="prompt" rows="3"
+                  placeholder="Add an SMS reminder after the delay, and only send it to subscribers on the pro plan."></textarea>
+      </div>
+      <div class="console-action-row">
+        <button type="button" class="btn btn-primary"
+                data-on:click="@post('/console/api/workflows/{{$page.TriggerIdentifier}}/ai-refine', {contentType: 'form', selector: '#wf-ai-refine-form'})">Refine</button>
+      </div>
+    </form>
+    {{else}}
+    <p class="console-empty" role="note">
+      The AI workflow builder is not configured. Set <code>NOTIFY_AI_API_KEY</code> (or
+      <code>ANTHROPIC_API_KEY</code>) on the server to enable Refine with AI.
+    </p>
+    {{end}}
+    {{/* Live chain-of-thought log — reasoning lines append as the run narrates. */}}
+    <div id="ai-builder-reasoning" class="ai-builder-reasoning" aria-live="polite" role="log"></div>
+    {{/* Live canvas — the refined workflow taking shape, re-rendered per event. */}}
+    <div id="ai-builder-canvas"></div>
+    {{/* Preview — the proposed edit with Apply changes / Discard on completion. */}}
+    <div id="ai-builder-preview"></div>
+  </section>
+  {{end}}
+
 </section>
 {{end}}

@@ -149,6 +149,10 @@ type workflowEditorView struct {
 	// render the add-step button menu. Driven from steptype.Default().Catalog()
 	// so all registered types appear without manual list maintenance.
 	StepCatalog []steptype.StepEntry
+	// AIConfigured reports whether the AI workflow builder is wired, gating the
+	// "Refine with AI" copilot sidebar (B4). When false the sidebar shows a
+	// not-configured note instead of the prompt form.
+	AIConfigured bool
 }
 
 // workflowStepEditorStep carries one step's decoded config for the
@@ -733,6 +737,7 @@ func (c *Console) serveWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 		ActiveTab:         "editor",
 		Signals:           workflowsSignalsJSON(false),
 		StepCatalog:       c.stepTypes.Catalog(),
+		AIConfigured:      c.aiBuilder != nil,
 	}
 	c.renderPage(w, r, http.StatusOK, "workflow-detail", wf.Name, view)
 }

@@ -10,11 +10,25 @@ import (
 	"github.com/danmestas/notify/internal/domain"
 )
 
-// Builder session lifecycle statuses.
+// Builder session lifecycle statuses. A session starts (and rides each mid-run
+// iteration) in Draft; the durable run's terminal finish step flips it to Ready
+// once the final validated draft is persisted. Only a Ready session may be
+// confirmed (create) or applied (refine) — Draft is NOT a terminal state, so
+// guarding on it would let a caller confirm/apply an original or partial draft
+// mid-run. Confirmed/Discarded are the post-action terminal states.
 const (
 	BuilderSessionDraft     = "draft"
+	BuilderSessionReady     = "ready"
 	BuilderSessionConfirmed = "confirmed"
 	BuilderSessionDiscarded = "discarded"
+)
+
+// Builder session modes. A create session builds a brand-new workflow from an
+// empty draft; a refine session edits an existing workflow, seeded with that
+// workflow's current shape and the slug it targets.
+const (
+	BuilderSessionModeCreate = "create"
+	BuilderSessionModeRefine = "refine"
 )
 
 // BuilderSession is one AI workflow-builder run: the originating prompt, the
@@ -27,8 +41,14 @@ type BuilderSession struct {
 	Status        string
 	DraftWorkflow json.RawMessage
 	Prompt        string
-	CreatedAt     string
-	UpdatedAt     string
+	// Mode is BuilderSessionModeCreate (build a new workflow) or
+	// BuilderSessionModeRefine (edit TargetSlug's workflow).
+	Mode string
+	// TargetSlug is the trigger identifier of the workflow a refine session
+	// edits; empty for create sessions.
+	TargetSlug string
+	CreatedAt  string
+	UpdatedAt  string
 }
 
 // BuilderMessage is one entry of a session's collected message history (the
@@ -48,8 +68,13 @@ type BuilderMessage struct {
 type BuilderSessionRepo interface {
 	// Create inserts a new session seeded with prompt and an empty draft. The
 	// caller supplies nothing but the prompt; id, status and timestamps are set
-	// here.
+	// here. The session is create-mode with no target slug.
 	Create(ctx context.Context, scope domain.Scope, prompt string) (BuilderSession, error)
+	// CreateRefine inserts a refine-mode session that edits an existing workflow:
+	// prompt is the requested change, targetSlug is the workflow's trigger
+	// identifier, and draft seeds the session with the workflow's current shape
+	// (a WorkflowDraft JSON snapshot) so the AgentLoop edits rather than builds.
+	CreateRefine(ctx context.Context, scope domain.Scope, prompt, targetSlug string, draft json.RawMessage) (BuilderSession, error)
 	// Get returns the session by id, filtered by scope. A session from another
 	// org/env returns ErrNotFound.
 	Get(ctx context.Context, scope domain.Scope, id string) (BuilderSession, error)
@@ -70,23 +95,36 @@ type builderSessionRepo struct {
 }
 
 func (repo *builderSessionRepo) Create(ctx context.Context, scope domain.Scope, prompt string) (BuilderSession, error) {
+	return repo.insert(ctx, scope, prompt, BuilderSessionModeCreate, "", json.RawMessage(`{}`))
+}
+
+func (repo *builderSessionRepo) CreateRefine(ctx context.Context, scope domain.Scope, prompt, targetSlug string, draft json.RawMessage) (BuilderSession, error) {
+	if len(draft) == 0 {
+		draft = json.RawMessage(`{}`)
+	}
+	return repo.insert(ctx, scope, prompt, BuilderSessionModeRefine, targetSlug, draft)
+}
+
+func (repo *builderSessionRepo) insert(ctx context.Context, scope domain.Scope, prompt, mode, targetSlug string, draft json.RawMessage) (BuilderSession, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	s := BuilderSession{
 		ID:            newULID(),
 		OrgID:         scope.OrgID,
 		EnvID:         scope.EnvID,
 		Status:        BuilderSessionDraft,
-		DraftWorkflow: json.RawMessage(`{}`),
+		DraftWorkflow: draft,
 		Prompt:        prompt,
+		Mode:          mode,
+		TargetSlug:    targetSlug,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
 	_, err := repo.w.ExecContext(
 		ctx,
 		`INSERT INTO builder_sessions
-		   (id, org_id, environment_id, status, draft_workflow, prompt, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		s.ID, s.OrgID, s.EnvID, s.Status, string(s.DraftWorkflow), s.Prompt, s.CreatedAt, s.UpdatedAt,
+		   (id, org_id, environment_id, status, draft_workflow, prompt, mode, target_slug, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.ID, s.OrgID, s.EnvID, s.Status, string(s.DraftWorkflow), s.Prompt, s.Mode, s.TargetSlug, s.CreatedAt, s.UpdatedAt,
 	)
 	if err != nil {
 		return BuilderSession{}, err
@@ -101,11 +139,11 @@ func (repo *builderSessionRepo) Get(ctx context.Context, scope domain.Scope, id 
 	)
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, org_id, environment_id, status, draft_workflow, prompt, created_at, updated_at
+		`SELECT id, org_id, environment_id, status, draft_workflow, prompt, mode, target_slug, created_at, updated_at
 		 FROM builder_sessions
 		 WHERE id = ? AND org_id = ? AND environment_id = ?`,
 		id, scope.OrgID, scope.EnvID,
-	).Scan(&s.ID, &s.OrgID, &s.EnvID, &s.Status, &draft, &s.Prompt, &s.CreatedAt, &s.UpdatedAt)
+	).Scan(&s.ID, &s.OrgID, &s.EnvID, &s.Status, &draft, &s.Prompt, &s.Mode, &s.TargetSlug, &s.CreatedAt, &s.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return BuilderSession{}, ErrNotFound
 	}

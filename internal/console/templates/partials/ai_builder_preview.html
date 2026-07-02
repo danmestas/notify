@@ -27,10 +27,17 @@
     <div class="console-slideover-actions">
       <button type="button" class="btn btn-outline"
               data-on:click="@post('/console/api/workflows/ai-discard/{{.SessionID}}', {headers: {'X-CSRF-Token': '{{.CSRF}}'}})">Discard</button>
+      {{if eq .Mode "refine"}}
+      <form method="POST" action="/console/api/workflows/{{.Slug}}/ai-apply/{{.SessionID}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <button type="submit" class="btn btn-primary">Apply changes</button>
+      </form>
+      {{else}}
       <form method="POST" action="/console/api/workflows/ai-confirm/{{.SessionID}}">
         <input type="hidden" name="csrf_token" value="{{.CSRF}}">
         <button type="submit" class="btn btn-primary">Use this workflow</button>
       </form>
+      {{end}}
     </div>
   </div>
   {{end}}

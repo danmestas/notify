@@ -183,6 +183,11 @@ func TestAgentLoop_InitsBuildsValidatesPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get session: %v", err)
 	}
+	// finish flips the session to the terminal Ready status (both create + refine)
+	// so the confirm endpoint only ever confirms a completed draft.
+	if sess.Status != store.BuilderSessionReady {
+		t.Fatalf("session status = %q, want %q after a successful build", sess.Status, store.BuilderSessionReady)
+	}
 	var persisted WorkflowDraft
 	if err := json.Unmarshal(sess.DraftWorkflow, &persisted); err != nil {
 		t.Fatalf("decode persisted draft: %v", err)

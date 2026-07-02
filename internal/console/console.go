@@ -407,6 +407,13 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/api/workflows/ai-generate", c.handleWorkflowAIGenerate)
 		pr.Post("/console/api/workflows/ai-confirm/{sessionID}", c.handleWorkflowAIConfirm)
 		pr.Post("/console/api/workflows/ai-discard/{sessionID}", c.handleWorkflowAIDiscard)
+		// B4: AI copilot refine (workflow detail sidebar). ai-refine seeds a
+		// refine session from the existing workflow and streams a proposal;
+		// ai-apply pushes the refined draft through authoring.Update; discard
+		// reuses ai-discard above. Registered before the {slug} mutation wildcards
+		// so the literal ai-refine / ai-apply segments win.
+		pr.Post("/console/api/workflows/{slug}/ai-refine", c.handleWorkflowAIRefine)
+		pr.Post("/console/api/workflows/{slug}/ai-apply/{sessionID}", c.handleWorkflowAIApply)
 		pr.Post("/console/api/workflows/{slug}/duplicate", c.handleWorkflowDuplicate)
 		// W2-A4: editor mutations. `steps/reorder` is registered before the
 		// `steps/{stepId}/...` wildcards so the literal `reorder` segment wins.

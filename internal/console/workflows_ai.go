@@ -50,6 +50,12 @@ type aiBuilderPreviewView struct {
 	Reasoning         []string
 	Error             string
 	CSRF              string
+	// Mode is "" / "create" for the create-tab preview (Use this workflow →
+	// ai-confirm) or "refine" for the detail-page copilot (Apply changes →
+	// ai-apply/{slug}). Slug is the refine target's trigger identifier, used to
+	// build the apply action URL. Both are empty in create mode.
+	Mode string
+	Slug string
 }
 
 // aiBuilderCanvasView binds the ai-builder-canvas fragment: the workflow taking
@@ -127,14 +133,14 @@ func (c *Console) handleWorkflowAIGenerate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	c.streamAIBuild(w, r, scope, sess.ID, runID)
+	c.streamAIBuild(w, r, scope, sess.ID, runID, store.BuilderSessionModeCreate, "")
 }
 
 // streamAIBuild subscribes to the run's build stream and relays each Event to the
 // browser as a Datastar patch until a terminal event, a failed run, the overall
 // deadline, or a client disconnect resolves it. One SSE generator carries every
 // patch (reasoning appends, canvas re-renders, the final preview).
-func (c *Console) streamAIBuild(w http.ResponseWriter, r *http.Request, scope domain.Scope, sessionID, runID string) {
+func (c *Console) streamAIBuild(w http.ResponseWriter, r *http.Request, scope domain.Scope, sessionID, runID, mode, slug string) {
 	timeout := aiGenerateTimeout
 	if c.aiGenerateTimeoutOverride > 0 {
 		timeout = c.aiGenerateTimeoutOverride
@@ -178,6 +184,8 @@ func (c *Console) streamAIBuild(w http.ResponseWriter, r *http.Request, scope do
 			// the run with no terminal stream event, so resolve inline here.
 			c.emitAIPreview(sse, r, aiBuilderPreviewView{
 				SessionID: sessionID,
+				Mode:      mode,
+				Slug:      slug,
 				Error:     "Generation did not finish — please try again.",
 			})
 			return
@@ -185,13 +193,15 @@ func (c *Console) streamAIBuild(w http.ResponseWriter, r *http.Request, scope do
 			if !ok {
 				return
 			}
-			if done := c.relayAIEvent(sse, r, scope, sessionID, raw); done {
+			if done := c.relayAIEvent(sse, r, scope, sessionID, mode, slug, raw); done {
 				return
 			}
 		case <-ticker.C:
 			if failed, err := c.aiBuilder.RunFailed(ctx, runID); err == nil && failed {
 				c.emitAIPreview(sse, r, aiBuilderPreviewView{
 					SessionID: sessionID,
+					Mode:      mode,
+					Slug:      slug,
 					Error:     "Generation did not finish — please try again.",
 				})
 				return
@@ -204,7 +214,7 @@ func (c *Console) streamAIBuild(w http.ResponseWriter, r *http.Request, scope do
 // when the event is terminal (done → final preview, error → inline failure) and
 // the stream should end; false to keep relaying. An undecodable payload is
 // dropped (defensive — never fail the stream on a malformed event).
-func (c *Console) relayAIEvent(sse *datastar.ServerSentEventGenerator, r *http.Request, scope domain.Scope, sessionID string, raw []byte) bool {
+func (c *Console) relayAIEvent(sse *datastar.ServerSentEventGenerator, r *http.Request, scope domain.Scope, sessionID, mode, slug string, raw []byte) bool {
 	var ev aiStreamEvent
 	if err := json.Unmarshal(raw, &ev); err != nil {
 		c.deps.Logger.Debug("console: ai stream decode", "err", err)
@@ -225,7 +235,7 @@ func (c *Console) relayAIEvent(sse *datastar.ServerSentEventGenerator, r *http.R
 		// Clear the live canvas before rendering the final preview so the
 		// workflow does not appear twice (canvas + preview).
 		c.emitAICanvas(sse, aiBuilderCanvasView{})
-		c.emitAIPreview(sse, r, c.finalPreviewView(r, scope, sessionID, ev.Draft))
+		c.emitAIPreview(sse, r, c.finalPreviewView(r, scope, sessionID, mode, slug, ev.Draft))
 		return true
 	case aibuilder.KindError:
 		// Log at Error level so the failure is visible in notify.log; the
@@ -233,6 +243,8 @@ func (c *Console) relayAIEvent(sse *datastar.ServerSentEventGenerator, r *http.R
 		c.deps.Logger.Error("console: ai build error event", "err", ev.Error)
 		c.emitAIPreview(sse, r, aiBuilderPreviewView{
 			SessionID: sessionID,
+			Mode:      mode,
+			Slug:      slug,
 			Error:     "The AI provider returned an error. Please try again.",
 		})
 		return true
@@ -245,7 +257,7 @@ func (c *Console) relayAIEvent(sse *datastar.ServerSentEventGenerator, r *http.R
 // validated draft on the session (finish → UpdateDraft) before streaming done, so
 // the session is the source of truth; the done event's draft is a defensive
 // fallback if the session read is empty.
-func (c *Console) finalPreviewView(r *http.Request, scope domain.Scope, sessionID string, fallback *aibuilder.WorkflowDraft) aiBuilderPreviewView {
+func (c *Console) finalPreviewView(r *http.Request, scope domain.Scope, sessionID, mode, slug string, fallback *aibuilder.WorkflowDraft) aiBuilderPreviewView {
 	var draft aibuilder.WorkflowDraft
 	if sess, err := c.deps.BuilderSessions.Get(r.Context(), scope, sessionID); err == nil && len(sess.DraftWorkflow) > 0 {
 		if uerr := json.Unmarshal(sess.DraftWorkflow, &draft); uerr != nil {
@@ -255,7 +267,10 @@ func (c *Console) finalPreviewView(r *http.Request, scope domain.Scope, sessionI
 	if len(draft.Steps) == 0 && fallback != nil {
 		draft = *fallback
 	}
-	return c.aiPreviewFromDraft(sessionID, &draft, nil)
+	v := c.aiPreviewFromDraft(sessionID, &draft, nil)
+	v.Mode = mode
+	v.Slug = slug
+	return v
 }
 
 // handleWorkflowAIConfirm handles POST /console/api/workflows/ai-confirm/{sessionID}.
@@ -299,11 +314,17 @@ func (c *Console) handleWorkflowAIConfirm(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Idempotency guard: a session that is already confirmed or discarded must not
-	// re-run Create, which would surface a spurious "identifier already exists" error.
-	if sess.Status != store.BuilderSessionDraft {
-		msg := "This workflow was already confirmed."
-		if sess.Status == store.BuilderSessionDiscarded {
+	// Only a session the durable run has finished (Ready) may be confirmed. A
+	// still-running (Draft) session would confirm a partial/original draft; an
+	// already-confirmed or discarded one must not re-run Create (which would
+	// surface a spurious "identifier already exists" error). Every non-Ready status
+	// is rejected inline.
+	if sess.Status != store.BuilderSessionReady {
+		msg := "This workflow is still being generated — try again in a moment."
+		switch sess.Status {
+		case store.BuilderSessionConfirmed:
+			msg = "This workflow was already confirmed."
+		case store.BuilderSessionDiscarded:
 			msg = "This workflow draft was discarded."
 		}
 		c.patchAIPreview(w, r, aiBuilderPreviewView{
