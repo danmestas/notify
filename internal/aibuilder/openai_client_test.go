@@ -269,6 +269,72 @@ func TestOpenAIClientMessage_ParsesTextResponse(t *testing.T) {
 	}
 }
 
+// TestToOpenAIMessages_SkipsStrayTextWhenToolResultsPresent guards the invariant
+// that a user Message carrying both Text and ToolResults never emits a user-text
+// message before the tool messages — OpenAI requires tool messages to immediately
+// follow the assistant's tool_calls; a stray user message in between causes a 400.
+func TestToOpenAIMessages_SkipsStrayTextWhenToolResultsPresent(t *testing.T) {
+	msgs := []Message{
+		{
+			Role: RoleUser,
+			Text: "stray text that must be dropped",
+			ToolResults: []ToolResult{
+				{ToolCallID: "call_1", Content: "tool result"},
+			},
+		},
+	}
+	out := toOpenAIMessages("", msgs)
+
+	data, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var parsed []map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if len(parsed) != 1 {
+		t.Fatalf("got %d messages, want 1 (stray text must be skipped when ToolResults present); messages: %v", len(parsed), parsed)
+	}
+	if parsed[0]["role"] != "tool" {
+		t.Errorf("message[0].role = %q, want tool", parsed[0]["role"])
+	}
+	if parsed[0]["tool_call_id"] != "call_1" {
+		t.Errorf("message[0].tool_call_id = %q, want call_1", parsed[0]["tool_call_id"])
+	}
+}
+
+// TestToOpenAIMessages_SkipsEmptyAssistantMessage guards the invariant that an
+// assistant Message with empty Text and no ToolCalls is not appended — an empty
+// assistant message is invalid and causes an OpenAI 400.
+func TestToOpenAIMessages_SkipsEmptyAssistantMessage(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleUser, Text: "build a workflow"},
+		{Role: RoleAssistant, Text: "", ToolCalls: nil}, // empty — must be skipped
+		{Role: RoleUser, Text: "anything else?"},
+	}
+	out := toOpenAIMessages("", msgs)
+
+	data, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var parsed []map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if len(parsed) != 2 {
+		t.Fatalf("got %d messages, want 2 (empty assistant must be skipped); messages: %v", len(parsed), parsed)
+	}
+	for _, m := range parsed {
+		if m["role"] == "assistant" {
+			t.Errorf("empty assistant message must not appear in output; messages: %v", parsed)
+		}
+	}
+}
+
 // TestOpenAIClientMessage_UsesConfiguredModel pins that the client always sends
 // its configured model, ignoring req.Model — the builder passes DefaultModel
 // ("claude-sonnet-4-6", an Anthropic id) which is not a valid OpenRouter slug

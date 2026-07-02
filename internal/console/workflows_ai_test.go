@@ -163,6 +163,14 @@ func TestAIGenerate_StreamsReasoningCanvasPreview(t *testing.T) {
 		t.Errorf("final preview missing trigger or use/discard; body: %s", body)
 	}
 
+	// On done, the canvas was cleared: the done handler emits an empty canvas
+	// patch (no data-component="ai-builder-canvas"), so there must be at least
+	// two occurrences of id="ai-builder-canvas" in the body — the live canvas
+	// from the canvas event, and the empty clear emitted on the done event.
+	if n := strings.Count(body, `id="ai-builder-canvas"`); n < 2 {
+		t.Errorf("expected ≥2 canvas patches (live + clear-on-done), got %d; body: %s", n, body)
+	}
+
 	// Exactly one session persisted, holding the run's validated draft.
 	sess := onlyBuilderSession(t, tc)
 	var got aibuilder.WorkflowDraft

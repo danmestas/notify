@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
@@ -234,6 +235,7 @@ func (b *AgentLoopBuilder) handle(ctx context.Context, lc loopContext) error {
 		MaxTokens:  DefaultMaxTokens,
 	})
 	if err != nil {
+		slog.Error("aibuilder: model call failed", "sessionID", st.SessionID, "iter", lc.Iteration(), "err", err)
 		b.emit(lc, Event{Kind: KindError, Err: err})
 		return fmt.Errorf("aibuilder: model call: %w", err)
 	}

@@ -144,7 +144,10 @@ func toOpenAIMessages(system string, msgs []Message) []openai.ChatCompletionMess
 	for _, m := range msgs {
 		switch m.Role {
 		case RoleUser:
-			if m.Text != "" {
+			// Guard: if ToolResults are present the message is a tool-return turn;
+			// emitting a user-text message first would violate the OpenAI protocol
+			// (tool messages must immediately follow the assistant's tool_calls).
+			if m.Text != "" && len(m.ToolResults) == 0 {
 				out = append(out, openai.UserMessage(m.Text))
 			}
 			// Each ToolResult becomes its own tool-role message; OpenAI requires
@@ -170,6 +173,11 @@ func toOpenAIMessages(system string, msgs []Message) []openai.ChatCompletionMess
 						},
 					}
 				}
+			}
+			// Guard: skip an assistant message with no content and no tool calls —
+			// an empty assistant message is rejected by the API with a 400.
+			if m.Text == "" && len(m.ToolCalls) == 0 {
+				continue
 			}
 			out = append(out, openai.ChatCompletionMessageParamUnion{OfAssistant: &asst})
 		}

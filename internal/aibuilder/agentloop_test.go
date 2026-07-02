@@ -4,13 +4,38 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
 )
+
+// errClient is a Client that always fails with the given error.
+type errClient struct{ err error }
+
+func (c *errClient) Message(_ context.Context, _ MessageRequest) (MessageResponse, error) {
+	return MessageResponse{}, c.err
+}
+
+// slogCapture records every slog.Record emitted to it. Implements slog.Handler.
+type slogCapture struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *slogCapture) Enabled(_ context.Context, _ slog.Level) bool { return true }
+func (h *slogCapture) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r.Clone())
+	return nil
+}
+func (h *slogCapture) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *slogCapture) WithGroup(_ string) slog.Handler      { return h }
 
 // fakeLoopCtx is a hand-driven loopContext: it stands in for
 // *engine.AgentLoopContext so handle() can be exercised across iterations with
@@ -315,5 +340,81 @@ func TestAgentLoop_LoadStateFailsForMissingSession(t *testing.T) {
 	}
 	if client.n != 0 {
 		t.Fatalf("model called %d times, want 0 (state load fails before the model)", client.n)
+	}
+}
+
+// TestAgentLoop_MessageErrorLogsAndStreamsReason asserts that when client.Message
+// fails, handle (a) streams a KindError event whose Error field carries the actual
+// error reason, and (b) logs the failure at slog.LevelError with sessionID and
+// iter context attributes so an operator can diagnose the failure from the log.
+func TestAgentLoop_MessageErrorLogsAndStreamsReason(t *testing.T) {
+	s := openTempStore(t)
+	scope := domain.Scope{OrgID: "org-1", EnvID: "env-a"}
+	sid := seedSession(t, s, scope, "build something")
+
+	// Capture slog output so we can assert the log entry.
+	cap := &slogCapture{}
+	old := slog.Default()
+	slog.SetDefault(slog.New(cap))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	modelErr := fmt.Errorf("openrouter: status 404 model not found")
+	b := NewAgentLoopBuilder(nil, &errClient{err: modelErr}, emailActive(), s.BuilderSessions())
+
+	lc := &fakeLoopCtx{iter: 2, input: runInputJSON(t, scope, sid)}
+	if err := b.handle(context.Background(), lc); err == nil {
+		t.Fatal("expected handle to return an error when Message() fails")
+	}
+	if lc.completed || lc.continued {
+		t.Fatal("handle must not resolve when Message() fails")
+	}
+
+	// The KindError stream event must carry the actual error reason.
+	if len(lc.streams) == 0 {
+		t.Fatal("no stream events emitted on Message() error")
+	}
+	var ev streamEvent
+	if err := json.Unmarshal(lc.streams[0], &ev); err != nil {
+		t.Fatalf("decode stream event: %v", err)
+	}
+	if ev.Kind != KindError {
+		t.Errorf("first stream event kind = %q, want %q", ev.Kind, KindError)
+	}
+	if !strings.Contains(ev.Error, "404") {
+		t.Errorf("KindError event Error = %q, want to contain the actual reason", ev.Error)
+	}
+
+	// An slog.LevelError record must have been emitted with sessionID and iter.
+	cap.mu.Lock()
+	records := make([]slog.Record, len(cap.records))
+	copy(records, cap.records)
+	cap.mu.Unlock()
+
+	var found bool
+	for _, r := range records {
+		if r.Level != slog.LevelError {
+			continue
+		}
+		var hasSession, hasIter bool
+		r.Attrs(func(a slog.Attr) bool {
+			switch a.Key {
+			case "sessionID":
+				hasSession = true
+			case "iter":
+				hasIter = true
+			}
+			return true
+		})
+		if hasSession && hasIter {
+			found = true
+			break
+		}
+	}
+	if !found {
+		var msgs []string
+		for _, r := range records {
+			msgs = append(msgs, fmt.Sprintf("[%s] %s", r.Level, r.Message))
+		}
+		t.Errorf("no slog.Error record with sessionID+iter attrs found; logged: %v", msgs)
 	}
 }

@@ -222,15 +222,18 @@ func (c *Console) relayAIEvent(sse *datastar.ServerSentEventGenerator, r *http.R
 		}
 		return false
 	case aibuilder.KindDone:
+		// Clear the live canvas before rendering the final preview so the
+		// workflow does not appear twice (canvas + preview).
+		c.emitAICanvas(sse, aiBuilderCanvasView{})
 		c.emitAIPreview(sse, r, c.finalPreviewView(r, scope, sessionID, ev.Draft))
 		return true
 	case aibuilder.KindError:
-		// Surface a generic failure to the operator; keep the model/transport
-		// detail in the logs rather than the UI.
-		c.deps.Logger.Debug("console: ai build error event", "err", ev.Error)
+		// Log at Error level so the failure is visible in notify.log; the
+		// model/transport detail lives in the log rather than the UI.
+		c.deps.Logger.Error("console: ai build error event", "err", ev.Error)
 		c.emitAIPreview(sse, r, aiBuilderPreviewView{
 			SessionID: sessionID,
-			Error:     "The builder could not produce a valid workflow. Please try again.",
+			Error:     "The AI provider returned an error. Please try again.",
 		})
 		return true
 	default:
