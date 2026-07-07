@@ -2540,6 +2540,317 @@ a.activity-item-run { color: var(--accent); }
   font-size: 0.875rem;
 }
 
+/* ===== create-mode tabs (workflow create: Manual | Guided) ================ */
+/* Wrapper for the reactive create-mode tabs. Mirrors .console-tab-bar so the
+   underline convention (.console-tab.is-active) reads the same everywhere. */
+.console-tabs {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: var(--space-4);
+}
+
+/* Not-configured note (Guided/Refine when the AI builder is unwired). */
+.console-empty {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  padding: var(--space-4);
+  background: var(--surface-2);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-card);
+}
+.console-empty code {
+  font-family: var(--font-mono);
+  font-size: 0.8125em;
+}
+
+/* ===== AI workflow builder ================================================
+   Shared surface for the Guided create flow (full-screen) and the Refine-with-AI
+   sidebar (workflow_detail). Suggestion cards, the reasoning log, the live
+   canvas and the final preview all use these classes in both places. */
+
+/* -- full-screen Guided builder overlay ---------------------------------- */
+.ai-builder-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 60; /* above the 420px .console-slideover (z-index:50) */
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.ai-builder-fullscreen-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.ai-builder-fullscreen-titles {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+.ai-builder-fullscreen-titles .console-tabs {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+.ai-builder-fullscreen-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.ai-builder-fullscreen-title svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  color: var(--accent);
+}
+.ai-builder-fullscreen-body {
+  flex: 1;
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-5);
+  box-sizing: border-box;
+}
+
+/* -- intake zone (prompt + starter cards, centered) ---------------------- */
+.ai-builder-intake {
+  max-width: 720px;
+  margin: 0 auto var(--space-6);
+}
+.ai-builder-intake-actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+/* -- starter / suggestion cards (Guided + Refine sidebar) ---------------- */
+.ai-builder-suggestions-label {
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.ai-builder-suggestions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+.ai-builder-suggestion-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  text-align: left;
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.ai-builder-suggestion-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.ai-builder-suggestion-card:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* Constrain the star SVG — without this the viewBox-only icon fills the card. */
+.ai-builder-suggestion-card svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--accent);
+}
+.ai-builder-suggestion-card span {
+  flex: 1;
+  min-width: 0;
+}
+
+/* -- two-column results (reasoning | canvas → preview) ------------------- */
+.ai-builder-results {
+  display: grid;
+  gap: var(--space-5);
+  align-items: start;
+}
+@media (min-width: 900px) {
+  .ai-builder-results {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  }
+}
+.ai-builder-results-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* -- reasoning log (chain-of-thought) ------------------------------------ */
+.ai-builder-reasoning {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 460px;
+  overflow-y: auto;
+  padding: var(--space-4);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+/* Collapse the log until the run appends its first line (keeps the pre-run
+   Guided view to just the prompt + cards). */
+.ai-builder-reasoning:empty {
+  display: none;
+}
+.ai-reasoning-line {
+  position: relative;
+  margin: 0;
+  padding: 2px 0 2px var(--space-3);
+}
+.ai-reasoning-line::before {
+  content: "\203A"; /* › */
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+}
+
+/* -- live canvas (workflow taking shape) --------------------------------- */
+.ai-canvas-steps,
+.ai-preview-steps {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ai-preview-steps {
+  margin-top: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.ai-canvas-step,
+.ai-preview-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-tile);
+  font-size: 0.8125rem;
+}
+.ai-canvas-step-index,
+.ai-preview-step-index {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: var(--radius-pill);
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+.ai-canvas-step-type,
+.ai-preview-step-type {
+  flex: none;
+  padding: 1px var(--space-2);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: var(--radius-pill);
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.ai-canvas-step-name,
+.ai-preview-step-name {
+  color: var(--text-primary);
+  font-weight: 500;
+  min-width: 0;
+}
+.ai-canvas-step-summary,
+.ai-preview-step-summary {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  margin-left: auto;
+  text-align: right;
+}
+
+/* -- final preview card (Use / Apply / Discard) -------------------------- */
+.ai-preview {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+.ai-preview-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.ai-preview-head .console-card-title {
+  margin: 0;
+}
+.ai-preview-trigger {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+/* -- Refine-with-AI sidebar (workflow_detail) ---------------------------- */
+/* The copilot reuses every .ai-builder-* / .ai-canvas-* / .ai-preview-* rule
+   above; it only needs its heading star constrained and its regions spaced. */
+.ai-copilot .console-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ai-copilot .console-card-title svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--accent);
+}
+.ai-copilot .ai-builder-suggestions {
+  margin: var(--space-3) 0;
+}
+.ai-copilot .ai-builder-reasoning,
+.ai-copilot #ai-builder-canvas,
+.ai-copilot #ai-builder-preview {
+  margin-top: var(--space-4);
+}
+.ai-copilot #ai-builder-canvas:empty,
+.ai-copilot #ai-builder-preview:empty {
+  margin-top: 0;
+}
+
 /* ===== workflow editor (W2-A4) ============================================ */
 
 .wf-step-actions {
