@@ -114,10 +114,17 @@ func envOr(key, def string) string {
 }
 
 // masterKey resolves the 32-byte AES-256-GCM master key. A non-empty hex flag
-// is decoded and length-checked; an empty flag derives a fixed dev key so a
-// local operator can boot without ceremony.
-func masterKey(hexKey string) ([]byte, error) {
+// is decoded and length-checked. An empty flag is only accepted when dev is
+// true: it then derives the exact same fixed dev key as before (byte-for-byte
+// unchanged) so a local operator can keep booting without ceremony and
+// existing local users are not re-keyed. Outside dev, an empty hex key is a
+// fatal misconfiguration — silently deriving a fixed, publicly-computable key
+// would encrypt every credential and cookie under a value anyone can compute.
+func masterKey(hexKey string, dev bool) ([]byte, error) {
 	if hexKey == "" {
+		if !dev {
+			return nil, fmt.Errorf("master-key-hex is required outside -dev/NOTIFY_DEV=1 (an empty key would derive a fixed, publicly-known encryption key)")
+		}
 		k := sha256.Sum256([]byte("notify-dev-master-key"))
 		return k[:], nil
 	}
@@ -131,6 +138,17 @@ func masterKey(hexKey string) ([]byte, error) {
 	return raw, nil
 }
 
+// envBool reports whether the environment variable key is set to "1" or
+// "true" (matches the existing NOTIFY_DISCORD_RESPOND_ALL convention below).
+func envBool(key string) bool {
+	switch os.Getenv(key) {
+	case "1", "true":
+		return true
+	default:
+		return false
+	}
+}
+
 // runServe wires the full stack and serves the HTTP API until interrupted.
 func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
@@ -138,14 +156,15 @@ func runServe(args []string) error {
 	bridgeURL := fs.String("bridge-url", envOr("NOTIFY_BRIDGE_URL", "http://127.0.0.1:8080"), "dagnats worker bridge URL")
 	dbPath := fs.String("db", envOr("NOTIFY_DB", "notify.db"), "SQLite database path")
 	addr := fs.String("addr", envOr("NOTIFY_ADDR", "127.0.0.1:3000"), "HTTP listen address")
-	masterKeyHex := fs.String("master-key-hex", os.Getenv("NOTIFY_MASTER_KEY_HEX"), "32-byte AES master key as hex (empty derives a dev key)")
+	masterKeyHex := fs.String("master-key-hex", os.Getenv("NOTIFY_MASTER_KEY_HEX"), "32-byte AES master key as hex (required unless -dev)")
+	dev := fs.Bool("dev", envBool("NOTIFY_DEV"), "allow booting without -master-key-hex/NOTIFY_MASTER_KEY_HEX by deriving a fixed, insecure dev key (development only)")
 	meshAllow := fs.String("mesh-allow", envOr("NOTIFY_MESH_ALLOW", mesh.DefaultAllowedSubjects), "allowlist pattern for mesh agent dispatch subjects")
 	meshNATSURL := fs.String("mesh-nats-url", envOr("NOTIFY_MESH_NATS_URL", ""), "NATS URL for mesh agent dispatch; empty reuses -nats-url (set when agents live on a different hub than the engine)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	mk, err := masterKey(*masterKeyHex)
+	mk, err := masterKey(*masterKeyHex, *dev)
 	if err != nil {
 		return err
 	}
@@ -165,6 +184,19 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = eng.Stop() }()
 
+	// Boot-time dagnats bridge reachability probe (notify hardening #6):
+	// engine.New only validates the NATS control-plane connection; the HTTP
+	// worker bridge is otherwise first touched lazily on the first poll (see
+	// engine.go's poll), so a misconfigured -bridge-url/NOTIFY_BRIDGE_URL
+	// would silently boot and then have every send.* task fail forever. A
+	// transport-level failure (nothing listening) is fatal here; see
+	// probeBridgeReachable's doc comment for why a reachable-but-not-2xx
+	// bridge is logged and swallowed instead.
+	bridgeClient := &http.Client{Timeout: bridgeProbeTimeout}
+	if err := probeBridgeReachable(ctx, bridgeClient, *bridgeURL); err != nil {
+		return fmt.Errorf("probeBridgeReachable: %w", err)
+	}
+
 	bus, err := eventbus.Connect(ctx, *natsURL)
 	if err != nil {
 		return fmt.Errorf("eventbus.Connect: %w", err)
@@ -172,12 +204,8 @@ func runServe(args []string) error {
 	defer func() { _ = bus.Close() }()
 
 	prefs := preferences.New(st)
-	eng.Handle("send.in_app", delivery.New(st).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandleInApp)
 	conn := connectivity.New(st, mk)
-	eng.Handle("send.email", delivery.NewEmail(st, conn).WithPreferences(prefs).WithThrottle(bus).WithDigester(bus).HandleEmail)
-	eng.Handle("send.push", delivery.NewPush(st, conn).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandlePush)
-	eng.Handle("send.chat", delivery.NewChat(st, conn).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandleChat)
-	eng.Handle("send.sms", delivery.NewSMS(st, conn).WithPreferences(prefs).WithEventBus(bus).WithThrottle(bus).WithDigester(bus).HandleSMS)
+	registerDeliveryHandlers(eng, st, conn, prefs, bus)
 	// Scheduled (cron) digest window: a digest.wait task sleeps until the next
 	// cron tick, then the downstream channel step self-sources and drains the
 	// accumulated events. Regular (amount+unit) digests use the engine's native
@@ -440,6 +468,11 @@ func runServe(args []string) error {
 	root := http.NewServeMux()
 	root.Handle("/console", consoleRoutes)
 	root.Handle("/console/", consoleRoutes)
+	// Readiness probe (notify hardening #6), distinct from /healthz's
+	// liveness-only check: reports 503 until both the dagnats bridge and the
+	// writer DB pool answer live, 200 once both do.
+	writer, _ := st.Pools()
+	root.HandleFunc("/readyz", readyzHandler(*bridgeURL, bridgeClient, writer))
 	root.Handle("/", handler)
 
 	srv := &http.Server{Addr: *addr, Handler: root}
@@ -465,7 +498,8 @@ func runBootstrap(args []string) error {
 	org := fs.String("org", "", "organization name")
 	env := fs.String("env", "", "environment identifier")
 	dbPath := fs.String("db", envOr("NOTIFY_DB", "notify.db"), "SQLite database path")
-	masterKeyHex := fs.String("master-key-hex", os.Getenv("NOTIFY_MASTER_KEY_HEX"), "32-byte AES master key as hex (empty derives a dev key)")
+	masterKeyHex := fs.String("master-key-hex", os.Getenv("NOTIFY_MASTER_KEY_HEX"), "32-byte AES master key as hex (required unless -dev)")
+	dev := fs.Bool("dev", envBool("NOTIFY_DEV"), "allow bootstrapping without -master-key-hex/NOTIFY_MASTER_KEY_HEX by deriving a fixed, insecure dev key (development only)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -473,7 +507,7 @@ func runBootstrap(args []string) error {
 		return fmt.Errorf("--org and --env are required")
 	}
 
-	mk, err := masterKey(*masterKeyHex)
+	mk, err := masterKey(*masterKeyHex, *dev)
 	if err != nil {
 		return err
 	}

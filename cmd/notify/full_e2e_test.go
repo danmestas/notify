@@ -6,12 +6,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,6 +157,65 @@ func TestFullJourney_RealBinary(t *testing.T) {
 		t.Errorf("timeseries in_app/sent = %d, want >= 2 (body=%s)", tsInAppSent, body)
 	}
 	t.Logf("full journey OK: content=%q deliveries=%v timeseries=%s", msg.Content, counts, body)
+}
+
+// TestServe_NoMasterKeyNoDev_ExitsNonZero guards the production master-key
+// guard (notify hardening #2): booting `serve` with neither
+// -master-key-hex/NOTIFY_MASTER_KEY_HEX nor -dev/NOTIFY_DEV set must refuse to
+// start rather than silently deriving the fixed, publicly-computable dev key
+// notify used to fall back to unconditionally — which would encrypt every
+// credential and cookie under a key anyone can compute.
+func TestServe_NoMasterKeyNoDev_ExitsNonZero(t *testing.T) {
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	dbPath := filepath.Join(t.TempDir(), "notify.db")
+	bin := buildNotify(t)
+	addr := freeAddr(t)
+
+	// Bounded so old (buggy) behavior — booting and serving forever — fails
+	// the test promptly instead of hanging until the suite's own timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	serve := exec.CommandContext(ctx, bin, "serve",
+		"--db", dbPath, "--nats-url", natsURL, "--bridge-url", bridgeURL, "--addr", addr)
+	serve.Env = envWithout(os.Environ(), "NOTIFY_MASTER_KEY_HEX", "NOTIFY_DEV")
+	var stderr bytes.Buffer
+	serve.Stderr = &stderr
+
+	err := serve.Run()
+	if ctx.Err() != nil {
+		t.Fatalf("serve did not exit within 10s with no master key and no -dev (should fail fast); stderr=%s", stderr.String())
+	}
+	if err == nil {
+		t.Fatalf("serve exited 0 with no master key and no -dev; want non-zero exit (stderr=%s)", stderr.String())
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("serve did not exit via ExitError: %v (stderr=%s)", err, stderr.String())
+	}
+	if exitErr.ExitCode() == 0 {
+		t.Errorf("serve ExitCode = 0, want non-zero (stderr=%s)", stderr.String())
+	}
+	t.Logf("serve correctly refused to boot: stderr=%s", stderr.String())
+}
+
+// envWithout returns env with the given keys removed (case-sensitive,
+// KEY=value form) so a test can assert on a genuinely absent variable rather
+// than relying on the ambient environment happening not to set it.
+func envWithout(env []string, keys ...string) []string {
+	drop := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		drop[k] = true
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if drop[name] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // seedTenant provisions the tenant (org+env+API key), i18n + layout rows, and an
