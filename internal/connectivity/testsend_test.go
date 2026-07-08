@@ -79,6 +79,9 @@ func TestChatProviderFromIntegration_ConstructsClient(t *testing.T) {
 func TestSend_ChatWebhook_EndToEnd(t *testing.T) {
 	ctx := context.Background()
 	svc := New(openTemp(t), testKey())
+	// The SSRF guard blocks loopback by design; opt out here since this test's
+	// whole point is exercising the wire path against a local httptest.Server.
+	svc.deliveryHTTPClient = &http.Client{}
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
 
 	type capture struct {
@@ -128,6 +131,9 @@ func TestSend_ChatWebhook_EndToEnd(t *testing.T) {
 func TestSend_DefaultMessage(t *testing.T) {
 	ctx := context.Background()
 	svc := New(openTemp(t), testKey())
+	// See TestSend_ChatWebhook_EndToEnd: opt out of the SSRF guard to reach a
+	// local httptest.Server.
+	svc.deliveryHTTPClient = &http.Client{}
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
 
 	got := make(chan string, 1)

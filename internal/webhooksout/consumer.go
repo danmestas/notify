@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/danmestas/notify/internal/delivery/httpaction"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/eventbus"
 	"github.com/danmestas/notify/internal/store"
@@ -28,15 +29,21 @@ type Consumer struct {
 	client *http.Client
 }
 
-// New builds a Consumer bound to bus and st with a short-timeout HTTP client.
+// New builds a Consumer bound to bus and st with a short-timeout, SSRF-safe
+// HTTP client: endpoint URLs come from tenant-configured webhook rows, so a
+// plain client would let a tenant point delivery-status fan-out at an internal
+// host.
 func New(bus *eventbus.Bus, st *store.Store) *Consumer {
-	return &Consumer{
-		bus:   bus,
-		store: st,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
-	}
+	return NewWithClient(bus, st, httpaction.NewSSRFSafeClientWithTimeout(5*time.Second))
+}
+
+// NewWithClient builds a Consumer bound to bus and st using the provided HTTP
+// client. Callers are responsible for applying any security policy on client;
+// this constructor is primarily for tests that need a bypass (e.g. to reach an
+// httptest server on loopback, which the SSRF-safe client from New rejects by
+// design).
+func NewWithClient(bus *eventbus.Bus, st *store.Store, client *http.Client) *Consumer {
+	return &Consumer{bus: bus, store: st, client: client}
 }
 
 // Start subscribes to every environment's delivery-status events. For each

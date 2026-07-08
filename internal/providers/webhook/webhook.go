@@ -27,8 +27,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danmestas/notify/internal/delivery/httpaction"
 	"github.com/danmestas/notify/internal/providers"
 )
+
+// defaultHTTPClient is the SSRF-safe client used when a caller does not supply
+// its own HTTPClient. URL/Address are tenant-supplied (the webhook endpoint
+// configured for an integration, or ChatMessage.Address), so the fallback must
+// not be a plain client: an attacker-controlled webhook URL pointing at an
+// internal host must be rejected at dial time, not merely at request build.
+var defaultHTTPClient = httpaction.NewSSRFSafeClientWithTimeout(10 * time.Second)
 
 var (
 	_ providers.EmailProvider = (*EmailClient)(nil)
@@ -150,7 +158,7 @@ func post(ctx context.Context, hc *http.Client, endpoint, hmacSecret string, pay
 	}
 
 	if hc == nil {
-		hc = &http.Client{Timeout: 10 * time.Second}
+		hc = defaultHTTPClient
 	}
 	resp, err := hc.Do(req)
 	if err != nil {

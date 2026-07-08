@@ -24,6 +24,13 @@ var (
 	_ providers.ChatProvider  = (*ChatClient)(nil)
 )
 
+// Every client literal below sets HTTPClient: &http.Client{} explicitly. The
+// zero-value fallback (post()'s nil-client branch) is now the SSRF-safe
+// client, which deliberately blocks loopback — but stubServer binds to
+// 127.0.0.1, so functional tests must opt out of the guard the same way
+// httpaction_test.go's seed() does. TestSSRFGuard-style tests in this package
+// (see webhook_ssrf_test.go) exercise the guarded default directly.
+
 // captured is one request observed by the stub webhook server.
 type captured struct {
 	method string
@@ -61,7 +68,7 @@ func wantSig(secret, body string) string {
 func TestEmailClient_Send_Wire(t *testing.T) {
 	srv, got := stubServer(t, http.StatusOK, `{"id":"wh-email-1"}`)
 
-	c := &EmailClient{URL: srv.URL + "/hook"}
+	c := &EmailClient{URL: srv.URL + "/hook", HTTPClient: &http.Client{}}
 	msg := providers.EmailMessage{
 		From:    "from@example.com",
 		To:      "to@example.com",
@@ -112,7 +119,7 @@ func TestEmailClient_Send_HMACSigned(t *testing.T) {
 	srv, got := stubServer(t, http.StatusOK, `{}`)
 
 	const secret = "super-secret-key"
-	c := &EmailClient{URL: srv.URL, HMACSecret: secret}
+	c := &EmailClient{URL: srv.URL, HMACSecret: secret, HTTPClient: &http.Client{}}
 	if _, err := c.Send(context.Background(), providers.EmailMessage{To: "x@y.z", Subject: "s"}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -124,7 +131,7 @@ func TestEmailClient_Send_HMACSigned(t *testing.T) {
 
 func TestEmailClient_Send_5xxIsTransient(t *testing.T) {
 	srv, _ := stubServer(t, http.StatusServiceUnavailable, ``)
-	c := &EmailClient{URL: srv.URL}
+	c := &EmailClient{URL: srv.URL, HTTPClient: &http.Client{}}
 	_, err := c.Send(context.Background(), providers.EmailMessage{To: "a@b.c"})
 	if err == nil {
 		t.Fatal("Send on 503: expected error, got nil")
@@ -136,7 +143,7 @@ func TestEmailClient_Send_5xxIsTransient(t *testing.T) {
 
 func TestEmailClient_Send_4xxIsPermanent(t *testing.T) {
 	srv, _ := stubServer(t, http.StatusBadRequest, `{"error":"bad"}`)
-	c := &EmailClient{URL: srv.URL}
+	c := &EmailClient{URL: srv.URL, HTTPClient: &http.Client{}}
 	_, err := c.Send(context.Background(), providers.EmailMessage{To: "a@b.c"})
 	if err == nil {
 		t.Fatal("Send on 400: expected error, got nil")
@@ -182,7 +189,7 @@ func TestEmailClient_Send_TimeoutIsTransient(t *testing.T) {
 func TestPushClient_Send_Wire(t *testing.T) {
 	srv, got := stubServer(t, http.StatusOK, `{"id":"wh-push-1"}`)
 
-	c := &PushClient{URL: srv.URL + "/p"}
+	c := &PushClient{URL: srv.URL + "/p", HTTPClient: &http.Client{}}
 	msg := providers.PushMessage{
 		Topic:    "topic1",
 		Title:    "Title",
@@ -237,7 +244,7 @@ func TestPushClient_Send_HMACSigned(t *testing.T) {
 	srv, got := stubServer(t, http.StatusOK, `{}`)
 
 	const secret = "push-secret"
-	c := &PushClient{URL: srv.URL, HMACSecret: secret}
+	c := &PushClient{URL: srv.URL, HMACSecret: secret, HTTPClient: &http.Client{}}
 	if _, err := c.Send(context.Background(), providers.PushMessage{Topic: "t", Body: "b"}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -249,7 +256,7 @@ func TestPushClient_Send_HMACSigned(t *testing.T) {
 
 func TestPushClient_Send_NoSecretNoSignature(t *testing.T) {
 	srv, got := stubServer(t, http.StatusOK, `{}`)
-	c := &PushClient{URL: srv.URL}
+	c := &PushClient{URL: srv.URL, HTTPClient: &http.Client{}}
 	if _, err := c.Send(context.Background(), providers.PushMessage{Topic: "t", Body: "b"}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -260,7 +267,7 @@ func TestPushClient_Send_NoSecretNoSignature(t *testing.T) {
 
 func TestPushClient_Send_5xxIsTransient(t *testing.T) {
 	srv, _ := stubServer(t, http.StatusBadGateway, ``)
-	c := &PushClient{URL: srv.URL}
+	c := &PushClient{URL: srv.URL, HTTPClient: &http.Client{}}
 	_, err := c.Send(context.Background(), providers.PushMessage{Topic: "t", Body: "b"})
 	if err == nil {
 		t.Fatal("Send on 502: expected error, got nil")
@@ -272,7 +279,7 @@ func TestPushClient_Send_5xxIsTransient(t *testing.T) {
 
 func TestPushClient_Send_4xxIsPermanent(t *testing.T) {
 	srv, _ := stubServer(t, http.StatusUnauthorized, ``)
-	c := &PushClient{URL: srv.URL}
+	c := &PushClient{URL: srv.URL, HTTPClient: &http.Client{}}
 	_, err := c.Send(context.Background(), providers.PushMessage{Topic: "t", Body: "b"})
 	if err == nil {
 		t.Fatal("Send on 401: expected error, got nil")
@@ -298,7 +305,7 @@ func TestPushClient_Send_EmptyURLIsPermanent(t *testing.T) {
 func TestChatClient_Send_Wire(t *testing.T) {
 	srv, got := stubServer(t, http.StatusOK, `{"id":"wh-chat-1"}`)
 
-	c := &ChatClient{URL: srv.URL + "/c"}
+	c := &ChatClient{URL: srv.URL + "/c", HTTPClient: &http.Client{}}
 	res, err := c.Send(context.Background(), providers.ChatMessage{Content: "hello chat"})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
@@ -329,7 +336,7 @@ func TestChatClient_Send_HMACSigned(t *testing.T) {
 	srv, got := stubServer(t, http.StatusOK, `{}`)
 
 	const secret = "chat-secret"
-	c := &ChatClient{URL: srv.URL, HMACSecret: secret}
+	c := &ChatClient{URL: srv.URL, HMACSecret: secret, HTTPClient: &http.Client{}}
 	if _, err := c.Send(context.Background(), providers.ChatMessage{Content: "hi"}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -341,7 +348,7 @@ func TestChatClient_Send_HMACSigned(t *testing.T) {
 
 func TestChatClient_Send_AddressOverridesURL(t *testing.T) {
 	srv, got := stubServer(t, http.StatusOK, `{}`)
-	c := &ChatClient{URL: "http://should.not.be.used.invalid/hook"}
+	c := &ChatClient{URL: "http://should.not.be.used.invalid/hook", HTTPClient: &http.Client{}}
 	if _, err := c.Send(context.Background(), providers.ChatMessage{
 		Address: srv.URL + "/override",
 		Content: "hi",
@@ -355,7 +362,7 @@ func TestChatClient_Send_AddressOverridesURL(t *testing.T) {
 
 func TestChatClient_Send_5xxIsTransient(t *testing.T) {
 	srv, _ := stubServer(t, http.StatusInternalServerError, ``)
-	c := &ChatClient{URL: srv.URL}
+	c := &ChatClient{URL: srv.URL, HTTPClient: &http.Client{}}
 	_, err := c.Send(context.Background(), providers.ChatMessage{Content: "b"})
 	if err == nil {
 		t.Fatal("Send on 500: expected error, got nil")
@@ -367,7 +374,7 @@ func TestChatClient_Send_5xxIsTransient(t *testing.T) {
 
 func TestChatClient_Send_4xxIsPermanent(t *testing.T) {
 	srv, _ := stubServer(t, http.StatusNotFound, ``)
-	c := &ChatClient{URL: srv.URL}
+	c := &ChatClient{URL: srv.URL, HTTPClient: &http.Client{}}
 	_, err := c.Send(context.Background(), providers.ChatMessage{Content: "b"})
 	if err == nil {
 		t.Fatal("Send on 404: expected error, got nil")

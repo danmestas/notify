@@ -17,11 +17,28 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/danmestas/notify/internal/delivery/httpaction"
 )
 
 // probeTimeout bounds every credential probe so a wedged provider cannot stall
 // the engine worker indefinitely.
 const probeTimeout = 10 * time.Second
+
+// probeClient returns the HTTP client used by every credential probe that
+// makes an outbound HTTP call (ntfy's BaseURL is tenant-supplied; the
+// cloudflare-email probe target is fixed but goes through the same helper for
+// a single code path). Production always gets the SSRF-safe client, whose
+// Timeout mirrors probeTimeout so a probe that never completes a TCP
+// handshake still bounds the same way it did with http.DefaultClient; the
+// per-call context.WithTimeout in authedGET is belt-and-suspenders on top of
+// that. See Service.probeHTTPClient for the test-only override.
+func (svc *Service) probeClient() *http.Client {
+	if svc.probeHTTPClient != nil {
+		return svc.probeHTTPClient
+	}
+	return httpaction.NewSSRFSafeClientWithTimeout(probeTimeout)
+}
 
 // probeSMTP dials the configured SMTP server, runs STARTTLS when offered, and
 // authenticates with PLAIN. It never sends MAIL/DATA, so no message is
@@ -70,12 +87,12 @@ func probeSMTP(cfg SMTPConfig) (ok bool, detail string) {
 // probeCloudflareEmail issues an authenticated GET against the account scope of
 // the Cloudflare API. A 2xx proves the token and account id are valid; a 401/403
 // is a definite credential negative; other statuses are reported verbatim.
-func probeCloudflareEmail(ctx context.Context, cfg CloudflareEmailConfig) (ok bool, detail string) {
+func probeCloudflareEmail(ctx context.Context, client *http.Client, cfg CloudflareEmailConfig) (ok bool, detail string) {
 	if strings.TrimSpace(cfg.AccountID) == "" || strings.TrimSpace(cfg.APIToken) == "" {
 		return false, "cloudflare-email: account id or api token not configured"
 	}
 	endpoint := "https://api.cloudflare.com/client/v4/accounts/" + url.PathEscape(cfg.AccountID)
-	status, body, err := authedGET(ctx, endpoint, "Bearer "+cfg.APIToken)
+	status, body, err := authedGET(ctx, client, endpoint, "Bearer "+cfg.APIToken)
 	if err != nil {
 		return false, fmt.Sprintf("cloudflare-email: probe %s failed: %v", endpoint, err)
 	}
@@ -93,7 +110,7 @@ func probeCloudflareEmail(ctx context.Context, cfg CloudflareEmailConfig) (ok bo
 // returns 200 for the docs/health root; a 401/403 indicates the token is
 // invalid for an auth-protected server. A transport failure is reported as a
 // negative with the cause.
-func probeNtfy(ctx context.Context, cfg NtfyConfig) (ok bool, detail string) {
+func probeNtfy(ctx context.Context, client *http.Client, cfg NtfyConfig) (ok bool, detail string) {
 	base := strings.TrimSpace(cfg.BaseURL)
 	if base == "" {
 		return false, "ntfy: no server base URL configured"
@@ -103,7 +120,7 @@ func probeNtfy(ctx context.Context, cfg NtfyConfig) (ok bool, detail string) {
 	if cfg.Token != "" {
 		auth = "Bearer " + cfg.Token
 	}
-	status, body, err := authedGET(ctx, endpoint, auth)
+	status, body, err := authedGET(ctx, client, endpoint, auth)
 	if err != nil {
 		return false, fmt.Sprintf("ntfy: probe %s failed: %v", endpoint, err)
 	}
@@ -120,7 +137,7 @@ func probeNtfy(ctx context.Context, cfg NtfyConfig) (ok bool, detail string) {
 // authedGET performs a bounded GET with an optional Authorization header and
 // returns the status code and a short truncated body. The probe never follows
 // into the response beyond 256 bytes.
-func authedGET(ctx context.Context, endpoint, authHeader string) (status int, body string, err error) {
+func authedGET(ctx context.Context, client *http.Client, endpoint, authHeader string) (status int, body string, err error) {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -130,7 +147,7 @@ func authedGET(ctx context.Context, endpoint, authHeader string) (status int, bo
 	if authHeader != "" {
 		req.Header.Set("Authorization", authHeader)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, "", err
 	}

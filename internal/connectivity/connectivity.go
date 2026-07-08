@@ -13,7 +13,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"net/http"
+	"time"
 
+	"github.com/danmestas/notify/internal/delivery/httpaction"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/providers"
 	"github.com/danmestas/notify/internal/providers/cloudflareemail"
@@ -225,12 +228,44 @@ type SignalWireConfig struct {
 type Service struct {
 	store *store.Store
 	gcm   cipher.AEAD
+
+	// deliveryHTTPClient overrides the client used to construct outbound
+	// provider clients whose destination URL is tenant-supplied: the
+	// webhook.{Email,Push,Chat}Client family (WebhookURL), ntfy.Client
+	// (BaseURL), discord.Client (WebhookURL), and signalwire.Client (SpaceURL).
+	// Left nil in production, where deliveryClient() always returns the
+	// SSRF-safe client. Tests in this package may set it to reach a local
+	// httptest.Server on loopback, which the guard otherwise blocks by design.
+	deliveryHTTPClient *http.Client
+
+	// probeHTTPClient overrides the client used by VerifyByID's credential
+	// probes (see probeClient in verify.go). Same rationale as
+	// deliveryHTTPClient: nil in production (SSRF-safe), overridable by tests
+	// that need to reach a local httptest.Server.
+	probeHTTPClient *http.Client
+}
+
+// Option customises a Service at construction. Options exist for tests that
+// must bypass the SSRF-safe outbound client (e.g. to reach a local
+// httptest.Server on loopback); production code calls New with no options.
+type Option func(*Service)
+
+// WithHTTPClient overrides the HTTP client used for BOTH tenant-URL provider
+// delivery (webhook/ntfy/discord/signalwire) and VerifyByID credential probes.
+// Intended for tests only: the default (no option) is the SSRF-safe client,
+// which blocks loopback/RFC1918/link-local by design, so an end-to-end test
+// that drives real delivery against a loopback stub server must pass this.
+func WithHTTPClient(c *http.Client) Option {
+	return func(s *Service) {
+		s.deliveryHTTPClient = c
+		s.probeHTTPClient = c
+	}
 }
 
 // New builds a Service. masterKey must be exactly 32 bytes (AES-256-GCM); New
 // panics otherwise, since a misconfigured key is a deploy-time programmer error
 // rather than a runtime condition.
-func New(s *store.Store, masterKey []byte) *Service {
+func New(s *store.Store, masterKey []byte, opts ...Option) *Service {
 	if len(masterKey) != 32 {
 		panic(fmt.Sprintf("connectivity: masterKey must be 32 bytes for AES-256-GCM, got %d", len(masterKey)))
 	}
@@ -242,7 +277,24 @@ func New(s *store.Store, masterKey []byte) *Service {
 	if err != nil {
 		panic(fmt.Sprintf("connectivity: cipher.NewGCM: %v", err))
 	}
-	return &Service{store: s, gcm: gcm}
+	svc := &Service{store: s, gcm: gcm}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
+}
+
+// deliveryClient returns the HTTP client used to build outbound provider
+// clients whose destination URL is tenant-supplied (webhook, ntfy, discord,
+// signalwire). See the Service.deliveryHTTPClient doc comment: production
+// always gets the SSRF-safe client. The 10s timeout matches each provider's
+// own nil-HTTPClient fallback, so wiring this in changes only the SSRF posture,
+// not the timeout behaviour.
+func (svc *Service) deliveryClient() *http.Client {
+	if svc.deliveryHTTPClient != nil {
+		return svc.deliveryHTTPClient
+	}
+	return httpaction.NewSSRFSafeClientWithTimeout(10 * time.Second)
 }
 
 // CreateSMTP stores an SMTP email integration for the Scope: it AES-GCM-encrypts
@@ -440,7 +492,7 @@ func (svc *Service) EmailProviderFromIntegration(in domain.Integration) (provide
 		// A webhook has no configured sender; the From travels in the rendered
 		// EmailMessage and is serialised into the JSON body unchanged. Return ""
 		// so the caller's From default stays whatever the message carried.
-		return &webhook.EmailClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret}, "", nil
+		return &webhook.EmailClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret, HTTPClient: svc.deliveryClient()}, "", nil
 	case "smtp", "": // empty ProviderID covers legacy rows created before the field was enforced.
 		var cfg SMTPConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
@@ -603,7 +655,7 @@ func (svc *Service) PushProviderFromIntegration(ctx context.Context, in domain.I
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
 			return nil, fmt.Errorf("connectivity: unmarshal ntfy config: %w", err)
 		}
-		return &ntfy.Client{BaseURL: cfg.BaseURL, Token: cfg.Token}, nil
+		return &ntfy.Client{BaseURL: cfg.BaseURL, Token: cfg.Token, HTTPClient: svc.deliveryClient()}, nil
 	case "expo":
 		var cfg ExpoConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
@@ -625,7 +677,7 @@ func (svc *Service) PushProviderFromIntegration(ctx context.Context, in domain.I
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
 			return nil, fmt.Errorf("connectivity: unmarshal push-webhook config: %w", err)
 		}
-		return &webhook.PushClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret}, nil
+		return &webhook.PushClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret, HTTPClient: svc.deliveryClient()}, nil
 	default:
 		// Fail closed: an unknown push provider must not be silently decoded as
 		// another provider's config.
@@ -785,7 +837,7 @@ func (svc *Service) ChatProviderFromIntegration(in domain.Integration) (provider
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
 			return nil, fmt.Errorf("connectivity: unmarshal discord config: %w", err)
 		}
-		return &discord.Client{WebhookURL: cfg.WebhookURL}, nil
+		return &discord.Client{WebhookURL: cfg.WebhookURL, HTTPClient: svc.deliveryClient()}, nil
 	case "telegram":
 		var cfg TelegramConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
@@ -812,7 +864,7 @@ func (svc *Service) ChatProviderFromIntegration(in domain.Integration) (provider
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
 			return nil, fmt.Errorf("connectivity: unmarshal chat-webhook config: %w", err)
 		}
-		return &webhook.ChatClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret}, nil
+		return &webhook.ChatClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret, HTTPClient: svc.deliveryClient()}, nil
 	default:
 		// Fail closed: an unknown chat provider must not be silently decoded as
 		// another provider's config.
@@ -937,10 +989,11 @@ func (svc *Service) SMSProviderFromIntegration(in domain.Integration) (providers
 			return nil, fmt.Errorf("connectivity: unmarshal signalwire config: %w", err)
 		}
 		return &signalwire.Client{
-			ProjectID: cfg.ProjectID,
-			Token:     cfg.Token,
-			SpaceURL:  cfg.SpaceURL,
-			From:      cfg.From,
+			ProjectID:  cfg.ProjectID,
+			Token:      cfg.Token,
+			SpaceURL:   cfg.SpaceURL,
+			From:       cfg.From,
+			HTTPClient: svc.deliveryClient(),
 		}, nil
 	case "sns":
 		var cfg SNSConfig
@@ -1173,7 +1226,7 @@ func (svc *Service) VerifyByID(ctx context.Context, scope domain.Scope, id strin
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
 			return VerifyResult{}, fmt.Errorf("connectivity: verify: unmarshal cloudflare config: %w", err)
 		}
-		ok, detail := probeCloudflareEmail(ctx, cfg)
+		ok, detail := probeCloudflareEmail(ctx, svc.probeClient(), cfg)
 		res.OK, res.Detail = ok, detail
 		return res, nil
 	case "ntfy":
@@ -1181,7 +1234,7 @@ func (svc *Service) VerifyByID(ctx context.Context, scope domain.Scope, id strin
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
 			return VerifyResult{}, fmt.Errorf("connectivity: verify: unmarshal ntfy config: %w", err)
 		}
-		ok, detail := probeNtfy(ctx, cfg)
+		ok, detail := probeNtfy(ctx, svc.probeClient(), cfg)
 		res.OK, res.Detail = ok, detail
 		return res, nil
 	default:

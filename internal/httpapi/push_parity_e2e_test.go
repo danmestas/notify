@@ -88,7 +88,9 @@ func TestPushParity_EndToEnd(t *testing.T) {
 	defer ntfySrv.Close()
 
 	masterKey := bytesRepeat(0x2a, 32)
-	conn := connectivity.New(st, masterKey)
+	// The ntfy delivery client is SSRF-safe by default and would block the
+	// loopback stub server; WithHTTPClient opts this e2e path out of the guard.
+	conn := connectivity.New(st, masterKey, connectivity.WithHTTPClient(&http.Client{}))
 
 	// Register the push delivery handler before workers start: the resolver is
 	// the real connectivity service, so the path under test includes encrypted

@@ -83,6 +83,18 @@ func ssrfDialControl(_ string, address string, _ syscall.RawConn) error {
 	return nil
 }
 
+// NewSSRFSafeClientWithTimeout returns an SSRF-safe client (see
+// NewSSRFSafeClient) whose overall per-request Timeout is set to d. Callers
+// outside this package that need a bounded request (rather than relying solely
+// on a context deadline) should use this instead of constructing their own
+// wrapper around NewSSRFSafeClient, so the dialer/Control guard logic stays in
+// exactly one place.
+func NewSSRFSafeClientWithTimeout(d time.Duration) *http.Client {
+	c := NewSSRFSafeClient()
+	c.Timeout = d
+	return c
+}
+
 // NewSSRFSafeClient returns an http.Client that enforces the SSRF guard at two
 // independent layers:
 //

@@ -62,7 +62,9 @@ func TestWebhook_DeliveryStatusPostedToEndpoint(t *testing.T) {
 
 	// Start the outbound webhook consumer; it subscribes to every env's
 	// delivery-status events and POSTs each to that scope's active endpoints.
-	whStop, err := webhooksout.New(bus, st).Start(ctx)
+	// The SSRF guard blocks loopback by design; NewWithClient opts out here
+	// since this test posts to a local httptest.Server (see below).
+	whStop, err := webhooksout.NewWithClient(bus, st, &http.Client{Timeout: 5 * time.Second}).Start(ctx)
 	if err != nil {
 		t.Fatalf("webhooksout.Start: %v", err)
 	}

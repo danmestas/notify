@@ -76,7 +76,10 @@ func TestConsumer_PostsDeliveryEventToEndpoint(t *testing.T) {
 		t.Fatalf("create endpoint: %v", err)
 	}
 
-	consumer := New(bus, st)
+	// The SSRF guard blocks loopback by design; use NewWithClient here since
+	// this test's whole point is exercising delivery against a local
+	// httptest.Server.
+	consumer := NewWithClient(bus, st, &http.Client{Timeout: 5 * time.Second})
 	stop, err := consumer.Start(ctx)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -180,7 +183,9 @@ func TestConsumer_OnlyActiveEndpoints(t *testing.T) {
 		t.Fatalf("create active: %v", err)
 	}
 
-	consumer := New(bus, st)
+	// See TestConsumer_PostsDeliveryEventToEndpoint: opt out of the SSRF guard
+	// to reach local httptest.Servers.
+	consumer := NewWithClient(bus, st, &http.Client{Timeout: 5 * time.Second})
 	stop, err := consumer.Start(ctx)
 	if err != nil {
 		t.Fatalf("Start: %v", err)

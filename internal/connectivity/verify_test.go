@@ -36,6 +36,9 @@ func TestVerifyByID_Ntfy_Reachable(t *testing.T) {
 	defer srv.Close()
 
 	svc := New(openTemp(t), testKey())
+	// The SSRF guard blocks loopback by design; opt out here since this test's
+	// whole point is exercising the probe against a local httptest.Server.
+	svc.probeHTTPClient = &http.Client{}
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
 	in, err := svc.CreateNtfy(context.Background(), scope, "ntfy-1",
 		NtfyConfig{BaseURL: srv.URL, Token: "tok"}, true)
@@ -64,6 +67,9 @@ func TestVerifyByID_Ntfy_Rejected(t *testing.T) {
 	defer srv.Close()
 
 	svc := New(openTemp(t), testKey())
+	// See TestVerifyByID_Ntfy_Reachable: opt out of the SSRF guard to reach a
+	// local httptest.Server.
+	svc.probeHTTPClient = &http.Client{}
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
 	in, err := svc.CreateNtfy(context.Background(), scope, "ntfy-1",
 		NtfyConfig{BaseURL: srv.URL, Token: "bad"}, true)
@@ -77,6 +83,9 @@ func TestVerifyByID_Ntfy_Rejected(t *testing.T) {
 	}
 	if res.OK {
 		t.Errorf("ntfy verify OK = true, want false on 401")
+	}
+	if strings.Contains(res.Detail, "ssrf guard:") {
+		t.Errorf("detail = %q, want a 401 rejection, not an SSRF block", res.Detail)
 	}
 }
 
