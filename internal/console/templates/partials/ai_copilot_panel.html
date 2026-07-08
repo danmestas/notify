@@ -49,7 +49,7 @@
              syncs $aiPrompt) so the form serialization at @post time sees the
              prompt — assigning the signal alone can race the DOM flush. */}}
         <button type="button" class="ai-copilot-starter"
-                data-on:click="document.getElementById('ai-copilot-input').value = {{jsEscape $s}}; document.getElementById('ai-copilot-input').dispatchEvent(new Event('input')); $aiStarted = true; ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}}))">
+                data-on:click="document.getElementById('ai-copilot-input').value = {{jsEscape $s}}; document.getElementById('ai-copilot-input').dispatchEvent(new Event('input')); $aiStarted = true; ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}})); document.getElementById('ai-copilot-input').value = ''; $aiPrompt = ''">
           {{uiIcon "star"}}
           <span>{{$s}}</span>
         </button>
