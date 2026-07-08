@@ -3,6 +3,7 @@ package aibuilder
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/danmestas/notify/internal/delivery/filter"
@@ -173,6 +174,50 @@ func TestEditStepContent_RejectsNonObjectControlValues(t *testing.T) {
 		if string(d.Steps[0].ControlValues) != string(steptype.Default().Get("email").DefaultControlValues()) {
 			t.Errorf("controlValues=%s: step mutated despite rejection: %s", cv, d.Steps[0].ControlValues)
 		}
+	}
+}
+
+// TestEditStepContent_FrontLoadsStepTypeValidate proves editStepContent calls
+// the target step's steptype.Validate hook BEFORE mutating the draft: a
+// controlValues blob that is a well-formed JSON object (passes isJSONObject)
+// but fails the step type's own validation (an http_request method outside
+// GET/POST/PUT/PATCH/DELETE) is rejected with an error that mentions the
+// offending field, and the step's control values are left untouched.
+func TestEditStepContent_FrontLoadsStepTypeValidate(t *testing.T) {
+	d := &WorkflowDraft{}
+	next := counter()
+	mustApply(t, d, next, toolAddStep, `{"type":"http_request"}`) // s1
+	before := string(d.Steps[0].ControlValues)
+
+	args := `{"stepId":"s1","controlValues":{"url":"https://example.com","method":"WOOF","headers":"{}","body":"","timeoutSec":30,"failurePolicy":"fail_closed"}}`
+	_, _, err := applyToolCall(d, reg(), next, toolEditStepContent, json.RawMessage(args))
+	if err == nil {
+		t.Fatal("expected error for an http_request method outside GET/POST/PUT/PATCH/DELETE")
+	}
+	if !strings.Contains(err.Error(), "method") {
+		t.Errorf("error = %v, want it to mention the offending field (method)", err)
+	}
+	if string(d.Steps[0].ControlValues) != before {
+		t.Errorf("step mutated despite rejected edit: got %s, want unchanged %s", d.Steps[0].ControlValues, before)
+	}
+}
+
+// TestEditStepContent_AcceptsValidStepTypeControlValues is the positive
+// counterpart: a well-formed edit that also passes the step type's Validate
+// hook is applied normally.
+func TestEditStepContent_AcceptsValidStepTypeControlValues(t *testing.T) {
+	d := &WorkflowDraft{}
+	next := counter()
+	mustApply(t, d, next, toolAddStep, `{"type":"http_request"}`) // s1
+
+	args := `{"stepId":"s1","controlValues":{"url":"https://example.com","method":"POST","headers":"{}","body":"","timeoutSec":30,"failurePolicy":"fail_closed"}}`
+	if _, _, err := applyToolCall(d, reg(), next, toolEditStepContent, json.RawMessage(args)); err != nil {
+		t.Fatalf("unexpected error for a valid http_request edit: %v", err)
+	}
+	var cv map[string]any
+	_ = json.Unmarshal(d.Steps[0].ControlValues, &cv)
+	if cv["method"] != "POST" {
+		t.Errorf("method = %v, want POST", cv["method"])
 	}
 }
 

@@ -253,6 +253,13 @@ func TestAgentLoop_InitsBuildsValidatesPersists(t *testing.T) {
 // TestAgentLoop_SelfCorrectRidesTheLoop proves a compile failure is fed back as a
 // user message and the loop Continues (self-correct rides the natural loop), then
 // a fix lands and the run Completes — all state carried in the checkpoint.
+//
+// The injected flaw is structural (no name set) rather than a bad per-step
+// value: applyToolCall now front-loads steptype.Validate for addStep/
+// addStepInBetween/editStepContent (see draft.go), so a bad step value is
+// rejected as an IsError tool_result on the SAME call instead of riding to the
+// turn-end Compile. The turn-end validateDraft/Compile gate still guards
+// structural shape (name/trigger/empty-steps) — that's what this test exercises.
 func TestAgentLoop_SelfCorrectRidesTheLoop(t *testing.T) {
 	s := openTempStore(t)
 	scope := domain.Scope{OrgID: "org-1", EnvID: "env-a"}
@@ -263,27 +270,15 @@ func TestAgentLoop_SelfCorrectRidesTheLoop(t *testing.T) {
 		switch call {
 		case 1:
 			return MessageResponse{StopReason: "tool_use", ToolCalls: []ToolCall{
-				tc("t1", toolSetWorkflowMetadata, `{"name":"Delayed"}`),
+				tc("t1", toolAddStep, `{"type":"delay"}`),
 			}}
 		case 2:
-			return MessageResponse{StopReason: "tool_use", ToolCalls: []ToolCall{
-				tc("t2", toolAddStep, `{"type":"delay"}`),
-			}}
-		case 3:
-			sidStep := cur.Steps[0].StepID
-			return MessageResponse{StopReason: "tool_use", ToolCalls: []ToolCall{
-				tc("t3", toolEditStepContent,
-					fmt.Sprintf(`{"stepId":%q,"controlValues":{"type":"regular","amount":5,"unit":"fortnights"}}`, sidStep)),
-			}}
-		case 4:
-			// Model thinks it is done, but the bad unit fails Compile.
+			// Model thinks it is done, but the workflow has no name/trigger yet.
 			return MessageResponse{StopReason: "end_turn", Text: "Done."}
-		case 5:
-			// Self-correct: fix the unit.
-			sidStep := cur.Steps[0].StepID
+		case 3:
+			// Self-correct: set the missing metadata.
 			return MessageResponse{StopReason: "tool_use", ToolCalls: []ToolCall{
-				tc("t5", toolEditStepContent,
-					fmt.Sprintf(`{"stepId":%q,"controlValues":{"type":"regular","amount":5,"unit":"minutes"}}`, sidStep)),
+				tc("t3", toolSetWorkflowMetadata, `{"name":"Delayed"}`),
 			}}
 		default:
 			return MessageResponse{StopReason: "end_turn", Text: "Fixed."}
@@ -311,16 +306,14 @@ func TestAgentLoop_SelfCorrectRidesTheLoop(t *testing.T) {
 		t.Fatal("compile error was not fed back to the model across the loop")
 	}
 
-	// The fixed draft persisted with the corrected unit.
+	// The fixed draft persisted with the metadata the self-correct turn set.
 	sess, _ := s.BuilderSessions().Get(context.Background(), scope, sid)
 	var persisted WorkflowDraft
 	if err := json.Unmarshal(sess.DraftWorkflow, &persisted); err != nil {
 		t.Fatalf("decode persisted: %v", err)
 	}
-	var cv map[string]any
-	_ = json.Unmarshal(persisted.Steps[0].ControlValues, &cv)
-	if cv["unit"] != "minutes" {
-		t.Fatalf("persisted unit = %v, want minutes", cv["unit"])
+	if persisted.Name != "Delayed" {
+		t.Fatalf("persisted name = %q, want Delayed", persisted.Name)
 	}
 }
 

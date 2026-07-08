@@ -128,6 +128,9 @@ func applyToolCall(draft *WorkflowDraft, reg *steptype.Registry, nextID idGen, t
 		if err != nil {
 			return Event{}, "", err
 		}
+		if vErr := reg.Get(a.Type).Validate(st.ControlValues); vErr != nil {
+			return Event{}, "", fmt.Errorf("addStep: %w", vErr)
+		}
 		draft.Steps = append(draft.Steps, st)
 		return Event{Kind: KindCanvas, ToolName: toolName}, addStepResult(st.StepID, draft.Steps), nil
 
@@ -148,6 +151,9 @@ func applyToolCall(draft *WorkflowDraft, reg *steptype.Registry, nextID idGen, t
 		if err != nil {
 			return Event{}, "", err
 		}
+		if vErr := reg.Get(a.Type).Validate(st.ControlValues); vErr != nil {
+			return Event{}, "", fmt.Errorf("addStepInBetween: %w", vErr)
+		}
 		draft.Steps = insertAt(draft.Steps, idx+1, st)
 		return Event{Kind: KindCanvas, ToolName: toolName}, addStepResult(st.StepID, draft.Steps), nil
 
@@ -165,6 +171,16 @@ func applyToolCall(draft *WorkflowDraft, reg *steptype.Registry, nextID idGen, t
 		idx, ok := indexOf(draft.Steps, a.StepID)
 		if !ok {
 			return Event{}, "", fmt.Errorf("editStepContent: unknown stepId %q", a.StepID)
+		}
+		// Front-load the per-type check here rather than waiting for the
+		// turn-end Compile: a model that submits nonsensical controlValues (e.g.
+		// an http_request with an unsupported method) gets an IsError tool_result
+		// on THIS call and can self-correct next turn, instead of the bad value
+		// riding silently in the draft until the whole workflow fails to compile.
+		if st := reg.Get(draft.Steps[idx].Type); st != nil {
+			if vErr := st.Validate(a.ControlValues); vErr != nil {
+				return Event{}, "", fmt.Errorf("editStepContent: %w", vErr)
+			}
 		}
 		draft.Steps[idx].ControlValues = a.ControlValues
 		return Event{Kind: KindCanvas, ToolName: toolName}, stepsResult(draft.Steps), nil

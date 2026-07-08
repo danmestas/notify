@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
@@ -23,6 +25,28 @@ const (
 	AgentLoopStepID      = "build"
 	DefaultMaxIterations = 24
 )
+
+// maxSelfCorrectAttempts caps consecutive turns that fail validation — either a
+// per-tool-call steptype.Validate rejection (draft.go's applyToolCall) or a
+// turn-end validateDraft/Compile failure — before the loop gives up. Without
+// this cap a persistently wrong model would ride the self-correct message all
+// the way to DefaultMaxIterations, one iteration at a time; failing fast
+// surfaces the problem sooner and far cheaper. A turn whose tool calls all
+// succeed (or a validateDraft pass) resets the counter, so it only trips on
+// genuinely consecutive failures.
+const maxSelfCorrectAttempts = 3
+
+// defaultTokenBudget is the fallback per-run input+output token ceiling used
+// when NOTIFY_AI_TOKEN_BUDGET is unset. It is comfortably above what a normal
+// build (a couple dozen tool-call turns against a several-KB system prompt)
+// consumes, while still bounding a runaway/looping model's spend; 0 disables
+// the budget entirely.
+const defaultTokenBudget = 300_000
+
+// tokenBudgetEnvVar names the environment variable that overrides
+// defaultTokenBudget without requiring a main.go / wiring change: unset or
+// unparsable falls back to defaultTokenBudget, "0" disables the budget.
+const tokenBudgetEnvVar = "NOTIFY_AI_TOKEN_BUDGET"
 
 // SessionStore is the slice of store.BuilderSessionRepo the agent-loop handler
 // needs: load the originating session (prompt + scope) and persist the final
@@ -71,6 +95,18 @@ type loopState struct {
 	// with their stepIds) even as Draft mutates across iterations. Empty in
 	// create mode.
 	Original *WorkflowDraft `json:"original,omitempty"`
+	// SelfCorrectAttempts counts consecutive iterations that failed validation
+	// (a per-tool-call Validate rejection or a turn-end validateDraft failure).
+	// It resets to 0 on any iteration that fully succeeds, and trips
+	// maxSelfCorrectAttempts into a terminal KindError rather than let a
+	// persistently wrong model burn the whole MaxIterations budget.
+	SelfCorrectAttempts int `json:"selfCorrectAttempts,omitempty"`
+	// TokensUsed accumulates InputTokens+OutputTokens from every successful
+	// model call this run has made so far. It round-trips through the
+	// checkpoint like everything else in loopState (no separate store or engine
+	// plumbing) and is compared against AgentLoopBuilder.tokenBudget each
+	// iteration.
+	TokensUsed int64 `json:"tokensUsed,omitempty"`
 }
 
 // runInput is the StartRun payload: the session to build into plus its tenancy
@@ -99,14 +135,15 @@ type streamEvent struct {
 // trigger runs and persist results. It is added alongside Builder.Run, not a
 // replacement.
 type AgentLoopBuilder struct {
-	eng      *engine.Engine
-	client   Client
-	reg      *steptype.Registry
-	ints     IntegrationLister
-	sessions SessionStore
-	model    string
-	maxSteps int
-	maxIters int
+	eng         *engine.Engine
+	client      Client
+	reg         *steptype.Registry
+	ints        IntegrationLister
+	sessions    SessionStore
+	model       string
+	maxSteps    int
+	maxIters    int
+	tokenBudget int
 }
 
 // AgentLoopOption configures an AgentLoopBuilder.
@@ -151,23 +188,57 @@ func WithAgentLoopRegistry(reg *steptype.Registry) AgentLoopOption {
 	}
 }
 
+// WithAgentLoopTokenBudget caps the total InputTokens+OutputTokens a single run
+// may spend across all its iterations (see loopState.TokensUsed). Negative
+// values are ignored (NewAgentLoopBuilder's env-derived default already applies
+// 0 = disabled, so this option only needs to guard against accidental negative
+// overrides).
+func WithAgentLoopTokenBudget(n int) AgentLoopOption {
+	return func(b *AgentLoopBuilder) {
+		if n >= 0 {
+			b.tokenBudget = n
+		}
+	}
+}
+
 // NewAgentLoopBuilder constructs an AgentLoopBuilder over the engine, a Client,
-// the integration lister (provider gating) and the builder-session store.
+// the integration lister (provider gating) and the builder-session store. The
+// token budget defaults from NOTIFY_AI_TOKEN_BUDGET (falling back to
+// defaultTokenBudget when unset/unparsable; "0" disables it) so callers such as
+// cmd/notify need no wiring change to get a sane default — WithAgentLoopTokenBudget
+// still overrides it explicitly for tests or a future flag.
 func NewAgentLoopBuilder(eng *engine.Engine, client Client, ints IntegrationLister, sessions SessionStore, opts ...AgentLoopOption) *AgentLoopBuilder {
 	b := &AgentLoopBuilder{
-		eng:      eng,
-		client:   client,
-		reg:      steptype.Default(),
-		ints:     ints,
-		sessions: sessions,
-		model:    DefaultModel,
-		maxSteps: DefaultMaxSteps,
-		maxIters: DefaultMaxIterations,
+		eng:         eng,
+		client:      client,
+		reg:         steptype.Default(),
+		ints:        ints,
+		sessions:    sessions,
+		model:       DefaultModel,
+		maxSteps:    DefaultMaxSteps,
+		maxIters:    DefaultMaxIterations,
+		tokenBudget: tokenBudgetFromEnv(os.Getenv),
 	}
 	for _, opt := range opts {
 		opt(b)
 	}
 	return b
+}
+
+// tokenBudgetFromEnv reads tokenBudgetEnvVar via getenv and returns its parsed
+// non-negative value, or defaultTokenBudget when the variable is unset,
+// unparsable, or negative. getenv is injected so tests can exercise this
+// without mutating the process environment.
+func tokenBudgetFromEnv(getenv func(string) string) int {
+	raw := getenv(tokenBudgetEnvVar)
+	if raw == "" {
+		return defaultTokenBudget
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return defaultTokenBudget
+	}
+	return n
 }
 
 // Register registers the per-iteration handler for AgentLoopTask. It must be
@@ -258,6 +329,20 @@ func (b *AgentLoopBuilder) handle(ctx context.Context, lc loopContext) error {
 		return fmt.Errorf("aibuilder: model call: %w", err)
 	}
 
+	// Accumulate token spend and enforce the budget (when enabled) before doing
+	// any more work this iteration — a run that has already spent its budget on
+	// this call gets no further benefit from applying tool calls it can never
+	// finish paying for. Mirrors the MaxIterations bound's role but with an
+	// explicit KindError instead of a silent iteration-cap failure, since a
+	// budget breach is diagnosable (cost) in a way "ran out of iterations" is not.
+	st.TokensUsed += resp.Usage.InputTokens + resp.Usage.OutputTokens
+	if b.tokenBudget > 0 && st.TokensUsed >= int64(b.tokenBudget) {
+		budgetErr := fmt.Errorf("aibuilder: token budget exceeded (%d >= %d)", st.TokensUsed, b.tokenBudget)
+		slog.Error("aibuilder: token budget exceeded", "sessionID", st.SessionID, "iter", lc.Iteration(), "tokensUsed", st.TokensUsed, "tokenBudget", b.tokenBudget)
+		b.emit(lc, Event{Kind: KindError, Err: budgetErr, Draft: st.Draft.clone()})
+		return budgetErr
+	}
+
 	// Record the assistant turn verbatim so the next iteration carries the
 	// model's own tool_use blocks (the API requires tool_result to follow the
 	// matching tool_use).
@@ -275,6 +360,9 @@ func (b *AgentLoopBuilder) handle(ctx context.Context, lc loopContext) error {
 	// feed the compile error back as a self-correct round on the next iteration.
 	if len(resp.ToolCalls) == 0 {
 		if vErr := validateDraft(st.Scope, &st.Draft); vErr != nil {
+			if scErr := b.selfCorrectLimitExceeded(lc, st); scErr != nil {
+				return scErr
+			}
 			st.Messages = append(st.Messages, Message{
 				Role: RoleUser,
 				Text: "The workflow failed validation: " + vErr.Error() +
@@ -288,9 +376,11 @@ func (b *AgentLoopBuilder) handle(ctx context.Context, lc loopContext) error {
 	// Apply each tool call, streaming events and collecting results to feed back
 	// to the model on the next iteration.
 	var results []ToolResult
+	var hadError bool
 	for _, tc := range resp.ToolCalls {
 		ev, content, applyErr := applyGatedToolCall(&st.Draft, b.reg, gatedSet, b.maxSteps, newStepID, tc)
 		if applyErr != nil {
+			hadError = true
 			results = append(results, ToolResult{
 				ToolCallID: tc.ID,
 				Content:    applyErr.Error(),
@@ -308,6 +398,13 @@ func (b *AgentLoopBuilder) handle(ctx context.Context, lc loopContext) error {
 			b.emit(lc, ev)
 		}
 		results = append(results, ToolResult{ToolCallID: tc.ID, Content: content})
+	}
+	if hadError {
+		if scErr := b.selfCorrectLimitExceeded(lc, st); scErr != nil {
+			return scErr
+		}
+	} else {
+		st.SelfCorrectAttempts = 0
 	}
 	st.Messages = append(st.Messages, Message{Role: RoleUser, ToolResults: results})
 	return b.continueLoop(lc, st)
@@ -424,6 +521,23 @@ func (b *AgentLoopBuilder) finish(ctx context.Context, lc loopContext, st *loopS
 	}
 	b.emit(lc, Event{Kind: KindDone, Text: summary, Draft: st.Draft.clone()})
 	return lc.Complete(draftJSON)
+}
+
+// selfCorrectLimitExceeded increments st.SelfCorrectAttempts and, once it
+// reaches maxSelfCorrectAttempts, streams a terminal KindError event and
+// returns the error the caller must return from handle — failing fast instead
+// of riding a persistently wrong model toward the engine's MaxIterations bound.
+// A nil return means the caller should proceed with its normal self-correct
+// continuation (append the feedback message / tool results and Continue).
+func (b *AgentLoopBuilder) selfCorrectLimitExceeded(lc loopContext, st *loopState) error {
+	st.SelfCorrectAttempts++
+	if st.SelfCorrectAttempts < maxSelfCorrectAttempts {
+		return nil
+	}
+	err := fmt.Errorf("aibuilder: self-correction limit exceeded (%d consecutive invalid turns)", st.SelfCorrectAttempts)
+	slog.Error("aibuilder: self-correction limit exceeded", "sessionID", st.SessionID, "attempts", st.SelfCorrectAttempts)
+	b.emit(lc, Event{Kind: KindError, Err: err, Draft: st.Draft.clone()})
+	return err
 }
 
 // continueLoop checkpoints the full loop state and asks the engine for another

@@ -82,12 +82,24 @@ type MessageRequest struct {
 	MaxTokens  int
 }
 
-// MessageResponse is the model's reply: free text, any tool calls, and the
-// reason the turn stopped ("end_turn", "tool_use", ...).
+// Usage reports the token accounting for one model call, when the provider
+// exposes it. The zero value ({0, 0}) is indistinguishable from "the provider
+// reported zero tokens"; callers that need to tell "unknown" apart from "zero"
+// (none currently do) must track that separately.
+type Usage struct {
+	InputTokens  int64
+	OutputTokens int64
+}
+
+// MessageResponse is the model's reply: free text, any tool calls, the reason
+// the turn stopped ("end_turn", "tool_use", ...), and the token usage the
+// provider billed for the call (used to enforce AgentLoopBuilder's token
+// budget).
 type MessageResponse struct {
 	Text       string
 	ToolCalls  []ToolCall
 	StopReason string
+	Usage      Usage
 }
 
 // Client abstracts the LLM so the builder loop is testable with a mock. The
@@ -161,6 +173,10 @@ func (c *anthropicClient) Message(ctx context.Context, req MessageRequest) (Mess
 
 	var out MessageResponse
 	out.StopReason = string(msg.StopReason)
+	out.Usage = Usage{
+		InputTokens:  msg.Usage.InputTokens,
+		OutputTokens: msg.Usage.OutputTokens,
+	}
 	for _, block := range msg.Content {
 		switch block.Type {
 		case "text":

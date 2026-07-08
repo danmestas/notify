@@ -203,7 +203,13 @@ func TestRun_EmitsReasoningToolCanvasDoneInOrder(t *testing.T) {
 }
 
 func TestRun_SelfCorrectsOnce_OnCompileFailure(t *testing.T) {
-	draft := &WorkflowDraft{Name: "Delay", TriggerIdentifier: "delay"}
+	// The injected flaw is structural (no name/trigger set) rather than a bad
+	// per-step value: addStep/editStepContent now front-load steptype.Validate
+	// (see draft.go), so a bad step value would be rejected as an IsError
+	// tool_result on the SAME call instead of riding to the turn-end Compile.
+	// The turn-end validateDraft/Compile gate still guards structural shape
+	// (name/trigger/empty-steps) — that's what this test exercises.
+	draft := &WorkflowDraft{}
 	client := &fnClient{fn: func(call int, _ MessageRequest) MessageResponse {
 		switch call {
 		case 1:
@@ -211,20 +217,12 @@ func TestRun_SelfCorrectsOnce_OnCompileFailure(t *testing.T) {
 				tc("t1", toolAddStep, `{"type":"delay"}`),
 			}}
 		case 2:
-			sid := draft.Steps[0].StepID
-			return MessageResponse{StopReason: "tool_use", ToolCalls: []ToolCall{
-				tc("t2", toolEditStepContent,
-					fmt.Sprintf(`{"stepId":%q,"controlValues":{"type":"regular","amount":5,"unit":"fortnights"}}`, sid)),
-			}}
-		case 3:
-			// Model thinks it's done, but the bad unit fails Compile.
+			// Model thinks it's done, but the workflow has no name/trigger yet.
 			return MessageResponse{StopReason: "end_turn", Text: "Done."}
-		case 4:
-			// Self-correct round: fix the unit.
-			sid := draft.Steps[0].StepID
+		case 3:
+			// Self-correct round: set the missing metadata.
 			return MessageResponse{StopReason: "tool_use", ToolCalls: []ToolCall{
-				tc("t3", toolEditStepContent,
-					fmt.Sprintf(`{"stepId":%q,"controlValues":{"type":"regular","amount":5,"unit":"minutes"}}`, sid)),
+				tc("t2", toolSetWorkflowMetadata, `{"name":"Delay"}`),
 			}}
 		default:
 			return MessageResponse{StopReason: "end_turn", Text: "Fixed."}
@@ -233,7 +231,7 @@ func TestRun_SelfCorrectsOnce_OnCompileFailure(t *testing.T) {
 
 	b := NewBuilder(client, emailActive())
 	var events []Event
-	if err := b.Run(context.Background(), domain.Scope{EnvID: "env1"}, draft, "delay 5 fortnights", collect(&events)); err != nil {
+	if err := b.Run(context.Background(), domain.Scope{EnvID: "env1"}, draft, "delay 5 minutes", collect(&events)); err != nil {
 		t.Fatalf("Run error after self-correct: %v", err)
 	}
 
@@ -258,21 +256,18 @@ func TestRun_SelfCorrectsOnce_OnCompileFailure(t *testing.T) {
 }
 
 func TestRun_SelfCorrectFailsTwice_EmitsError(t *testing.T) {
-	draft := &WorkflowDraft{Name: "Delay", TriggerIdentifier: "delay"}
+	// As above: the injected flaw is structural (name never set) so it survives
+	// the new front-loaded per-tool Validate and still reaches the turn-end
+	// validateDraft gate, which the synchronous Builder only forgives once.
+	draft := &WorkflowDraft{}
 	client := &fnClient{fn: func(call int, _ MessageRequest) MessageResponse {
 		switch call {
 		case 1:
 			return MessageResponse{StopReason: "tool_use", ToolCalls: []ToolCall{
 				tc("t1", toolAddStep, `{"type":"delay"}`),
 			}}
-		case 2:
-			sid := draft.Steps[0].StepID
-			return MessageResponse{StopReason: "tool_use", ToolCalls: []ToolCall{
-				tc("t2", toolEditStepContent,
-					fmt.Sprintf(`{"stepId":%q,"controlValues":{"type":"regular","amount":0,"unit":"minutes"}}`, sid)),
-			}}
 		default:
-			// Never fixes; stops twice with the invalid amount.
+			// Never sets a name; stops twice with the workflow still unnamed.
 			return MessageResponse{StopReason: "end_turn", Text: "Done."}
 		}
 	}}

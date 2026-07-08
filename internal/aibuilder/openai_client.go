@@ -119,6 +119,10 @@ func (c *openaiClient) Message(ctx context.Context, req MessageRequest) (Message
 	out := MessageResponse{
 		StopReason: choice.FinishReason,
 		Text:       choice.Message.Content,
+		Usage: Usage{
+			InputTokens:  resp.Usage.PromptTokens,
+			OutputTokens: resp.Usage.CompletionTokens,
+		},
 	}
 	for _, tc := range choice.Message.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{

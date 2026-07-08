@@ -269,6 +269,35 @@ func TestOpenAIClientMessage_ParsesTextResponse(t *testing.T) {
 	}
 }
 
+// TestOpenAIClientMessage_ParsesUsage asserts the response parser populates
+// MessageResponse.Usage from the wire response's usage.prompt_tokens /
+// usage.completion_tokens fields (chatCompletionFixture always sets 10/5) —
+// the token accounting AgentLoopBuilder's token budget relies on.
+func TestOpenAIClientMessage_ParsesUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		resp := chatCompletionFixture("stop", "hi", nil)
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	c := NewOpenAIClient("sk-test", srv.URL, "test-model")
+	resp, err := c.Message(context.Background(), MessageRequest{
+		Model:    "test-model",
+		Messages: []Message{{Role: RoleUser, Text: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Message: %v", err)
+	}
+	if resp.Usage.InputTokens != 10 {
+		t.Errorf("Usage.InputTokens = %d, want 10", resp.Usage.InputTokens)
+	}
+	if resp.Usage.OutputTokens != 5 {
+		t.Errorf("Usage.OutputTokens = %d, want 5", resp.Usage.OutputTokens)
+	}
+}
+
 // TestToOpenAIMessages_SkipsStrayTextWhenToolResultsPresent guards the invariant
 // that a user Message carrying both Text and ToolResults never emits a user-text
 // message before the tool messages — OpenAI requires tool messages to immediately
