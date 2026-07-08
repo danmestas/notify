@@ -181,7 +181,7 @@ func TestHandleInApp_ThrottledPersistsEmptyExtras(t *testing.T) {
 // stubChannelChecker disables the channel so the send path skips.
 type stubChannelChecker struct{ enabled bool }
 
-func (s stubChannelChecker) ChannelEnabled(_ context.Context, _ domain.Scope, _, _, _ string) (bool, error) {
+func (s stubChannelChecker) ChannelEnabled(_ context.Context, _ domain.Scope, _, _, _ string, _ bool) (bool, error) {
 	return s.enabled, nil
 }
 

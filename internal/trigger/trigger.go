@@ -353,13 +353,14 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 	notificationID := store.NewULID()
 
 	envelope := runenv.InAppEnvelope{
-		Scope:          runenv.Scope{OrgID: scope.OrgID, EnvID: scope.EnvID},
-		TransactionID:  req.TransactionID,
-		WorkflowID:     wf.ID,
-		NotificationID: notificationID,
-		SubscriberID:   subscriberID,
-		Subscriber:     subscriberJSON,
-		Payload:        req.Payload,
+		Scope:            runenv.Scope{OrgID: scope.OrgID, EnvID: scope.EnvID},
+		TransactionID:    req.TransactionID,
+		WorkflowID:       wf.ID,
+		WorkflowCritical: wf.Critical,
+		NotificationID:   notificationID,
+		SubscriberID:     subscriberID,
+		Subscriber:       subscriberJSON,
+		Payload:          req.Payload,
 		// IdempotencyKey composes TransactionID with SubscriberID (base64url
 		// so an embedded ':' can't blur the boundary between the two parts —
 		// same technique as buildDigestKey above). A multicast trigger shares

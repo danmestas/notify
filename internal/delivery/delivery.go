@@ -20,8 +20,12 @@ import (
 // PreferenceChecker reports whether a channel is enabled for a subscriber/workflow.
 // preferences.Service satisfies this structurally (delivery does not import
 // preferences). A nil checker means "always send" (no preference filtering).
+// critical is the triggering workflow's Critical flag (env.WorkflowCritical);
+// every call site forwards it verbatim so the no-opt-out override lives once,
+// inside the checker's implementation, rather than being re-checked at each
+// of the 5 channel handlers.
 type PreferenceChecker interface {
-	ChannelEnabled(ctx context.Context, scope domain.Scope, subscriberID, workflowID, channel string) (bool, error)
+	ChannelEnabled(ctx context.Context, scope domain.Scope, subscriberID, workflowID, channel string, critical bool) (bool, error)
 }
 
 // EventPublisher publishes live events for a persisted message: a per-subscriber
@@ -173,7 +177,7 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	// error we fail open (proceed to send), mirroring the reference default-enabled
 	// behaviour rather than dropping the notification on a transient lookup fault.
 	if h.prefs != nil {
-		enabled, perr := h.prefs.ChannelEnabled(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, env.SubscriberID, env.WorkflowID, env.Step.Channel)
+		enabled, perr := h.prefs.ChannelEnabled(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical)
 		if perr == nil && !enabled {
 			return h.persistSkipped(ctx, env, t, subject, content)
 		}

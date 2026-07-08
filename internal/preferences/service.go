@@ -5,8 +5,9 @@
 //
 // TODO(parity): the reference platform resolves four levels — workflow-critical override >
 // subscriber per-workflow > subscriber global > workflow default. This service
-// implements the two subscriber levels; workflow-default/critical layers are a
-// documented follow-up.
+// implements the two subscriber levels plus the workflow-critical override
+// (ChannelEnabled's critical parameter); workflow-default is a documented
+// follow-up.
 package preferences
 
 import (
@@ -83,8 +84,15 @@ func (svc *Service) ResolveChannels(ctx context.Context, scope domain.Scope, sub
 }
 
 // ChannelEnabled is the convenience check used by delivery: a channel is
-// enabled unless explicitly set false (absent => enabled).
-func (svc *Service) ChannelEnabled(ctx context.Context, scope domain.Scope, subscriberID, workflowID, channel string) (bool, error) {
+// enabled unless explicitly set false (absent => enabled). critical is the
+// triggering workflow's domain.Workflow.Critical flag: a critical (no-opt-out)
+// workflow always reports enabled, bypassing subscriber preferences entirely —
+// this is the single enforcement point for the critical override so delivery
+// call sites never duplicate the short-circuit.
+func (svc *Service) ChannelEnabled(ctx context.Context, scope domain.Scope, subscriberID, workflowID, channel string, critical bool) (bool, error) {
+	if critical {
+		return true, nil
+	}
 	m, err := svc.ResolveChannels(ctx, scope, subscriberID, workflowID)
 	if err != nil {
 		return false, err

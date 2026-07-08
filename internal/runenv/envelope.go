@@ -106,14 +106,20 @@ type Step struct {
 // Payload are raw JSON objects so the handler can unmarshal them into
 // map[string]any for {{path}} template resolution.
 type InAppEnvelope struct {
-	Scope          Scope           `json:"scope"`
-	TransactionID  string          `json:"transactionId"`
-	WorkflowID     string          `json:"workflowId"`
-	NotificationID string          `json:"notificationId"`
-	SubscriberID   string          `json:"subscriberId"`
-	Subscriber     json.RawMessage `json:"subscriber"`
-	Payload        json.RawMessage `json:"payload"`
-	Step           Step            `json:"step"`
+	Scope         Scope  `json:"scope"`
+	TransactionID string `json:"transactionId"`
+	WorkflowID    string `json:"workflowId"`
+	// WorkflowCritical mirrors the triggering domain.Workflow.Critical flag,
+	// populated once at trigger time (and on self-source rebuild) from the
+	// loaded workflow row. It is the sole channel by which delivery handlers
+	// learn a workflow is no-opt-out; they forward it verbatim to
+	// preferences.Service.ChannelEnabled rather than re-deriving it.
+	WorkflowCritical bool            `json:"workflowCritical,omitempty"`
+	NotificationID   string          `json:"notificationId"`
+	SubscriberID     string          `json:"subscriberId"`
+	Subscriber       json.RawMessage `json:"subscriber"`
+	Payload          json.RawMessage `json:"payload"`
+	Step             Step            `json:"step"`
 	// IdempotencyKey is the dagnats StartRun admission value: authoring.Compile
 	// points every compiled DAG's IdempotencyKey dot-path at this field. It
 	// combines TransactionID with SubscriberID (trigger.go composes it) rather

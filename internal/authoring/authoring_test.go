@@ -736,6 +736,72 @@ func TestDuplicate_409OnIdentifierCollision(t *testing.T) {
 	}
 }
 
+// TestDuplicate_PreservesCritical is the no-opt-out guarantee under cloning:
+// duplicating a critical workflow (e.g. "password-reset") must yield a critical
+// copy — losing it silently on the new row would strip the exact protection the
+// flag exists to provide. The paired non-critical case guards against a
+// copy that spuriously flips criticality on. Uses a nil engine (Duplicate's
+// Publish is a no-op without one), so no sidecar is needed.
+func TestDuplicate_PreservesCritical(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, nil)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+	steps := []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"reset"}`)}}
+
+	// Critical source -> critical copy.
+	if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Password Reset",
+		TriggerIdentifier: "password-reset",
+		Steps:             steps,
+		Critical:          true,
+	}); err != nil {
+		t.Fatalf("Create critical: %v", err)
+	}
+	dup, err := svc.Duplicate(ctx, scope, "password-reset", authoring.DuplicateInput{
+		Name:              "Password Reset (Copy)",
+		TriggerIdentifier: "password-reset-copy",
+	})
+	if err != nil {
+		t.Fatalf("Duplicate critical: %v", err)
+	}
+	if !dup.Critical {
+		t.Fatalf("duplicate of a critical workflow lost Critical: got %+v", dup)
+	}
+	// Persisted row must also be critical (not just the returned value).
+	got, err := svc.GetBySlug(ctx, scope, "password-reset-copy")
+	if err != nil {
+		t.Fatalf("GetBySlug copy: %v", err)
+	}
+	if !got.Critical {
+		t.Fatalf("persisted duplicate is not critical: got %+v", got)
+	}
+
+	// Non-critical source -> non-critical copy (guard against a flip-on).
+	if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome",
+		Steps:             steps,
+	}); err != nil {
+		t.Fatalf("Create non-critical: %v", err)
+	}
+	plainDup, err := svc.Duplicate(ctx, scope, "welcome", authoring.DuplicateInput{
+		Name:              "Welcome (Copy)",
+		TriggerIdentifier: "welcome-copy",
+	})
+	if err != nil {
+		t.Fatalf("Duplicate non-critical: %v", err)
+	}
+	if plainDup.Critical {
+		t.Fatalf("duplicate of a non-critical workflow became critical: got %+v", plainDup)
+	}
+}
+
 func TestSetActive_TogglesActiveFlag(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))

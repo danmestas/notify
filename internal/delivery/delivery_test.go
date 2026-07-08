@@ -136,7 +136,7 @@ type stubChecker struct {
 	err     error
 }
 
-func (c stubChecker) ChannelEnabled(_ context.Context, _ domain.Scope, _, _, _ string) (bool, error) {
+func (c stubChecker) ChannelEnabled(_ context.Context, _ domain.Scope, _, _, _ string, _ bool) (bool, error) {
 	return c.enabled, c.err
 }
 
@@ -210,6 +210,81 @@ func TestHandleInApp_SendsWhenEnabled(t *testing.T) {
 	}
 	if msgs[0].Status != "sent" {
 		t.Errorf("Status = %q, want %q", msgs[0].Status, "sent")
+	}
+}
+
+// criticalAwareChecker mirrors preferences.Service.ChannelEnabled's real
+// contract (critical always wins over a mute) without depending on the
+// preferences package. It exists to prove HandleInApp forwards
+// env.WorkflowCritical through to the checker rather than deciding the
+// override itself — delivery.go centralizes zero critical-bypass logic of its
+// own, matching the checker's ChannelEnabled(..., critical bool) contract.
+type criticalAwareChecker struct{ muted bool }
+
+func (c criticalAwareChecker) ChannelEnabled(_ context.Context, _ domain.Scope, _, _, _ string, critical bool) (bool, error) {
+	if critical {
+		return true, nil
+	}
+	return !c.muted, nil
+}
+
+// TestHandleInApp_CriticalWorkflowBypassesMutedChannel is the no-opt-out
+// contract at the delivery layer: a critical workflow (e.g. password-reset)
+// still delivers ("sent") even though the subscriber has muted the channel.
+func TestHandleInApp_CriticalWorkflowBypassesMutedChannel(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	h := New(s).WithPreferences(criticalAwareChecker{muted: true})
+
+	env := inAppEnvelope()
+	env.WorkflowCritical = true
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "in_app")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	if msgs[0].Status != "sent" {
+		t.Errorf("Status = %q, want %q (critical workflow must bypass the mute)", msgs[0].Status, "sent")
+	}
+}
+
+// TestHandleInApp_NonCriticalWorkflowStaysMuted is the regression: a
+// non-critical workflow (WorkflowCritical false, the default) must still be
+// skipped by the same muted channel.
+func TestHandleInApp_NonCriticalWorkflowStaysMuted(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	h := New(s).WithPreferences(criticalAwareChecker{muted: true})
+
+	env := inAppEnvelope()
+	env.WorkflowCritical = false
+	input, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleInApp(ctx, engine.TaskPayload{RunID: "run_1", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleInApp: %v", err)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "in_app")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	if msgs[0].Status != "skipped" {
+		t.Errorf("Status = %q, want %q (non-critical workflow must stay muted)", msgs[0].Status, "skipped")
 	}
 }
 

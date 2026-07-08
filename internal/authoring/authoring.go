@@ -62,6 +62,9 @@ type WorkflowInput struct {
 	Name              string
 	TriggerIdentifier string
 	Steps             []domain.Step
+	// Critical marks the workflow no-opt-out: subscriber channel/workflow
+	// preferences cannot suppress its delivery (see domain.Workflow.Critical).
+	Critical bool
 }
 
 // Create persists a workflow row. Steps are marshalled into the row's JSON
@@ -76,6 +79,7 @@ func (s *Service) Create(ctx context.Context, scope domain.Scope, in WorkflowInp
 		TriggerIdentifier: in.TriggerIdentifier,
 		Active:            true,
 		Steps:             steps,
+		Critical:          in.Critical,
 	}
 	// Validate by compiling before any write — mirrors Update. An invalid step
 	// configuration (e.g. delay amount <= 0) must be rejected with an
@@ -207,6 +211,9 @@ type UpdateInput struct {
 	Name          string
 	Steps         []domain.Step
 	PayloadSchema json.RawMessage
+	// Critical is editable post-create (unlike Active/Origin, which Update
+	// deliberately carries forward from existing rather than accepting here).
+	Critical bool
 }
 
 // ErrCompileFailure wraps a Compile error so HTTP handlers can map it to 422.
@@ -244,6 +251,7 @@ func (s *Service) Update(ctx context.Context, scope domain.Scope, slug string, i
 		Name:              in.Name,
 		Steps:             steps,
 		PayloadSchema:     in.PayloadSchema,
+		Critical:          in.Critical,
 	}
 	if _, err := Compile(candidate); err != nil {
 		return domain.Workflow{}, &ErrCompileFailure{Cause: err}
@@ -325,6 +333,10 @@ func (s *Service) Duplicate(ctx context.Context, scope domain.Scope, srcSlug str
 		Active:            true,
 		Steps:             src.Steps,
 		PayloadSchema:     src.PayloadSchema,
+		// Preserve the source's no-opt-out status: cloning a critical workflow
+		// (e.g. duplicating "password-reset" to iterate on it) must yield a
+		// critical copy, or the guarantee is silently lost on the new row.
+		Critical: src.Critical,
 	}
 	created, err := s.store.Workflows().Create(ctx, scope, newWF)
 	if err != nil {

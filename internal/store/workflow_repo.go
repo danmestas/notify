@@ -22,9 +22,9 @@ type WorkflowRepo interface {
 	// must re-register every persisted workflow without knowing the set of
 	// scopes ahead of time. It is intentionally NOT scope-filtered.
 	ListAll(ctx context.Context) ([]domain.Workflow, error)
-	// Update replaces the mutable fields (name, steps, payload_schema) of the
-	// workflow identified by wf.ID within the scope. Returns ErrNotFound when
-	// no matching row exists in this scope.
+	// Update replaces the mutable fields (name, steps, payload_schema, critical)
+	// of the workflow identified by wf.ID within the scope. Returns ErrNotFound
+	// when no matching row exists in this scope.
 	Update(ctx context.Context, scope domain.Scope, wf domain.Workflow) error
 	// Delete removes the workflow row identified by triggerID within the scope.
 	// Returns ErrNotFound when no matching row exists.
@@ -49,10 +49,10 @@ func (repo *workflowRepo) Create(ctx context.Context, scope domain.Scope, wf dom
 	_, err := repo.w.ExecContext(
 		ctx,
 		`INSERT INTO workflows
-		   (id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   (id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version, critical)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		wf.ID, wf.OrgID, wf.EnvID, wf.Name, wf.TriggerIdentifier, wf.Active, wf.Origin,
-		[]byte(wf.Steps), []byte(wf.PayloadSchema), wf.CompiledDAGVer,
+		[]byte(wf.Steps), []byte(wf.PayloadSchema), wf.CompiledDAGVer, wf.Critical,
 	)
 	if err != nil {
 		// A duplicate (environment_id, trigger_identifier) trips the UNIQUE
@@ -73,11 +73,11 @@ func (repo *workflowRepo) GetByTriggerIdentifier(ctx context.Context, scope doma
 	)
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version
+		`SELECT id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version, critical
 		 FROM workflows WHERE org_id = ? AND environment_id = ? AND trigger_identifier = ?`,
 		scope.OrgID, scope.EnvID, triggerID,
 	).Scan(&wf.ID, &wf.OrgID, &wf.EnvID, &wf.Name, &wf.TriggerIdentifier, &wf.Active, &wf.Origin,
-		&steps, &schema, &wf.CompiledDAGVer)
+		&steps, &schema, &wf.CompiledDAGVer, &wf.Critical)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Workflow{}, ErrNotFound
 	}
@@ -96,11 +96,11 @@ func (repo *workflowRepo) GetByID(ctx context.Context, scope domain.Scope, id st
 	)
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version
+		`SELECT id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version, critical
 		 FROM workflows WHERE org_id = ? AND environment_id = ? AND id = ?`,
 		scope.OrgID, scope.EnvID, id,
 	).Scan(&wf.ID, &wf.OrgID, &wf.EnvID, &wf.Name, &wf.TriggerIdentifier, &wf.Active, &wf.Origin,
-		&steps, &schema, &wf.CompiledDAGVer)
+		&steps, &schema, &wf.CompiledDAGVer, &wf.Critical)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Workflow{}, ErrNotFound
 	}
@@ -115,7 +115,7 @@ func (repo *workflowRepo) GetByID(ctx context.Context, scope domain.Scope, id st
 func (repo *workflowRepo) List(ctx context.Context, scope domain.Scope) ([]domain.Workflow, error) {
 	rows, err := repo.r.QueryContext(
 		ctx,
-		`SELECT id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version
+		`SELECT id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version, critical
 		 FROM workflows WHERE org_id = ? AND environment_id = ? ORDER BY rowid`,
 		scope.OrgID, scope.EnvID,
 	)
@@ -130,7 +130,7 @@ func (repo *workflowRepo) List(ctx context.Context, scope domain.Scope) ([]domai
 			steps, schema []byte
 		)
 		if err := rows.Scan(&wf.ID, &wf.OrgID, &wf.EnvID, &wf.Name, &wf.TriggerIdentifier, &wf.Active, &wf.Origin,
-			&steps, &schema, &wf.CompiledDAGVer); err != nil {
+			&steps, &schema, &wf.CompiledDAGVer, &wf.Critical); err != nil {
 			return nil, err
 		}
 		wf.Steps = steps
@@ -146,7 +146,7 @@ func (repo *workflowRepo) List(ctx context.Context, scope domain.Scope) ([]domai
 func (repo *workflowRepo) ListAll(ctx context.Context) ([]domain.Workflow, error) {
 	rows, err := repo.r.QueryContext(
 		ctx,
-		`SELECT id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version
+		`SELECT id, org_id, environment_id, name, trigger_identifier, active, origin, steps, payload_schema, compiled_dag_version, critical
 		 FROM workflows ORDER BY rowid`,
 	)
 	if err != nil {
@@ -160,7 +160,7 @@ func (repo *workflowRepo) ListAll(ctx context.Context) ([]domain.Workflow, error
 			steps, schema []byte
 		)
 		if err := rows.Scan(&wf.ID, &wf.OrgID, &wf.EnvID, &wf.Name, &wf.TriggerIdentifier, &wf.Active, &wf.Origin,
-			&steps, &schema, &wf.CompiledDAGVer); err != nil {
+			&steps, &schema, &wf.CompiledDAGVer, &wf.Critical); err != nil {
 			return nil, err
 		}
 		wf.Steps = steps
@@ -170,17 +170,17 @@ func (repo *workflowRepo) ListAll(ctx context.Context) ([]domain.Workflow, error
 	return wfs, rows.Err()
 }
 
-// Update replaces the mutable fields (name, steps, payload_schema) for the
-// workflow identified by wf.ID within scope. The trigger_identifier is
+// Update replaces the mutable fields (name, steps, payload_schema, critical)
+// for the workflow identified by wf.ID within scope. The trigger_identifier is
 // intentionally not updateable (renaming an engine DAG key orphans run
 // history). Returns ErrNotFound when no row matches.
 func (repo *workflowRepo) Update(ctx context.Context, scope domain.Scope, wf domain.Workflow) error {
 	res, err := repo.w.ExecContext(
 		ctx,
 		`UPDATE workflows
-		 SET name = ?, steps = ?, payload_schema = ?
+		 SET name = ?, steps = ?, payload_schema = ?, critical = ?
 		 WHERE org_id = ? AND environment_id = ? AND id = ?`,
-		wf.Name, []byte(wf.Steps), []byte(wf.PayloadSchema),
+		wf.Name, []byte(wf.Steps), []byte(wf.PayloadSchema), wf.Critical,
 		scope.OrgID, scope.EnvID, wf.ID,
 	)
 	if err != nil {

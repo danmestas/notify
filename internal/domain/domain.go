@@ -94,6 +94,10 @@ type Workflow struct {
 	Steps             json.RawMessage `db:"steps"`
 	PayloadSchema     json.RawMessage `db:"payload_schema"`
 	CompiledDAGVer    string          `db:"compiled_dag_version"`
+	// Critical marks a no-opt-out workflow (e.g. password-reset): subscriber
+	// channel/workflow preferences cannot suppress delivery. Enforced at
+	// delivery time by preferences.Service.ChannelEnabled, not here.
+	Critical bool `db:"critical"`
 }
 
 // Step is one element of Workflow.Steps (JSON, not a table column).

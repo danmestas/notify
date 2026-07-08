@@ -181,7 +181,7 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 	// error we fail open (proceed to send), mirroring the reference default-enabled
 	// behaviour rather than dropping the notification on a transient lookup fault.
 	if h.prefs != nil {
-		enabled, perr := h.prefs.ChannelEnabled(ctx, scope, env.SubscriberID, env.WorkflowID, env.Step.Channel)
+		enabled, perr := h.prefs.ChannelEnabled(ctx, scope, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical)
 		if perr == nil && !enabled {
 			return h.persistSMSSkipped(ctx, env, t, scope, subject, content)
 		}
