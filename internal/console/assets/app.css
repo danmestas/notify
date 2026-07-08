@@ -2995,6 +2995,12 @@ a.activity-item-run { color: var(--accent); }
 
 /* -- empty state (starter cards) ---------------------------------------- */
 .ai-copilot-empty {
+  /* Scroll internally like .ai-thread so the starter cards never push the
+     composer below the fold at short viewport heights — the composer stays
+     pinned (flex:none) and this region scrolls instead. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   padding: var(--space-4);
 }
 .ai-copilot-empty-lead {

@@ -58,8 +58,12 @@
       {{end}}
     </div>
 
-    {{/* Thread — one .ai-message per turn; the SSE relay appends new turns. */}}
-    <div id="ai-thread" class="ai-thread" role="log" aria-live="polite" aria-label="Copilot conversation">
+    {{/* Thread — one .ai-message per turn; the SSE relay appends new turns.
+         Hidden until a turn begins ($aiStarted, = has messages on resume) so it
+         never takes flex space beside the empty state — otherwise both would be
+         flex:1 and split the column, gapping the empty state. */}}
+    <div id="ai-thread" class="ai-thread" role="log" aria-live="polite" aria-label="Copilot conversation"
+         data-show="$aiStarted">
       {{range .Messages}}{{template "ai-message" .}}{{end}}
     </div>
 
