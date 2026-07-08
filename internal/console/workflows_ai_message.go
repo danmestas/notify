@@ -126,5 +126,5 @@ func (c *Console) handleWorkflowAIMessage(w http.ResponseWriter, r *http.Request
 
 	// Stream this follow-up into a NEW assistant turn appended to #ai-thread, keyed
 	// on the just-appended user message id so multi-turn appends never collide.
-	c.streamAICopilotTurn(w, r, scope, sessionID, runID, prompt, msgID, false)
+	c.streamAICopilotTurn(w, r, scope, sessionID, runID, prompt, msgID, false, false)
 }

@@ -153,7 +153,7 @@ func (c *Console) handleWorkflowAIGenerate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	c.streamAICopilotTurn(w, r, scope, sess.ID, runID, prompt, msgID, true)
+	c.streamAICopilotTurn(w, r, scope, sess.ID, runID, prompt, msgID, true, false)
 }
 
 // aiCanvasFromDraft builds the live-canvas view from a draft snapshot: the

@@ -231,8 +231,10 @@ func (c *Console) aiThreadReplay(ctx context.Context, scope domain.Scope, sess s
 // #ai-thread, optionally patches $aiSessionID (first/create turn), then relays the
 // run's events into that turn's per-message containers until a terminal event, the
 // deadline, or a failed run resolves it. userMsgID keys the assistant turn so
-// multi-turn appends never collide.
-func (c *Console) streamAICopilotTurn(w http.ResponseWriter, r *http.Request, scope domain.Scope, sessionID, runID, userText, userMsgID string, emitSessionID bool) {
+// multi-turn appends never collide. isRetry marks a Try-again re-stream into the
+// SAME turn id (see removeTurnElements below) — a create or follow-up turn is
+// always a fresh id and must NOT set it.
+func (c *Console) streamAICopilotTurn(w http.ResponseWriter, r *http.Request, scope domain.Scope, sessionID, runID, userText, userMsgID string, emitSessionID, isRetry bool) {
 	timeout := aiGenerateTimeout
 	if c.aiGenerateTimeoutOverride > 0 {
 		timeout = c.aiGenerateTimeoutOverride
@@ -265,15 +267,23 @@ func (c *Console) streamAICopilotTurn(w http.ResponseWriter, r *http.Request, sc
 
 	sse := datastar.NewSSE(w, r)
 
-	// Defensive: a Try-again re-streams the SAME turn id — drop any stale copy of
-	// this turn so the fresh appends below don't collide with the retried turn's
-	// old elements. For a brand-new turn these selectors match nothing (a harmless
-	// client-side no-op).
-	c.removeTurnElements(sse, userMsgID)
+	// Only a Try-again re-streams into the SAME turn id — drop its stale DOM
+	// first so the fresh appends below don't collide with the retried turn's old
+	// elements. A create/follow-up turn's id has never existed in the DOM, so
+	// this removal is gated on isRetry rather than fired unconditionally: an
+	// unconditional remove-mode patch against a selector that matches nothing
+	// is exactly what trips the Datastar client's PatchElementsNoTargetsFound
+	// console warning, and it would otherwise fire on every single turn.
+	if isRetry {
+		c.removeTurnElements(sse, userMsgID)
+	}
 
-	// Render this turn's shells into the thread before the first event arrives.
+	// Render this turn's shells into the thread before the first event arrives,
+	// then scroll the newly-sent turn into view — a long prior thread would
+	// otherwise leave it (and the "Working" status) below the fold.
 	c.appendThreadMessage(sse, aiThreadMessageView{ID: userMsgID + "-u", Role: "user", Text: userText})
 	c.appendThreadMessage(sse, aiThreadMessageView{ID: userMsgID, Role: "assistant", Working: true})
+	c.scrollThreadToBottom(sse)
 	if emitSessionID {
 		if perr := sse.MarshalAndPatchSignals(map[string]string{"aiSessionID": sessionID}); perr != nil {
 			c.deps.Logger.Debug("console: ai copilot patch session signal", "err", perr)
@@ -413,6 +423,10 @@ func (c *Console) finalizeCopilotTurn(sse *datastar.ServerSentEventGenerator, r 
 		TurnID:    turnID,
 		CSRF:      csrfFromRequest(r),
 	})
+	// The turn's chips/reasoning grew the thread while streaming, so the
+	// Keep/Discard/Try-again bar just patched in above may now sit past the
+	// fold at short viewports — bring it into view.
+	c.scrollThreadToBottom(sse)
 	if summary != "" && c.deps.BuilderSessions != nil {
 		if _, err := c.deps.BuilderSessions.AppendMessage(r.Context(), scope, sessionID, "assistant", summary, ""); err != nil {
 			c.deps.Logger.Debug("console: ai copilot persist assistant turn", "err", err)
@@ -496,6 +510,21 @@ func (c *Console) resetInFlight(scope domain.Scope, sessionID string) {
 func (c *Console) clearTurnStatus(sse *datastar.ServerSentEventGenerator, turnID string) {
 	if err := sse.PatchElements(`<div id="ai-msg-` + turnID + `-status" class="ai-msg-status"></div>`); err != nil {
 		c.deps.Logger.Debug("console: ai copilot status clear", "err", err)
+	}
+}
+
+// scrollThreadToBottom scrolls #ai-thread to its newest content. The panel is
+// viewport-clamped (see .ai-copilot-layout in app.css) with #ai-thread as its
+// only internal scroll region, so the composer itself never moves — but the
+// newest turn (and, once a turn finishes, its Keep/Discard/Try-again row) can
+// still start below the thread's own visible area on a long conversation or a
+// short viewport. Executed client-side via a one-shot <script> patch rather
+// than a CSS-only anchor, since the target only exists after the SSE append
+// that triggers this call.
+func (c *Console) scrollThreadToBottom(sse *datastar.ServerSentEventGenerator) {
+	const script = `var t=document.getElementById('ai-thread');if(t){t.scrollTop=t.scrollHeight;}`
+	if err := sse.ExecuteScript(script); err != nil {
+		c.deps.Logger.Debug("console: ai thread autoscroll", "err", err)
 	}
 }
 

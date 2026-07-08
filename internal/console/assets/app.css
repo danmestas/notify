@@ -2857,15 +2857,26 @@ a.activity-item-run { color: var(--accent); }
 .ai-copilot-view {
   padding: 0;
 }
+/* height (not min-height): the layout row must be VIEWPORT-CLAMPED, never
+   content-grown. min-height only sets a floor — the row still stretches past
+   the fold as the thread/canvas grow, pushing the composer and the per-turn
+   action row off-screen with no scrollbar to reach them (confirmed live at
+   short viewports: clicks past the fold hit no element). A definite height
+   here makes align-items:stretch hand the docked panel that same definite
+   height, so its flex column (header / #ai-thread / composer) can cap the
+   thread as the ONLY internal scroll region and keep the composer pinned. */
 .ai-copilot-layout {
   display: flex;
   align-items: stretch;
   gap: 0;
-  min-height: calc(100vh - 120px);
+  height: calc(100vh - 120px);
+  height: calc(100dvh - 120px);
+  overflow: hidden;
 }
 .ai-copilot-canvas-pane {
   flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
   padding: var(--space-5) var(--space-5) var(--space-6);
   overflow-y: auto;
 }
@@ -2909,6 +2920,7 @@ a.activity-item-run { color: var(--accent); }
   flex: none;
   width: 420px;
   min-width: 44px;
+  min-height: 0;
   border-left: 1px solid var(--border-subtle);
   background: var(--surface-2);
   display: flex;
@@ -3224,12 +3236,22 @@ a.activity-item-run { color: var(--accent); }
 }
 .ai-copilot-send { flex: none; }
 
-/* Stack the panel below the canvas on narrow viewports. */
+/* Stack the panel below the canvas on narrow viewports. Canvas + panel no
+   longer share one viewport-clamped row here — each gets its own natural
+   height and the PAGE scrolls, same as before this fix; the composer stays
+   reachable via #ai-thread's own internal scroll once the panel is open. */
 @media (max-width: 720px) {
-  .ai-copilot-layout { flex-direction: column; }
+  .ai-copilot-layout {
+    flex-direction: column;
+    height: auto;
+    overflow: visible;
+  }
+  .ai-copilot-canvas-pane { overflow-y: visible; }
   .ai-copilot-panel,
   .ai-copilot-panel.is-collapsed {
     width: 100% !important;
+    height: calc(100vh - 120px);
+    height: calc(100dvh - 120px);
     border-left: none;
     border-top: 1px solid var(--border-subtle);
   }

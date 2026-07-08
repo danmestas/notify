@@ -324,9 +324,10 @@ func (c *Console) handleWorkflowAIRetry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Re-stream into the SAME turn id: streamAICopilotTurn first removes the stale
-	// turn elements, then re-appends the user bubble + a fresh assistant shell.
-	c.streamAICopilotTurn(w, r, scope, sessionID, runID, instruction, turnID, false)
+	// Re-stream into the SAME turn id: isRetry=true makes streamAICopilotTurn
+	// first remove the stale turn elements, then re-append the user bubble + a
+	// fresh assistant shell.
+	c.streamAICopilotTurn(w, r, scope, sessionID, runID, instruction, turnID, false, true)
 }
 
 // turnInstructionText returns the content of the user message identified by

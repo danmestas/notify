@@ -298,6 +298,12 @@ func TestAIRetry_RevertsThenRedispatches(t *testing.T) {
 		!strings.Contains(body, `data-component="ai-builder-canvas"`) {
 		t.Errorf("retry did not re-stream a fresh turn; body: %s", body)
 	}
+	// Retry re-streams into the SAME turn id, so it must first drop that turn's
+	// stale DOM (the prior attempt's chips/reasoning/actions) before re-appending —
+	// unlike a brand-new turn (see TestAIBuilderCopilot_CreateDoesNotEmitStaleRemovalNoise).
+	if body := rr.Body.String(); !strings.Contains(body, "mode remove") {
+		t.Errorf("retry did not clear the stale turn's DOM before re-streaming; body: %s", body)
+	}
 
 	// The draft was rebuilt to the retry's shape (email + in_app), not turn 2's sms.
 	sess, err := tc.st.BuilderSessions().Get(ctx, tc.scope, sessID)

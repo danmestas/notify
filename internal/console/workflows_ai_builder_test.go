@@ -208,6 +208,38 @@ func TestAIBuilderCopilot_FollowUpAppendsSecondTurn(t *testing.T) {
 	}
 }
 
+// TestAIBuilderCopilot_CreateDoesNotEmitStaleRemovalNoise proves a brand-new
+// turn (create or follow-up — never a retry) does NOT emit a remove-mode
+// PatchElements against #ai-turn-{id}/-u. That defensive removal exists only
+// to drop a retried turn's stale DOM before re-streaming; firing it
+// unconditionally on every turn targets selectors that have never existed in
+// the DOM yet, which is exactly what trips the Datastar client's
+// PatchElementsNoTargetsFound console warning on every single turn.
+func TestAIBuilderCopilot_CreateDoesNotEmitStaleRemovalNoise(t *testing.T) {
+	tc := newTestConsole(t)
+	draft := &aibuilder.WorkflowDraft{
+		Name:              "Welcome Flow",
+		TriggerIdentifier: "welcome-flow",
+		Steps:             []domain.Step{{StepID: "s1", Type: "email", Name: "Greeting", ControlValues: json.RawMessage(`{"subject":"Hi"}`)}},
+	}
+	events := [][]byte{aiStreamMsg(t, "done", "Built a one-step welcome flow.", draft, "")}
+	tc.injectStreamingBuilder("run-noscroll", draft, false, events)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/ai-generate", url.Values{
+		"prompt":     {"welcome new users with an email"},
+		"view":       {"copilot"},
+		"csrf_token": {csrf},
+	}, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "mode remove") {
+		t.Errorf("a brand-new turn emitted a remove-mode patch (stale-DOM cleanup belongs to retry only); body: %s", body)
+	}
+}
+
 // TestAIBuilderView_ReplaysPriorTurns proves resuming a session (?session=)
 // renders its draft into the canvas and replays its stored turns into the thread.
 func TestAIBuilderView_ReplaysPriorTurns(t *testing.T) {
