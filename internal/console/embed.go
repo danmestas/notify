@@ -70,6 +70,7 @@ var uiIconFS embed.FS
 //go:embed templates/not_found.html
 //go:embed templates/error.html
 //go:embed templates/workflows.html
+//go:embed templates/workflows_ai.html
 //go:embed templates/workflow_detail.html
 //go:embed templates/workflow_test.html
 //go:embed templates/workflow_activity.html
@@ -79,8 +80,10 @@ var uiIconFS embed.FS
 //go:embed templates/partials/toast.html
 //go:embed templates/partials/dashboard_kpis.html
 //go:embed templates/partials/workflows_list.html
-//go:embed templates/partials/ai_builder_preview.html
 //go:embed templates/partials/ai_builder_canvas.html
+//go:embed templates/partials/ai_copilot_panel.html
+//go:embed templates/partials/ai_message.html
+//go:embed templates/partials/ai_chip.html
 //go:embed templates/partials/workflow_step_editor.html
 //go:embed templates/partials/step_preview.html
 //go:embed templates/partials/analytics_kpis.html

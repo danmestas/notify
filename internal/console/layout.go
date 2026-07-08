@@ -39,6 +39,7 @@ var pageContentFiles = map[string]string{
 	"not-found":         "templates/not_found.html",
 	"error":             "templates/error.html",
 	"workflows":         "templates/workflows.html",
+	"workflows-ai":      "templates/workflows_ai.html",
 	"workflow-detail":   "templates/workflow_detail.html",
 	"workflow-test":     "templates/workflow_test.html",
 	"workflow-activity": "templates/workflow_activity.html",

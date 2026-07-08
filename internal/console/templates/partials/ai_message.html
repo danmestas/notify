@@ -1,0 +1,68 @@
+{{/* ai-message — one turn in the copilot thread (#ai-thread). A user turn is a
+     right-aligned bubble; an assistant turn is a left-aligned block carrying the
+     per-message containers the SSE relay patches by id:
+       #ai-msg-{ID}-chips      chain-of-thought chips append here
+       #ai-msg-{ID}-reasoning  streamed reasoning lines append here
+       #ai-msg-{ID}-status     the "Working" spinner (cleared on done)
+       #ai-msg-{ID}-actions    EMPTY placeholder (Slice 3 fills Keep/Discard/Try-again)
+     Keying every container by the turn's message id is what lets multi-turn
+     appends land in the right turn instead of colliding. */}}
+{{define "ai-message"}}
+{{if eq .Role "user"}}
+<div id="ai-turn-{{.ID}}" class="ai-msg ai-msg-user" data-msg-id="{{.ID}}">
+  <div class="ai-msg-bubble">{{.Text}}</div>
+</div>
+{{else}}
+<div id="ai-turn-{{.ID}}" class="ai-msg ai-msg-assistant" data-msg-id="{{.ID}}">
+  <span class="ai-msg-avatar" aria-hidden="true">{{uiIcon "star"}}</span>
+  <div class="ai-msg-body">
+    <p class="ai-msg-role">Copilot</p>
+    <div id="ai-msg-{{.ID}}-chips" class="ai-chips">
+      {{range .Chips}}{{template "ai-chip" .}}{{end}}
+    </div>
+    <div id="ai-msg-{{.ID}}-reasoning" class="ai-msg-reasoning">
+      {{if .Text}}<p class="ai-reasoning-line">{{.Text}}</p>{{end}}
+    </div>
+    <div id="ai-msg-{{.ID}}-status" class="ai-msg-status">
+      {{if .Working}}<span class="ai-msg-spinner" aria-hidden="true"></span><span>Working…</span>{{end}}
+    </div>
+    {{if .Actions}}{{template "ai-turn-actions" .Actions}}{{else}}<div id="ai-msg-{{.ID}}-actions" class="ai-msg-actions"></div>{{end}}
+  </div>
+</div>
+{{end}}
+{{end}}
+
+{{/* ai-turn-actions — the per-turn action bar the copilot renders into
+     #ai-msg-{TurnID}-actions once a turn finishes (session Ready). It shows on
+     the LATEST assistant turn only; superseding a turn re-patches this element
+     to an empty .ai-msg-actions. Bound to aiTurnActionsView.
+       - default state: Keep all / Discard / Try again, each a colon-form
+         datastar @post that serializes the co-located hidden csrf_token + msg_id.
+       - Saved state (after Keep): a confirmation + a link to the new workflow. */}}
+{{define "ai-turn-actions"}}
+<div id="ai-msg-{{.TurnID}}-actions" class="ai-msg-actions">
+  {{if .Saved}}
+  <span class="ai-msg-saved">{{uiIcon "check"}} Saved</span>
+  <a class="ai-msg-open-link" href="/console/workflows/{{.Slug}}">Open workflow {{uiIcon "arrow-up-right"}}</a>
+  {{else if .Error}}
+  <span class="ai-msg-action-error" role="alert">{{.Error}}</span>
+  {{else}}
+  <form id="ai-actions-{{.TurnID}}" class="ai-msg-actions-form" data-on:submit="evt.preventDefault()">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="hidden" name="msg_id" value="{{.TurnID}}">
+    <button type="button" class="btn btn-primary btn-sm ai-action ai-action-keep"
+            data-on:click="@post('/console/api/workflows/ai/{{.SessionID}}/keep', {contentType: 'form', selector: '#ai-actions-{{.TurnID}}', headers: {'X-CSRF-Token': '{{.CSRF}}'}})">
+      {{uiIcon "check"}}<span>Keep all</span>
+    </button>
+    <button type="button" class="btn btn-sm ai-action ai-action-discard"
+            data-on:click="@post('/console/api/workflows/ai/{{.SessionID}}/discard-turn', {contentType: 'form', selector: '#ai-actions-{{.TurnID}}', headers: {'X-CSRF-Token': '{{.CSRF}}'}})">
+      {{uiIcon "x"}}<span>Discard</span>
+    </button>
+    <button type="button" class="btn btn-sm ai-action ai-action-retry"
+            data-on:click="@post('/console/api/workflows/ai/{{.SessionID}}/retry', {contentType: 'form', selector: '#ai-actions-{{.TurnID}}', headers: {'X-CSRF-Token': '{{.CSRF}}'}})">
+      {{uiIcon "rotate-ccw"}}<span>Try again</span>
+    </button>
+  </form>
+  {{end}}
+</div>
+{{end}}

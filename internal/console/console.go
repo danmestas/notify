@@ -402,22 +402,26 @@ func (c *Console) Routes() http.Handler {
 		// registered before the {slug} wildcard so chi never matches "new" as a
 		// slug (chi prefers static segments, but the explicit order documents it).
 		pr.Get("/console/workflows/new", c.serveWorkflowNew)
+		// Slice 2: the docked-copilot AI workflow builder (two-pane canvas + chat
+		// panel). Registered before the {slug} wildcard so the literal `ai` segment
+		// wins over a workflow slug named "ai".
+		pr.Get("/console/workflows/ai", c.serveWorkflowAIBuilder)
 		pr.Get("/console/workflows/{slug}/duplicate", c.serveWorkflowDuplicate)
 		pr.Get("/console/workflows/{slug}", c.serveWorkflowDetail)
 		pr.Post("/console/api/workflows", c.handleWorkflowCreate)
-		// B2: AI workflow builder (Guided create tab). ai-generate runs the
-		// builder synchronously and patches a preview; ai-confirm compiles +
-		// persists the drafted workflow; ai-discard drops the draft.
+		// AI copilot builder. ai-generate opens a NEW session and streams the
+		// first (create) turn into the docked thread; `message` continues an
+		// existing session (create or refine) — it checkpoints the current draft,
+		// records the user turn, and dispatches a fresh run that accumulates on it.
 		pr.Post("/console/api/workflows/ai-generate", c.handleWorkflowAIGenerate)
-		pr.Post("/console/api/workflows/ai-confirm/{sessionID}", c.handleWorkflowAIConfirm)
-		pr.Post("/console/api/workflows/ai-discard/{sessionID}", c.handleWorkflowAIDiscard)
-		// B4: AI copilot refine (workflow detail sidebar). ai-refine seeds a
-		// refine session from the existing workflow and streams a proposal;
-		// ai-apply pushes the refined draft through authoring.Update; discard
-		// reuses ai-discard above. Registered before the {slug} mutation wildcards
-		// so the literal ai-refine / ai-apply segments win.
-		pr.Post("/console/api/workflows/{slug}/ai-refine", c.handleWorkflowAIRefine)
-		pr.Post("/console/api/workflows/{slug}/ai-apply/{sessionID}", c.handleWorkflowAIApply)
+		pr.Post("/console/api/workflows/ai/{sessionID}/message", c.handleWorkflowAIMessage)
+		// Per-turn actions on the copilot thread. keep persists the current draft as
+		// a real workflow (create → Create, refine → Update against the session's
+		// target slug); discard-turn reverts the draft to the pre-turn checkpoint
+		// and drops the turn; retry reverts then re-dispatches the same instruction.
+		pr.Post("/console/api/workflows/ai/{sessionID}/keep", c.handleWorkflowAIKeep)
+		pr.Post("/console/api/workflows/ai/{sessionID}/discard-turn", c.handleWorkflowAIDiscardTurn)
+		pr.Post("/console/api/workflows/ai/{sessionID}/retry", c.handleWorkflowAIRetry)
 		pr.Post("/console/api/workflows/{slug}/duplicate", c.handleWorkflowDuplicate)
 		// W2-A4: editor mutations. `steps/reorder` is registered before the
 		// `steps/{stepId}/...` wildcards so the literal `reorder` segment wins.

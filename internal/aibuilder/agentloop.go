@@ -30,6 +30,10 @@ const (
 type SessionStore interface {
 	Get(ctx context.Context, scope domain.Scope, id string) (store.BuilderSession, error)
 	UpdateDraft(ctx context.Context, scope domain.Scope, id string, draft json.RawMessage, status string) error
+	// Messages returns the session's message history in insertion order. The
+	// generalized loadState reads it to drive a follow-up turn from the latest
+	// user instruction (a copilot chat message) rather than the original prompt.
+	Messages(ctx context.Context, scope domain.Scope, sessionID string) ([]store.BuilderMessage, error)
 }
 
 // loopContext is the subset of *engine.AgentLoopContext the per-iteration
@@ -81,11 +85,12 @@ type runInput struct {
 // stream.{runID}.{stepID}. It mirrors Event's shape but renders Err as a string
 // (an error value does not marshal). The console (next unit) decodes these.
 type streamEvent struct {
-	Kind     EventKind      `json:"kind"`
-	Text     string         `json:"text,omitempty"`
-	ToolName string         `json:"toolName,omitempty"`
-	Draft    *WorkflowDraft `json:"draft,omitempty"`
-	Error    string         `json:"error,omitempty"`
+	Kind       EventKind      `json:"kind"`
+	Text       string         `json:"text,omitempty"`
+	ToolName   string         `json:"toolName,omitempty"`
+	ToolCallID string         `json:"toolCallId,omitempty"`
+	Draft      *WorkflowDraft `json:"draft,omitempty"`
+	Error      string         `json:"error,omitempty"`
 }
 
 // AgentLoopBuilder hosts the AI workflow builder as a durable dagnats agent-loop
@@ -298,7 +303,7 @@ func (b *AgentLoopBuilder) handle(ctx context.Context, lc loopContext) error {
 			ev.Draft = st.Draft.clone()
 			b.emit(lc, ev)
 		case KindCanvas:
-			b.emit(lc, Event{Kind: KindTool, ToolName: tc.Name, Draft: st.Draft.clone()})
+			b.emit(lc, Event{Kind: KindTool, ToolName: tc.Name, ToolCallID: tc.ID, Draft: st.Draft.clone()})
 			ev.Draft = st.Draft.clone()
 			b.emit(lc, ev)
 		}
@@ -338,25 +343,67 @@ func (b *AgentLoopBuilder) loadState(ctx context.Context, lc loopContext) (*loop
 		SessionID:  in.SessionID,
 		Scope:      scope,
 		GatedTypes: AvailableStepTypes(b.reg, integrations),
-		Messages:   []Message{{Role: RoleUser, Text: sess.Prompt}},
+		Messages:   []Message{{Role: RoleUser, Text: b.turnInstruction(ctx, scope, in.SessionID, sess.Prompt)}},
 		Draft:      WorkflowDraft{},
 		Mode:       store.BuilderSessionModeCreate,
 	}
-	// Refine mode: start from the existing workflow's shape (seeded on the
-	// session at dispatch) rather than an empty draft, and freeze that shape so
-	// the refine system prompt keeps describing the pre-edit workflow. The
-	// seeded TriggerIdentifier is immutable — setWorkflowMetadata only writes it
-	// when empty, so the model cannot repoint the refine at a new identifier.
-	if sess.Mode == store.BuilderSessionModeRefine {
-		var seeded WorkflowDraft
-		if err := json.Unmarshal(sess.DraftWorkflow, &seeded); err != nil {
-			return nil, fmt.Errorf("aibuilder: decode refine seed draft: %w", err)
-		}
+	// Multi-turn seeding rule: if the session already holds a workflow, start from
+	// it and freeze that shape as Original so the refine (edit) system prompt keeps
+	// describing the pre-edit workflow across iterations. This covers BOTH a refine
+	// session (seeded from an existing workflow at dispatch) AND a follow-up turn on
+	// a create session whose prior turn produced steps — both must "continue editing
+	// the current draft" rather than rebuild. A create session's FIRST turn holds
+	// the empty-object placeholder, which decodes to a zero draft and is NOT a seed,
+	// so it starts from empty with the create system prompt. The seeded
+	// TriggerIdentifier is immutable — setWorkflowMetadata only writes it when empty,
+	// so the model cannot repoint at a new identifier.
+	seeded, ok, err := decodeSeedDraft(sess.DraftWorkflow)
+	if err != nil {
+		return nil, fmt.Errorf("aibuilder: decode seed draft: %w", err)
+	}
+	if ok {
 		st.Mode = store.BuilderSessionModeRefine
 		st.Draft = seeded
 		st.Original = seeded.clone()
 	}
 	return st, nil
+}
+
+// turnInstruction returns the user instruction driving this run's first
+// iteration: the latest user message in the session's chat history (a follow-up
+// copilot turn), falling back to fallback (the original session prompt) when the
+// history has no user message — the case for a session's first turn, whose
+// instruction is carried by sess.Prompt rather than an appended message. A
+// history read error is non-fatal: the fallback prompt still drives the run.
+func (b *AgentLoopBuilder) turnInstruction(ctx context.Context, scope domain.Scope, sessionID, fallback string) string {
+	msgs, err := b.sessions.Messages(ctx, scope, sessionID)
+	if err != nil {
+		return fallback
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == string(RoleUser) && msgs[i].Content != "" {
+			return msgs[i].Content
+		}
+	}
+	return fallback
+}
+
+// decodeSeedDraft decodes a session's stored draft and reports whether it already
+// holds a workflow worth continuing from. The empty-object placeholder ("{}") a
+// create session's first turn stores decodes to a zero draft and is NOT a seed;
+// any draft carrying a name, trigger identifier, or steps IS.
+func decodeSeedDraft(raw json.RawMessage) (WorkflowDraft, bool, error) {
+	if len(raw) == 0 {
+		return WorkflowDraft{}, false, nil
+	}
+	var d WorkflowDraft
+	if err := json.Unmarshal(raw, &d); err != nil {
+		return WorkflowDraft{}, false, err
+	}
+	if d.Name == "" && d.TriggerIdentifier == "" && len(d.Steps) == 0 {
+		return WorkflowDraft{}, false, nil
+	}
+	return d, true, nil
 }
 
 // finish persists the validated draft on the session (the durable result the run
@@ -394,10 +441,11 @@ func (b *AgentLoopBuilder) continueLoop(lc loopContext, st *loopState) error {
 // must not derail the build, so the error is dropped.
 func (b *AgentLoopBuilder) emit(lc loopContext, ev Event) {
 	se := streamEvent{
-		Kind:     ev.Kind,
-		Text:     ev.Text,
-		ToolName: ev.ToolName,
-		Draft:    ev.Draft,
+		Kind:       ev.Kind,
+		Text:       ev.Text,
+		ToolName:   ev.ToolName,
+		ToolCallID: ev.ToolCallID,
+		Draft:      ev.Draft,
 	}
 	if ev.Err != nil {
 		se.Error = ev.Err.Error()

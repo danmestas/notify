@@ -1,10 +1,8 @@
 package console
 
-// B5 tests: suggestion cards, rate limiting, prompt clamp, and streaming
-// robustness (completed-but-terminal-dropped run resolves to the ready draft).
+// Rate limiting + prompt clamp coverage for the copilot generate endpoint.
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,92 +13,7 @@ import (
 	"github.com/danmestas/notify/internal/domain"
 )
 
-// ─── 1. Suggestion cards ─────────────────────────────────────────────────────
-
-// TestSuggestionCards_GuidedTabRendered asserts the Guided create tab (on the
-// /console/workflows/new page) renders suggestion cards when the AI builder is
-// configured. Each card must be a <button> element (keyboard-accessible), carry
-// a data-on:click handler, and contain the suggestion text.
-func TestSuggestionCards_GuidedTabRendered(t *testing.T) {
-	tc := newTestConsole(t)
-	tc.injectStreamingBuilder("run-x", nil, false, nil)
-	cookie, _ := tc.login(t)
-
-	rr := tc.get(t, "/console/workflows/new", cookie)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rr.Code)
-	}
-	body := rr.Body.String()
-
-	// At least one suggestion card must be present.
-	if !strings.Contains(body, "ai-builder-suggestion-card") {
-		t.Errorf("Guided tab missing suggestion cards (class ai-builder-suggestion-card); body did not contain it")
-	}
-	// Must be real buttons (keyboard-accessible).
-	if !strings.Contains(body, `<button`) {
-		t.Errorf("suggestion cards are not <button> elements")
-	}
-	// Must carry a Datastar colon-form click handler.
-	if !strings.Contains(body, "data-on:click") {
-		t.Errorf("suggestion cards missing data-on:click; body snippet: %s", body[:min(500, len(body))])
-	}
-	// At least one suggestion text must appear (substring check avoids HTML-escaping issues).
-	if !strings.Contains(body, "Welcome series") {
-		t.Errorf("first suggestion text not found in Guided tab body")
-	}
-	// Handler must set the textarea value (prefix check for wf-ai-prompt).
-	if !strings.Contains(body, "wf-ai-prompt") {
-		t.Errorf("suggestion card click does not target the wf-ai-prompt textarea")
-	}
-}
-
-// TestSuggestionCards_GuidedTabHiddenWhenUnconfigured asserts no suggestion
-// cards appear on the Guided tab when the AI builder is not wired — cards are
-// inside the {{if $page.AIConfigured}} guard.
-func TestSuggestionCards_GuidedTabHiddenWhenUnconfigured(t *testing.T) {
-	tc := newTestConsole(t) // aiBuilder nil
-	cookie, _ := tc.login(t)
-
-	rr := tc.get(t, "/console/workflows/new", cookie)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rr.Code)
-	}
-	if strings.Contains(rr.Body.String(), "ai-builder-suggestion-card") {
-		t.Errorf("suggestion cards must not appear when AI builder is not configured")
-	}
-}
-
-// TestSuggestionCards_RefineTabRendered asserts the Refine-with-AI sidebar on
-// the workflow detail page also renders suggestion cards when wired.
-func TestSuggestionCards_RefineTabRendered(t *testing.T) {
-	tc := newTestConsole(t)
-	tc.seedWorkflowWithSteps(t, "Welcome", "welcome", []domain.Step{
-		{StepID: "s1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)},
-	})
-	tc.injectStreamingBuilder("run-x", nil, false, nil)
-	cookie, _ := tc.login(t)
-
-	rr := tc.get(t, "/console/workflows/welcome", cookie)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rr.Code)
-	}
-	body := rr.Body.String()
-
-	if !strings.Contains(body, "ai-builder-suggestion-card") {
-		t.Errorf("Refine sidebar missing suggestion cards; body did not contain ai-builder-suggestion-card")
-	}
-	// The suggestion text may be HTML-escaped (e.g. ' → &#39;); check a
-	// substring that is safe across HTML escaping.
-	if !strings.Contains(body, "Add an SMS reminder") {
-		t.Errorf("first refine suggestion text not found in detail page body")
-	}
-	// Refine cards must target the refine textarea.
-	if !strings.Contains(body, "wf-ai-refine-prompt") {
-		t.Errorf("refine suggestion card click does not target the wf-ai-refine-prompt textarea")
-	}
-}
-
-// ─── 2. Rate limiting ────────────────────────────────────────────────────────
+// ─── Rate limiting ───────────────────────────────────────────────────────────
 
 // TestAIRateLimit_ExceededGenerate asserts that the (N+1)th request within the
 // rate-limit window from the same scope is rejected with an inline message and
@@ -141,10 +54,9 @@ func TestAIRateLimit_ExceededGenerate(t *testing.T) {
 	if !strings.Contains(strings.ToLower(body), "generating a lot") {
 		t.Errorf("expected rate-limit inline message; body: %s", body)
 	}
-	// The rejected request must not have dispatched a run (the stub still
-	// reports the run counter for the allowed requests only).
+	// The rejected request must not have created a session (the guard fires before
+	// Create).
 	sessions := builderSessionIDs(t, tc)
-	// Each allowed request creates one session; the rejected one must not.
 	if len(sessions) != aiGenerateRateLimit {
 		t.Errorf("sessions after rate limit = %d, want %d (the rejected request must not create a session)", len(sessions), aiGenerateRateLimit)
 	}
@@ -235,84 +147,6 @@ func TestAIPromptClamp_Generate(t *testing.T) {
 	}
 	if len(builderSessionIDs(t, tc)) != 0 {
 		t.Error("over-long prompt must not create a builder session")
-	}
-}
-
-// TestAIPromptClamp_Refine asserts the same clamp on the refine endpoint.
-func TestAIPromptClamp_Refine(t *testing.T) {
-	tc := newTestConsole(t)
-	tc.seedWorkflowWithSteps(t, "Welcome", "welcome", []domain.Step{
-		{StepID: "s1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)},
-	})
-	tc.injectStreamingBuilder("run-clamp2", nil, false, nil)
-	cookie, csrf := tc.login(t)
-
-	long := strings.Repeat("b", aiPromptMaxLen+1)
-	rr := tc.postForm(t, "/console/api/workflows/welcome/ai-refine", url.Values{
-		"prompt":     {long},
-		"csrf_token": {csrf},
-	}, cookie)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rr.Code)
-	}
-	if !strings.Contains(strings.ToLower(rr.Body.String()), "too long") {
-		t.Errorf("expected prompt-too-long message on refine; body: %s", rr.Body.String())
-	}
-	if len(builderSessionIDs(t, tc)) != 0 {
-		t.Error("over-long refine prompt must not create a builder session")
-	}
-}
-
-// ─── 3. Streaming robustness: completed-but-missed-terminal-event ────────────
-
-// TestAIGenerate_CompletedRunResolvesToDraft proves that when the ctx deadline
-// fires but the run actually completed (session is Ready), the handler serves
-// the ready draft instead of the "did not finish" error. This is the
-// dropped-terminal-event case: the done event arrived after the SSE subscriber
-// unsubscribed or was never received.
-func TestAIGenerate_CompletedRunResolvesToDraft(t *testing.T) {
-	tc := newTestConsole(t)
-	draft := &aibuilder.WorkflowDraft{
-		Name:              "Late Finish",
-		TriggerIdentifier: "late-finish",
-		Steps: []domain.Step{{
-			StepID:        "s1",
-			Type:          "email",
-			Name:          "Greet",
-			ControlValues: json.RawMessage(`{"subject":"Hi"}`),
-		}},
-	}
-	// The stub Dispatch writes the final draft + sets status=Ready immediately
-	// (simulating the run finishing). The stream emits only a reasoning event
-	// (no terminal done event), so the timeout fires. On ctx-done the handler
-	// must detect the Ready session and serve the preview.
-	events := [][]byte{
-		aiStreamMsg(t, "reasoning", "Thinking...", nil, ""),
-		// intentionally no done event
-	}
-	tc.injectStreamingBuilder("run-late", draft, false, events)
-	tc.c.aiGenerateTimeoutOverride = 30 * time.Millisecond
-	tc.c.aiBuildPollOverride = 10 * time.Second // keep poll from interfering
-	cookie, csrf := tc.login(t)
-
-	rr := tc.postForm(t, "/console/api/workflows/ai-generate", url.Values{
-		"prompt":     {"late finishing workflow"},
-		"csrf_token": {csrf},
-	}, cookie)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
-	}
-	body := rr.Body.String()
-	// Must NOT show the "did not finish" error.
-	if strings.Contains(strings.ToLower(body), "did not finish") {
-		t.Errorf("completed run showed 'did not finish' instead of ready draft; body: %s", body)
-	}
-	// Must render the Use-this-workflow preview with the ready draft.
-	if !strings.Contains(body, "Use this workflow") {
-		t.Errorf("completed run did not render the ready draft preview; body: %s", body)
-	}
-	if !strings.Contains(body, "late-finish") {
-		t.Errorf("preview missing trigger identifier from ready draft; body: %s", body)
 	}
 }
 

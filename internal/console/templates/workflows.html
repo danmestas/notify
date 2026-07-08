@@ -41,35 +41,23 @@
 
   {{/* Create overlay — a client-side overlay (data-show on the workflowNewOpen
        signal) that overlays the unchanged list page so opening it causes NO
-       layout shift; the /new route just seeds workflowNewOpen=true. Manual mode
-       uses the compact right-hand drawer; Guided (AI) mode takes over the whole
-       screen as a full-bleed builder. Both modes live under the one overlay so a
-       single Escape handler and the $workflowNewOpen signal control them. */}}
+       layout shift; the /new route just seeds workflowNewOpen=true. The compact
+       right-hand drawer creates a workflow manually; "Build with AI" links to the
+       docked-copilot builder view for AI-assisted creation. */}}
   <div id="workflow-create-slideover" data-component="workflow-create"
        data-show="$workflowNewOpen"
        data-on:keydown__window="evt.key === 'Escape' && ($workflowNewOpen = false)">
     {{if not $page.ReadOnly}}
 
-    {{/* Manual create — the compact right-hand drawer (unchanged path). */}}
-    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="wf-create-heading"
-         data-show="$wfCreateMode === 'manual'">
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="wf-create-heading">
       <div class="console-slideover-header">
         <h2 id="wf-create-heading" class="console-card-title">Create workflow</h2>
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
                 data-on:click="$workflowNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
 
-      {{/* Mode tabs: Manual (drawer) vs Guided (full-screen AI builder). */}}
-      <div class="console-tabs" role="tablist" aria-label="Create mode">
-        <button type="button" class="console-tab" role="tab"
-                data-attr:aria-selected="$wfCreateMode === 'manual'"
-                data-class:is-active="$wfCreateMode === 'manual'"
-                data-on:click="$wfCreateMode = 'manual'">Manual</button>
-        <button type="button" class="console-tab" role="tab"
-                data-attr:aria-selected="$wfCreateMode === 'guided'"
-                data-class:is-active="$wfCreateMode === 'guided'"
-                data-on:click="$wfCreateMode = 'guided'">Guided</button>
-      </div>
+      {{/* AI entry point: the docked-copilot builder view (create mode). */}}
+      <a class="btn btn-outline wf-create-ai-link" href="/console/workflows/ai">{{ uiIcon "star" }} Build with AI</a>
 
       {{if $page.FormError}}
       <p id="wf-form-error" class="console-form-error" role="alert">{{$page.FormError}}</p>
@@ -93,87 +81,6 @@
           <button type="submit" class="btn btn-primary">Create workflow</button>
         </div>
       </form>
-    </div>
-
-    {{/* Guided create — the full-screen AI builder. A full-bleed overlay: an
-         intake zone (prompt + starter cards, centered) up top, and a two-column
-         results area below (reasoning log | live canvas → final preview) that
-         fills once a generation streams in. Keeps the #ai-builder-* target ids
-         intact so the ai-generate SSE relay patches them unchanged. */}}
-    <div class="ai-builder-fullscreen" role="dialog" aria-modal="true" aria-labelledby="wf-ai-heading"
-         data-show="$wfCreateMode === 'guided'">
-      <header class="ai-builder-fullscreen-header">
-        <div class="ai-builder-fullscreen-titles">
-          <h2 id="wf-ai-heading" class="ai-builder-fullscreen-title">{{ uiIcon "star" }} Build a workflow with AI</h2>
-          <div class="console-tabs" role="tablist" aria-label="Create mode">
-            <button type="button" class="console-tab" role="tab"
-                    data-attr:aria-selected="$wfCreateMode === 'manual'"
-                    data-class:is-active="$wfCreateMode === 'manual'"
-                    data-on:click="$wfCreateMode = 'manual'">Manual</button>
-            <button type="button" class="console-tab" role="tab"
-                    data-attr:aria-selected="$wfCreateMode === 'guided'"
-                    data-class:is-active="$wfCreateMode === 'guided'"
-                    data-on:click="$wfCreateMode = 'guided'">Guided</button>
-          </div>
-        </div>
-        <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
-                data-on:click="$workflowNewOpen = false">{{ uiIcon "x" }}</button>
-      </header>
-
-      <div class="ai-builder-fullscreen-body">
-        {{if $page.AIConfigured}}
-        <div class="ai-builder-intake">
-          <form id="wf-ai-form">
-            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-            <div class="form-row">
-              <label class="form-label" for="wf-ai-prompt">Describe your workflow</label>
-              <textarea class="console-input" id="wf-ai-prompt" name="prompt" rows="4"
-                        placeholder="When a user signs up, send a welcome in-app message, wait a day, then email them onboarding tips."></textarea>
-            </div>
-            <div class="ai-builder-intake-actions">
-              <button type="button" class="btn btn-outline" data-on:click="$workflowNewOpen = false">Cancel</button>
-              <button type="button" class="btn btn-primary"
-                      data-on:click="@post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#wf-ai-form'})">Generate</button>
-            </div>
-          </form>
-          {{/* Starter cards — click to prefill the prompt textarea. */}}
-          {{if $page.AIBuilderSuggestions}}
-          <p class="ai-builder-suggestions-label">Or start from an example</p>
-          <div class="ai-builder-suggestions" aria-label="Example prompts">
-            {{range $s := $page.AIBuilderSuggestions}}
-            <button type="button" class="ai-builder-suggestion-card"
-                    data-on:click="document.getElementById('wf-ai-prompt').value = {{jsEscape $s}}; document.getElementById('wf-ai-prompt').dispatchEvent(new Event('input'))">
-              {{uiIcon "star"}}
-              <span>{{$s}}</span>
-            </button>
-            {{end}}
-          </div>
-          {{end}}
-        </div>
-        {{else}}
-        <div class="ai-builder-intake">
-          <p class="console-empty" role="note">
-            The AI workflow builder is not configured. Set <code>NOTIFY_AI_API_KEY</code> (or
-            <code>ANTHROPIC_API_KEY</code>) on the server to enable Guided creation.
-          </p>
-        </div>
-        {{end}}
-
-        {{/* Two-column results — reasoning log (left) | canvas → preview (right).
-             Empty and collapsed until the ai-generate run streams content in. */}}
-        <div class="ai-builder-results">
-          <div class="ai-builder-results-col ai-builder-results-reasoning">
-            {{/* Live chain-of-thought log — reasoning lines append here. */}}
-            <div id="ai-builder-reasoning" class="ai-builder-reasoning" aria-live="polite" role="log"></div>
-          </div>
-          <div class="ai-builder-results-col ai-builder-results-canvas">
-            {{/* Live canvas — the workflow building in real time. */}}
-            <div id="ai-builder-canvas"></div>
-            {{/* Preview — patched with the final proposal when the run completes. */}}
-            <div id="ai-builder-preview"></div>
-          </div>
-        </div>
-      </div>
     </div>
     {{end}}
   </div>

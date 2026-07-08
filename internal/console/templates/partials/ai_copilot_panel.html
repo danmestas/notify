@@ -1,0 +1,102 @@
+{{/* ai-copilot-panel — the docked chat panel of the AI workflow builder. Bound
+     to the aiBuilderPageView ($page). Collapsible to a ~44px rail ($aiCollapsed)
+     and resizable via a drag handle ($aiWidth px). The thread (#ai-thread) holds
+     the turns; the empty state (starter cards) shows until the first turn starts
+     ($aiStarted). Send routes the FIRST message to ai-generate (creates the
+     session, streams into a new assistant turn) and every FOLLOW-UP to the
+     session's /message endpoint (a fresh assistant turn) — the create stream
+     patches $aiSessionID so follow-ups target the right session. */}}
+{{define "ai-copilot-panel"}}
+{{$csrf := .CSRF}}
+<aside class="ai-copilot-panel"
+       data-class:is-collapsed="$aiCollapsed"
+       data-attr:style="'width:' + ($aiCollapsed ? 44 : $aiWidth) + 'px'"
+       aria-label="AI copilot">
+  {{/* Resize handle on the panel's left edge; drags the docked width. */}}
+  <div class="ai-copilot-resize" aria-hidden="true"
+       data-show="!$aiCollapsed"
+       data-on:pointerdown="$aiResizing = true; evt.preventDefault()"
+       data-on:pointermove__window="$aiResizing && ($aiWidth = Math.min(720, Math.max(300, window.innerWidth - evt.clientX)))"
+       data-on:pointerup__window="$aiResizing = false"></div>
+
+  {{/* Collapsed rail — the whole panel shrinks to this expand button. */}}
+  <button type="button" class="ai-copilot-rail"
+          data-show="$aiCollapsed"
+          data-on:click="$aiCollapsed = false"
+          aria-label="Expand copilot panel">
+    {{uiIcon "message-circle"}}
+    <span class="ai-copilot-rail-label">Copilot</span>
+  </button>
+
+  {{/* Expanded panel body. */}}
+  <div class="ai-copilot-inner" data-show="!$aiCollapsed">
+    <header class="ai-copilot-header">
+      <h2 class="ai-copilot-title">{{uiIcon "star"}} Copilot</h2>
+      <button type="button" class="btn-icon ai-copilot-collapse"
+              data-on:click="$aiCollapsed = true"
+              aria-label="Collapse copilot panel">{{uiIcon "chevron-down"}}</button>
+    </header>
+
+    {{if .AIConfigured}}
+    {{/* Empty state — starter cards, shown until the first turn begins. */}}
+    <div class="ai-copilot-empty" data-show="!$aiStarted">
+      <p class="ai-copilot-empty-lead">Describe the notification workflow you want, and the copilot will build it step by step.</p>
+      {{if .Suggestions}}
+      <p class="ai-copilot-empty-label">Start from an example</p>
+      <div class="ai-copilot-starters" aria-label="Example prompts">
+        {{range $s := .Suggestions}}
+        {{/* Set the textarea's DOM value directly (then fire input so data-bind
+             syncs $aiPrompt) so the form serialization at @post time sees the
+             prompt — assigning the signal alone can race the DOM flush. */}}
+        <button type="button" class="ai-copilot-starter"
+                data-on:click="document.getElementById('ai-copilot-input').value = {{jsEscape $s}}; document.getElementById('ai-copilot-input').dispatchEvent(new Event('input')); $aiStarted = true; ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}}))">
+          {{uiIcon "star"}}
+          <span>{{$s}}</span>
+        </button>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+
+    {{/* Thread — one .ai-message per turn; the SSE relay appends new turns. */}}
+    <div id="ai-thread" class="ai-thread" role="log" aria-live="polite" aria-label="Copilot conversation">
+      {{range .Messages}}{{template "ai-message" .}}{{end}}
+    </div>
+
+    {{/* Inline note — pre-turn rejections (rate limit, over-long, dispatch
+         failure) patch #ai-copilot-note here rather than a full-screen preview. */}}
+    {{template "ai-copilot-note" ""}}
+
+    {{/* Composer — Enter sends, Shift+Enter newlines. */}}
+    <form id="ai-copilot-form" class="ai-copilot-composer" data-on:submit="evt.preventDefault()">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <input type="hidden" name="view" value="copilot">
+      <label class="sr-only" for="ai-copilot-input">Message the copilot</label>
+      <textarea id="ai-copilot-input" class="console-input ai-copilot-input" name="prompt" rows="2"
+                placeholder="Message the copilot…"
+                data-bind="aiPrompt"
+                data-on:keydown="evt.key === 'Enter' && !evt.shiftKey && (evt.preventDefault(), $aiPrompt.trim() && ($aiStarted = true, ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}})), $aiPrompt = ''))"></textarea>
+      <button type="button" class="btn btn-primary ai-copilot-send"
+              data-attr:disabled="$aiPrompt.trim() === '' ? 'disabled' : null"
+              data-on:click="$aiPrompt.trim() && ($aiStarted = true, ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}})), $aiPrompt = '')">Send</button>
+    </form>
+    {{else}}
+    <div class="ai-copilot-empty">
+      <p class="console-empty" role="note">
+        The AI workflow builder is not configured. Set <code>NOTIFY_AI_API_KEY</code> (or
+        <code>ANTHROPIC_API_KEY</code>) on the server to enable the copilot.
+      </p>
+    </div>
+    {{end}}
+  </div>
+</aside>
+{{end}}
+
+{{/* ai-copilot-note — a one-shot inline note in the copilot panel. The copilot
+     handlers' pre-turn rejections render this fragment (data = the message
+     string) and patch it into #ai-copilot-note; an empty string clears it. */}}
+{{define "ai-copilot-note"}}
+<div id="ai-copilot-note" class="ai-copilot-note" role="status" aria-live="polite">
+  {{if .}}<p class="console-form-error ai-copilot-note-error" role="alert">{{.}}</p>{{end}}
+</div>
+{{end}}

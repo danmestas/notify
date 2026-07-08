@@ -41,8 +41,12 @@ type Event struct {
 	Kind     EventKind
 	Text     string
 	ToolName string
-	Draft    *WorkflowDraft
-	Err      error
+	// ToolCallID is the model's id for the tool call this event reflects (set on
+	// KindTool events). It lets a downstream consumer key a per-tool-call UI chip
+	// to the exact call, so repeated calls to the same tool remain distinct.
+	ToolCallID string
+	Draft      *WorkflowDraft
+	Err        error
 }
 
 // Builder drives the iterative tool-use loop against a Client. It is safe to

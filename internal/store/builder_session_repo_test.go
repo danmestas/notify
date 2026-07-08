@@ -152,10 +152,10 @@ func TestBuilderSessionRepo_Messages(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := repo.AppendMessage(ctx, scope, sess.ID, "assistant", "thinking", ""); err != nil {
+	if _, err := repo.AppendMessage(ctx, scope, sess.ID, "assistant", "thinking", ""); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
-	if err := repo.AppendMessage(ctx, scope, sess.ID, "tool", "addStep", `[{"name":"addStep"}]`); err != nil {
+	if _, err := repo.AppendMessage(ctx, scope, sess.ID, "tool", "addStep", `[{"name":"addStep"}]`); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 
@@ -171,7 +171,121 @@ func TestBuilderSessionRepo_Messages(t *testing.T) {
 	}
 
 	// Cross-env AppendMessage must be rejected.
-	if err := repo.AppendMessage(ctx, other, sess.ID, "assistant", "x", ""); !errors.Is(err, ErrNotFound) {
+	if _, err := repo.AppendMessage(ctx, other, sess.ID, "assistant", "x", ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-env AppendMessage err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestBuilderSessionRepo_CheckpointRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.BuilderSessions()
+
+	scope := domain.Scope{OrgID: "org-1", EnvID: "env-a"}
+	other := domain.Scope{OrgID: "org-1", EnvID: "env-b"}
+
+	sess, err := repo.Create(ctx, scope, "welcome new users")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// The session's current (turn-1) draft is what we snapshot before a follow-up.
+	turn1 := json.RawMessage(`{"name":"Welcome","triggerIdentifier":"welcome","steps":[{"stepId":"s1","type":"email"}]}`)
+	if err := repo.UpdateDraft(ctx, scope, sess.ID, turn1, BuilderSessionReady); err != nil {
+		t.Fatalf("UpdateDraft turn1: %v", err)
+	}
+
+	// No checkpoints yet.
+	if _, err := repo.LatestCheckpoint(ctx, scope, sess.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("LatestCheckpoint on empty stack = %v, want ErrNotFound", err)
+	}
+
+	// Push a checkpoint of the pre-turn draft, linked to a message id.
+	msgID, err := repo.AppendMessage(ctx, scope, sess.ID, "user", "add an sms reminder", "")
+	if err != nil {
+		t.Fatalf("AppendMessage: %v", err)
+	}
+	cp1, err := repo.PushCheckpoint(ctx, scope, sess.ID, msgID, turn1)
+	if err != nil {
+		t.Fatalf("PushCheckpoint: %v", err)
+	}
+	if cp1.Seq != 1 {
+		t.Fatalf("first checkpoint seq = %d, want 1", cp1.Seq)
+	}
+	if cp1.MessageID != msgID {
+		t.Fatalf("checkpoint messageID = %q, want %q", cp1.MessageID, msgID)
+	}
+
+	// The turn mutates the draft (adds an sms step).
+	turn2 := json.RawMessage(`{"name":"Welcome","triggerIdentifier":"welcome","steps":[{"stepId":"s1","type":"email"},{"stepId":"s2","type":"sms"}]}`)
+	if err := repo.UpdateDraft(ctx, scope, sess.ID, turn2, BuilderSessionReady); err != nil {
+		t.Fatalf("UpdateDraft turn2: %v", err)
+	}
+
+	// A second push snapshots the turn-2 draft; seq increments per session.
+	cp2, err := repo.PushCheckpoint(ctx, scope, sess.ID, "", turn2)
+	if err != nil {
+		t.Fatalf("PushCheckpoint 2: %v", err)
+	}
+	if cp2.Seq != 2 {
+		t.Fatalf("second checkpoint seq = %d, want 2", cp2.Seq)
+	}
+
+	// LatestCheckpoint returns the top of the stack (turn-2 snapshot).
+	latest, err := repo.LatestCheckpoint(ctx, scope, sess.ID)
+	if err != nil {
+		t.Fatalf("LatestCheckpoint: %v", err)
+	}
+	if latest.ID != cp2.ID || latest.Seq != 2 {
+		t.Fatalf("LatestCheckpoint = %+v, want cp2", latest)
+	}
+
+	// RevertToCheckpoint(cp1) restores the session draft to the turn-1 snapshot
+	// (the round-trip): the sms step is gone again.
+	if err := repo.RevertToCheckpoint(ctx, scope, sess.ID, cp1.ID); err != nil {
+		t.Fatalf("RevertToCheckpoint: %v", err)
+	}
+	reverted, err := repo.Get(ctx, scope, sess.ID)
+	if err != nil {
+		t.Fatalf("Get after revert: %v", err)
+	}
+	if string(reverted.DraftWorkflow) != string(turn1) {
+		t.Fatalf("reverted draft = %s, want turn1 %s", reverted.DraftWorkflow, turn1)
+	}
+	// Revert is non-destructive: both checkpoints still on the stack.
+	if latest2, err := repo.LatestCheckpoint(ctx, scope, sess.ID); err != nil || latest2.ID != cp2.ID {
+		t.Fatalf("checkpoints not preserved after revert: %+v err=%v", latest2, err)
+	}
+
+	// PopCheckpoint pops the top (cp2) and restores its snapshot.
+	popped, err := repo.PopCheckpoint(ctx, scope, sess.ID)
+	if err != nil {
+		t.Fatalf("PopCheckpoint: %v", err)
+	}
+	if popped.ID != cp2.ID {
+		t.Fatalf("PopCheckpoint id = %q, want cp2 %q", popped.ID, cp2.ID)
+	}
+	afterPop, err := repo.Get(ctx, scope, sess.ID)
+	if err != nil {
+		t.Fatalf("Get after pop: %v", err)
+	}
+	if string(afterPop.DraftWorkflow) != string(turn2) {
+		t.Fatalf("after pop draft = %s, want turn2 %s", afterPop.DraftWorkflow, turn2)
+	}
+	// The stack top is now cp1.
+	if top, err := repo.LatestCheckpoint(ctx, scope, sess.ID); err != nil || top.ID != cp1.ID {
+		t.Fatalf("after pop, stack top = %+v err=%v, want cp1", top, err)
+	}
+
+	// Every checkpoint method is scope-checked: a cross-env caller cannot reach
+	// this session's checkpoints.
+	if _, err := repo.PushCheckpoint(ctx, other, sess.ID, "", turn1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-env PushCheckpoint err = %v, want ErrNotFound", err)
+	}
+	if _, err := repo.LatestCheckpoint(ctx, other, sess.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-env LatestCheckpoint err = %v, want ErrNotFound", err)
+	}
+	if err := repo.RevertToCheckpoint(ctx, other, sess.ID, cp1.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-env RevertToCheckpoint err = %v, want ErrNotFound", err)
 	}
 }

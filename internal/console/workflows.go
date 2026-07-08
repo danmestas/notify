@@ -348,10 +348,6 @@ func workflowsSignalsJSON(newOpen bool) template.JS {
 	b, err := json.Marshal(map[string]any{
 		"wfTab":           "editor",
 		"workflowNewOpen": newOpen,
-		// wfCreateMode toggles the create slide-over between the Manual form and
-		// the Guided (AI builder) tab. Defaults to manual so the unchanged path
-		// is the first thing an operator sees (B2).
-		"wfCreateMode": "manual",
 	})
 	if err != nil {
 		return template.JS("{}")

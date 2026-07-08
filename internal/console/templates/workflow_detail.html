@@ -165,51 +165,16 @@
     </div>
   </section>
 
-  {{/* B4: Refine-with-AI copilot. Describe a change; the AI proposes an edited
-       workflow the operator can Apply or Discard. The ai-refine SSE response
-       streams reasoning lines, the live canvas, and the final Apply/Discard
-       preview into the regions below. Gated on the builder being wired. */}}
-  {{if not $page.ReadOnly}}
+  {{/* Refine with AI — opens the docked-copilot builder view seeded with this
+       workflow (?slug=), where the operator chats to modify it and Keep writes
+       the changes back via authoring.Update. Gated on the builder being wired. */}}
+  {{if and (not $page.ReadOnly) $page.AIConfigured}}
   <section class="console-card ai-copilot" aria-labelledby="wf-ai-refine-heading" id="wf-ai-refine">
     <h2 id="wf-ai-refine-heading" class="console-card-title">{{ uiIcon "star" }} Refine with AI</h2>
-    {{if $page.AIConfigured}}
-    <p class="console-lede">Describe a change and the AI will propose an edited workflow to apply.</p>
-    {{/* Suggestion cards — click to prefill the refine prompt textarea. */}}
-    {{if $page.AIBuilderSuggestions}}
-    <div class="ai-builder-suggestions" aria-label="Example prompts">
-      {{range $s := $page.AIBuilderSuggestions}}
-      <button type="button" class="ai-builder-suggestion-card"
-              data-on:click="document.getElementById('wf-ai-refine-prompt').value = {{jsEscape $s}}; document.getElementById('wf-ai-refine-prompt').dispatchEvent(new Event('input'))">
-        {{uiIcon "star"}}
-        <span>{{$s}}</span>
-      </button>
-      {{end}}
+    <p class="console-lede">Chat with the copilot to modify this workflow — it edits the live steps and you Keep the changes when you're happy.</p>
+    <div class="console-action-row">
+      <a class="btn btn-primary" href="/console/workflows/ai?slug={{$page.TriggerIdentifier}}">{{ uiIcon "star" }} Refine with AI</a>
     </div>
-    {{end}}
-    <form id="wf-ai-refine-form">
-      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-      <div class="form-row">
-        <label class="form-label" for="wf-ai-refine-prompt">What should change?</label>
-        <textarea class="console-input" id="wf-ai-refine-prompt" name="prompt" rows="3"
-                  placeholder="Add an SMS reminder after the delay, and only send it to subscribers on the pro plan."></textarea>
-      </div>
-      <div class="console-action-row">
-        <button type="button" class="btn btn-primary"
-                data-on:click="@post('/console/api/workflows/{{$page.TriggerIdentifier}}/ai-refine', {contentType: 'form', selector: '#wf-ai-refine-form'})">Refine</button>
-      </div>
-    </form>
-    {{else}}
-    <p class="console-empty" role="note">
-      The AI workflow builder is not configured. Set <code>NOTIFY_AI_API_KEY</code> (or
-      <code>ANTHROPIC_API_KEY</code>) on the server to enable Refine with AI.
-    </p>
-    {{end}}
-    {{/* Live chain-of-thought log — reasoning lines append as the run narrates. */}}
-    <div id="ai-builder-reasoning" class="ai-builder-reasoning" aria-live="polite" role="log"></div>
-    {{/* Live canvas — the refined workflow taking shape, re-rendered per event. */}}
-    <div id="ai-builder-canvas"></div>
-    {{/* Preview — the proposed edit with Apply changes / Discard on completion. */}}
-    <div id="ai-builder-preview"></div>
   </section>
   {{end}}
 

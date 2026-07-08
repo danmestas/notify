@@ -1,7 +1,7 @@
 {{/* ai-builder-canvas — the workflow taking shape live, re-rendered in place on
-     every canvas/tool stream event from the ai-generate run. Shows the proposed
-     name so far and the ordered steps; empty until the model adds the first one.
-     The terminal done event replaces this with the ai-builder-preview fragment. */}}
+     every canvas/tool stream event from a copilot turn. Shows the proposed name
+     so far and the ordered steps; empty until the model adds the first one. Also
+     seeds the builder view's canvas on resume (?session=) and refine (?slug=). */}}
 {{define "ai-builder-canvas"}}
 <div id="ai-builder-canvas">
   {{if or .Name .Steps}}

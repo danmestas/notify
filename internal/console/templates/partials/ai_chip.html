@@ -1,0 +1,12 @@
+{{/* ai-chip — one chain-of-thought chip for a single tool call in the copilot
+     thread. Its stable id (chip-{ToolCallID}) lets the SSE relay transition the
+     same chip through streaming → done → error by re-patching it outer-mode.
+     data-state drives the spinner / check / error styling. */}}
+{{define "ai-chip"}}
+<span id="chip-{{.ToolCallID}}" class="ai-chip" data-state="{{.State}}">
+  <span class="ai-chip-icon" aria-hidden="true">
+    {{if eq .State "done"}}{{uiIcon "check"}}{{else if eq .State "error"}}{{uiIcon "x"}}{{else}}<span class="ai-chip-spinner"></span>{{end}}
+  </span>
+  <span class="ai-chip-label">{{.Label}}</span>
+</span>
+{{end}}

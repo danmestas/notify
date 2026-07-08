@@ -1,0 +1,24 @@
+{{define "content"}}{{$page := .Page}}
+{{/* Two-pane AI workflow builder: the live canvas (left/main) and the docked,
+     collapsible + resizable copilot chat panel (right). NOT a modal, NOT
+     full-screen. The canvas reuses the ai-builder-canvas fragment so the SSE
+     relay patches #ai-builder-canvas in place as steps stream in. */}}
+<section class="console-section ai-copilot-view" data-signals="{{$page.Signals}}">
+  <div class="ai-copilot-layout">
+    <main class="ai-copilot-canvas-pane">
+      <div class="ai-copilot-canvas-head">
+        <h1 class="ai-copilot-canvas-title">{{uiIcon "star"}} Build a workflow with AI</h1>
+        <a class="btn btn-outline" href="/console/workflows">Back to workflows</a>
+      </div>
+      {{/* Pre-generation hint — hidden once the first turn starts. */}}
+      <div class="ai-copilot-canvas-empty" data-show="!$aiStarted">
+        <p>Your workflow will take shape here as the copilot works. Describe what you
+           want in the panel to the right to get started.</p>
+      </div>
+      {{template "ai-builder-canvas" $page.Canvas}}
+    </main>
+
+    {{template "ai-copilot-panel" $page}}
+  </div>
+</section>
+{{end}}
