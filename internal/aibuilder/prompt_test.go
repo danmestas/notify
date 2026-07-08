@@ -13,15 +13,18 @@ func TestSystemPrompt_IncludesGatedCatalogAndVocab(t *testing.T) {
 	gated := AvailableStepTypes(reg, []domain.Integration{{Channel: "email", Active: true}})
 	p := systemPrompt(reg.Catalog(), gated)
 
-	// Gated-in channel + an action step are documented.
+	// Gated-in channel + an action step + the built-in in_app inbox are documented.
 	if !strings.Contains(p, "email (Email)") {
 		t.Error("prompt missing email catalog entry")
 	}
 	if !strings.Contains(p, "delay (Delay)") {
 		t.Error("prompt missing delay catalog entry")
 	}
-	// Gated-out channels must not be offered.
-	for _, excluded := range []string{"sms (SMS)", "push (Push)", "in_app (In-App)", "chat (Chat)"} {
+	if !strings.Contains(p, "in_app (In-App)") {
+		t.Error("prompt missing built-in in_app catalog entry")
+	}
+	// Gated-out (external-provider) channels must not be offered.
+	for _, excluded := range []string{"sms (SMS)", "push (Push)", "chat (Chat)"} {
 		if strings.Contains(p, excluded) {
 			t.Errorf("prompt should not list gated-out %q", excluded)
 		}

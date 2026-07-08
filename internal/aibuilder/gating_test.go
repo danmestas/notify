@@ -17,15 +17,16 @@ func has(types []string, t string) bool {
 	return false
 }
 
-func TestAvailableStepTypes_ActionStepsAlwaysAvailable(t *testing.T) {
-	// No integrations at all: only the action steps survive.
+func TestAvailableStepTypes_ActionStepsAndInAppAlwaysAvailable(t *testing.T) {
+	// No integrations at all: action steps AND the built-in in_app inbox survive;
+	// the external-provider channels are gated out.
 	got := AvailableStepTypes(steptype.Default(), nil)
-	for _, action := range []string{"delay", "digest", "throttle", "http_request"} {
-		if !has(got, action) {
-			t.Errorf("action step %q should always be available, got %v", action, got)
+	for _, always := range []string{"in_app", "delay", "digest", "throttle", "http_request"} {
+		if !has(got, always) {
+			t.Errorf("%q should always be available (built-in / action), got %v", always, got)
 		}
 	}
-	for _, channel := range []string{"in_app", "email", "push", "chat", "sms"} {
+	for _, channel := range []string{"email", "push", "chat", "sms"} {
 		if has(got, channel) {
 			t.Errorf("channel %q should be gated out with no integrations, got %v", channel, got)
 		}
@@ -41,7 +42,10 @@ func TestAvailableStepTypes_OnlyEmailActive(t *testing.T) {
 	if !has(got, "email") {
 		t.Errorf("email should be available, got %v", got)
 	}
-	for _, excluded := range []string{"sms", "push", "in_app", "chat"} {
+	if !has(got, "in_app") {
+		t.Errorf("in_app should always be available (built-in inbox), got %v", got)
+	}
+	for _, excluded := range []string{"sms", "push", "chat"} {
 		if has(got, excluded) {
 			t.Errorf("%q should be excluded (no active integration), got %v", excluded, got)
 		}
@@ -85,10 +89,12 @@ func TestBuildTools_AddStepEnumIsGated(t *testing.T) {
 	}
 
 	enum := extractTypeEnum(t, addStep.InputSchema)
-	if !has(enum, "email") {
-		t.Errorf("addStep enum missing email: %v", enum)
+	for _, present := range []string{"email", "in_app"} { // email active; in_app built-in
+		if !has(enum, present) {
+			t.Errorf("addStep enum missing %q: %v", present, enum)
+		}
 	}
-	for _, excluded := range []string{"sms", "push", "in_app", "chat"} {
+	for _, excluded := range []string{"sms", "push", "chat"} {
 		if has(enum, excluded) {
 			t.Errorf("addStep enum should not contain unconfigured %q: %v", excluded, enum)
 		}

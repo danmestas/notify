@@ -26,6 +26,16 @@ var channelSteps = map[string]string{
 	"sms":    "sms",
 }
 
+// builtinChannels are channels notify delivers WITHOUT any external provider.
+// The in-app inbox persists the message and publishes an inbox event directly
+// (delivery.HandleInApp never looks up an integration), so — like the reference platform's built-in
+// Inbox — in_app is always available regardless of configured integrations. The
+// external-provider channels (email/sms/chat/push) stay gated on an Active
+// integration.
+var builtinChannels = map[string]bool{
+	"in_app": true,
+}
+
 // AvailableStepTypes computes the step types the model may add: every action
 // step (no channel) plus every channel step whose channel has an Active
 // integration. Order follows the registry's registration order so the addStep
@@ -41,7 +51,7 @@ func AvailableStepTypes(reg *steptype.Registry, integrations []domain.Integratio
 	var out []string
 	for _, name := range reg.Names() {
 		if channel, isChannel := channelSteps[name]; isChannel {
-			if active[channel] {
+			if builtinChannels[channel] || active[channel] {
 				out = append(out, name)
 			}
 			continue
