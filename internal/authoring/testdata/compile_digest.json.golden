@@ -9,5 +9,6 @@
         "duration": 172800000000000
       }
     }
-  ]
+  ],
+  "idempotency_key": "idempotencyKey"
 }

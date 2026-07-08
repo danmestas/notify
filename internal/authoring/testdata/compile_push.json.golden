@@ -6,5 +6,6 @@
       "task": "send.push",
       "type": "normal"
     }
-  ]
+  ],
+  "idempotency_key": "idempotencyKey"
 }

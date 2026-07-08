@@ -46,6 +46,31 @@ func TestCompile_OneStepInApp(t *testing.T) {
 	}
 }
 
+// TestCompile_SetsIdempotencyKey proves every compiled DAG dedupes retried
+// triggers by the envelope's top-level idempotencyKey field. trigger.go
+// composes runenv.InAppEnvelope.IdempotencyKey (json:"idempotencyKey",
+// top-level, NOT nested under payload) from (TransactionID, SubscriberID) —
+// the shape shared by every channel DAG — so the dagnats admission check
+// (StartRun: a repeated key value returns the existing run id instead of
+// starting a duplicate) fires for every workflow. Composing on the recipient
+// too (not TransactionID alone) matters because a multicast trigger shares
+// one TransactionID across every fan-out recipient; see
+// runenv.InAppEnvelope.IdempotencyKey's doc comment.
+func TestCompile_SetsIdempotencyKey(t *testing.T) {
+	wf := domain.Workflow{
+		EnvID:             "env_1",
+		TriggerIdentifier: "welcome",
+		Steps:             mustSteps(t, []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}}),
+	}
+	def, err := authoring.Compile(wf)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if def.IdempotencyKey != "idempotencyKey" {
+		t.Fatalf("def.IdempotencyKey = %q, want %q", def.IdempotencyKey, "idempotencyKey")
+	}
+}
+
 func TestCompile_TwoStepChains(t *testing.T) {
 	wf := domain.Workflow{
 		EnvID:             "env_1",

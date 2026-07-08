@@ -21,6 +21,21 @@ import (
 // every step's StepDef from it.
 var stepTypes = steptype.Default()
 
+// idempotencyDotPath is the dagnats StartRun admission key every compiled DAG
+// dedupes on: a top-level dot-path evaluated against the run input. It targets
+// runenv.InAppEnvelope.IdempotencyKey (json:"idempotencyKey", a top-level
+// sibling of Payload, NOT nested under it) — the envelope shape shared by
+// every channel DAG, so one constant is correct for all compiled workflows.
+// trigger.go composes that field from (TransactionID, SubscriberID) rather
+// than using TransactionID alone: a multicast trigger (to.topicKey) mints ONE
+// TransactionID shared by every fan-out recipient, so a bare "transactionId"
+// dot-path would collide every recipient after the first onto one dagnats
+// run. A retried trigger reuses TransactionID (trigger.go mints a ULID only
+// when the client omits one) against the SAME recipient, so the composed key
+// still dedupes a genuine retry while leaving distinct multicast recipients
+// distinct.
+const idempotencyDotPath = "idempotencyKey"
+
 // Service persists workflows and registers their compiled DAGs with the engine.
 type Service struct {
 	store *store.Store
@@ -81,8 +96,9 @@ func Compile(wf domain.Workflow) (engine.WorkflowDef, error) {
 		return engine.WorkflowDef{}, fmt.Errorf("authoring: unmarshal steps: %w", err)
 	}
 	def := engine.WorkflowDef{
-		Name:  wf.EnvID + "-" + wf.TriggerIdentifier,
-		Steps: make([]engine.StepDef, 0, len(steps)),
+		Name:           wf.EnvID + "-" + wf.TriggerIdentifier,
+		Steps:          make([]engine.StepDef, 0, len(steps)),
+		IdempotencyKey: idempotencyDotPath,
 	}
 	for i, step := range steps {
 		var sd engine.StepDef

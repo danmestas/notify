@@ -6,5 +6,6 @@
       "task": "send.chat",
       "type": "normal"
     }
-  ]
+  ],
+  "idempotency_key": "idempotencyKey"
 }

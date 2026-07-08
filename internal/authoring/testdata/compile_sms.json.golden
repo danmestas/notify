@@ -6,5 +6,6 @@
       "task": "send.sms",
       "type": "normal"
     }
-  ]
+  ],
+  "idempotency_key": "idempotencyKey"
 }

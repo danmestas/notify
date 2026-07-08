@@ -6,5 +6,6 @@
       "task": "send.email",
       "type": "normal"
     }
-  ]
+  ],
+  "idempotency_key": "idempotencyKey"
 }

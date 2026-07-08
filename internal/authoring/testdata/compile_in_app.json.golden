@@ -6,5 +6,6 @@
       "task": "send.in_app",
       "type": "normal"
     }
-  ]
+  ],
+  "idempotency_key": "idempotencyKey"
 }

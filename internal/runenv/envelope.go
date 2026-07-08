@@ -114,4 +114,14 @@ type InAppEnvelope struct {
 	Subscriber     json.RawMessage `json:"subscriber"`
 	Payload        json.RawMessage `json:"payload"`
 	Step           Step            `json:"step"`
+	// IdempotencyKey is the dagnats StartRun admission value: authoring.Compile
+	// points every compiled DAG's IdempotencyKey dot-path at this field. It
+	// combines TransactionID with SubscriberID (trigger.go composes it) rather
+	// than reusing TransactionID alone: a multicast trigger (to.topicKey) mints
+	// ONE TransactionID shared by every fan-out recipient, so keying only on
+	// TransactionID would collide every recipient after the first onto the same
+	// dagnats run. Keying on (TransactionID, SubscriberID) still dedupes a
+	// genuine client retry of the identical (transaction, recipient) pair,
+	// without merging distinct recipients of the same multicast.
+	IdempotencyKey string `json:"idempotencyKey"`
 }

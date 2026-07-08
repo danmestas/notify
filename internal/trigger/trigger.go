@@ -360,6 +360,13 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 		SubscriberID:   subscriberID,
 		Subscriber:     subscriberJSON,
 		Payload:        req.Payload,
+		// IdempotencyKey composes TransactionID with SubscriberID (base64url
+		// so an embedded ':' can't blur the boundary between the two parts —
+		// same technique as buildDigestKey above). A multicast trigger shares
+		// one TransactionID across every topic member, so TransactionID alone
+		// would collide their runs; per-recipient composition dedupes only a
+		// genuine retry of the same (transaction, recipient) pair.
+		IdempotencyKey: req.TransactionID + ":" + base64.RawURLEncoding.EncodeToString([]byte(subscriberID)),
 		Step: runenv.Step{
 			StepID:            step.StepID,
 			Channel:           step.Type,
