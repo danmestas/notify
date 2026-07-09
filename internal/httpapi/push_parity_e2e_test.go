@@ -126,7 +126,7 @@ func TestPushParity_EndToEnd(t *testing.T) {
 		t.Fatalf("authoring.Publish: %v", err)
 	}
 
-	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, nil, nil, nil, nil, conn, nil, nil, nil))
+	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, nil, nil, nil, nil, nil, conn, nil, nil, nil))
 	defer srv.Close()
 
 	authHeader := "ApiKey " + key

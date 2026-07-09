@@ -40,7 +40,7 @@ func startEnvVarServer(t *testing.T) (*httptest.Server, string) {
 		t.Fatalf("envvars.New: %v", err)
 	}
 	inbox := inboxapi.New(st)
-	handler := httpapi.New(id, nil, nil, inbox, nil, nil, nil, nil, nil, nil, st, ev, nil)
+	handler := httpapi.New(id, nil, nil, inbox, nil, nil, nil, nil, nil, nil, nil, st, ev, nil)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	return srv, "ApiKey " + key
@@ -162,7 +162,7 @@ func TestEnvVarsAPI_ScopeIsolation(t *testing.T) {
 		t.Fatalf("envvars.New: %v", err)
 	}
 	inbox := inboxapi.New(st)
-	handler := httpapi.New(id, nil, nil, inbox, nil, nil, nil, nil, nil, nil, st, ev, nil)
+	handler := httpapi.New(id, nil, nil, inbox, nil, nil, nil, nil, nil, nil, nil, st, ev, nil)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
