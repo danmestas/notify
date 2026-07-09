@@ -40,14 +40,15 @@ func wireCommon[T common[T]](h T, d deliveryDeps) T {
 	return h.WithPreferences(d.prefs).WithEventBus(d.bus).WithThrottle(d.bus).WithDigester(d.bus)
 }
 
-// registerDeliveryHandlers registers the 5 channel send handlers
-// (in_app/email/push/chat/sms) with eng, each wired through wireCommon so
-// every channel gets the identical preferences/event-bus/throttle/digest
-// dependencies — including send.email, which previously never received
-// .WithEventBus and so never published delivery-status events (the analytics
-// service's live counts are driven entirely off those events via
-// bus.SubscribeAllDelivery, so email sends were silently invisible to
-// /v1/analytics/deliveries and /v1/analytics/timeseries).
+// registerDeliveryHandlers registers the 6 channel send handlers
+// (in_app/email/push/chat/sms/stream) with eng, each wired through
+// wireCommon so every channel gets the identical
+// preferences/event-bus/throttle/digest dependencies — including send.email,
+// which previously never received .WithEventBus and so never published
+// delivery-status events (the analytics service's live counts are driven
+// entirely off those events via bus.SubscribeAllDelivery, so email sends
+// were silently invisible to /v1/analytics/deliveries and
+// /v1/analytics/timeseries).
 func registerDeliveryHandlers(eng *engine.Engine, st *store.Store, conn *connectivity.Service, prefs *preferences.Service, bus *eventbus.Bus) {
 	d := deliveryDeps{prefs: prefs, bus: bus}
 	eng.Handle("send.in_app", wireCommon(delivery.New(st), d).HandleInApp)
@@ -55,4 +56,9 @@ func registerDeliveryHandlers(eng *engine.Engine, st *store.Store, conn *connect
 	eng.Handle("send.push", wireCommon(delivery.NewPush(st, conn), d).HandlePush)
 	eng.Handle("send.chat", wireCommon(delivery.NewChat(st, conn), d).HandleChat)
 	eng.Handle("send.sms", wireCommon(delivery.NewSMS(st, conn), d).HandleSMS)
+	// send.stream carries a 5th dependency (the durable-feed publisher) none
+	// of the other channels need, so it goes through wireCommon for the 4
+	// shared ones and then .WithFeed(bus) on top — *eventbus.Bus satisfies
+	// delivery.FeedPublisher alongside EventPublisher/Throttler/Digester.
+	eng.Handle("send.stream", wireCommon(delivery.NewStream(st), d).WithFeed(bus).HandleStream)
 }

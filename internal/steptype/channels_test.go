@@ -152,7 +152,7 @@ func TestStream_ParseForm(t *testing.T) {
 // TestStream_Validate exercises the authoring-time static topic guard: empty
 // topics and topics containing wildcard/injection characters are rejected;
 // dot-separated and templated topics are accepted (the rendered value is
-// re-validated at send time by eventbus.ValidateFeedTopic, not here).
+// re-validated at send time by domain.ValidateFeedTopic, not here).
 func TestStream_Validate(t *testing.T) {
 	cases := []struct {
 		name    string

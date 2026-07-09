@@ -185,11 +185,12 @@ func (stream) ParseForm(form url.Values) (json.RawMessage, error) {
 }
 
 // streamTopicForbidden reports whether r may never appear in an authored
-// stream topic. This is a cheap, dependency-free authoring-time guard —
-// steptype must not import eventbus (package doc, keeps the registry
-// dependency-light). The authoritative gate is the RENDERED topic checked by
-// eventbus.ValidateFeedTopic at send time (Slice A4); this only rejects
-// characters that could never be legal even after template rendering.
+// stream topic. This is a cheap, standalone authoring-time guard against the
+// literal (unrendered) template text — it does not call domain.ValidateFeedTopic
+// because an authored topic is a template ("orders.{{payload.region}}") and
+// dots/braces are legal there. The authoritative gate is the RENDERED topic
+// checked by domain.ValidateFeedTopic at send time (Slice A4); this only
+// rejects characters that could never be legal even after template rendering.
 func streamTopicForbidden(r rune) bool {
 	return r == '*' || r == '>' || r == '$' || unicode.IsSpace(r)
 }

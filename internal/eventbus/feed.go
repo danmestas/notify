@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
+	"github.com/danmestas/notify/internal/domain"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
@@ -27,9 +27,6 @@ const (
 	// hit, independent of feedStreamMaxAge.
 	feedStreamMaxBytes = 1 << 30 // 1 GiB
 
-	// maxFeedTopicLen bounds the topic string ValidateFeedTopic accepts.
-	maxFeedTopicLen = 128
-
 	// maxFeedEnvIDLen bounds the environmentID validateEnvID accepts. envIDs
 	// are system-generated single-token identifiers (ULIDs); this is a
 	// generous ceiling, not a tight fit.
@@ -49,38 +46,6 @@ func ensureFeedStream(ctx context.Context, js jetstream.JetStream) error {
 	})
 	if err != nil {
 		return fmt.Errorf("eventbus: ensure stream %q: %w", feedStream, err)
-	}
-	return nil
-}
-
-// ValidateFeedTopic is the subject-injection gate for stream-channel topics.
-// It is exported because both the "stream" step-type's static authoring
-// validation and (indirectly, via PublishFeed/ConsumeFeed) the delivery
-// handler and the SSE bridge all need to reject the same things: a topic
-// must be non-empty, at most 128 bytes, dot-separated into non-empty tokens
-// (no leading/trailing/double dots), each token matching
-// ^[A-Za-z0-9_-]+$ — which rejects NATS wildcards ("*", ">"), whitespace,
-// "$" (JetStream/system subject prefixes), unicode, and NUL bytes.
-func ValidateFeedTopic(topic string) error {
-	if topic == "" {
-		return fmt.Errorf("eventbus: feed topic must be non-empty")
-	}
-	if len(topic) > maxFeedTopicLen {
-		return fmt.Errorf("eventbus: feed topic exceeds %d bytes", maxFeedTopicLen)
-	}
-	tokens := strings.Split(topic, ".")
-	for _, tok := range tokens {
-		if tok == "" {
-			return fmt.Errorf("eventbus: feed topic %q has an empty segment", topic)
-		}
-		for _, r := range tok {
-			switch {
-			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
-				// allowed
-			default:
-				return fmt.Errorf("eventbus: feed topic %q contains disallowed character %q", topic, r)
-			}
-		}
 	}
 	return nil
 }
@@ -117,12 +82,14 @@ func feedSubject(environmentID, topic string) string {
 
 // PublishFeed publishes one stream-channel event durably to the
 // environment's feed topic on NOTIFY_FEED. topic must already be rendered
-// (concrete); it is re-validated here as defense in depth.
+// (concrete); it is re-validated here (via domain.ValidateFeedTopic) as
+// defense in depth — the delivery package's HandleStream already hard-gates
+// on the same rule before ever calling this.
 func (b *Bus) PublishFeed(environmentID, topic string, data []byte) error {
 	if err := validateEnvID(environmentID); err != nil {
 		return fmt.Errorf("eventbus: PublishFeed: %w", err)
 	}
-	if err := ValidateFeedTopic(topic); err != nil {
+	if err := domain.ValidateFeedTopic(topic); err != nil {
 		return fmt.Errorf("eventbus: PublishFeed: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -156,7 +123,7 @@ func (b *Bus) ConsumeFeed(ctx context.Context, environmentID, topic string, from
 	if err := validateEnvID(environmentID); err != nil {
 		return nil, fmt.Errorf("eventbus: ConsumeFeed: %w", err)
 	}
-	if err := ValidateFeedTopic(topic); err != nil {
+	if err := domain.ValidateFeedTopic(topic); err != nil {
 		return nil, fmt.Errorf("eventbus: ConsumeFeed: %w", err)
 	}
 
