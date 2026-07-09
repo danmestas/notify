@@ -420,20 +420,17 @@ func TestStream_ReplayAfterFullRestart(t *testing.T) {
 		}
 	}
 
-	// Poll the store until both sends have landed before tearing everything
-	// down, so the restart/replay assertion below is the only thing left to
-	// prove (not a race against send latency).
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		got, err := st.Messages().List(ctx, scope, "user_2", "stream")
-		if err != nil {
-			t.Fatalf("Messages().List: %v", err)
-		}
-		if len(got) >= 2 {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
+	// Prime the durable feed BEFORE tearing anything down: open an SSE
+	// connection against the ORIGINAL server (from=0) and read both frames.
+	// HandleStream only calls PublishFeed after the message is durably
+	// persisted (internal/delivery/stream.go), and this read replays
+	// straight off the durable NOTIFY_FEED stream — the same path the
+	// post-restart assertion below exercises — so seeing both frames here
+	// proves both sends are durably committed, not a race against send
+	// latency, before the bus/process-level restart happens.
+	priming := openFeedStream(t, srv.URL, authHeader, "topic=events&from=0")
+	priming.read(t, 2, 15*time.Second)
+	priming.close()
 
 	// Tear down the SSE client's server AND the Bus — simulating a full
 	// notify-process restart, not just a dropped HTTP connection.
@@ -457,10 +454,18 @@ func TestStream_ReplayAfterFullRestart(t *testing.T) {
 	t.Cleanup(stream.close)
 	frames := stream.read(t, 2, 15*time.Second)
 
-	m1 := decodeMessage(t, frames[0].data)
-	m2 := decodeMessage(t, frames[1].data)
-	if m1.Content != "#1" || m2.Content != "#2" {
-		t.Fatalf("replayed contents = %q, %q, want #1 then #2", m1.Content, m2.Content)
+	// The two triggers are dispatched to independent engine worker
+	// goroutines (engine.pollLoop spawns one goroutine per polled task), so
+	// their PublishFeed calls — and therefore the durable stream's sequence
+	// order — can land in either order, regardless of HTTP trigger order.
+	// Assert on the SET of replayed contents (both sends survived the
+	// restart), not which one arrives first.
+	gotContents := map[string]bool{}
+	for _, f := range frames {
+		gotContents[decodeMessage(t, f.data).Content] = true
+	}
+	if !gotContents["#1"] || !gotContents["#2"] {
+		t.Fatalf("replayed contents = %v, want both #1 and #2", gotContents)
 	}
 	if frames[0].id == "" || frames[1].id == "" || frames[0].id == frames[1].id {
 		t.Fatalf("replayed frame ids = %q, %q, want distinct non-empty stream seqs", frames[0].id, frames[1].id)
