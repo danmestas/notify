@@ -97,3 +97,218 @@ func TestWorkflowVersionRepo_Get_CrossTenant404s(t *testing.T) {
 		t.Fatalf("cross-env Get err = %v, want ErrNotFound", err)
 	}
 }
+
+// TestWorkflowVersions_RetentionCap proves Create prunes old rows down to
+// maxVersionsPerWorkflow inside the same transaction as the insert: after 55
+// Creates on one workflow, exactly 50 rows remain, the retained set is the
+// newest 50 (seqs 6..55), the latest (seq 55) is present, and seqs 1..5 are
+// gone.
+func TestWorkflowVersions_RetentionCap(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "org-1", EnvID: "env-a"}
+
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome",
+		Steps:             json.RawMessage(`[]`),
+	})
+	if err != nil {
+		t.Fatalf("Workflows().Create: %v", err)
+	}
+
+	repo := s.WorkflowVersions()
+	var last WorkflowVersion
+	for i := 0; i < 55; i++ {
+		last, err = repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome","steps":[]}`))
+		if err != nil {
+			t.Fatalf("Create #%d: %v", i+1, err)
+		}
+	}
+	if last.Seq != 55 {
+		t.Fatalf("last.Seq = %d, want 55", last.Seq)
+	}
+
+	versions, err := repo.ListByWorkflow(ctx, scope, wf.ID)
+	if err != nil {
+		t.Fatalf("ListByWorkflow: %v", err)
+	}
+	if len(versions) != 50 {
+		t.Fatalf("len(versions) = %d, want exactly 50", len(versions))
+	}
+	if versions[0].Seq != 6 {
+		t.Fatalf("oldest retained seq = %d, want 6", versions[0].Seq)
+	}
+	if versions[len(versions)-1].Seq != 55 {
+		t.Fatalf("newest retained seq = %d, want 55", versions[len(versions)-1].Seq)
+	}
+	seen := make(map[int]bool, len(versions))
+	for _, v := range versions {
+		seen[v.Seq] = true
+	}
+	for seq := 6; seq <= 55; seq++ {
+		if !seen[seq] {
+			t.Fatalf("seq %d missing from retained set", seq)
+		}
+	}
+	for seq := 1; seq <= 5; seq++ {
+		if seen[seq] {
+			t.Fatalf("seq %d still present, want pruned", seq)
+		}
+	}
+
+	// The compiled_dag_version pointer still targets the latest version even
+	// after older rows are pruned.
+	got, err := s.Workflows().GetByID(ctx, scope, wf.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.CompiledDAGVer != last.ID {
+		t.Fatalf("CompiledDAGVer = %q, want latest version id %q", got.CompiledDAGVer, last.ID)
+	}
+}
+
+// TestWorkflowVersions_RetentionCap_PerWorkflowIsolation proves the retention
+// cap is scoped per workflow_id: pruning one workflow's version stack down to
+// maxVersionsPerWorkflow must not touch another workflow's rows, even when
+// both are published back-to-back.
+func TestWorkflowVersions_RetentionCap_PerWorkflowIsolation(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "org-1", EnvID: "env-a"}
+
+	wfA, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "Welcome A",
+		TriggerIdentifier: "welcome-a",
+		Steps:             json.RawMessage(`[]`),
+	})
+	if err != nil {
+		t.Fatalf("Workflows().Create A: %v", err)
+	}
+	wfB, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "Welcome B",
+		TriggerIdentifier: "welcome-b",
+		Steps:             json.RawMessage(`[]`),
+	})
+	if err != nil {
+		t.Fatalf("Workflows().Create B: %v", err)
+	}
+
+	repo := s.WorkflowVersions()
+	for i := 0; i < 55; i++ {
+		if _, err := repo.Create(ctx, scope, wfA.ID, wfA.Name, wfA.TriggerIdentifier, json.RawMessage(`{"name":"a"}`)); err != nil {
+			t.Fatalf("Create A #%d: %v", i+1, err)
+		}
+	}
+	for i := 0; i < 55; i++ {
+		if _, err := repo.Create(ctx, scope, wfB.ID, wfB.Name, wfB.TriggerIdentifier, json.RawMessage(`{"name":"b"}`)); err != nil {
+			t.Fatalf("Create B #%d: %v", i+1, err)
+		}
+	}
+
+	versionsA, err := repo.ListByWorkflow(ctx, scope, wfA.ID)
+	if err != nil {
+		t.Fatalf("ListByWorkflow A: %v", err)
+	}
+	if len(versionsA) != 50 {
+		t.Fatalf("len(versionsA) = %d, want 50", len(versionsA))
+	}
+	if versionsA[0].Seq != 6 || versionsA[len(versionsA)-1].Seq != 55 {
+		t.Fatalf("versionsA range = [%d,%d], want [6,55]", versionsA[0].Seq, versionsA[len(versionsA)-1].Seq)
+	}
+
+	versionsB, err := repo.ListByWorkflow(ctx, scope, wfB.ID)
+	if err != nil {
+		t.Fatalf("ListByWorkflow B: %v", err)
+	}
+	if len(versionsB) != 50 {
+		t.Fatalf("len(versionsB) = %d, want 50", len(versionsB))
+	}
+	if versionsB[0].Seq != 6 || versionsB[len(versionsB)-1].Seq != 55 {
+		t.Fatalf("versionsB range = [%d,%d], want [6,55]", versionsB[0].Seq, versionsB[len(versionsB)-1].Seq)
+	}
+}
+
+// TestWorkflowVersions_UnderCap_NoPrune proves a workflow with fewer than
+// maxVersionsPerWorkflow versions is left untouched: 10 Creates leave all 10
+// rows in place, seq 1 included.
+func TestWorkflowVersions_UnderCap_NoPrune(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "org-1", EnvID: "env-a"}
+
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome",
+		Steps:             json.RawMessage(`[]`),
+	})
+	if err != nil {
+		t.Fatalf("Workflows().Create: %v", err)
+	}
+
+	repo := s.WorkflowVersions()
+	for i := 0; i < 10; i++ {
+		if _, err := repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome"}`)); err != nil {
+			t.Fatalf("Create #%d: %v", i+1, err)
+		}
+	}
+
+	versions, err := repo.ListByWorkflow(ctx, scope, wf.ID)
+	if err != nil {
+		t.Fatalf("ListByWorkflow: %v", err)
+	}
+	if len(versions) != 10 {
+		t.Fatalf("len(versions) = %d, want 10 (under cap, nothing pruned)", len(versions))
+	}
+	if versions[0].Seq != 1 {
+		t.Fatalf("oldest seq = %d, want 1", versions[0].Seq)
+	}
+}
+
+// TestWorkflowVersions_RollbackWithinRetainedWindow_StillResolves proves
+// Rollback is unaffected by the retention cap as long as its target version
+// id is still within the retained window: Get looks the row up by id, and
+// pruning never removes a version inside the newest maxVersionsPerWorkflow.
+func TestWorkflowVersions_RollbackWithinRetainedWindow_StillResolves(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "org-1", EnvID: "env-a"}
+
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome",
+		Steps:             json.RawMessage(`[]`),
+	})
+	if err != nil {
+		t.Fatalf("Workflows().Create: %v", err)
+	}
+
+	repo := s.WorkflowVersions()
+	var versions []WorkflowVersion
+	for i := 0; i < 55; i++ {
+		v, err := repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome"}`))
+		if err != nil {
+			t.Fatalf("Create #%d: %v", i+1, err)
+		}
+		versions = append(versions, v)
+	}
+
+	// versions[5] is seq 6, the oldest still-retained row after the 55th
+	// Create's prune (seqs 1..5 were dropped). It must still resolve.
+	retained := versions[5]
+	got, err := repo.Get(ctx, scope, retained.ID)
+	if err != nil {
+		t.Fatalf("Get retained version (seq %d): %v", retained.Seq, err)
+	}
+	if got.Seq != 6 {
+		t.Fatalf("got.Seq = %d, want 6", got.Seq)
+	}
+
+	// versions[0] is seq 1, pruned by the cap. Its id no longer resolves —
+	// this is the documented, acceptable retention-window limit on how far
+	// back a rollback can target.
+	pruned := versions[0]
+	if _, err := repo.Get(ctx, scope, pruned.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get pruned version err = %v, want ErrNotFound", err)
+	}
+}

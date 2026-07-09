@@ -13,8 +13,12 @@
 -- own, mirroring builder_checkpoints (migration 0025). ADD-only — existing
 -- rows are untouched.
 --
--- Retention: this table grows one row per publish with no pruning policy —
--- deliberately deferred; flagged as a follow-up.
+-- Retention: capped at 50 versions per workflow. workflow_version_repo.go's
+-- Create prunes the oldest rows beyond that cap, in the same transaction as
+-- the insert, every time it appends a new version. The newest row is always
+-- kept, so RepublishAll's latest-version boot read is unaffected; Rollback is
+-- bounded to targeting a version still within the retained window. This
+-- supersedes the table's original "grows unbounded, follow-up" note.
 
 CREATE TABLE workflow_versions (
     id                  TEXT PRIMARY KEY,

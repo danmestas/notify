@@ -39,6 +39,12 @@ type WorkflowVersionRepo interface {
 	// a scaffolded-and-abandoned marker (0001_init.sql) never set to a
 	// non-empty value; Create retires it by making it the live pointer to the
 	// latest published version instead of a second, independent marker.
+	//
+	// Retention: Create also caps the version stack at maxVersionsPerWorkflow
+	// (50) rows per workflow, pruning the oldest rows beyond that in the same
+	// transaction. The latest version is always retained, so LatestByWorkflow
+	// (RepublishAll's boot-time source of truth) is unaffected; Rollback is
+	// bounded to targeting a version still within that retained window.
 	Create(ctx context.Context, scope domain.Scope, workflowID, name, triggerIdentifier string, compiledDef json.RawMessage) (WorkflowVersion, error)
 	// Get loads a single version row by id, scope-checked via a
 	// workflow_id -> workflows join so a cross-tenant version id returns
@@ -56,6 +62,15 @@ type WorkflowVersionRepo interface {
 	// lookup here mirrors ListAll's deliberate non-scoping.
 	LatestByWorkflow(ctx context.Context, workflowID string) (WorkflowVersion, error)
 }
+
+// maxVersionsPerWorkflow caps how many workflow_versions rows Create retains
+// per workflow. 50 is plenty of rollback history — far more than an operator
+// will realistically page back through — while keeping the table's growth
+// bounded instead of the prior unbounded-leak behavior (migration 0027's
+// original "grows unbounded" note). The newest row is always kept, so
+// LatestByWorkflow (RepublishAll's boot-time source of truth) is never
+// affected by pruning.
+const maxVersionsPerWorkflow = 50
 
 type workflowVersionRepo struct {
 	w *sql.DB
@@ -111,6 +126,27 @@ func (repo *workflowVersionRepo) Create(ctx context.Context, scope domain.Scope,
 		ctx,
 		`UPDATE workflows SET compiled_dag_version = ? WHERE id = ? AND org_id = ? AND environment_id = ?`,
 		wv.ID, workflowID, scope.OrgID, scope.EnvID,
+	); err != nil {
+		return WorkflowVersion{}, err
+	}
+	// Retention cap: prune this workflow's older rows down to the newest
+	// maxVersionsPerWorkflow, in the same transaction as the insert above so
+	// the version stack is never observed mid-prune. seq is monotonic and
+	// gapless within a workflow (Create always allocates MAX(seq)+1, and
+	// pruning only ever removes a contiguous prefix), so MAX(seq)-cap is the
+	// exact cutoff: rows at or below it are deleted, leaving exactly
+	// min(total, cap) rows — never cap-1 or cap+1. When the workflow has at
+	// most cap rows, MAX(seq)-cap goes non-positive and the DELETE matches
+	// nothing (seq is always >= 1), so an under-cap workflow is untouched.
+	// This only ever prunes workflowID's own rows (scoped by the WHERE and by
+	// the subquery), never another workflow's, and it never touches the row
+	// just inserted above (the newest row's seq is always > MAX(seq)-cap).
+	if _, err := tx.ExecContext(
+		ctx,
+		`DELETE FROM workflow_versions
+		   WHERE workflow_id = ?
+		     AND seq <= (SELECT MAX(seq) FROM workflow_versions WHERE workflow_id = ?) - ?`,
+		workflowID, workflowID, maxVersionsPerWorkflow,
 	); err != nil {
 		return WorkflowVersion{}, err
 	}
