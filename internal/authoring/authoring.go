@@ -36,14 +36,26 @@ var stepTypes = steptype.Default()
 // distinct.
 const idempotencyDotPath = "idempotencyKey"
 
+// registerer is the subset of *engine.Engine authoring depends on to publish
+// a compiled DAG. Publish, Update, RepublishAll, and Rollback register
+// through it; tests substitute a fake implementation to assert exactly what
+// gets registered without booting a real dagnats sidecar (engine.Engine has
+// no RegisterWorkflow introspection API — a live sidecar can prove
+// RegisterWorkflow didn't error, but not what def it was called with).
+type registerer interface {
+	RegisterWorkflow(ctx context.Context, def engine.WorkflowDef) error
+}
+
 // Service persists workflows and registers their compiled DAGs with the engine.
 type Service struct {
 	store *store.Store
-	eng   *engine.Engine
+	eng   registerer
 }
 
-// New constructs a Service over the given store and engine.
-func New(s *store.Store, eng *engine.Engine) *Service {
+// New constructs a Service over the given store and engine. eng may be nil
+// for store-only wiring (e.g. the operator console in tests); passing a
+// non-nil *engine.Engine (or any other registerer) enables DAG registration.
+func New(s *store.Store, eng registerer) *Service {
 	return &Service{store: s, eng: eng}
 }
 
@@ -144,8 +156,10 @@ func (s *Service) List(ctx context.Context, scope domain.Scope) ([]domain.Workfl
 	return s.store.Workflows().List(ctx, scope)
 }
 
-// Publish loads the workflow by trigger identifier, compiles it, and registers
-// the DAG with the engine.
+// Publish loads the workflow by trigger identifier, compiles it, registers
+// the DAG with the engine, and — on successful registration — appends the
+// exact registered bytes to the workflow's version stack (store.WorkflowVersionRepo)
+// so a bad publish is a Rollback rather than a rebuild.
 func (s *Service) Publish(ctx context.Context, scope domain.Scope, triggerIdentifier string) error {
 	wf, err := s.store.Workflows().GetByTriggerIdentifier(ctx, scope, triggerIdentifier)
 	if err != nil {
@@ -157,13 +171,76 @@ func (s *Service) Publish(ctx context.Context, scope domain.Scope, triggerIdenti
 	}
 	// A nil engine means the service is wired for store-only operation
 	// (the operator console seeds and edits workflow rows without a live
-	// engine connection in tests). Registration is skipped; Create already
-	// persists rows without touching the engine, so this keeps the two
-	// paths consistent.
+	// engine connection in tests). Registration — and therefore versioning,
+	// which only captures what was actually registered — is skipped; Create
+	// already persists rows without touching the engine, so this keeps the
+	// two paths consistent.
 	if s.eng == nil {
 		return nil
 	}
-	return s.eng.RegisterWorkflow(ctx, def)
+	if err := s.eng.RegisterWorkflow(ctx, def); err != nil {
+		return err
+	}
+	return s.recordVersion(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, def)
+}
+
+// recordVersion marshals def (the exact bytes just registered with the
+// engine) and appends it to the workflow's version stack. Shared by Publish
+// and Rollback — rollback is itself a publish, so it too grows the
+// append-only stack rather than mutating history. name/triggerIdentifier are
+// the metadata stored alongside the def: Rollback passes the ROLLED-BACK
+// version's name/trigger (not the current live row's) so the audit row
+// describes the def it actually carries.
+func (s *Service) recordVersion(ctx context.Context, scope domain.Scope, workflowID, name, triggerIdentifier string, def engine.WorkflowDef) error {
+	defJSON, err := json.Marshal(def)
+	if err != nil {
+		return fmt.Errorf("authoring: marshal compiled def: %w", err)
+	}
+	if _, err := s.store.WorkflowVersions().Create(ctx, scope, workflowID, name, triggerIdentifier, defJSON); err != nil {
+		return fmt.Errorf("authoring: record version: %w", err)
+	}
+	return nil
+}
+
+// Rollback re-registers an earlier published version's compiled DAG
+// byte-for-byte (skipping Compile — the persisted compiled_def IS the def
+// that was registered) and appends a new version row copying it, keeping the
+// version stack append-only and auditable: a rollback is itself a publish.
+//
+// versionID is scope-checked via a workflow_id -> workflows join
+// (store.WorkflowVersionRepo.Get) and, additionally, checked against the
+// workflow resolved from triggerIdentifier — a version id that exists in this
+// scope but belongs to a different workflow returns store.ErrNotFound rather
+// than cross-wiring one workflow's DAG onto another's trigger.
+func (s *Service) Rollback(ctx context.Context, scope domain.Scope, triggerIdentifier, versionID string) error {
+	wf, err := s.store.Workflows().GetByTriggerIdentifier(ctx, scope, triggerIdentifier)
+	if err != nil {
+		return err
+	}
+	ver, err := s.store.WorkflowVersions().Get(ctx, scope, versionID)
+	if err != nil {
+		return err
+	}
+	if ver.WorkflowID != wf.ID {
+		return store.ErrNotFound
+	}
+	var def engine.WorkflowDef
+	if err := json.Unmarshal(ver.CompiledDef, &def); err != nil {
+		return fmt.Errorf("authoring: unmarshal version %s: %w", versionID, err)
+	}
+	// Mirrors Publish's nil-engine store-only wiring: no live engine means
+	// there is nothing to re-register.
+	if s.eng == nil {
+		return nil
+	}
+	if err := s.eng.RegisterWorkflow(ctx, def); err != nil {
+		return fmt.Errorf("authoring: rollback register: %w", err)
+	}
+	// Append the rolled-back def as the new latest version, tagged with the
+	// version it restored (ver.Name/TriggerIdentifier) so the audit row and
+	// RepublishAll's boot-time re-registration both track v1's def, not the
+	// current live row's.
+	return s.recordVersion(ctx, scope, wf.ID, ver.Name, ver.TriggerIdentifier, def)
 }
 
 // RepublishAll re-registers every persisted workflow with the engine. It is
@@ -171,13 +248,25 @@ func (s *Service) Publish(ctx context.Context, scope domain.Scope, triggerIdenti
 // memory and loses it on restart, so a workflow that was only registered at
 // create/update time silently stops firing (the engine runs it with
 // task_count=0) until the row is saved again. RepublishAll closes that gap by
-// compiling and re-registering each stored workflow on startup.
+// re-registering each stored workflow's last-published compiled DAG on startup.
 //
-// It is resilient by design: a workflow that fails to compile (e.g. a
-// malformed delay step persisted by an older version) is logged and skipped
-// rather than aborting boot. The count of successfully re-registered workflows
-// is returned for the caller to log. A nil engine (store-only wiring) makes
-// this a no-op returning 0.
+// workflow_versions is the durable source of truth: for a workflow that has
+// at least one version row, RepublishAll re-registers the LATEST version's
+// compiled_def BYTE-FOR-BYTE (json.Unmarshal → RegisterWorkflow, skipping
+// Compile — identical to Rollback). This makes rollback survive a restart (a
+// rollback appends a new latest version, so boot re-registers that) AND fixes
+// the original log-and-skip failure: a workflow whose live steps no longer
+// compile still boots from its last-good published version instead of being
+// silently dropped.
+//
+// Only a workflow with NO version rows (pre-migration rows, or a row created
+// but never published) falls back to Compile(wf.steps); its next publish
+// captures a version and moves it onto the durable path.
+//
+// It is resilient by design: a workflow that fails to unmarshal/compile or
+// register is logged and skipped rather than aborting boot. The count of
+// successfully re-registered workflows is returned for the caller to log. A
+// nil engine (store-only wiring) makes this a no-op returning 0.
 func (s *Service) RepublishAll(ctx context.Context) (int, error) {
 	wfs, err := s.store.Workflows().ListAll(ctx)
 	if err != nil {
@@ -188,11 +277,8 @@ func (s *Service) RepublishAll(ctx context.Context) (int, error) {
 	}
 	registered := 0
 	for _, wf := range wfs {
-		def, cErr := Compile(wf)
-		if cErr != nil {
-			slog.Default().Error("authoring: republish skip (compile failed)",
-				"workflow_id", wf.ID, "trigger_identifier", wf.TriggerIdentifier,
-				"org_id", wf.OrgID, "env_id", wf.EnvID, "err", cErr)
+		def, ok := s.bootDef(ctx, wf)
+		if !ok {
 			continue
 		}
 		if rErr := s.eng.RegisterWorkflow(ctx, def); rErr != nil {
@@ -204,6 +290,43 @@ func (s *Service) RepublishAll(ctx context.Context) (int, error) {
 		registered++
 	}
 	return registered, nil
+}
+
+// bootDef resolves the WorkflowDef RepublishAll should register for wf at
+// boot. It prefers the latest published version's compiled_def (durable
+// source of truth, unmarshaled byte-for-byte); only a workflow with no
+// version rows falls back to compiling its live steps. ok=false means the
+// workflow was logged-and-skipped (bad version bytes or an uncompilable
+// pre-version row) and must not be registered.
+func (s *Service) bootDef(ctx context.Context, wf domain.Workflow) (engine.WorkflowDef, bool) {
+	ver, vErr := s.store.WorkflowVersions().LatestByWorkflow(ctx, wf.ID)
+	switch {
+	case vErr == nil:
+		var def engine.WorkflowDef
+		if uErr := json.Unmarshal(ver.CompiledDef, &def); uErr != nil {
+			slog.Default().Error("authoring: republish skip (version unmarshal failed)",
+				"workflow_id", wf.ID, "trigger_identifier", wf.TriggerIdentifier,
+				"org_id", wf.OrgID, "env_id", wf.EnvID, "version_id", ver.ID, "err", uErr)
+			return engine.WorkflowDef{}, false
+		}
+		return def, true
+	case errors.Is(vErr, store.ErrNotFound):
+		// No published version yet (pre-migration / never-published): fall
+		// back to compiling the live steps, preserving prior behavior.
+		def, cErr := Compile(wf)
+		if cErr != nil {
+			slog.Default().Error("authoring: republish skip (compile failed)",
+				"workflow_id", wf.ID, "trigger_identifier", wf.TriggerIdentifier,
+				"org_id", wf.OrgID, "env_id", wf.EnvID, "err", cErr)
+			return engine.WorkflowDef{}, false
+		}
+		return def, true
+	default:
+		slog.Default().Error("authoring: republish skip (load version failed)",
+			"workflow_id", wf.ID, "trigger_identifier", wf.TriggerIdentifier,
+			"org_id", wf.OrgID, "env_id", wf.EnvID, "err", vErr)
+		return engine.WorkflowDef{}, false
+	}
 }
 
 // UpdateInput carries the mutable fields for an Update call.

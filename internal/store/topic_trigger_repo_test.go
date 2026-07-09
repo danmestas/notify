@@ -9,7 +9,7 @@ import (
 
 func TestMigrate_0016_AppliesTopicTriggers(t *testing.T) {
 	s := openTemp(t)
-	if n := migrationCount(t, s); n != 26 {
+	if n := migrationCount(t, s); n != 27 {
 		t.Fatalf("expected 26 recorded migrations, got %d", n)
 	}
 	var name string

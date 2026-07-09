@@ -93,7 +93,12 @@ type Workflow struct {
 	Origin            string          `db:"origin"`
 	Steps             json.RawMessage `db:"steps"`
 	PayloadSchema     json.RawMessage `db:"payload_schema"`
-	CompiledDAGVer    string          `db:"compiled_dag_version"`
+	// CompiledDAGVer is the id of the workflow's latest workflow_versions row
+	// (see store.WorkflowVersionRepo). It was originally a scaffolded marker
+	// (0001_init.sql) never set to a non-empty value; store.WorkflowVersionRepo.Create
+	// retired that dead state by repointing it at the latest published
+	// version instead of leaving a second, independent version marker.
+	CompiledDAGVer string `db:"compiled_dag_version"`
 	// Critical marks a no-opt-out workflow (e.g. password-reset): subscriber
 	// channel/workflow preferences cannot suppress delivery. Enforced at
 	// delivery time by preferences.Service.ChannelEnabled, not here.
