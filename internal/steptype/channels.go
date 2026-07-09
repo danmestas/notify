@@ -195,10 +195,37 @@ func streamTopicForbidden(r rune) bool {
 	return r == '*' || r == '>' || r == '$' || unicode.IsSpace(r)
 }
 
-// Validate rejects a missing topic and any authored topic containing a
-// character that can never be legal in a NATS-derived subject token (wildcard
-// markers, whitespace, or '$'), even inside a Handlebars template span — the
-// rendered value is re-validated at send time.
+// stripTemplateSpans removes every "{{...}}" Handlebars span from s, leaving
+// only the static (non-template) text. This lets Validate apply the
+// forbidden-character blacklist to authored static text without over-rejecting
+// legitimate whitespace or field-path characters inside a template expression
+// (e.g. "orders.{{ payload.region }}.created"). An unterminated "{{" (no
+// matching "}}") is left as-is so its contents still fall under the blacklist.
+func stripTemplateSpans(s string) string {
+	var b strings.Builder
+	for {
+		start := strings.Index(s, "{{")
+		if start < 0 {
+			b.WriteString(s)
+			break
+		}
+		end := strings.Index(s[start:], "}}")
+		if end < 0 {
+			b.WriteString(s)
+			break
+		}
+		b.WriteString(s[:start])
+		s = s[start+end+len("}}"):]
+	}
+	return b.String()
+}
+
+// Validate rejects a missing topic and any authored topic whose STATIC text
+// (i.e. with "{{...}}" Handlebars spans stripped) contains a character that
+// can never be legal in a NATS-derived subject token (wildcard markers,
+// whitespace, or '$'). Whitespace/'$' inside a template span is allowed here
+// since it is legitimate Handlebars syntax (e.g. "{{ payload.region }}"); the
+// rendered value is re-validated at send time by domain.ValidateFeedTopic.
 func (stream) Validate(cv json.RawMessage) error {
 	var m struct {
 		Topic string `json:"topic"`
@@ -211,7 +238,8 @@ func (stream) Validate(cv json.RawMessage) error {
 	if m.Topic == "" {
 		return errors.New("stream: topic is required")
 	}
-	if strings.IndexFunc(m.Topic, streamTopicForbidden) >= 0 {
+	static := stripTemplateSpans(m.Topic)
+	if strings.IndexFunc(static, streamTopicForbidden) >= 0 {
 		return errors.New("stream: topic contains an invalid character")
 	}
 	return nil

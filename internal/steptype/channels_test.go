@@ -161,6 +161,8 @@ func TestStream_Validate(t *testing.T) {
 	}{
 		{"plain dotted topic", "orders.created", false},
 		{"templated topic", "orders.{{payload.region}}.created", false},
+		{"templated topic with spaces in braces", "orders.{{ payload.region }}.created", false},
+		{"templated topic no spaces around field", "orders.{{payload.x}}", false},
 		{"empty topic", "", true},
 		{"wildcard star", "orders.*", true},
 		{"wildcard gt", "a.>", true},

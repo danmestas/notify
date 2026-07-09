@@ -293,6 +293,7 @@ func TestFeedStream_BadInputs(t *testing.T) {
 	}{
 		{"missing topic", true, "", http.StatusBadRequest},
 		{"wildcard topic", true, "topic=orders.*", http.StatusBadRequest},
+		{"bare wildcard topic", true, "topic=*", http.StatusBadRequest},
 		{"empty segment topic", true, "topic=a..b", http.StatusBadRequest},
 		{"malformed from", true, "topic=orders&from=not-a-seq-or-time", http.StatusBadRequest},
 		{"no scope", false, "topic=orders", http.StatusUnauthorized},

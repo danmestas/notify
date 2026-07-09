@@ -1,6 +1,6 @@
 [tools]
-actionlint = "latest"
-gofumpt = "latest"
-golangci-lint = "latest"
-hk = "latest"
-lefthook = "latest"
+actionlint = "1.7.12"
+gofumpt = "0.10.0"
+golangci-lint = "2.12.2"
+hk = "1.47.0"
+lefthook = "2.1.9"

@@ -31,7 +31,8 @@ jobs:
         run: go build ./...
       - name: build dagnats sidecar
         run: |
-          GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@main
+          # pinned to danmestas/dagnats@main as of 2026-07-09; bump periodically
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@d4916601bcea994bb575c4ca298abc56b534925c
           echo "DAGNATS_BIN=$RUNNER_TEMP/bin/dagnats" >> "$GITHUB_ENV"
       - name: test (race + coverage)
         run: go test -race -coverprofile=coverage.out ./...
