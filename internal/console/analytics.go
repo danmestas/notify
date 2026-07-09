@@ -14,12 +14,18 @@ import (
 // analytics.go renders GET /console/analytics — the Wave-4 analytics depth page:
 // all four KPI cards live (Messages Delivered, Failed Deliveries, Active Subscribers,
 // Avg Messages/Subscriber), a workflow filter pill, plus Delivery Trend, Delivery by
-// Channel, Workflow Runs Trend, and Active Subscribers Trend charts.
+// Channel, and Workflow Runs Trend charts.
 //
 // Backed by: DeliveriesByChannel (CountByChannelStatus), DeliveriesOverTime
 // (DeliveriesByDay), CountActiveSubscribers, and AverageMessagesPerSubscriber —
 // all now accepting the optional AnalyticsFilter for workflow_id scoping (GAP-AF-05,
 // GAP-AF-06).
+//
+// There used to be a fifth chart, "Active Subscribers Trend" — it plotted the
+// same per-day sent-volume series as Delivery Trend under a different label,
+// because there is no per-day distinct-subscriber query backing it. Removed
+// rather than relabeled: relabeling would have left two identical lines on
+// the page under different names, which is its own kind of dishonest.
 
 // analyticsRange is the closed set of time-window tokens the analytics page
 // accepts. The token is echoed back through the template so the range-tab
@@ -119,10 +125,6 @@ type analyticsChartsView struct {
 	FailedChart analyticsLineChart
 	// RunsTrendChart is the Workflow Runs Trend chart (total deliveries per day).
 	RunsTrendChart analyticsLineChart
-	// SubscribersTrendChart approximates Active Subscribers Trend using the sent
-	// delivery series (a true per-day distinct-subscriber bucketed aggregation is
-	// a separate, future aggregation; this is the best available proxy).
-	SubscribersTrendChart analyticsLineChart
 }
 
 // analyticsLineChart is an inline-SVG area/line series rendered from
@@ -307,19 +309,15 @@ func buildAnalyticsCharts(
 	failed := buildLineChart(dayLabels, failedPerDay)
 	bar := buildBarChart(channels, channelTotals)
 	runs := buildLineChart(dayLabels, totalPerDay)
-	// Active Subscribers Trend: proxy with sent-message-volume-per-day (best
-	// available without a bucketed distinct-subscriber aggregation).
-	subsTrend := buildLineChart(dayLabels, sentPerDay)
 
 	return analyticsChartsView{
-		Range:                 rang,
-		Channels:              channels,
-		ActiveChannels:        activeChannels,
-		TrendChart:            trend,
-		ByChannelChart:        bar,
-		FailedChart:           failed,
-		RunsTrendChart:        runs,
-		SubscribersTrendChart: subsTrend,
+		Range:          rang,
+		Channels:       channels,
+		ActiveChannels: activeChannels,
+		TrendChart:     trend,
+		ByChannelChart: bar,
+		FailedChart:    failed,
+		RunsTrendChart: runs,
 	}
 }
 

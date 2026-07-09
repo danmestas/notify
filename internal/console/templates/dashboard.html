@@ -26,7 +26,7 @@
       </div>
       <p class="kpi-card-value">
         {{$page.Cards.Sent.Total}}
-        {{if $page.Cards.Sent.DeltaPct}}<span class="kpi-delta {{if $page.Cards.Sent.DeltaUp}}is-up{{else}}is-down{{end}}">{{if $page.Cards.Sent.DeltaUp}}{{ uiIcon "arrow-up" }}{{else}}{{ uiIcon "arrow-down" }}{{end}}{{$page.Cards.Sent.DeltaPct}}</span>{{end}}
+        {{if $page.Cards.Sent.DeltaAvailable}}<span class="kpi-delta {{if $page.Cards.Sent.DeltaUp}}is-up{{else}}is-down{{end}}">{{if $page.Cards.Sent.DeltaUp}}{{ uiIcon "arrow-up" }}{{else}}{{ uiIcon "arrow-down" }}{{end}}{{$page.Cards.Sent.DeltaPct}}</span>{{end}}
       </p>
       <ul class="kpi-breakdown" role="list">
         {{range $page.Cards.Sent.Channels}}
@@ -61,7 +61,6 @@
       </div>
       <p class="kpi-card-value">{{$page.Cards.Agents.Total}}</p>
       <p class="kpi-card-sub">{{$page.Cards.Agents.Mesh}} mesh · {{$page.Cards.Agents.Bridge}} bridge</p>
-      <p class="kpi-card-note">{{if $page.Cards.Agents.AllResponsive}}<span class="kpi-dot channel-push" aria-hidden="true"></span>all responsive{{end}}</p>
     </article>
 
     {{/* Errors */}}
@@ -72,7 +71,7 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
         </span>
       </div>
-      <p class="kpi-card-value">{{$page.Cards.Errors.Count}} <span class="kpi-card-sub-inline">{{$page.Cards.Errors.DeadLettered}} dead-lettered</span></p>
+      <p class="kpi-card-value">{{$page.Cards.Errors.Count}}</p>
       <p class="kpi-card-note">
         {{if $page.Cards.Errors.DLQURL}}<a href="{{$page.Cards.Errors.DLQURL}}" target="_blank" rel="noopener" class="kpi-link-danger">Open DLQ in dagnats {{ uiIcon "arrow-up-right" }}</a>{{else}}<span class="kpi-link-danger">DLQ in dagnats</span>{{end}}
       </p>

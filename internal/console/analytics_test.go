@@ -12,7 +12,7 @@
 //	TestAnalytics_WorkflowFilter_IsolatesKPIs     — workflow_id scopes KPI fragment
 //	TestAnalytics_WorkflowFilter_IsolatesCharts   — workflow_id scopes charts fragment
 //	TestAnalytics_RunsTrendChart                   — Workflow Runs Trend chart present
-//	TestAnalytics_SubscribersTrendChart            — Active Subscribers Trend chart present
+//	TestAnalytics_NoSubscribersTrendChart          — Active Subscribers Trend chart removed (was a mislabeled proxy)
 //	TestAnalytics_EmptyStoreRendersZeroState       — empty store empty-states
 //	TestAnalytics_RangeTab24h                      — 24h range param echoed in fragment
 //	TestAnalytics_RangeTab30d                      — 30d range param echoed in fragment
@@ -263,9 +263,13 @@ func TestAnalytics_RunsTrendChart(t *testing.T) {
 	}
 }
 
-// TestAnalytics_SubscribersTrendChart verifies the Active Subscribers Trend chart
-// section is present in the charts fragment (Wave 4 addition).
-func TestAnalytics_SubscribersTrendChart(t *testing.T) {
+// TestAnalytics_NoSubscribersTrendChart proves the "Active Subscribers Trend"
+// chart is gone. It plotted the exact same per-day sent-volume series as the
+// Delivery Trend chart under a misleading name (an audit finding: notify has
+// no per-day distinct-subscriber query, so the chart was not measuring
+// subscribers at all). Removed rather than relabeled — relabeling would have
+// left two identical lines on the page.
+func TestAnalytics_NoSubscribersTrendChart(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)
 
@@ -274,8 +278,8 @@ func TestAnalytics_SubscribersTrendChart(t *testing.T) {
 		t.Fatalf("analytics-charts: %d", rr.Code)
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, "Active Subscribers Trend") {
-		t.Errorf("Active Subscribers Trend chart section missing from analytics-charts fragment")
+	if strings.Contains(body, "Active Subscribers Trend") {
+		t.Errorf("Active Subscribers Trend chart section still present in analytics-charts fragment")
 	}
 }
 

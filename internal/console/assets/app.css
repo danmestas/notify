@@ -720,7 +720,6 @@ input[type="checkbox"]:disabled { opacity: 0.5; cursor: not-allowed; }
   gap: var(--space-2);
 }
 .kpi-card-of { font-size: 0.95rem; font-weight: 400; color: var(--text-secondary); }
-.kpi-card-sub-inline { font-size: 0.8rem; font-weight: 400; color: var(--text-secondary); }
 .kpi-delta {
   font-size: 0.72rem;
   font-weight: 600;

@@ -238,6 +238,130 @@ func TestBuildSparkline_ZeroFillsAndScales(t *testing.T) {
 	}
 }
 
+// TestDashboard_SentTodayScopedToToday proves the "Sent today" KPI card
+// counts only deliveries whose created_at falls on today's UTC day —
+// a delivery seeded for yesterday must not inflate the headline number.
+func TestDashboard_SentTodayScopedToToday(t *testing.T) {
+	tc := newTestConsole(t)
+	now := time.Now().UTC()
+	yesterday := now.AddDate(0, 0, -1).Format(time.RFC3339Nano)
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "in_app", Status: "sent", CreatedAt: yesterday},
+		{Channel: "in_app", Status: "sent"}, // defaults to now => today
+	})
+
+	ctx := domain.ContextWithScope(testBackground(), tc.scope)
+	view, err := tc.c.buildDashboardView(ctx, tc.scope, now)
+	if err != nil {
+		t.Fatalf("buildDashboardView: %v", err)
+	}
+	if view.Cards.Sent.Total != 1 {
+		t.Errorf("Sent.Total = %d, want 1 (yesterday's delivery must not count)", view.Cards.Sent.Total)
+	}
+}
+
+// TestDashboard_SentDeltaAbsentWithoutPriorData proves the delta badge is
+// gated off (no fabricated percentage) when there is no prior-day sent
+// count to compare against — the zero-base case the audit flagged.
+func TestDashboard_SentDeltaAbsentWithoutPriorData(t *testing.T) {
+	tc := newTestConsole(t)
+	now := time.Now().UTC()
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "in_app", Status: "sent"}, // today only, no yesterday rows
+	})
+
+	ctx := domain.ContextWithScope(testBackground(), tc.scope)
+	view, err := tc.c.buildDashboardView(ctx, tc.scope, now)
+	if err != nil {
+		t.Fatalf("buildDashboardView: %v", err)
+	}
+	if view.Cards.Sent.DeltaAvailable {
+		t.Errorf("DeltaAvailable = true, want false (no prior-day data)")
+	}
+	if view.Cards.Sent.DeltaPct != "" {
+		t.Errorf("DeltaPct = %q, want empty when unavailable", view.Cards.Sent.DeltaPct)
+	}
+
+	cookie, _ := tc.login(t)
+	rr := tc.get(t, "/console/", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/: status = %d, want 200", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), `class="kpi-delta`) {
+		t.Errorf("dashboard rendered a delta badge with no prior-day data")
+	}
+}
+
+// TestDashboard_SentDeltaComputedFromPriorDay proves the delta badge, when
+// shown, is a REAL comparison against yesterday's sent count rather than a
+// hardcoded literal.
+func TestDashboard_SentDeltaComputedFromPriorDay(t *testing.T) {
+	tc := newTestConsole(t)
+	now := time.Now().UTC()
+	yesterday := now.AddDate(0, 0, -1).Format(time.RFC3339Nano)
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "in_app", Status: "sent", CreatedAt: yesterday},
+		{Channel: "in_app", Status: "sent", CreatedAt: yesterday},
+		{Channel: "in_app", Status: "sent"},
+		{Channel: "in_app", Status: "sent"},
+		{Channel: "in_app", Status: "sent"},
+		{Channel: "in_app", Status: "sent"},
+	})
+
+	ctx := domain.ContextWithScope(testBackground(), tc.scope)
+	view, err := tc.c.buildDashboardView(ctx, tc.scope, now)
+	if err != nil {
+		t.Fatalf("buildDashboardView: %v", err)
+	}
+	// today=4, yesterday=2 -> +100.0%, up.
+	if !view.Cards.Sent.DeltaAvailable {
+		t.Fatalf("DeltaAvailable = false, want true (prior-day data present)")
+	}
+	if !view.Cards.Sent.DeltaUp {
+		t.Errorf("DeltaUp = false, want true (today > yesterday)")
+	}
+	if view.Cards.Sent.DeltaPct != "100.0%" {
+		t.Errorf("DeltaPct = %q, want \"100.0%%\"", view.Cards.Sent.DeltaPct)
+	}
+
+	cookie, _ := tc.login(t)
+	rr := tc.get(t, "/console/", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `class="kpi-delta is-up">`) {
+		t.Errorf("dashboard missing the up delta badge")
+	}
+	if !strings.Contains(body, "100.0%") {
+		t.Errorf("dashboard delta badge missing the computed 100.0%% value")
+	}
+}
+
+// TestDashboard_NoFabricatedMetrics greps the rendered page for the three
+// fabricated values the audit found: the hardcoded "12.4%" delta, the
+// unconditional "all responsive" agent claim, and the "dead-lettered" count
+// (notify's Shape B webhooksout consumer has no DLQ — see
+// internal/webhooksout/consumer.go). None may ever appear again.
+func TestDashboard_NoFabricatedMetrics(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "in_app", Status: "sent"},
+		{Channel: "email", Status: "failed"},
+	})
+	cookie, _ := tc.login(t)
+	rr := tc.get(t, "/console/", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, fabricated := range []string{"12.4%", "all responsive", "dead-lettered"} {
+		if strings.Contains(body, fabricated) {
+			t.Errorf("dashboard still renders fabricated metric %q", fabricated)
+		}
+	}
+}
+
 func TestBuildSparkline_ChannelFilterAndEmpty(t *testing.T) {
 	now := time.Date(2026, 6, 12, 15, 0, 0, 0, time.UTC)
 	series := []domain.DeliveryDayCount{

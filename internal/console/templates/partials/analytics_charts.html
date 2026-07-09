@@ -2,12 +2,16 @@
   analytics-charts — the analytics page chart section. Binds an analyticsChartsView.
   The outer div carries the stable id the fragment endpoint patches.
 
-  Five charts (all inline SVG, no external charting library):
+  Four charts (all inline SVG, no external charting library):
     1. Delivery Trend — per-day sent count area/line chart
     2. Delivery by Channel — horizontal bar chart of totals per channel
     3. Failed by Day — per-day failed count line chart
     4. Workflow Runs Trend — total deliveries per day (all statuses, GAP-AF-06)
-    5. Active Subscribers Trend — proxy: sent-volume per day (GAP-AF-05)
+
+  There used to be a fifth "Active Subscribers Trend" chart (GAP-AF-05); it
+  plotted the same per-day sent-volume series as Delivery Trend under a
+  different label (no per-day distinct-subscriber query exists to back it
+  honestly) and was removed rather than relabeled.
 
   Channel toggle: each channel pill is a Datastar signal button. Clicking
   a channel name toggles it in/out of the analyticsChannels signal and
@@ -116,23 +120,6 @@
       <polyline fill="none" class="analytics-runs-line" points="{{.RunsTrendChart.Points}}"></polyline>
     </svg>
     <p class="analytics-chart-total">{{.RunsTrendChart.Total}} runs</p>
-    {{end}}
-  </section>
-
-  {{/* Active Subscribers Trend chart (Wave 4 — GAP-AF-05 proxy) */}}
-  <section class="card analytics-chart-card" aria-label="Active subscribers trend">
-    <h2 class="analytics-chart-title">Active Subscribers Trend</h2>
-    {{if .SubscribersTrendChart.Empty}}
-    <p class="console-empty-state-description">No subscriber activity in this period.</p>
-    {{else}}
-    <svg class="analytics-chart-svg analytics-chart-svg--subscribers" role="img"
-         viewBox="0 0 {{.SubscribersTrendChart.Width}} {{.SubscribersTrendChart.Height}}"
-         width="{{.SubscribersTrendChart.Width}}" height="{{.SubscribersTrendChart.Height}}"
-         style="min-height:{{.SubscribersTrendChart.Height}}px"
-         aria-label="{{.SubscribersTrendChart.Total}} messages to active subscribers over the selected period">
-      <polyline fill="none" class="analytics-subscribers-line" points="{{.SubscribersTrendChart.Points}}"></polyline>
-    </svg>
-    <p class="analytics-chart-total">{{.SubscribersTrendChart.Total}} messages</p>
     {{end}}
   </section>
 

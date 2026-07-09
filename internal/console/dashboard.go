@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -53,13 +54,17 @@ type channelStat struct {
 	Class   string // CSS modifier (channel-in_app …) for the colour dot
 }
 
-// sentCard: total sends + per-channel breakdown dots. DeltaPct/DeltaUp
-// are a labelled stub (no prior-window comparison query exists yet).
+// sentCard: today's total sends + per-channel breakdown dots, plus a
+// real delta against yesterday's sent count. DeltaAvailable gates the
+// template's delta badge: it is false (and DeltaPct/DeltaUp are zero
+// values) whenever today or yesterday has no sent deliveries, so the UI
+// never renders a percentage computed off a zero base.
 type sentCard struct {
-	Total    int
-	Channels []channelStat
-	DeltaPct string // e.g. "12.4%" — stubbed; no prior-window query yet
-	DeltaUp  bool
+	Total          int
+	Channels       []channelStat
+	DeltaPct       string // e.g. "8.3%" — empty unless DeltaAvailable
+	DeltaUp        bool
+	DeltaAvailable bool
 }
 
 // workflowsCard: active vs total workflow counts off authoring.List.
@@ -70,21 +75,23 @@ type workflowsCard struct {
 }
 
 // agentsCard: agent count split by runtime (mesh|bridge) off agents.List.
-// AllResponsive is a stub (no live agent-health probe wired).
+// There is no live agent-health/heartbeat signal in the Agent record (see
+// internal/agents/domain.Agent), so this card intentionally makes no
+// responsiveness claim — only the real counts it can back with a query.
 type agentsCard struct {
-	Total         int
-	Mesh          int
-	Bridge        int
-	AllResponsive bool
+	Total  int
+	Mesh   int
+	Bridge int
 }
 
-// errorsCard: failed-delivery count over the analytics window.
-// DeadLettered is a stub (no DLQ count query wired); the deep-link to the
-// dagnats DLQ uses DLQURL when DagnatsConsoleURL is set.
+// errorsCard: failed-delivery count over the analytics window. The deep-link
+// to the dagnats DLQ uses DLQURL when DagnatsConsoleURL is set. notify's
+// webhooksout consumer deliberately ships no dead-letter queue (MaxDeliver:5
+// is a crash backstop, not a DLQ — see internal/webhooksout/consumer.go), so
+// this card does not claim a dead-lettered count.
 type errorsCard struct {
-	Count        int
-	DeadLettered int
-	DLQURL       string
+	Count  int
+	DLQURL string
 }
 
 // deliveriesChart is the "Deliveries per channel" card: one polyline per
@@ -261,32 +268,64 @@ const dashRecentLimit = 6
 // buildDashboardView assembles the full "Delivery health" composition for
 // scope: the four KPI cards, the per-channel chart, and the recent
 // activity panel. Each sub-build degrades independently — a card with no
-// backing query renders its structure with zeros and a labelled stub
-// rather than failing the page. Stubs (no backing query yet): the
-// "Sent today" delta %, agent responsiveness, and the dead-lettered count.
+// backing query renders its structure with zeros rather than failing the
+// page. Every value shown is backed by a real query; a card that cannot be
+// backed honestly (agent responsiveness, dead-lettered count) omits the
+// claim entirely instead of showing a placeholder.
 func (c *Console) buildDashboardView(ctx context.Context, scope domain.Scope, now time.Time) (dashboardView, error) {
 	byChannel, err := c.deps.Analytics.DeliveriesByChannel(ctx, scope, store.AnalyticsFilter{})
 	if err != nil {
 		return dashboardView{}, fmt.Errorf("deliveries by channel: %w", err)
 	}
 
-	// Sent + Errors cards off the by-channel/status matrix.
-	// "Sent today" counts only status=sent so the headline matches the label.
-	// Failures/bounces/errors are tallied separately for the errors card only.
-	sent := sentCard{DeltaPct: "12.4%", DeltaUp: true}
+	// Errors card: failed/error/bounced count over the full analytics window
+	// (unchanged from before — the DeadLettered sub-claim is what was removed).
 	errCount := 0
-	for ch, statuses := range byChannel {
-		chSent := 0
+	for _, statuses := range byChannel {
 		for status, n := range statuses {
-			if status == "sent" {
-				chSent += n
-				sent.Total += n
-			}
 			switch status {
 			case "failed", "error", "bounced":
 				errCount += n
 			}
 		}
+	}
+
+	// Per-channel/day series backs both the "Sent today" card and the
+	// deliveries chart below, so fetch it once up front.
+	series, err := c.deps.Analytics.DeliveriesOverTime(ctx, scope, store.AnalyticsFilter{})
+	if err != nil {
+		return dashboardView{}, fmt.Errorf("deliveries over time: %w", err)
+	}
+
+	// "Sent today" is scoped to today's UTC day bucket (previously this
+	// summed the ALL-TIME by-channel/status matrix, which made the "today"
+	// label a lie). todayByChannel mirrors the shape of byChannel but
+	// restricted to rows whose day == todayKey; yesterdaySent backs the
+	// delta comparison below.
+	todayKey := now.Format("2006-01-02")
+	yesterdayKey := now.AddDate(0, 0, -1).Format("2006-01-02")
+	todayByChannel := make(map[string]map[string]int)
+	yesterdaySent := 0
+	for _, row := range series {
+		switch row.Day {
+		case todayKey:
+			byStatus := todayByChannel[row.Channel]
+			if byStatus == nil {
+				byStatus = make(map[string]int)
+				todayByChannel[row.Channel] = byStatus
+			}
+			byStatus[row.Status] += row.Count
+		case yesterdayKey:
+			if row.Status == "sent" {
+				yesterdaySent += row.Count
+			}
+		}
+	}
+
+	sent := sentCard{}
+	for ch, statuses := range todayByChannel {
+		chSent := statuses["sent"]
+		sent.Total += chSent
 		// Only the named channels get a breakdown dot; count reflects sent only.
 		for _, named := range dashChannels {
 			if ch == named {
@@ -300,6 +339,16 @@ func (c *Console) buildDashboardView(ctx context.Context, scope domain.Scope, no
 	sort.SliceStable(sent.Channels, func(i, j int) bool {
 		return channelOrder(sent.Channels[i].Channel) < channelOrder(sent.Channels[j].Channel)
 	})
+
+	// Delta vs yesterday: a real comparison, gated to avoid a percentage off
+	// a zero base. Both today's and yesterday's sent counts must be > 0.
+	if sent.Total > 0 && yesterdaySent > 0 {
+		diff := sent.Total - yesterdaySent
+		pct := math.Abs(float64(diff)) / float64(yesterdaySent) * 100
+		sent.DeltaPct = fmt.Sprintf("%.1f%%", pct)
+		sent.DeltaUp = diff >= 0
+		sent.DeltaAvailable = true
+	}
 
 	// Workflows card off authoring.List.
 	wfCard := workflowsCard{}
@@ -316,7 +365,7 @@ func (c *Console) buildDashboardView(ctx context.Context, scope domain.Scope, no
 	wfCard.Inactive = wfCard.Total - wfCard.Active
 
 	// Agents card off agents.List, split by runtime.
-	agCard := agentsCard{AllResponsive: true}
+	agCard := agentsCard{}
 	if c.deps.Agents != nil {
 		if agents, agErr := c.deps.Agents.Agents().List(ctx, scope); agErr == nil {
 			agCard.Total = len(agents)
@@ -333,16 +382,13 @@ func (c *Console) buildDashboardView(ctx context.Context, scope domain.Scope, no
 		}
 	}
 
-	errCard := errorsCard{Count: errCount, DeadLettered: 0}
+	errCard := errorsCard{Count: errCount}
 	if c.deps.DagnatsConsoleURL != "" {
 		errCard.DLQURL = c.deps.DagnatsConsoleURL + "/console/dlq"
 	}
 
-	// Per-channel chart off the 7-day time series.
-	series, err := c.deps.Analytics.DeliveriesOverTime(ctx, scope, store.AnalyticsFilter{})
-	if err != nil {
-		return dashboardView{}, fmt.Errorf("deliveries over time: %w", err)
-	}
+	// Per-channel chart off the 7-day time series (series was already
+	// fetched above to scope the "Sent today" card).
 	chart := buildDeliveriesChart(series, now)
 
 	// Recent activity panel — reuse the activity feed builder, capped.
