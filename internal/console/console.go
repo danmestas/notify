@@ -93,6 +93,11 @@ type Deps struct {
 	// queries the dashboard renders. The caller picks the backend
 	// (SQLite or DuckDB) exactly as it does for httpapi.
 	Analytics *analytics.Service
+	// WorkflowVersions provides the version-history / rollback panel on the
+	// workflow detail page. Nil is LEGAL (unlike most repo deps here): it
+	// hides the panel entirely rather than panicking in New, so consumers
+	// that don't need rollback (e.g. older test wiring) are unaffected.
+	WorkflowVersions store.WorkflowVersionRepo
 	// MasterKey is the 32-byte AES-256-GCM key the session cookie is
 	// sealed with — the same master key identity and connectivity use.
 	MasterKey []byte
@@ -352,6 +357,7 @@ func New(deps Deps) *Console {
 //	GET  /console/workflows/{slug}                        workflow detail page (read-only)
 //	GET  /console/workflows/{slug}/test                   workflow test/trigger page (W2-A5)
 //	POST /console/api/workflows/{slug}/test               fire a test trigger (W2-A5)
+//	POST /console/api/workflows/{slug}/rollback           roll back to an earlier published version
 //	GET  /console/workflows/{slug}/activity               workflow activity tab (W2-A6)
 //	GET  /console/api/fragments/workflow-activity/{slug}  activity tbody fragment (W2-A6)
 //	GET  /console/analytics                               analytics page
@@ -364,6 +370,7 @@ func New(deps Deps) *Console {
 //	GET  /console/ , /console                           dashboard
 //	POST /console/logout                                clear session (CSRF)
 //	GET  /console/api/fragments/dashboard-kpis          KPI fragment (PatchElements SSE)
+//	POST /console/api/workflows/{slug}/rollback         roll back to an earlier published version
 //	GET  /console/activity                              activity feed page (W1-6)
 //	GET  /console/api/fragments/activity-list           paginated feed fragment (PatchElements SSE)
 //	GET  /console/api/fragments/activity-detail         per-notification detail panel (PatchElements SSE)
@@ -428,6 +435,9 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/api/workflows/{slug}/save", c.handleWorkflowSave)
 		pr.Post("/console/api/workflows/{slug}/delete", c.handleWorkflowDelete)
 		pr.Post("/console/api/workflows/{slug}/activate", c.handleWorkflowActivate)
+		// Version history / rollback panel: re-registers an earlier published
+		// version's compiled DAG byte-for-byte (authoring.Service.Rollback).
+		pr.Post("/console/api/workflows/{slug}/rollback", c.handleWorkflowRollback)
 		pr.Post("/console/api/workflows/{slug}/steps", c.handleWorkflowStepAdd)
 		pr.Post("/console/api/workflows/{slug}/steps/reorder", c.handleWorkflowStepReorder)
 		pr.Post("/console/api/workflows/{slug}/steps/{stepId}/delete", c.handleWorkflowStepDelete)

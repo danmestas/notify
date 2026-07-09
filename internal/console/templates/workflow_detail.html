@@ -112,6 +112,13 @@
           <label class="form-label" for="wf-payload-schema">Payload schema (JSON)</label>
           <textarea class="console-input" id="wf-payload-schema" name="payload_schema" rows="4">{{$page.PayloadSchemaJSON}}</textarea>
         </div>
+        <div class="form-row">
+          <label class="form-label" for="wf-critical">
+            <input type="checkbox" id="wf-critical" name="critical" value="on"{{if $page.Critical}} checked{{end}}>
+            Critical
+          </label>
+          <span class="form-hint">Transactional — bypasses subscriber channel mutes / preferences.</span>
+        </div>
         <button type="submit" class="btn btn-primary">Save</button>
       </form>
 
@@ -145,6 +152,10 @@
           <dt>Status</dt>
           <dd>{{if $page.Active}}<span class="chip chip-success">active</span>{{else}}<span class="chip chip-warning">inactive</span>{{end}}</dd>
         </div>
+        <div class="wf-meta-row">
+          <dt>Critical</dt>
+          <dd>{{if $page.Critical}}<span class="chip chip-warning">critical</span>{{else}}—{{end}}</dd>
+        </div>
       </dl>
       {{if $page.PayloadSchemaJSON}}
       <div class="wf-payload-schema">
@@ -164,6 +175,49 @@
       <p class="console-lede">Select a step to edit.</p>
     </div>
   </section>
+
+  {{/* Version history / rollback panel (Wave 2). Versions render newest-first;
+       the newest is "current" (no rollback control). Rolling back re-registers
+       an earlier published version's compiled DAG byte-for-byte
+       (authoring.Service.Rollback) via a two-step inline confirm, matching
+       the delete confirm's ?confirmDelete= idiom. */}}
+  {{if $page.VersionsAvailable}}
+  <section class="console-card" aria-labelledby="wf-versions-heading" id="wf-version-history">
+    <h2 id="wf-versions-heading" class="console-card-title">Version history</h2>
+    <details open>
+      <summary class="wf-step-controls-summary">{{len $page.Versions}} version(s)</summary>
+      {{if $page.Versions}}
+      <ol class="wf-step-list" role="list">
+        {{range $v := $page.Versions}}
+        <li class="wf-step-item">
+          <header class="wf-step-header">
+            <span class="wf-step-id"><code>v{{$v.Seq}}</code></span>
+            <span class="wf-step-name">published {{$v.RelTime}}</span>
+            {{if $v.Current}}
+            <span class="chip chip-success">current</span>
+            {{else if not $page.ReadOnly}}
+              {{if eq $page.ConfirmRollback $v.ID}}
+              <span class="console-confirm-label">Roll back to v{{$v.Seq}}?</span>
+              <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}">Cancel</a>
+              <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/rollback" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <input type="hidden" name="versionId" value="{{$v.ID}}">
+                <button type="submit" class="btn btn-danger">Confirm roll back</button>
+              </form>
+              {{else}}
+              <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}?confirmRollback={{$v.ID}}">Roll back</a>
+              {{end}}
+            {{end}}
+          </header>
+        </li>
+        {{end}}
+      </ol>
+      {{else}}
+      <p class="console-lede">No versions published yet.</p>
+      {{end}}
+    </details>
+  </section>
+  {{end}}
 
   {{/* Refine with AI — opens the docked-copilot builder view seeded with this
        workflow (?slug=), where the operator chats to modify it and Keep writes

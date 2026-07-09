@@ -2572,3 +2572,357 @@ func TestWorkflowStepSave_BlankRowBetweenFilledSkipped(t *testing.T) {
 		t.Errorf("filled rows wrong: %+v", groups[0].Conditions)
 	}
 }
+
+// ---- Feature A: Critical checkbox ----
+
+func TestWorkflowSave_CriticalOn(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/save", url.Values{
+		"csrf_token": {csrf},
+		"name":       {"My WF"},
+		"critical":   {"on"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("save critical=on: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	wf, err := tc.deps.Authoring.GetBySlug(context.Background(), tc.scope, "my-wf")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	if !wf.Critical {
+		t.Errorf("Critical = false after saving critical=on, want true")
+	}
+}
+
+func TestWorkflowSave_CriticalOff(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, csrf := tc.login(t)
+
+	// First turn it on.
+	tc.postForm(t, "/console/api/workflows/my-wf/save", url.Values{
+		"csrf_token": {csrf},
+		"name":       {"My WF"},
+		"critical":   {"on"},
+	}, cookie)
+
+	// Save again without the checkbox — should turn it back off.
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/save", url.Values{
+		"csrf_token": {csrf},
+		"name":       {"My WF"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("save critical off: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	wf, err := tc.deps.Authoring.GetBySlug(context.Background(), tc.scope, "my-wf")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	if wf.Critical {
+		t.Errorf("Critical = true after saving without the checkbox, want false")
+	}
+}
+
+func TestWorkflowDetail_CriticalCheckboxChecked(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, csrf := tc.login(t)
+
+	// Turn critical on first.
+	tc.postForm(t, "/console/api/workflows/my-wf/save", url.Values{
+		"csrf_token": {csrf},
+		"name":       {"My WF"},
+		"critical":   {"on"},
+	}, cookie)
+
+	rr := tc.get(t, "/console/workflows/my-wf", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET detail: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `id="wf-critical"`) {
+		t.Errorf("detail page missing id=\"wf-critical\" checkbox")
+	}
+	if !strings.Contains(body, "checked") {
+		t.Errorf("detail page checkbox missing 'checked' for a critical workflow")
+	}
+}
+
+// TestWorkflowEditor_StepSavePreservesCritical proves the reset-fix: setting
+// critical=true via Save, then editing a step through a DIFFERENT mutation
+// handler (step save), must not silently reset Critical back to false. Every
+// authoring.Update caller must carry forward the loaded wf.Critical.
+func TestWorkflowEditor_StepSavePreservesCritical(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{}`)},
+	})
+	cookie, csrf := tc.login(t)
+
+	// Set critical=true.
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/save", url.Values{
+		"csrf_token": {csrf},
+		"name":       {"My WF"},
+		"critical":   {"on"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("save critical=on: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	// Edit an unrelated step via the step-save handler (no critical field).
+	rr2 := tc.postForm(t, "/console/api/workflows/my-wf/steps/in_app-1/save", url.Values{
+		"csrf_token": {csrf},
+		"body":       {"updated body"},
+	}, cookie)
+	if rr2.Code != http.StatusSeeOther {
+		t.Fatalf("step save: status = %d, want 303 (body: %s)", rr2.Code, rr2.Body.String())
+	}
+
+	wf, err := tc.deps.Authoring.GetBySlug(context.Background(), tc.scope, "my-wf")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	if !wf.Critical {
+		t.Errorf("Critical = false after step save, want true (reset-fix regression)")
+	}
+}
+
+// ---- Feature B: version history / rollback ----
+
+func TestWorkflowDetail_VersionsNewestIsCurrent(t *testing.T) {
+	tc := newTestConsole(t)
+	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
+	ctx := context.Background()
+	for i := 1; i <= 3; i++ {
+		if _, err := tc.st.WorkflowVersions().Create(ctx, tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier,
+			json.RawMessage(`{"v":`+strconv.Itoa(i)+`}`)); err != nil {
+			t.Fatalf("seed version %d: %v", i, err)
+		}
+	}
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/my-wf", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET detail: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "v3") {
+		t.Errorf("detail page missing newest version v3")
+	}
+	// Newest (v3) is current: no rollback link for it, but "current" chip present.
+	v3Idx := strings.Index(body, "v3")
+	confirmIdx := strings.Index(body, "?confirmRollback=")
+	if v3Idx == -1 {
+		t.Fatalf("v3 not found")
+	}
+	if !strings.Contains(body, "chip-success") {
+		t.Errorf("detail page missing current-version chip-success")
+	}
+	if confirmIdx == -1 {
+		t.Errorf("detail page missing rollback links for older versions")
+	}
+}
+
+func TestWorkflowDetail_VersionsEmptyState(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/my-wf", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET detail: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Version history") {
+		t.Errorf("detail page missing 'Version history' section")
+	}
+	if !strings.Contains(body, "No versions") {
+		t.Errorf("detail page missing empty-state copy for zero versions")
+	}
+}
+
+func TestWorkflowDetail_ConfirmRollbackShowsForm(t *testing.T) {
+	tc := newTestConsole(t)
+	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
+	ctx := context.Background()
+	v1, err := tc.st.WorkflowVersions().Create(ctx, tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`))
+	if err != nil {
+		t.Fatalf("seed version: %v", err)
+	}
+	if _, err := tc.st.WorkflowVersions().Create(ctx, tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":2}`)); err != nil {
+		t.Fatalf("seed version 2: %v", err)
+	}
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/my-wf?confirmRollback="+v1.ID, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET confirm rollback: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `name="versionId" value="`+v1.ID+`"`) {
+		t.Errorf("confirm rollback form missing hidden versionId input for %s", v1.ID)
+	}
+	if !strings.Contains(body, "Confirm roll back") {
+		t.Errorf("confirm rollback form missing 'Confirm roll back' button")
+	}
+}
+
+func TestWorkflowRollback_NoCSRF403(t *testing.T) {
+	tc := newTestConsole(t)
+	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
+	v1, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`))
+	if err != nil {
+		t.Fatalf("seed version: %v", err)
+	}
+	cookie, _ := tc.login(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/console/api/workflows/my-wf/rollback",
+		strings.NewReader(url.Values{"versionId": {v1.ID}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	tc.h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("rollback without csrf_token: status = %d, want 403", rr.Code)
+	}
+}
+
+func TestWorkflowRollback_BogusVersionID404s(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/rollback", url.Values{
+		"csrf_token": {csrf},
+		"versionId":  {"bogus-version-id"},
+	}, cookie)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("rollback with bogus versionId: status = %d, want 404 (body: %s)", rr.Code, rr.Body.String())
+	}
+}
+
+func TestWorkflowRollback_CrossScopeVersionID404s(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	altScope := tc.altScope(t)
+	otherWF, err := tc.deps.Authoring.Create(context.Background(), altScope, authoring.WorkflowInput{
+		Name:              "Alt WF",
+		TriggerIdentifier: "alt-wf",
+		Steps:             []domain.Step{{StepID: "s1", Type: "in_app", ControlValues: json.RawMessage(`{}`)}},
+	})
+	if err != nil {
+		t.Fatalf("seed alt-scope workflow: %v", err)
+	}
+	altVersion, err := tc.st.WorkflowVersions().Create(context.Background(), altScope, otherWF.ID, otherWF.Name, otherWF.TriggerIdentifier, json.RawMessage(`{"v":1}`))
+	if err != nil {
+		t.Fatalf("seed alt-scope version: %v", err)
+	}
+	cookie, csrf := tc.login(t)
+
+	// altVersion belongs to a workflow in a different scope entirely — Get itself
+	// scope-checks and returns ErrNotFound before the cross-workflow check runs.
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/rollback", url.Values{
+		"csrf_token": {csrf},
+		"versionId":  {altVersion.ID},
+	}, cookie)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("rollback with cross-scope versionId: status = %d, want 404 (body: %s)", rr.Code, rr.Body.String())
+	}
+}
+
+// TestWorkflowRollback_CrossWorkflowSameScope404s proves the same-scope,
+// different-workflow case: a versionId that resolves within this scope but
+// belongs to a DIFFERENT workflow than the one named in the URL must still
+// 404, not cross-wire one workflow's DAG onto another's trigger.
+func TestWorkflowRollback_CrossWorkflowSameScope404s(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	otherWF := tc.seedWorkflowAndReturn(t, "Other WF", "other-wf")
+	otherVersion, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, otherWF.ID, otherWF.Name, otherWF.TriggerIdentifier, json.RawMessage(`{"v":1}`))
+	if err != nil {
+		t.Fatalf("seed other-workflow version: %v", err)
+	}
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/rollback", url.Values{
+		"csrf_token": {csrf},
+		"versionId":  {otherVersion.ID},
+	}, cookie)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("rollback targeting another workflow's version: status = %d, want 404 (body: %s)", rr.Code, rr.Body.String())
+	}
+}
+
+// TestWorkflowRollback_HappyPathRedirects proves the success path: with the
+// nil-engine test wiring, authoring.Service.Rollback returns before
+// recordVersion runs (see authoring.go Rollback: "no live engine means there
+// is nothing to re-register"), so this only asserts the 303 redirect back to
+// the editor and that no error is surfaced — NOT that a new version row
+// appears (it does not, under nil-engine wiring).
+func TestWorkflowRollback_HappyPathRedirects(t *testing.T) {
+	tc := newTestConsole(t)
+	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
+	v1, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`))
+	if err != nil {
+		t.Fatalf("seed version: %v", err)
+	}
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/rollback", url.Values{
+		"csrf_token": {csrf},
+		"versionId":  {v1.ID},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("rollback happy path: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Location"); got != "/console/workflows/my-wf" {
+		t.Errorf("Location = %q, want /console/workflows/my-wf", got)
+	}
+}
+
+func TestWorkflowRollback_ReadOnlyBlocked(t *testing.T) {
+	tc := newTestConsoleReadOnly(t)
+	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
+	v1, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`))
+	if err != nil {
+		t.Fatalf("seed version: %v", err)
+	}
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/my-wf/rollback", url.Values{
+		"csrf_token": {csrf},
+		"versionId":  {v1.ID},
+	}, cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("ReadOnly rollback: status = %d, want 403", rr.Code)
+	}
+}
+
+func TestWorkflowDetail_ReadOnlyNoRollbackButtons(t *testing.T) {
+	tc := newTestConsoleReadOnly(t)
+	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
+	if _, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`)); err != nil {
+		t.Fatalf("seed version: %v", err)
+	}
+	if _, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":2}`)); err != nil {
+		t.Fatalf("seed version 2: %v", err)
+	}
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/my-wf", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET detail: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "?confirmRollback=") {
+		t.Errorf("ReadOnly detail page has rollback links, want none")
+	}
+	if strings.Contains(body, "Roll back") {
+		t.Errorf("ReadOnly detail page has a Roll back button, want none")
+	}
+}

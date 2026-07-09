@@ -105,10 +105,23 @@ func (c *Console) keepPersist(r *http.Request, scope domain.Scope, sess store.Bu
 		if target == "" {
 			return "", "This refine session has no target workflow."
 		}
+		// Load the current row to preserve its Critical flag: Update writes
+		// Critical unconditionally, and this path has no form field for it
+		// (unlike handleWorkflowSave), so omitting this would silently reset
+		// Critical to false on every AI refine keep.
+		existing, err := c.deps.Authoring.GetBySlug(r.Context(), scope, target)
+		if err != nil {
+			if isNotFound(err) {
+				return "", "The target workflow no longer exists."
+			}
+			c.deps.Logger.Error("console: ai keep lookup", "err", err)
+			return "", "Saving the changes failed."
+		}
 		if _, err := c.deps.Authoring.Update(r.Context(), scope, target, authoring.UpdateInput{
 			Name:          draft.Name,
 			Steps:         draft.Steps,
 			PayloadSchema: draft.PayloadSchema,
+			Critical:      existing.Critical,
 		}); err != nil {
 			var compileErr *authoring.ErrCompileFailure
 			if errors.As(err, &compileErr) {

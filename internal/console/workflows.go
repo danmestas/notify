@@ -161,6 +161,32 @@ type workflowEditorView struct {
 	// Refine-with-AI sidebar to help users get started. Each string is a
 	// complete example prompt; clicking a card prefills the prompt textarea.
 	AIBuilderSuggestions []string
+	// Critical marks a no-opt-out workflow (mirrors domain.Workflow.Critical):
+	// subscriber channel/workflow preferences cannot suppress delivery.
+	Critical bool
+	// Versions are the workflow's published version history, newest first,
+	// capped at the newest 20. Empty when Deps.WorkflowVersions is nil or the
+	// workflow has never been published.
+	Versions []workflowVersionRow
+	// VersionsAvailable gates the version-history panel: true when
+	// Deps.WorkflowVersions is wired (nil is legal — it hides the panel
+	// rather than 500ing).
+	VersionsAvailable bool
+	// ConfirmRollback names the version id awaiting inline rollback confirm
+	// (?confirmRollback=<id>), mirroring ConfirmDelete's two-step pattern.
+	ConfirmRollback string
+}
+
+// workflowVersionRow is one row in the version-history panel.
+type workflowVersionRow struct {
+	ID string
+	// Seq is the version's sequence number ("v{{Seq}}").
+	Seq int
+	// RelTime is the relativeTime-formatted publish timestamp.
+	RelTime string
+	// Current marks the newest (highest-seq) version — it renders a chip
+	// instead of a rollback link.
+	Current bool
 }
 
 // workflowStepEditorStep carries one step's decoded config for the
@@ -713,6 +739,8 @@ func (c *Console) serveWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 
 	schemaJSON := prettyJSON(wf.PayloadSchema)
 
+	versionRows, versionsAvailable := c.buildWorkflowVersionRows(r.Context(), scope, slug, wf.ID)
+
 	statusLabel := "inactive"
 	if wf.Active {
 		statusLabel = "active"
@@ -745,8 +773,43 @@ func (c *Console) serveWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 		StepCatalog:          c.stepTypes.Catalog(),
 		AIConfigured:         c.aiBuilder != nil,
 		AIBuilderSuggestions: aiBuilderRefineSuggestions,
+		Critical:             wf.Critical,
+		Versions:             versionRows,
+		VersionsAvailable:    versionsAvailable,
+		ConfirmRollback:      r.URL.Query().Get("confirmRollback"),
 	}
 	c.renderPage(w, r, http.StatusOK, "workflow-detail", wf.Name, view)
+}
+
+// buildWorkflowVersionRows loads the workflow's version history (newest
+// first, capped at the newest 20) for the detail page's panel. It is
+// non-fatal: a nil Deps.WorkflowVersions or a list error logs and returns an
+// empty panel rather than 500ing the whole page — the version history is a
+// secondary view, not load-bearing for the editor.
+func (c *Console) buildWorkflowVersionRows(ctx context.Context, scope domain.Scope, slug, workflowID string) ([]workflowVersionRow, bool) {
+	if c.deps.WorkflowVersions == nil {
+		return nil, false
+	}
+	vers, err := c.deps.WorkflowVersions.ListByWorkflow(ctx, scope, workflowID)
+	if err != nil {
+		c.deps.Logger.Error("console: list workflow versions", "slug", slug, "err", err)
+		return nil, true
+	}
+	// ListByWorkflow returns seq-ascending (oldest first); cap to the newest 20.
+	if len(vers) > 20 {
+		vers = vers[len(vers)-20:]
+	}
+	rows := make([]workflowVersionRow, 0, len(vers))
+	for i := len(vers) - 1; i >= 0; i-- {
+		v := vers[i]
+		rows = append(rows, workflowVersionRow{
+			ID:      v.ID,
+			Seq:     v.Seq,
+			RelTime: relativeTime(v.CreatedAt),
+			Current: i == len(vers)-1,
+		})
+	}
+	return rows, true
 }
 
 // ─── mutation handlers ────────────────────────────────────────────────────────
@@ -924,10 +987,13 @@ func (c *Console) handleWorkflowSave(w http.ResponseWriter, r *http.Request) {
 		schema = json.RawMessage(raw)
 	}
 
+	critical := r.FormValue("critical") == "1" || r.FormValue("critical") == "on"
+
 	if _, err := c.deps.Authoring.Update(r.Context(), scope, slug, authoring.UpdateInput{
 		Name:          name,
 		Steps:         steps,
 		PayloadSchema: schema,
+		Critical:      critical,
 	}); err != nil {
 		var compileErr *authoring.ErrCompileFailure
 		if errors.As(err, &compileErr) {
@@ -1019,6 +1085,57 @@ func (c *Console) handleWorkflowActivate(w http.ResponseWriter, r *http.Request)
 	http.Redirect(w, r, "/console/workflows/"+slug, http.StatusSeeOther)
 }
 
+// handleWorkflowRollback handles POST /console/api/workflows/{slug}/rollback:
+// re-registers an earlier published version's compiled DAG byte-for-byte via
+// authoring.Service.Rollback, which itself scope-checks the version id
+// against the workflow resolved from slug (a version id valid in this scope
+// but belonging to a different workflow 404s rather than cross-wiring one
+// workflow's DAG onto another's trigger).
+func (c *Console) handleWorkflowRollback(w http.ResponseWriter, r *http.Request) {
+	if w == nil {
+		panic("handleWorkflowRollback: w is nil")
+	}
+	if r == nil {
+		panic("handleWorkflowRollback: r is nil")
+	}
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
+		panic("handleWorkflowRollback: no scope in context")
+	}
+	if c.deps.ReadOnly {
+		http.Error(w, "console is read-only", http.StatusForbidden)
+		return
+	}
+	slug := chi.URLParam(r, "slug")
+	if slug == "" {
+		http.Error(w, "missing slug", http.StatusBadRequest)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	editURL := "/console/workflows/" + slug
+	versionID := strings.TrimSpace(r.FormValue("versionId"))
+	if versionID == "" {
+		http.Redirect(w, r, editURL+"?error="+
+			url.QueryEscape("Version is required."), http.StatusSeeOther)
+		return
+	}
+
+	if err := c.deps.Authoring.Rollback(r.Context(), scope, slug, versionID); err != nil {
+		if isNotFound(err) {
+			c.serveNotFound(w, r)
+			return
+		}
+		c.deps.Logger.Error("console: rollback workflow", "slug", slug, "err", err)
+		http.Redirect(w, r, editURL+"?error="+
+			url.QueryEscape("Rollback failed."), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, editURL, http.StatusSeeOther)
+}
+
 // handleWorkflowStepAdd handles POST /console/api/workflows/{slug}/steps.
 func (c *Console) handleWorkflowStepAdd(w http.ResponseWriter, r *http.Request) {
 	if w == nil {
@@ -1077,6 +1194,7 @@ func (c *Console) handleWorkflowStepAdd(w http.ResponseWriter, r *http.Request) 
 		Name:          wf.Name,
 		Steps:         steps,
 		PayloadSchema: wf.PayloadSchema,
+		Critical:      wf.Critical,
 	}); err != nil {
 		var compileErr *authoring.ErrCompileFailure
 		if errors.As(err, &compileErr) {
@@ -1143,6 +1261,7 @@ func (c *Console) handleWorkflowStepDelete(w http.ResponseWriter, r *http.Reques
 		Name:          wf.Name,
 		Steps:         out,
 		PayloadSchema: wf.PayloadSchema,
+		Critical:      wf.Critical,
 	}); err != nil {
 		c.deps.Logger.Error("console: step delete update", "slug", slug, "err", err)
 		http.Error(w, "delete step failed", http.StatusInternalServerError)
@@ -1224,6 +1343,7 @@ func (c *Console) handleWorkflowStepReorder(w http.ResponseWriter, r *http.Reque
 		Name:          wf.Name,
 		Steps:         steps,
 		PayloadSchema: wf.PayloadSchema,
+		Critical:      wf.Critical,
 	}); err != nil {
 		c.deps.Logger.Error("console: step reorder update", "slug", slug, "err", err)
 		http.Error(w, "reorder failed", http.StatusInternalServerError)
@@ -1307,6 +1427,7 @@ func (c *Console) handleWorkflowStepSave(w http.ResponseWriter, r *http.Request)
 		Name:          wf.Name,
 		Steps:         steps,
 		PayloadSchema: wf.PayloadSchema,
+		Critical:      wf.Critical,
 	}); err != nil {
 		var compileErr *authoring.ErrCompileFailure
 		if errors.As(err, &compileErr) {
