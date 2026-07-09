@@ -115,6 +115,11 @@ func Connect(ctx context.Context, natsURL string) (*Bus, error) {
 		return nil, fmt.Errorf("eventbus: ensure stream %q: %w", deliveryStream, err)
 	}
 
+	if err := ensureFeedStream(ctx, js); err != nil {
+		nc.Close()
+		return nil, err
+	}
+
 	return &Bus{nc: nc, js: js, kv: kv, throttle: throttle, digest: digest}, nil
 }
 
