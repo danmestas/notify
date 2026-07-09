@@ -175,6 +175,11 @@ type workflowEditorView struct {
 	// ConfirmRollback names the version id awaiting inline rollback confirm
 	// (?confirmRollback=<id>), mirroring ConfirmDelete's two-step pattern.
 	ConfirmRollback string
+	// VersionsError reports that Deps.WorkflowVersions.ListByWorkflow failed
+	// (logged, non-fatal). Distinguishes a backend error from a genuinely
+	// empty version history so the panel doesn't show "No versions published
+	// yet." for a broken load.
+	VersionsError bool
 }
 
 // workflowVersionRow is one row in the version-history panel.
@@ -739,7 +744,7 @@ func (c *Console) serveWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 
 	schemaJSON := prettyJSON(wf.PayloadSchema)
 
-	versionRows, versionsAvailable := c.buildWorkflowVersionRows(r.Context(), scope, slug, wf.ID)
+	versionRows, versionsAvailable, versionsError := c.buildWorkflowVersionRows(r.Context(), scope, slug, wf.ID)
 
 	statusLabel := "inactive"
 	if wf.Active {
@@ -777,6 +782,7 @@ func (c *Console) serveWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 		Versions:             versionRows,
 		VersionsAvailable:    versionsAvailable,
 		ConfirmRollback:      r.URL.Query().Get("confirmRollback"),
+		VersionsError:        versionsError,
 	}
 	c.renderPage(w, r, http.StatusOK, "workflow-detail", wf.Name, view)
 }
@@ -785,15 +791,17 @@ func (c *Console) serveWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 // first, capped at the newest 20) for the detail page's panel. It is
 // non-fatal: a nil Deps.WorkflowVersions or a list error logs and returns an
 // empty panel rather than 500ing the whole page — the version history is a
-// secondary view, not load-bearing for the editor.
-func (c *Console) buildWorkflowVersionRows(ctx context.Context, scope domain.Scope, slug, workflowID string) ([]workflowVersionRow, bool) {
+// secondary view, not load-bearing for the editor. The third return value
+// distinguishes a ListByWorkflow error from a genuinely empty history so the
+// template can render a distinct message instead of the empty-state copy.
+func (c *Console) buildWorkflowVersionRows(ctx context.Context, scope domain.Scope, slug, workflowID string) ([]workflowVersionRow, bool, bool) {
 	if c.deps.WorkflowVersions == nil {
-		return nil, false
+		return nil, false, false
 	}
 	vers, err := c.deps.WorkflowVersions.ListByWorkflow(ctx, scope, workflowID)
 	if err != nil {
 		c.deps.Logger.Error("console: list workflow versions", "slug", slug, "err", err)
-		return nil, true
+		return nil, true, true
 	}
 	// ListByWorkflow returns seq-ascending (oldest first); cap to the newest 20.
 	if len(vers) > 20 {
@@ -809,7 +817,7 @@ func (c *Console) buildWorkflowVersionRows(ctx context.Context, scope domain.Sco
 			Current: i == len(vers)-1,
 		})
 	}
-	return rows, true
+	return rows, true, false
 }
 
 // ─── mutation handlers ────────────────────────────────────────────────────────

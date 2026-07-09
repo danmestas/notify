@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/delivery/filter"
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/store"
 )
 
 // ---- list page ----
@@ -2769,6 +2771,41 @@ func TestWorkflowDetail_ConfirmRollbackShowsForm(t *testing.T) {
 	}
 	if !strings.Contains(body, "Confirm roll back") {
 		t.Errorf("confirm rollback form missing 'Confirm roll back' button")
+	}
+	if !strings.Contains(body, "re-registers the live workflow immediately") {
+		t.Errorf("confirm rollback label missing immediate-effect warning copy (body: %s)", body)
+	}
+}
+
+// erroringWorkflowVersionRepo wraps a real store.WorkflowVersionRepo but
+// forces ListByWorkflow to fail, so the detail page's error path (distinct
+// from the genuine zero-version empty state) can be exercised without a
+// dedicated fake store.
+type erroringWorkflowVersionRepo struct {
+	store.WorkflowVersionRepo
+}
+
+func (erroringWorkflowVersionRepo) ListByWorkflow(context.Context, domain.Scope, string) ([]store.WorkflowVersion, error) {
+	return nil, errors.New("boom: injected store failure")
+}
+
+func TestWorkflowDetail_VersionsListErrorShowsDistinctMessage(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflow(t, "My WF", "my-wf")
+	tc.deps.WorkflowVersions = erroringWorkflowVersionRepo{tc.st.WorkflowVersions()}
+	tc.rebuild()
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/my-wf", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET detail with erroring version store: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Couldn't load version history") {
+		t.Errorf("detail page missing distinct version-list error message (body: %s)", body)
+	}
+	if strings.Contains(body, "No versions published yet.") {
+		t.Errorf("detail page showed genuine-empty copy instead of the error message (body: %s)", body)
 	}
 }
 

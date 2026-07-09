@@ -197,7 +197,7 @@
             <span class="chip chip-success">current</span>
             {{else if not $page.ReadOnly}}
               {{if eq $page.ConfirmRollback $v.ID}}
-              <span class="console-confirm-label">Roll back to v{{$v.Seq}}?</span>
+              <span class="console-confirm-label">Roll back to v{{$v.Seq}}? This re-registers the live workflow immediately.</span>
               <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}">Cancel</a>
               <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/rollback" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
@@ -212,6 +212,8 @@
         </li>
         {{end}}
       </ol>
+      {{else if $page.VersionsError}}
+      <p class="console-lede">Couldn't load version history — try reloading.</p>
       {{else}}
       <p class="console-lede">No versions published yet.</p>
       {{end}}
