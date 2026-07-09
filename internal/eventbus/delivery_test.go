@@ -87,6 +87,22 @@ func TestBus_DeliveryPubSub_ScopedByEnv(t *testing.T) {
 	}
 }
 
+func TestPublishDelivery_EmptyEnvRejected(t *testing.T) {
+	natsURL := startSidecar(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	bus, err := Connect(ctx, natsURL)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer bus.Close()
+
+	if err := bus.PublishDelivery("", []byte(`{"event":"x"}`)); err == nil {
+		t.Fatal("PublishDelivery(\"\", ...) = nil error, want error")
+	}
+}
+
 func TestBus_DeliveryUnsubscribe_Stops(t *testing.T) {
 	natsURL := startSidecar(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

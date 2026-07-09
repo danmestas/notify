@@ -20,11 +20,19 @@ import (
 // Names of notify's private JetStream resources. These belong to notify;
 // dagnats owns its own separate buckets and streams which we never touch.
 const (
-	inboxCountsBucket = "notify_inbox_counts"
-	throttleBucket    = "notify_throttle"
-	digestBucket      = "notify_digest"
-	analyticsStream   = "NOTIFY_ANALYTICS"
-	analyticsSubject  = "notify.analytics.>"
+	inboxCountsBucket  = "notify_inbox_counts"
+	throttleBucket     = "notify_throttle"
+	digestBucket       = "notify_digest"
+	analyticsStream    = "NOTIFY_ANALYTICS"
+	analyticsSubject   = "notify.analytics.>"
+	deliveryStream     = "NOTIFY_DELIVERY"
+	deliverySubjectAll = "notify.delivery.>"
+
+	// deliveryStreamMaxAge bounds how long delivery-status events are
+	// retained on the NOTIFY_DELIVERY stream. Durable consumers (e.g.
+	// webhooksout) must catch up within this window after downtime;
+	// 7 days covers any realistic outage.
+	deliveryStreamMaxAge = 7 * 24 * time.Hour
 
 	// maxThrottleBucketTTL is the per-key TTL on the notify_throttle bucket.
 	// Throttle counters are keyed per (compositeKey, windowEpoch); without a
@@ -97,6 +105,16 @@ func Connect(ctx context.Context, natsURL string) (*Bus, error) {
 		return nil, fmt.Errorf("eventbus: ensure stream %q: %w", analyticsStream, err)
 	}
 
+	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+		Name:     deliveryStream,
+		Subjects: []string{deliverySubjectAll},
+		MaxAge:   deliveryStreamMaxAge,
+		Storage:  jetstream.FileStorage,
+	}); err != nil {
+		nc.Close()
+		return nil, fmt.Errorf("eventbus: ensure stream %q: %w", deliveryStream, err)
+	}
+
 	return &Bus{nc: nc, js: js, kv: kv, throttle: throttle, digest: digest}, nil
 }
 
@@ -149,12 +167,18 @@ func deliverySubject(environmentID string) string {
 	return "notify.delivery." + environmentID
 }
 
-// PublishDelivery publishes a delivery-status event for an environment.
+// PublishDelivery publishes a delivery-status event for an environment onto
+// the durable NOTIFY_DELIVERY stream (JetStream, at-least-once) so it
+// survives restarts and consumer downtime. Core-NATS subscribers on the same
+// subject (SubscribeDelivery, SubscribeAllDelivery) still receive it live —
+// JetStream publish is a normal NATS publish that the stream also captures.
 func (b *Bus) PublishDelivery(environmentID string, data []byte) error {
 	if environmentID == "" {
 		return fmt.Errorf("eventbus: PublishDelivery: environmentID must be non-empty")
 	}
-	if err := b.nc.Publish(deliverySubject(environmentID), data); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := b.js.Publish(ctx, deliverySubject(environmentID), data); err != nil {
 		return fmt.Errorf("eventbus: PublishDelivery: %w", err)
 	}
 	return nil
@@ -185,6 +209,56 @@ func (b *Bus) SubscribeAllDelivery(handler func([]byte)) (unsubscribe func() err
 		return nil, fmt.Errorf("eventbus: SubscribeAllDelivery: %w", err)
 	}
 	return sub.Unsubscribe, nil
+}
+
+// ConsumeAllDeliveryDurable starts (or resumes) a durable JetStream consumer
+// named durable on the NOTIFY_DELIVERY stream, delivering every
+// environment's delivery-status events (subject notify.delivery.>) to
+// handler at least once.
+//
+// Ack/Nak semantics: when handler returns nil the message is Acked, telling
+// the server to advance past it and never redeliver it. When handler returns
+// an error the message is Naked, telling the server to redeliver it
+// immediately (up to MaxDeliver=5 attempts, AckWait=30s between attempts if
+// redelivery is instead triggered by a timeout rather than an explicit Nak).
+// Because the consumer is durable, restarting ConsumeAllDeliveryDurable with
+// the SAME durable name resumes from the last acked position on the
+// server — events published while no consumer was running are delivered on
+// the next start, and already-acked events are not redelivered.
+//
+// The returned stop func drains the consumer: it stops pulling new messages
+// but lets any message already handed to handler finish before returning.
+func (b *Bus) ConsumeAllDeliveryDurable(ctx context.Context, durable string, handler func(data []byte) error) (stop func() error, err error) {
+	if durable == "" {
+		return nil, fmt.Errorf("eventbus: ConsumeAllDeliveryDurable: durable must be non-empty")
+	}
+
+	cons, err := b.js.CreateOrUpdateConsumer(ctx, deliveryStream, jetstream.ConsumerConfig{
+		Durable:        durable,
+		FilterSubjects: []string{deliverySubjectAll},
+		AckPolicy:      jetstream.AckExplicitPolicy,
+		AckWait:        30 * time.Second,
+		MaxDeliver:     5,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("eventbus: ConsumeAllDeliveryDurable: ensure consumer %q: %w", durable, err)
+	}
+
+	consumeCtx, err := cons.Consume(func(msg jetstream.Msg) {
+		if handler(msg.Data()) == nil {
+			_ = msg.Ack()
+		} else {
+			_ = msg.Nak()
+		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("eventbus: ConsumeAllDeliveryDurable: consume %q: %w", durable, err)
+	}
+
+	return func() error {
+		consumeCtx.Drain()
+		return nil
+	}, nil
 }
 
 // buildStreamSubject builds the dagnats run-stream subject the AI workflow
