@@ -18,10 +18,10 @@ func has(types []string, t string) bool {
 }
 
 func TestAvailableStepTypes_ActionStepsAndInAppAlwaysAvailable(t *testing.T) {
-	// No integrations at all: action steps AND the built-in in_app inbox survive;
-	// the external-provider channels are gated out.
+	// No integrations at all: action steps AND the built-in in_app/stream
+	// channels survive; the external-provider channels are gated out.
 	got := AvailableStepTypes(steptype.Default(), nil)
-	for _, always := range []string{"in_app", "delay", "digest", "throttle", "http_request"} {
+	for _, always := range []string{"in_app", "stream", "delay", "digest", "throttle", "http_request"} {
 		if !has(got, always) {
 			t.Errorf("%q should always be available (built-in / action), got %v", always, got)
 		}
@@ -44,6 +44,9 @@ func TestAvailableStepTypes_OnlyEmailActive(t *testing.T) {
 	}
 	if !has(got, "in_app") {
 		t.Errorf("in_app should always be available (built-in inbox), got %v", got)
+	}
+	if !has(got, "stream") {
+		t.Errorf("stream should always be available (built-in feed), got %v", got)
 	}
 	for _, excluded := range []string{"sms", "push", "chat"} {
 		if has(got, excluded) {
@@ -89,7 +92,7 @@ func TestBuildTools_AddStepEnumIsGated(t *testing.T) {
 	}
 
 	enum := extractTypeEnum(t, addStep.InputSchema)
-	for _, present := range []string{"email", "in_app"} { // email active; in_app built-in
+	for _, present := range []string{"email", "in_app", "stream"} { // email active; in_app/stream built-in
 		if !has(enum, present) {
 			t.Errorf("addStep enum missing %q: %v", present, enum)
 		}

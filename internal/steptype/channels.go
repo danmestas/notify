@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
+	"unicode"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
@@ -161,4 +163,55 @@ func (chat) EditorPartial() string                            { return "wf-step-
 
 func (chat) ParseForm(form url.Values) (json.RawMessage, error) {
 	return marshalControlValues(map[string]any{"body": formField(form, "body")})
+}
+
+// stream is the stream channel step type — a 10th, built-in (provider-less,
+// like in_app) type that publishes a rendered event to a tenant's durable
+// feed topic (topic + body). It compiles to the "send.stream" task.
+type stream struct{}
+
+func (stream) Name() string                                     { return "stream" }
+func (stream) DisplayName() string                              { return "Stream" }
+func (stream) DefaultControlValues() json.RawMessage            { return emptyControlValues() }
+func (stream) ControlMap(cv json.RawMessage) map[string]string  { return flattenControlValues(cv) }
+func (stream) Compile(step domain.Step) (engine.StepDef, error) { return channelStepDef(step), nil }
+func (stream) EditorPartial() string                            { return "wf-step-fields-stream" }
+
+func (stream) ParseForm(form url.Values) (json.RawMessage, error) {
+	return marshalControlValues(map[string]any{
+		"topic": formField(form, "topic"),
+		"body":  formField(form, "body"),
+	})
+}
+
+// streamTopicForbidden reports whether r may never appear in an authored
+// stream topic. This is a cheap, dependency-free authoring-time guard —
+// steptype must not import eventbus (package doc, keeps the registry
+// dependency-light). The authoritative gate is the RENDERED topic checked by
+// eventbus.ValidateFeedTopic at send time (Slice A4); this only rejects
+// characters that could never be legal even after template rendering.
+func streamTopicForbidden(r rune) bool {
+	return r == '*' || r == '>' || r == '$' || unicode.IsSpace(r)
+}
+
+// Validate rejects a missing topic and any authored topic containing a
+// character that can never be legal in a NATS-derived subject token (wildcard
+// markers, whitespace, or '$'), even inside a Handlebars template span — the
+// rendered value is re-validated at send time.
+func (stream) Validate(cv json.RawMessage) error {
+	var m struct {
+		Topic string `json:"topic"`
+	}
+	if len(cv) > 0 {
+		if err := json.Unmarshal(cv, &m); err != nil {
+			return err
+		}
+	}
+	if m.Topic == "" {
+		return errors.New("stream: topic is required")
+	}
+	if strings.IndexFunc(m.Topic, streamTopicForbidden) >= 0 {
+		return errors.New("stream: topic contains an invalid character")
+	}
+	return nil
 }

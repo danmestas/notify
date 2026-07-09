@@ -233,11 +233,12 @@ func TestWorkflowDetail_AddStepMenuContainsAllRegisteredTypes(t *testing.T) {
 	}
 	body := rr.Body.String()
 
-	// All nine registered types must appear as hidden type inputs in the add-step
-	// form buttons. Three were missing from the old hardcoded list.
+	// All ten registered types must appear as hidden type inputs in the add-step
+	// form buttons. Three were missing from the old hardcoded list; stream is the
+	// newest addition and must be Catalog-driven, not hardcoded.
 	wantTypes := []string{
 		"in_app", "email", "push", "chat", "sms",
-		"delay", "digest", "throttle", "http_request",
+		"delay", "digest", "throttle", "http_request", "stream",
 	}
 	for _, typ := range wantTypes {
 		needle := `name="type" value="` + typ + `"`
@@ -1475,6 +1476,38 @@ func TestFragmentWorkflowStepEditor_RendersEmailFields(t *testing.T) {
 	// Pre-filled value from controlValues must appear.
 	if !strings.Contains(body, "Hello World") {
 		t.Errorf("email step-editor fragment missing pre-filled subject value")
+	}
+}
+
+// TestFragmentWorkflowStepEditor_RendersStreamFields proves the step-editor
+// fragment endpoint returns topic + body fields for a stream step (the 10th,
+// built-in channel step type).
+func TestFragmentWorkflowStepEditor_RendersStreamFields(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
+		{StepID: "stream-1", Type: "stream", ControlValues: json.RawMessage(`{"topic":"orders.created","body":"hi {{payload.x}}"}`)},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/workflow-step-editor/my-wf/stream-1", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET step-editor fragment: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, "event: datastar-patch-elements") {
+		t.Errorf("step-editor fragment missing SSE event framing")
+	}
+	// Must render the stream-specific topic field.
+	if !strings.Contains(body, `name="topic"`) {
+		t.Errorf("stream step-editor fragment missing topic field")
+	}
+	if !strings.Contains(body, `name="body"`) {
+		t.Errorf("stream step-editor fragment missing body field")
+	}
+	// Pre-filled value from controlValues must appear.
+	if !strings.Contains(body, "orders.created") {
+		t.Errorf("stream step-editor fragment missing pre-filled topic value")
 	}
 }
 

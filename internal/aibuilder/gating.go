@@ -24,16 +24,20 @@ var channelSteps = map[string]string{
 	"push":   "push",
 	"chat":   "chat",
 	"sms":    "sms",
+	"stream": "stream",
 }
 
 // builtinChannels are channels notify delivers WITHOUT any external provider.
 // The in-app inbox persists the message and publishes an inbox event directly
 // (delivery.HandleInApp never looks up an integration), so — like the reference platform's built-in
 // Inbox — in_app is always available regardless of configured integrations. The
-// external-provider channels (email/sms/chat/push) stay gated on an Active
-// integration.
+// stream channel is likewise provider-less: it publishes to the tenant's durable
+// feed directly (delivery.HandleStream never looks up an integration), so it is
+// always available too. The external-provider channels (email/sms/chat/push)
+// stay gated on an Active integration.
 var builtinChannels = map[string]bool{
 	"in_app": true,
+	"stream": true,
 }
 
 // AvailableStepTypes computes the step types the model may add: every action

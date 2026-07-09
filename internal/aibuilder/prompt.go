@@ -17,6 +17,7 @@ var stepControlFields = map[string]string{
 	"push":         "title (required), body (required); optional: data_json (a STRING containing a JSON object whose values are strings).",
 	"chat":         "body (required).",
 	"sms":          "body (required).",
+	"stream":       "topic (required, dot-separated key template, e.g. \"orders.{{payload.region}}\"; letters/digits/underscore/hyphen per key, no wildcards or whitespace), body (required, Handlebars). Built-in: publishes to the tenant's durable feed, no provider needed.",
 	"delay":        "type (\"regular\"|\"scheduled\"|\"dynamic\", default regular). regular: amount (int>0), unit (seconds|minutes|hours|days|weeks|months). scheduled: atTime (string), weekDays ([]string MON..SUN), monthDays ([]int). dynamic: dynamicKey (dot-path into payload).",
 	"digest":       "type (\"regular\"|\"scheduled\", default regular). regular: amount (int>0), unit. scheduled: cron (valid expression). digestKey (optional dot-path grouping key).",
 	"throttle":     "limit (int>0), windowSec (int>0).",

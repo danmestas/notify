@@ -259,6 +259,18 @@
 {{define "wf-step-fields-chat"}}
     {{template "wf-preview-split" (dict "BodyLabel" "Message" "Rows" 4 "Body" (index .ControlMap "body"))}}
     {{end}}
+{{define "wf-step-fields-stream"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-topic">Topic</label>
+      <input class="console-input console-input-mono" type="text" id="cv-topic" name="topic"
+             placeholder="orders.{{"{{payload.region}}"}}.created" value="{{index .ControlMap "topic"}}">
+      <p class="form-hint">Dot-separated feed topic. Each key is letters, digits, <code>_</code>, and <code>-</code> only; <code>{{"{{payload.*}}"}}</code> and <code>{{"{{subscriber.*}}"}}</code> are interpolated before publish.</p>
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-stream-body">Body</label>
+      <textarea class="console-input console-input-mono" id="cv-stream-body" name="body" rows="4">{{index .ControlMap "body"}}</textarea>
+    </div>
+    {{end}}
 {{define "wf-step-fields-delay"}}
     <div class="form-row">
       <label class="form-label" for="delay-type-trigger">Delay type</label>

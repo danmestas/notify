@@ -23,6 +23,9 @@ func TestSystemPrompt_IncludesGatedCatalogAndVocab(t *testing.T) {
 	if !strings.Contains(p, "in_app (In-App)") {
 		t.Error("prompt missing built-in in_app catalog entry")
 	}
+	if !strings.Contains(p, "stream (Stream)") {
+		t.Error("prompt missing built-in stream catalog entry")
+	}
 	// Gated-out (external-provider) channels must not be offered.
 	for _, excluded := range []string{"sms (SMS)", "push (Push)", "chat (Chat)"} {
 		if strings.Contains(p, excluded) {
