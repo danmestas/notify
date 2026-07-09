@@ -122,6 +122,7 @@ func RebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 			Channel:           found.Type,
 			SubjectTemplate:   controls.Subject,
 			BodyTemplate:      controls.Body,
+			Topic:             controls.Topic,
 			ThrottleLimit:     controls.Throttle.Limit,
 			ThrottleWindowSec: controls.Throttle.WindowSec,
 			LayoutKey:         controls.LayoutKey,

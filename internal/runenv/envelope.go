@@ -34,8 +34,11 @@ type InAppAction struct {
 // internal/delivery/rebuild (self-source path), so the compiler enforces sync
 // between the two paths instead of relying on developer discipline.
 type StepControls struct {
-	Subject  string `json:"subject"`
-	Body     string `json:"body"`
+	Subject string `json:"subject"`
+	Body    string `json:"body"`
+	// Topic is the stream channel's routing key: a dot-key template rendered
+	// against {subscriber,payload}. Absent on every other channel.
+	Topic    string `json:"topic,omitempty"`
 	Throttle struct {
 		Limit     int `json:"limit"`
 		WindowSec int `json:"windowSec"`
@@ -66,11 +69,14 @@ type StepControls struct {
 // travel here because dagnats StepDef config does NOT reach the worker \u2014 only
 // TaskPayload.Input does (verified against dag.ResolveInput).
 type Step struct {
-	StepID            string `json:"stepId"`
-	Channel           string `json:"channel"`
-	ProviderID        string `json:"providerId,omitempty"`
-	SubjectTemplate   string `json:"subjectTemplate,omitempty"`
-	BodyTemplate      string `json:"bodyTemplate"`
+	StepID          string `json:"stepId"`
+	Channel         string `json:"channel"`
+	ProviderID      string `json:"providerId,omitempty"`
+	SubjectTemplate string `json:"subjectTemplate,omitempty"`
+	BodyTemplate    string `json:"bodyTemplate"`
+	// Topic is the stream channel's routing key: a dot-key template rendered
+	// against {subscriber,payload}. Absent on every other channel.
+	Topic             string `json:"topic,omitempty"`
 	ThrottleLimit     int    `json:"throttleLimit,omitempty"`
 	ThrottleWindowSec int    `json:"throttleWindowSec,omitempty"`
 	LayoutKey         string `json:"layoutKey,omitempty"`

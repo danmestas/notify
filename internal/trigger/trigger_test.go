@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/danmestas/notify/internal/dagtest"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
 )
@@ -402,6 +405,117 @@ func TestIngest_PushDataJSONCorrupted_ReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(ingestErr.Error(), "data_json") {
 		t.Errorf("error = %q, want mention of data_json", ingestErr.Error())
+	}
+}
+
+// TestIngest_StreamWorkflow_TopicInEnvelope proves the producer side of A3:
+// a workflow whose first step is Type:"stream" with a "topic" control value
+// produces an envelope whose Step.Topic carries the authored (unrendered)
+// template and Step.Channel is "stream". The stream channel has no delivery
+// handler yet, so this registers a capturing fake handler on the real
+// dagtest-backed engine (eng.Handle) and asserts on the marshaled
+// TaskPayload.Input it receives — the same envelope trigger.Ingest passed to
+// engine.StartRun.
+func TestIngest_StreamWorkflow_TopicInEnvelope(t *testing.T) {
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Stop() })
+
+	dbPath := filepath.Join(t.TempDir(), "trigger.db")
+	ctx := context.Background()
+	st, err := store.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+	const streamTrigger = "stream-flow"
+
+	steps, err := json.Marshal([]domain.Step{{
+		StepID:        "S1",
+		Type:          "stream",
+		ControlValues: json.RawMessage(`{"topic":"orders.{{payload.r}}","body":"b"}`),
+	}})
+	if err != nil {
+		t.Fatalf("marshal steps: %v", err)
+	}
+	if _, err := st.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "StreamWelcome",
+		TriggerIdentifier: streamTrigger,
+		Active:            true,
+		Steps:             steps,
+	}); err != nil {
+		t.Fatalf("Workflows().Create: %v", err)
+	}
+
+	// Fake handler: the stream channel has no real send handler yet (that is a
+	// later slice), so capture the envelope the engine hands to send.stream and
+	// return a trivial output.
+	var (
+		mu        sync.Mutex
+		captured  json.RawMessage
+		gotHandle bool
+	)
+	eng.Handle("send.stream", func(_ context.Context, t engine.TaskPayload) (json.RawMessage, error) {
+		mu.Lock()
+		captured = append(json.RawMessage(nil), t.Input...)
+		gotHandle = true
+		mu.Unlock()
+		return json.RawMessage(`{}`), nil
+	})
+	eng.StartWorkers(ctx)
+
+	dagName := scope.EnvID + "-" + streamTrigger
+	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
+		Name:  dagName,
+		Steps: []engine.StepDef{{ID: "S1", Task: "send.stream", Type: "normal"}},
+	}); err != nil {
+		t.Fatalf("RegisterWorkflow: %v", err)
+	}
+
+	svc := trigger.New(audience.New(st), st, eng)
+	resp, err := svc.Ingest(ctx, scope, trigger.TriggerRequest{
+		Name:          streamTrigger,
+		To:            trigger.ToField{SubscriberID: "user_stream", FirstName: "Ada"},
+		Payload:       json.RawMessage(`{"r":"42"}`),
+		TransactionID: "tx-stream-1",
+	})
+	if err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	if !resp.Acknowledged || resp.Status != "processed" {
+		t.Fatalf("resp = %+v, want acknowledged/processed", resp)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		done := gotHandle
+		mu.Unlock()
+		if done {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !gotHandle {
+		t.Fatal("send.stream handler was never invoked within 10s")
+	}
+
+	var env runenv.InAppEnvelope
+	if err := json.Unmarshal(captured, &env); err != nil {
+		t.Fatalf("unmarshal captured envelope: %v (raw=%s)", err, captured)
+	}
+	if env.Step.Channel != "stream" {
+		t.Errorf("Step.Channel = %q, want %q", env.Step.Channel, "stream")
+	}
+	if env.Step.Topic != "orders.{{payload.r}}" {
+		t.Errorf("Step.Topic = %q, want %q", env.Step.Topic, "orders.{{payload.r}}")
 	}
 }
 
