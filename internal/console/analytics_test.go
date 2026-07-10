@@ -220,6 +220,70 @@ func TestAnalytics_WorkflowFilter_IsolatesKPIs(t *testing.T) {
 	}
 }
 
+// TestAnalytics_WorkflowFilter_IsolatesActiveSubscribersAndAvg proves the
+// Active Subscribers and Avg Messages/Subscriber KPI tiles also scope to the
+// selected workflow — not just Messages Delivered. Before the M1 fix these two
+// tiles stayed at the all-workflows values, producing self-contradictory pairs
+// like "1.0 avg" next to "0 delivered".
+func TestAnalytics_WorkflowFilter_IsolatesActiveSubscribersAndAvg(t *testing.T) {
+	tc := newTestConsole(t)
+	// wf-a: sub-1 (2 rows) + sub-2 (1 row) → 2 active subscribers, avg 1.5.
+	// wf-b: sub-3 (1 row) → 1 active subscriber, avg 1.0.
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a", SubscriberID: "sub-1"},
+		{Channel: "in_app", Status: "sent", WorkflowID: "wf-a", SubscriberID: "sub-1"},
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a", SubscriberID: "sub-2"},
+		{Channel: "email", Status: "sent", WorkflowID: "wf-b", SubscriberID: "sub-3"},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/analytics-kpis?workflow_id=wf-b", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("analytics-kpis?workflow_id=wf-b: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	// wf-b: delivered=1, active subscribers=1, avg=1.0 — all self-consistent.
+	if !strings.Contains(body, `<span class="analytics-kpi-value">1</span>`) {
+		t.Errorf("workflow_id=wf-b: expected a KPI value of 1 (delivered/active subs), body: %.400s", body)
+	}
+	// The all-workflows Active Subscribers count (3) and avg (1.5) must not leak
+	// through when scoped to wf-b.
+	if strings.Contains(body, `<span class="analytics-kpi-value">3</span>`) {
+		t.Errorf("workflow_id=wf-b: Active Subscribers leaked the all-workflows count (3)")
+	}
+	if strings.Contains(body, "1.5") {
+		t.Errorf("workflow_id=wf-b: Avg Messages/Subscriber leaked the all-workflows average (1.5)")
+	}
+}
+
+// TestAnalytics_WorkflowFilter_NoContradictoryZeroDeliveredPositiveAvg is a
+// guard against the exact bug reported in QA M1: a workflow filter that has
+// zero delivered messages must never show a positive Avg Messages/Subscriber.
+func TestAnalytics_WorkflowFilter_NoContradictoryZeroDeliveredPositiveAvg(t *testing.T) {
+	tc := newTestConsole(t)
+	// All rows belong to wf-a; wf-b has none.
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a", SubscriberID: "sub-1"},
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a", SubscriberID: "sub-1"},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/analytics-kpis?workflow_id=wf-b", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("analytics-kpis?workflow_id=wf-b: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	// Messages Delivered for wf-b must be 0 …
+	if !strings.Contains(body, `<span class="analytics-kpi-value">0</span>`) {
+		t.Errorf("workflow_id=wf-b: expected 0 delivered, body: %.400s", body)
+	}
+	// … and Avg Messages/Subscriber must NOT show the all-workflows average (2.0),
+	// which would contradict 0 delivered.
+	if strings.Contains(body, `<span class="analytics-kpi-value">2</span>`) || strings.Contains(body, "2.0") {
+		t.Errorf("workflow_id=wf-b: contradictory non-zero avg alongside 0 delivered, body: %.400s", body)
+	}
+}
+
 // TestAnalytics_WorkflowFilter_IsolatesCharts proves the charts fragment is also
 // scoped by workflow_id (GAP-AF-06).
 func TestAnalytics_WorkflowFilter_IsolatesCharts(t *testing.T) {

@@ -99,13 +99,15 @@ func (r *Repo) DeliveriesByDay(ctx context.Context, scope domain.Scope, f store.
 }
 
 // CountActiveSubscribers counts distinct subscriber_ids that appear in the
-// DuckDB backend for the given scope and since cutoff (GAP-AF-05).
-func (r *Repo) CountActiveSubscribers(ctx context.Context, scope domain.Scope, since time.Time) (int64, error) {
-	return store.QueryCountActiveSubscribers(ctx, r.db, scope, since)
+// DuckDB backend for the given scope and since cutoff. The optional filter may
+// restrict results to a specific workflow_id (GAP-AF-05, M1).
+func (r *Repo) CountActiveSubscribers(ctx context.Context, scope domain.Scope, since time.Time, f store.AnalyticsFilter) (int64, error) {
+	return store.QueryCountActiveSubscribers(ctx, r.db, scope, since, f)
 }
 
 // AverageMessagesPerSubscriber returns the average number of delivery rows per
-// distinct subscriber for the given scope and since cutoff (GAP-AF-05).
-func (r *Repo) AverageMessagesPerSubscriber(ctx context.Context, scope domain.Scope, since time.Time) (float64, error) {
-	return store.QueryAverageMessagesPerSubscriber(ctx, r.db, scope, since)
+// distinct subscriber for the given scope and since cutoff. The optional
+// filter may restrict results to a specific workflow_id (GAP-AF-05, M1).
+func (r *Repo) AverageMessagesPerSubscriber(ctx context.Context, scope domain.Scope, since time.Time, f store.AnalyticsFilter) (float64, error) {
+	return store.QueryAverageMessagesPerSubscriber(ctx, r.db, scope, since, f)
 }

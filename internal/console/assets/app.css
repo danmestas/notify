@@ -2281,6 +2281,12 @@ a.activity-item-run { color: var(--accent); }
   stroke-linejoin: round;
   stroke-linecap: round;
 }
+.analytics-runs-line {
+  stroke: var(--status-info);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
 
 /* Channel bar chart */
 .analytics-bar-chart {

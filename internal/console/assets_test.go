@@ -115,6 +115,47 @@ func TestAssetRoutes_BareUnversionedURLIsNotFound(t *testing.T) {
 	}
 }
 
+// TestAssets_AnalyticsRunsLineCSSIsVisible guards against QA finding M2: the
+// Workflow Runs Trend chart's <polyline class="analytics-runs-line"> was in
+// the DOM but invisible because .analytics-runs-line had no CSS rule at all,
+// so it fell back to the SVG default `stroke: none`. Its siblings
+// .analytics-trend-line and .analytics-failed-line each set an explicit
+// stroke color; .analytics-runs-line must too, and it must use a distinct
+// color from the trend line so the two lines are visually separable.
+func TestAssets_AnalyticsRunsLineCSSIsVisible(t *testing.T) {
+	tc := newTestConsole(t)
+	rr := tc.get(t, assetManifest["app.css"], nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET app.css: status = %d, want 200", rr.Code)
+	}
+	css := rr.Body.String()
+
+	runsRE := regexp.MustCompile(`(?s)\.analytics-runs-line\s*\{([^}]*)\}`)
+	m := runsRE.FindStringSubmatch(css)
+	if m == nil {
+		t.Fatal(".analytics-runs-line rule not found in app.css — the Workflow Runs Trend chart renders invisible (stroke: none)")
+	}
+	rule := m[1]
+	if !strings.Contains(rule, "stroke:") || strings.Contains(rule, "stroke: none") {
+		t.Errorf(".analytics-runs-line rule does not set a visible stroke: %q", rule)
+	}
+
+	trendRE := regexp.MustCompile(`(?s)\.analytics-trend-line\s*\{([^}]*)\}`)
+	trendMatch := trendRE.FindStringSubmatch(css)
+	if trendMatch == nil {
+		t.Fatal(".analytics-trend-line rule not found in app.css (sibling rule expected to exist)")
+	}
+	strokeRE := regexp.MustCompile(`stroke:\s*([^;]+);`)
+	runsStroke := strokeRE.FindStringSubmatch(rule)
+	trendStroke := strokeRE.FindStringSubmatch(trendMatch[1])
+	if runsStroke == nil || trendStroke == nil {
+		t.Fatalf("could not parse stroke values: runs=%v trend=%v", runsStroke, trendStroke)
+	}
+	if runsStroke[1] == trendStroke[1] {
+		t.Errorf(".analytics-runs-line stroke (%q) must be visually distinct from .analytics-trend-line stroke (%q)", runsStroke[1], trendStroke[1])
+	}
+}
+
 func TestLayoutHTML_EmitsHashedAssetURLs(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)

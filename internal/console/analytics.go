@@ -18,8 +18,10 @@ import (
 //
 // Backed by: DeliveriesByChannel (CountByChannelStatus), DeliveriesOverTime
 // (DeliveriesByDay), CountActiveSubscribers, and AverageMessagesPerSubscriber —
-// all now accepting the optional AnalyticsFilter for workflow_id scoping (GAP-AF-05,
-// GAP-AF-06).
+// all accept the optional AnalyticsFilter for workflow_id scoping (GAP-AF-05,
+// GAP-AF-06). CountActiveSubscribers and AverageMessagesPerSubscriber only
+// gained the filter in M1 — until then they silently ignored the workflow
+// filter and could render self-contradictory KPI pairs.
 //
 // There used to be a fifth chart, "Active Subscribers Trend" — it plotted the
 // same per-day sent-volume series as Delivery Trend under a different label,
@@ -179,7 +181,11 @@ func channelTone(ch string) tileTone {
 }
 
 // buildAnalyticsKPIView constructs the KPI fragment from DeliveriesByChannel
-// plus the new CountActiveSubscribers / AverageMessagesPerSubscriber aggregations.
+// plus the CountActiveSubscribers / AverageMessagesPerSubscriber aggregations.
+// All four tiles share the same AnalyticsFilter, so a workflow filter scopes
+// every tile identically — Active Subscribers and Avg Messages/Subscriber
+// used to ignore it and silently stay at all-workflows values, which could
+// render a self-contradictory pair like "1.0 avg" beside "0 delivered" (M1).
 func (c *Console) buildAnalyticsKPIView(
 	r *http.Request, scope domain.Scope, rang analyticsRange, workflowID string,
 ) (analyticsKPIView, error) {
@@ -204,11 +210,11 @@ func (c *Console) buildAnalyticsKPIView(
 	}
 
 	since := rangeSince(rang, time.Now().UTC())
-	activeSubs, err := c.deps.Analytics.CountActiveSubscribers(r.Context(), scope, since)
+	activeSubs, err := c.deps.Analytics.CountActiveSubscribers(r.Context(), scope, since, f)
 	if err != nil {
 		return analyticsKPIView{}, fmt.Errorf("count active subscribers: %w", err)
 	}
-	avgMsg, err := c.deps.Analytics.AverageMessagesPerSubscriber(r.Context(), scope, since)
+	avgMsg, err := c.deps.Analytics.AverageMessagesPerSubscriber(r.Context(), scope, since, f)
 	if err != nil {
 		return analyticsKPIView{}, fmt.Errorf("avg messages per subscriber: %w", err)
 	}

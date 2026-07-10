@@ -99,15 +99,17 @@ func (svc *Service) DeliveriesOverTime(ctx context.Context, scope domain.Scope, 
 }
 
 // CountActiveSubscribers returns the number of distinct subscribers with at
-// least one delivery row at or after since (GAP-AF-05).
-func (svc *Service) CountActiveSubscribers(ctx context.Context, scope domain.Scope, since time.Time) (int64, error) {
-	return svc.repo.CountActiveSubscribers(ctx, scope, since)
+// least one delivery row at or after since, optionally scoped to a single
+// workflow via f.WorkflowID (GAP-AF-05, M1).
+func (svc *Service) CountActiveSubscribers(ctx context.Context, scope domain.Scope, since time.Time, f store.AnalyticsFilter) (int64, error) {
+	return svc.repo.CountActiveSubscribers(ctx, scope, since, f)
 }
 
 // AverageMessagesPerSubscriber returns the average delivery count per distinct
-// subscriber at or after since (GAP-AF-05). Returns 0 when no data.
-func (svc *Service) AverageMessagesPerSubscriber(ctx context.Context, scope domain.Scope, since time.Time) (float64, error) {
-	return svc.repo.AverageMessagesPerSubscriber(ctx, scope, since)
+// subscriber at or after since, optionally scoped to a single workflow via
+// f.WorkflowID (GAP-AF-05, M1). Returns 0 when no data.
+func (svc *Service) AverageMessagesPerSubscriber(ctx context.Context, scope domain.Scope, since time.Time, f store.AnalyticsFilter) (float64, error) {
+	return svc.repo.AverageMessagesPerSubscriber(ctx, scope, since, f)
 }
 
 // Routes mounts the analytics query API. Callers MUST mount it inside the

@@ -217,7 +217,7 @@ func TestAnalyticsRepo_CountActiveSubscribers(t *testing.T) {
 	}
 
 	// Since base: only sub-1 and sub-2 are within the window.
-	n, err := repo.CountActiveSubscribers(ctx, scope, base)
+	n, err := repo.CountActiveSubscribers(ctx, scope, base, AnalyticsFilter{})
 	if err != nil {
 		t.Fatalf("CountActiveSubscribers: %v", err)
 	}
@@ -226,12 +226,51 @@ func TestAnalyticsRepo_CountActiveSubscribers(t *testing.T) {
 	}
 
 	// Since zero: all three subscribers in scope (sub-1, sub-2, sub-3).
-	nAll, err := repo.CountActiveSubscribers(ctx, scope, time.Time{})
+	nAll, err := repo.CountActiveSubscribers(ctx, scope, time.Time{}, AnalyticsFilter{})
 	if err != nil {
 		t.Fatalf("CountActiveSubscribers(zero since): %v", err)
 	}
 	if nAll != 3 {
 		t.Fatalf("CountActiveSubscribers(zero): got %d, want 3", nAll)
+	}
+}
+
+// TestAnalyticsRepo_CountActiveSubscribers_WorkflowFilter proves the
+// AnalyticsFilter.WorkflowID predicate scopes the distinct-subscriber count to
+// only that workflow's rows (M1 fix — the KPI tile previously ignored the
+// workflow filter despite a doc comment claiming otherwise, GAP-AF-05/06).
+func TestAnalyticsRepo_CountActiveSubscribers_WorkflowFilter(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Analytics()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	rows := []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", SubscriberID: "sub-1", WorkflowID: "wf-a"},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-2", WorkflowID: "wf-a"},
+		// sub-3 only ever appears on wf-b.
+		{Channel: "email", Status: "sent", SubscriberID: "sub-3", WorkflowID: "wf-b"},
+	}
+	for i, r := range rows {
+		if err := repo.Insert(ctx, scope, r); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+
+	n, err := repo.CountActiveSubscribers(ctx, scope, time.Time{}, AnalyticsFilter{WorkflowID: "wf-a"})
+	if err != nil {
+		t.Fatalf("CountActiveSubscribers(wf-a): %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("CountActiveSubscribers(wf-a): got %d, want 2", n)
+	}
+
+	nB, err := repo.CountActiveSubscribers(ctx, scope, time.Time{}, AnalyticsFilter{WorkflowID: "wf-b"})
+	if err != nil {
+		t.Fatalf("CountActiveSubscribers(wf-b): %v", err)
+	}
+	if nB != 1 {
+		t.Fatalf("CountActiveSubscribers(wf-b): got %d, want 1", nB)
 	}
 }
 
@@ -257,7 +296,7 @@ func TestAnalyticsRepo_AverageMessagesPerSubscriber(t *testing.T) {
 		}
 	}
 
-	avg, err := repo.AverageMessagesPerSubscriber(ctx, scope, base)
+	avg, err := repo.AverageMessagesPerSubscriber(ctx, scope, base, AnalyticsFilter{})
 	if err != nil {
 		t.Fatalf("AverageMessagesPerSubscriber: %v", err)
 	}
@@ -269,12 +308,52 @@ func TestAnalyticsRepo_AverageMessagesPerSubscriber(t *testing.T) {
 
 	// Empty store → zero.
 	emptyScope := domain.Scope{OrgID: "o1", EnvID: "empty"}
-	avgEmpty, err := repo.AverageMessagesPerSubscriber(ctx, emptyScope, time.Time{})
+	avgEmpty, err := repo.AverageMessagesPerSubscriber(ctx, emptyScope, time.Time{}, AnalyticsFilter{})
 	if err != nil {
 		t.Fatalf("AverageMessagesPerSubscriber(empty): %v", err)
 	}
 	if avgEmpty != 0 {
 		t.Fatalf("AverageMessagesPerSubscriber(empty): got %v, want 0", avgEmpty)
+	}
+}
+
+// TestAnalyticsRepo_AverageMessagesPerSubscriber_WorkflowFilter proves the
+// AnalyticsFilter.WorkflowID predicate scopes the average to only that
+// workflow's rows (M1 fix).
+func TestAnalyticsRepo_AverageMessagesPerSubscriber_WorkflowFilter(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Analytics()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	// wf-a: sub-1 gets 2 rows, sub-2 gets 1 row → average = 1.5.
+	// wf-b: sub-3 gets 1 row → average = 1.0.
+	rows := []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", SubscriberID: "sub-1", WorkflowID: "wf-a"},
+		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1", WorkflowID: "wf-a"},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-2", WorkflowID: "wf-a"},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-3", WorkflowID: "wf-b"},
+	}
+	for i, r := range rows {
+		if err := repo.Insert(ctx, scope, r); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+
+	avgA, err := repo.AverageMessagesPerSubscriber(ctx, scope, time.Time{}, AnalyticsFilter{WorkflowID: "wf-a"})
+	if err != nil {
+		t.Fatalf("AverageMessagesPerSubscriber(wf-a): %v", err)
+	}
+	if avgA != 1.5 {
+		t.Fatalf("AverageMessagesPerSubscriber(wf-a): got %v, want 1.5", avgA)
+	}
+
+	avgB, err := repo.AverageMessagesPerSubscriber(ctx, scope, time.Time{}, AnalyticsFilter{WorkflowID: "wf-b"})
+	if err != nil {
+		t.Fatalf("AverageMessagesPerSubscriber(wf-b): %v", err)
+	}
+	if avgB != 1.0 {
+		t.Fatalf("AverageMessagesPerSubscriber(wf-b): got %v, want 1.0", avgB)
 	}
 }
 
@@ -292,7 +371,7 @@ func TestAnalyticsRepo_CountActiveSubscribers_ScopeIsolation(t *testing.T) {
 	_ = repo.Insert(ctx, scopeA, domain.AnalyticsDelivery{SubscriberID: "sub-a", Channel: "email", Status: "sent", CreatedAt: base.Format(time.RFC3339Nano)})
 	_ = repo.Insert(ctx, scopeB, domain.AnalyticsDelivery{SubscriberID: "sub-b", Channel: "email", Status: "sent", CreatedAt: base.Format(time.RFC3339Nano)})
 
-	n, err := repo.CountActiveSubscribers(ctx, scopeA, time.Time{})
+	n, err := repo.CountActiveSubscribers(ctx, scopeA, time.Time{}, AnalyticsFilter{})
 	if err != nil {
 		t.Fatalf("CountActiveSubscribers: %v", err)
 	}

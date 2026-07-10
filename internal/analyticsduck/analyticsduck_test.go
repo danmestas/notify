@@ -195,7 +195,7 @@ func TestRepo_CountActiveSubscribers(t *testing.T) {
 		}
 	}
 
-	n, err := repo.CountActiveSubscribers(ctx, scope, base)
+	n, err := repo.CountActiveSubscribers(ctx, scope, base, store.AnalyticsFilter{})
 	if err != nil {
 		t.Fatalf("CountActiveSubscribers: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestRepo_AverageMessagesPerSubscriber(t *testing.T) {
 		}
 	}
 
-	avg, err := repo.AverageMessagesPerSubscriber(ctx, scope, base)
+	avg, err := repo.AverageMessagesPerSubscriber(ctx, scope, base, store.AnalyticsFilter{})
 	if err != nil {
 		t.Fatalf("AverageMessagesPerSubscriber: %v", err)
 	}

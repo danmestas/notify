@@ -33,12 +33,14 @@ type AnalyticsRepo interface {
 	DeliveriesByDay(ctx context.Context, scope domain.Scope, f AnalyticsFilter) ([]domain.DeliveryDayCount, error)
 	// CountActiveSubscribers returns the number of distinct subscriber_ids that
 	// appear in the analytics_deliveries table for the given scope and since
-	// cutoff. GAP-AF-05.
-	CountActiveSubscribers(ctx context.Context, scope domain.Scope, since time.Time) (int64, error)
+	// cutoff. The optional filter may restrict results to a specific
+	// workflow_id (GAP-AF-05, M1).
+	CountActiveSubscribers(ctx context.Context, scope domain.Scope, since time.Time, f AnalyticsFilter) (int64, error)
 	// AverageMessagesPerSubscriber returns the average number of delivery rows
 	// per distinct subscriber for the given scope and since cutoff. Returns 0
-	// when there are no subscribers. GAP-AF-05.
-	AverageMessagesPerSubscriber(ctx context.Context, scope domain.Scope, since time.Time) (float64, error)
+	// when there are no subscribers. The optional filter may restrict results
+	// to a specific workflow_id (GAP-AF-05, M1).
+	AverageMessagesPerSubscriber(ctx context.Context, scope domain.Scope, since time.Time, f AnalyticsFilter) (float64, error)
 }
 
 type analyticsRepo struct {
@@ -156,17 +158,18 @@ func QueryDeliveriesByDay(ctx context.Context, db *sql.DB, scope domain.Scope, f
 	return out, nil
 }
 
-func (repo *analyticsRepo) CountActiveSubscribers(ctx context.Context, scope domain.Scope, since time.Time) (int64, error) {
-	return QueryCountActiveSubscribers(ctx, repo.r, scope, since)
+func (repo *analyticsRepo) CountActiveSubscribers(ctx context.Context, scope domain.Scope, since time.Time, f AnalyticsFilter) (int64, error) {
+	return QueryCountActiveSubscribers(ctx, repo.r, scope, since, f)
 }
 
 // QueryCountActiveSubscribers counts distinct subscriber_ids that have at least
 // one delivery row at or after since for the given scope. Shared by the SQLite
-// and DuckDB backends (GAP-AF-05).
-func QueryCountActiveSubscribers(ctx context.Context, db *sql.DB, scope domain.Scope, since time.Time) (int64, error) {
+// and DuckDB backends. The optional AnalyticsFilter may add a workflow_id
+// predicate (GAP-AF-05, M1).
+func QueryCountActiveSubscribers(ctx context.Context, db *sql.DB, scope domain.Scope, since time.Time, f AnalyticsFilter) (int64, error) {
 	// Empty subscriber_id rows (legacy/anonymous deliveries) are excluded by the
 	// WHERE subscriber_id != '' guard so they don't inflate the count.
-	q, args := buildSubscriberQuery(scope, since)
+	q, args := buildSubscriberQuery(scope, since, f)
 	q = fmt.Sprintf(`SELECT COUNT(DISTINCT subscriber_id) FROM (%s)`, q)
 	var n int64
 	if err := db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
@@ -175,15 +178,16 @@ func QueryCountActiveSubscribers(ctx context.Context, db *sql.DB, scope domain.S
 	return n, nil
 }
 
-func (repo *analyticsRepo) AverageMessagesPerSubscriber(ctx context.Context, scope domain.Scope, since time.Time) (float64, error) {
-	return QueryAverageMessagesPerSubscriber(ctx, repo.r, scope, since)
+func (repo *analyticsRepo) AverageMessagesPerSubscriber(ctx context.Context, scope domain.Scope, since time.Time, f AnalyticsFilter) (float64, error) {
+	return QueryAverageMessagesPerSubscriber(ctx, repo.r, scope, since, f)
 }
 
 // QueryAverageMessagesPerSubscriber returns the average number of delivery rows
 // per distinct (non-empty) subscriber_id for the given scope and since cutoff.
-// Returns 0.0 when there are no rows. Shared by SQLite and DuckDB (GAP-AF-05).
-func QueryAverageMessagesPerSubscriber(ctx context.Context, db *sql.DB, scope domain.Scope, since time.Time) (float64, error) {
-	q, args := buildSubscriberQuery(scope, since)
+// Returns 0.0 when there are no rows. Shared by SQLite and DuckDB. The optional
+// AnalyticsFilter may add a workflow_id predicate (GAP-AF-05, M1).
+func QueryAverageMessagesPerSubscriber(ctx context.Context, db *sql.DB, scope domain.Scope, since time.Time, f AnalyticsFilter) (float64, error) {
+	q, args := buildSubscriberQuery(scope, since, f)
 	// Compute total rows and distinct-subscriber count in one pass: avg = total/distinct.
 	// CAST to REAL guards against integer division in SQLite.
 	outer := fmt.Sprintf(
@@ -202,8 +206,10 @@ func QueryAverageMessagesPerSubscriber(ctx context.Context, db *sql.DB, scope do
 
 // buildSubscriberQuery returns the inner SELECT used by both CountActiveSubscribers
 // and AverageMessagesPerSubscriber: all rows for the scope/since window where
-// subscriber_id is non-empty.
-func buildSubscriberQuery(scope domain.Scope, since time.Time) (string, []any) {
+// subscriber_id is non-empty. The optional AnalyticsFilter.WorkflowID adds a
+// workflow_id predicate so both aggregations can scope to a single workflow
+// (M1: previously these two queries silently ignored the workflow filter).
+func buildSubscriberQuery(scope domain.Scope, since time.Time, f AnalyticsFilter) (string, []any) {
 	var sb strings.Builder
 	sb.WriteString(
 		`SELECT subscriber_id FROM analytics_deliveries
@@ -214,6 +220,10 @@ func buildSubscriberQuery(scope domain.Scope, since time.Time) (string, []any) {
 	if !since.IsZero() {
 		sb.WriteString(` AND created_at >= ?`)
 		args = append(args, since.UTC().Format(time.RFC3339Nano))
+	}
+	if f.WorkflowID != "" {
+		sb.WriteString(` AND workflow_id = ?`)
+		args = append(args, f.WorkflowID)
 	}
 	return sb.String(), args
 }
