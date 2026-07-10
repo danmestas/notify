@@ -7,12 +7,15 @@ package console
 // and deep-links to a real engine run.
 
 import (
+	"bufio"
 	"context"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/domain"
 )
 
@@ -282,6 +285,130 @@ func TestVerify_ScopeIsolation(t *testing.T) {
 	rr := tc.get(t, "/console/api/fragments/integration-detail?id=does-not-exist", cookie)
 	if !strings.Contains(rr.Body.String(), "Select an integration") {
 		t.Errorf("unknown integration drawer should render the empty state")
+	}
+}
+
+// ─── credential-verify: synchronous pass/fail surfaced inline (M5) ───────────
+//
+// The durable engine run started above gives dagnats-level durability/trace,
+// but the console previously left the operator with nothing but "a run
+// started" — no pass/fail, ever, without leaving the console. These prove the
+// verify handler also probes synchronously (the same check the durable run's
+// task handler performs) and surfaces a definite verdict inline.
+
+func TestVerify_SyncProbeSuccess_ShowsVerifiedBanner(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.deps.DagnatsConsoleURL = "http://dagnats.local"
+	tc.deps.CredVerifier = &stubCredVerifier{runID: "run-verify-ok"}
+	tc.rebuild()
+	addr := startFakeSMTP(t)
+	in, err := tc.deps.Connectivity.CreateSMTP(context.Background(), tc.scope, "smtp-1",
+		connectivity.SMTPConfig{Addr: addr, Host: "localhost", From: "n@example.com"}, true)
+	if err != nil {
+		t.Fatalf("CreateSMTP: %v", err)
+	}
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/integrations/"+in.ID+"/verify",
+		url.Values{"csrf_token": {csrf}}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("verify status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "verified=1") {
+		t.Errorf("verify redirect = %q, want ?verified=1 on a passing probe", loc)
+	}
+	if !strings.Contains(loc, "verifyRun=run-verify-ok") {
+		t.Errorf("verify redirect = %q, want the durable run id still carried for the audit deep-link", loc)
+	}
+
+	rr2 := tc.get(t, loc, cookie)
+	body := rr2.Body.String()
+	if !strings.Contains(body, "Credentials verified") {
+		t.Errorf("page missing 'Credentials verified' banner; body:\n%s", body[:min(len(body), 2000)])
+	}
+	if !strings.Contains(body, "http://dagnats.local/console/runs/run-verify-ok") {
+		t.Errorf("page missing dagnats deep-link alongside the verdict; body:\n%s", body[:min(len(body), 2000)])
+	}
+}
+
+func TestVerify_SyncProbeRejected_ShowsErrorBanner(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.deps.CredVerifier = &stubCredVerifier{runID: "run-verify-bad"}
+	tc.rebuild()
+	// Port 1 is reserved and refuses connections — a definite dial failure.
+	in, err := tc.deps.Connectivity.CreateSMTP(context.Background(), tc.scope, "smtp-bad",
+		connectivity.SMTPConfig{Addr: "127.0.0.1:1", Host: "localhost"}, true)
+	if err != nil {
+		t.Fatalf("CreateSMTP: %v", err)
+	}
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/integrations/"+in.ID+"/verify",
+		url.Values{"csrf_token": {csrf}}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("verify status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "verifyError=") {
+		t.Errorf("verify redirect = %q, want ?verifyError= on a failing probe", loc)
+	}
+	if strings.Contains(loc, "verified=1") {
+		t.Errorf("verify redirect = %q, must not claim verified=1 on a rejected probe", loc)
+	}
+
+	rr2 := tc.get(t, loc, cookie)
+	body := rr2.Body.String()
+	if !strings.Contains(body, "dial") {
+		t.Errorf("page missing dial-failure detail in the error banner; body:\n%s", body[:min(len(body), 2000)])
+	}
+	if strings.Contains(body, "Credentials verified") {
+		t.Errorf("page must not show the success banner on a rejected probe")
+	}
+}
+
+// startFakeSMTP starts a minimal SMTP greeter that speaks just enough of the
+// protocol for net/smtp's NewClient + EHLO + QUIT (no STARTTLS/AUTH) so
+// VerifyByID's no-auth path resolves ok=true. Mirrors
+// internal/connectivity/verify_test.go's helper of the same shape (unexported
+// there, so the console package needs its own copy).
+func startFakeSMTP(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go serveFakeSMTP(conn)
+		}
+	}()
+	return ln.Addr().String()
+}
+
+func serveFakeSMTP(conn net.Conn) {
+	defer func() { _ = conn.Close() }()
+	w := func(s string) { _, _ = conn.Write([]byte(s + "\r\n")) }
+	w("220 fake ESMTP")
+	sc := bufio.NewScanner(conn)
+	for sc.Scan() {
+		line := strings.ToUpper(strings.TrimSpace(sc.Text()))
+		switch {
+		case strings.HasPrefix(line, "EHLO"), strings.HasPrefix(line, "HELO"):
+			w("250-fake greets you")
+			w("250 SIZE 10240000")
+		case strings.HasPrefix(line, "QUIT"):
+			w("221 bye")
+			return
+		default:
+			w("250 ok")
+		}
 	}
 }
 

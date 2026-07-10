@@ -345,6 +345,25 @@ func TestAgents_Detail_Overview(t *testing.T) {
 	}
 }
 
+// TestAgents_ActiveBadgeHasTooltip proves the "active" pill carries a title
+// distinguishing enabled-vs-verified (L2): "active" reads as a health check at
+// a glance, but it only means the agent is not deactivated.
+func TestAgents_ActiveBadgeHasTooltip(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+	seedBasicAgent(t, tc, "support-bot", "Support Bot")
+
+	list := tc.get(t, "/console/agents", cookie).Body.String()
+	if !strings.Contains(list, `title="Enabled`) {
+		t.Errorf("agents list active badge missing enabled-vs-verified title; body:\n%s", list)
+	}
+
+	detail := tc.get(t, "/console/agents/support-bot", cookie).Body.String()
+	if !strings.Contains(detail, `title="Enabled`) {
+		t.Errorf("agent detail active badge missing enabled-vs-verified title; body:\n%s", detail)
+	}
+}
+
 func TestAgents_Detail_ChannelsTab(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)
@@ -381,6 +400,26 @@ func TestAgents_Detail_ConversationsTab(t *testing.T) {
 	}
 	if !strings.Contains(body, "/console/agents/support-bot/conversations/") {
 		t.Errorf("open-conversation link missing")
+	}
+}
+
+// TestAgents_Detail_ConversationsTabStaysScoped is a regression guard for L3:
+// the agent-detail "Conversations" tab must deep-link to this agent's own
+// scoped tab (/console/agents/{id}/tabs/conversations), never to the global
+// unscoped /console/conversations list — that's a different, cross-agent
+// view reachable from the sidebar, not from inside an agent's own page.
+func TestAgents_Detail_ConversationsTabStaysScoped(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+	seedBasicAgent(t, tc, "support-bot", "Support Bot")
+
+	rr := tc.get(t, "/console/agents/support-bot", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `href="/console/agents/support-bot/tabs/conversations"`) {
+		t.Errorf("Conversations tab must link to this agent's scoped tab; body:\n%s", body)
 	}
 }
 

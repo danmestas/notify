@@ -75,6 +75,31 @@ func TestIntegrations_PageRenderWithSeededIntegrations(t *testing.T) {
 	}
 }
 
+// TestIntegrations_ActiveBadgeHasTooltip proves the "active" pill carries a
+// title distinguishing enabled-vs-verified (L2): it can otherwise read as a
+// live health check when it only means "enabled / not deactivated".
+func TestIntegrations_ActiveBadgeHasTooltip(t *testing.T) {
+	tc := newTestConsole(t)
+	in := tc.seedIntegration(t, domain.Integration{
+		ProviderID:     "smtp",
+		Channel:        "email",
+		Active:         true,
+		Identifier:     "smtp-primary",
+		EncCredentials: []byte("fake-ciphertext"),
+	})
+	cookie, _ := tc.login(t)
+
+	grid := tc.get(t, "/console/api/fragments/integrations-grid", cookie).Body.String()
+	if !strings.Contains(grid, `title="Enabled`) {
+		t.Errorf("integrations grid active badge missing enabled-vs-verified title; body:\n%s", grid)
+	}
+
+	detail := tc.get(t, "/console/api/fragments/integration-detail?id="+in.ID, cookie).Body.String()
+	if !strings.Contains(detail, `title="Enabled`) {
+		t.Errorf("integration detail active badge missing enabled-vs-verified title; body:\n%s", detail)
+	}
+}
+
 // TestIntegrations_ToolbarUsesDesignSystem guards the integration toolbar
 // against regressing to the unstyled raw controls it shipped with: the channel
 // filters must render as a styled segmented group (.integration-channel-tabs >
@@ -130,6 +155,45 @@ func TestFragment_IntegrationProviderForm_ListsFullCatalog(t *testing.T) {
 		if !strings.Contains(body, "$integrationProviderPick='"+p.ID+"'") {
 			t.Errorf("provider picker missing signal-based select for id=%s", p.ID)
 		}
+	}
+}
+
+// TestFragment_IntegrationProviderForm_SMTPAddrHostClarified is a regression
+// guard for L4: the Custom SMTP connect form required BOTH "Address
+// (host:port)" and "Host" with no help text, reading as redundant. Addr is the
+// real dial target (net.DialTimeout); Host is only a TLS SNI / EHLO override
+// probeSMTP falls back to deriving from Addr when blank — so Host must not be
+// required, and both fields need help text making the distinction legible.
+func TestFragment_IntegrationProviderForm_SMTPAddrHostClarified(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.getWithQuery(t, "/console/api/fragments/integration-provider-form",
+		url.Values{"provider": {"smtp"}}.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("smtp form: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	addrIdx := strings.Index(body, `name="addr"`)
+	hostIdx := strings.Index(body, `name="host"`)
+	usernameIdx := strings.Index(body, `name="username"`)
+	if addrIdx < 0 || hostIdx < 0 || usernameIdx < 0 {
+		t.Fatalf("smtp form missing addr/host/username fields; body:\n%s", body)
+	}
+	// Each field's block runs from its <input name="..."> to the start of the
+	// next field's, so it captures that field's own trailing help text.
+	addrField := body[addrIdx:hostIdx]
+	hostField := body[hostIdx:usernameIdx]
+
+	if !strings.Contains(addrField, "form-hint") {
+		t.Errorf("Address field missing help text distinguishing it from Host; field:\n%s", addrField)
+	}
+	if !strings.Contains(hostField, "form-hint") {
+		t.Errorf("Host field missing help text distinguishing it from Address; field:\n%s", hostField)
+	}
+	if strings.Contains(hostField, "required") {
+		t.Errorf("Host must not be required — it's an optional TLS/EHLO override derived from Address when blank; field:\n%s", hostField)
 	}
 }
 

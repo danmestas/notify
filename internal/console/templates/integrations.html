@@ -93,14 +93,23 @@
              them in favour of ?datastar=), so the banner renders here —
              persistent, above #integration-detail — and shows regardless of
              the fragment fetch. */}}
-        {{if $page.VerifyRunURL}}
+        {{if $page.Verified}}
+        <div class="console-banner console-banner--success" role="status" id="integration-verify-success-page">
+          <strong>Credentials verified.</strong>
+          {{$page.VerifyDetail}}
+          {{if $page.VerifyRunURL}}<a class="console-link" href="{{$page.VerifyRunURL}}" target="_blank" rel="noopener noreferrer">View run in dagnats {{ uiIcon "arrow-up-right" }}</a>{{end}}
+        </div>
+        {{else if $page.VerifyError}}
+        <p class="console-form-error" role="alert" id="integration-verify-error-page">
+          {{$page.VerifyError}}
+          {{if $page.VerifyRunURL}}<a class="console-link" href="{{$page.VerifyRunURL}}" target="_blank" rel="noopener noreferrer">View run in dagnats {{ uiIcon "arrow-up-right" }}</a>{{end}}
+        </p>
+        {{else if $page.VerifyRunURL}}
         <div class="console-banner console-banner--success" role="status" id="integration-verify-success-page">
           <strong>Verification run started.</strong>
           A durable credentials check was kicked off for this integration.
           <a class="console-link" href="{{$page.VerifyRunURL}}" target="_blank" rel="noopener noreferrer">View run in dagnats {{ uiIcon "arrow-up-right" }}</a>
         </div>
-        {{else if $page.VerifyError}}
-        <p class="console-form-error" role="alert" id="integration-verify-error-page">{{$page.VerifyError}}</p>
         {{end}}
         {{if $page.TestSendOK}}
         <div class="console-banner console-banner--success" role="status" id="integration-testsend-success-page">

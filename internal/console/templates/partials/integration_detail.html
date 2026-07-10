@@ -58,7 +58,7 @@
   <div class="integration-detail-active">
     <span class="integration-detail-label">Status</span>
     {{if $in.Active}}
-    <span class="chip chip-success">active</span>
+    <span class="chip chip-success" title="Enabled — not a live health check">active</span>
     {{else}}
     <span class="chip chip-warning">inactive</span>
     {{end}}
@@ -83,14 +83,23 @@
        provider handshake). On confirm a native POST kicks an engine run; the
        result banner deep-links to that run in the dagnats console. */}}
   <div class="integration-verify-zone">
-    {{if $.VerifyRunURL}}
+    {{if $.Verified}}
+    <div class="console-banner console-banner--success" role="status" id="integration-verify-success">
+      <strong>Credentials verified.</strong>
+      {{$.VerifyDetail}}
+      {{if $.VerifyRunURL}}<a class="console-link" href="{{$.VerifyRunURL}}" target="_blank" rel="noopener noreferrer">View run in dagnats {{ uiIcon "arrow-up-right" }}</a>{{end}}
+    </div>
+    {{else if $.VerifyError}}
+    <p class="console-form-error" role="alert" id="integration-verify-error">
+      {{$.VerifyError}}
+      {{if $.VerifyRunURL}}<a class="console-link" href="{{$.VerifyRunURL}}" target="_blank" rel="noopener noreferrer">View run in dagnats {{ uiIcon "arrow-up-right" }}</a>{{end}}
+    </p>
+    {{else if $.VerifyRunURL}}
     <div class="console-banner console-banner--success" role="status" id="integration-verify-success">
       <strong>Verification run started.</strong>
       A durable credentials check was kicked off for this integration.
       <a class="console-link" href="{{$.VerifyRunURL}}" target="_blank" rel="noopener noreferrer">View run in dagnats {{ uiIcon "arrow-up-right" }}</a>
     </div>
-    {{else if $.VerifyError}}
-    <p class="console-form-error" role="alert" id="integration-verify-error">{{$.VerifyError}}</p>
     {{end}}
 
     {{if not $.ReadOnly}}
@@ -221,6 +230,7 @@
                value="{{.Value}}"
                autocomplete="new-password"
                {{if .Required}}required{{end}}>
+        {{if .Help}}<span class="form-hint">{{.Help}}</span>{{end}}
       </div>
       {{end}}
     </fieldset>

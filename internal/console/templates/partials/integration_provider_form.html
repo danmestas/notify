@@ -69,6 +69,7 @@
                class="console-input"
                autocomplete="{{if $secret}}new-password{{else}}off{{end}}"
                {{if .Required}}required aria-required="true"{{end}}>
+        {{if .Help}}<span class="form-hint">{{.Help}}</span>{{end}}
       </div>
       {{end}}
     </fieldset>

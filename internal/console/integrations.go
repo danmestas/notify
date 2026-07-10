@@ -112,15 +112,24 @@ type integrationsListView struct {
 	// PreopenID is set when the page is opened at /console/integrations/{id}:
 	// the drawer opens immediately for that row.
 	PreopenID string
-	// VerifyRunURL / VerifyError / TestSendOK / TestSendError carry the
-	// post-verify and post-test-send result banners read from the page URL
-	// query. The verify/test-send handlers 303-redirect to
-	// /console/integrations/{id}?verifyRun=<run> (or ?verifyError= /
-	// ?testSendOK=1 / ?testSendError=<msg>). The detail fragment @get can't
-	// carry those literal params (Datastar serializes signals to ?datastar=
-	// and drops them), so the banner renders at the page level, above
-	// #integration-detail, where it shows regardless of the fragment fetch.
-	VerifyRunURL  string
+	// VerifyRunURL / Verified / VerifyDetail / VerifyError / TestSendOK /
+	// TestSendError carry the post-verify and post-test-send result banners
+	// read from the page URL query. The verify/test-send handlers 303-redirect
+	// to /console/integrations/{id}?verifyRun=<run> (plus ?verified=1&
+	// verifyDetail=<msg> on a passing probe, or ?verifyError=<msg> on a
+	// rejected/failed one; ?testSendOK=1 / ?testSendError=<msg> for test-send).
+	// The detail fragment @get can't carry those literal params (Datastar
+	// serializes signals to ?datastar= and drops them), so the banner renders
+	// at the page level, above #integration-detail, where it shows regardless
+	// of the fragment fetch.
+	VerifyRunURL string
+	// Verified is true when the synchronous credential probe (M5) passed;
+	// VerifyDetail carries its human-readable detail (e.g. "smtp: authenticated
+	// with mail.example.com"). VerifyError carries the failure reason on a
+	// rejected probe or an incomplete-probe error — mutually exclusive with
+	// Verified.
+	Verified      bool
+	VerifyDetail  string
 	VerifyError   string
 	TestSendOK    bool
 	TestSendError string
@@ -146,6 +155,9 @@ type integrationCredentialField struct {
 	Label    string // human label (e.g. "Password", "API Token")
 	Value    string // always connectivity.CredentialMaskSentinel — never the real secret
 	Required bool
+	// Help is optional guidance rendered under the field (e.g. clarifying two
+	// similarly-named fields' distinct purposes). Empty renders nothing.
+	Help string
 }
 
 // integrationDetailView is what the integration-detail fragment binds.
@@ -169,9 +181,14 @@ type integrationDetailView struct {
 	// ConfirmVerify renders the two-step inline confirm for Verify (chassis
 	// idiom: no native confirm() since the probe performs a real handshake).
 	ConfirmVerify bool
-	// VerifyRunURL / VerifyError carry the post-verify banner: the deep-link to
-	// the verification engine run, or the failure message. Mutually exclusive.
+	// VerifyRunURL carries the deep-link to the verification engine run
+	// (durable audit trail). Verified / VerifyDetail / VerifyError carry the
+	// synchronous probe verdict (M5): Verified+VerifyDetail on a pass,
+	// VerifyError on a rejected credential or an incomplete probe. Verified
+	// and VerifyError are mutually exclusive.
 	VerifyRunURL string
+	Verified     bool
+	VerifyDetail string
 	VerifyError  string
 	// CanTestSend reports whether the per-integration test-send action is wired
 	// (Deps.Connectivity != nil && !ReadOnly). When false the Send-test form is
@@ -272,8 +289,14 @@ func credentialFieldsForProvider(providerID string) []integrationCredentialField
 	switch providerID {
 	case "smtp":
 		return []integrationCredentialField{
-			{Key: "addr", Label: "Address (host:port)", Value: connectivity.CredentialMaskSentinel, Required: true},
-			{Key: "host", Label: "Host", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{
+				Key: "addr", Label: "Address (host:port)", Value: connectivity.CredentialMaskSentinel, Required: true,
+				Help: "The server notify dials, e.g. smtp.example.com:587.",
+			},
+			{
+				Key: "host", Label: "Host", Value: connectivity.CredentialMaskSentinel,
+				Help: "Optional. Only needed if the TLS certificate / EHLO hostname differs from the address above — otherwise leave blank.",
+			},
 			{Key: "username", Label: "Username", Value: connectivity.CredentialMaskSentinel},
 			{Key: "password", Label: "Password", Value: connectivity.CredentialMaskSentinel},
 			{Key: "from", Label: "From address", Value: connectivity.CredentialMaskSentinel},
@@ -440,6 +463,8 @@ func (c *Console) serveIntegrationsPage(w http.ResponseWriter, r *http.Request) 
 		ReadOnly:      c.deps.ReadOnly,
 		PreopenID:     preopenID,
 		VerifyRunURL:  verifyRunURL,
+		Verified:      r.URL.Query().Get("verified") == "1",
+		VerifyDetail:  r.URL.Query().Get("verifyDetail"),
 		VerifyError:   r.URL.Query().Get("verifyError"),
 		TestSendOK:    r.URL.Query().Get("testSendOK") == "1",
 		TestSendError: r.URL.Query().Get("testSendError"),
@@ -581,6 +606,8 @@ func (c *Console) serveFragmentIntegrationDetail(w http.ResponseWriter, r *http.
 		CanVerify:     c.deps.CredVerifier != nil,
 		ConfirmVerify: confirmVerify,
 		VerifyRunURL:  verifyRunURL,
+		Verified:      r.URL.Query().Get("verified") == "1",
+		VerifyDetail:  r.URL.Query().Get("verifyDetail"),
 		VerifyError:   r.URL.Query().Get("verifyError"),
 		CanTestSend:   c.deps.Connectivity != nil && !c.deps.ReadOnly,
 		TestSendOK:    r.URL.Query().Get("testSendOK") == "1",
@@ -636,7 +663,28 @@ func (c *Console) handleIntegrationVerify(w http.ResponseWriter, r *http.Request
 			url.QueryEscape("Verification failed to start: "+err.Error()), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, backURL+"?verifyRun="+url.QueryEscape(runID), http.StatusSeeOther)
+	runParam := "&verifyRun=" + url.QueryEscape(runID)
+
+	// M5: the durable run above gives dagnats-level durability/trace, but an
+	// operator waiting on this click needs an immediate verdict rather than a
+	// trip to dagnats to find out whether the credentials actually work.
+	// Probe synchronously — the same check the durable run's task handler
+	// performs (connectivity.VerifyByID) — and surface pass/fail inline.
+	if c.deps.Connectivity == nil {
+		http.Redirect(w, r, backURL+"?verifyRun="+url.QueryEscape(runID), http.StatusSeeOther)
+		return
+	}
+	res, verr := c.deps.Connectivity.VerifyByID(r.Context(), scope, id)
+	switch {
+	case verr != nil:
+		c.deps.Logger.Error("console: credential verify probe", "id", id, "err", verr)
+		http.Redirect(w, r, backURL+"?verifyError="+
+			url.QueryEscape("Verification could not complete: "+verr.Error())+runParam, http.StatusSeeOther)
+	case !res.OK:
+		http.Redirect(w, r, backURL+"?verifyError="+url.QueryEscape(res.Detail)+runParam, http.StatusSeeOther)
+	default:
+		http.Redirect(w, r, backURL+"?verified=1&verifyDetail="+url.QueryEscape(res.Detail)+runParam, http.StatusSeeOther)
+	}
 }
 
 // handleIntegrationTestSend handles POST /console/integrations/{id}/test-send:
