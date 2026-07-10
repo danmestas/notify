@@ -24,6 +24,12 @@
 //	TestSubscribers_Update_ReadOnlyBlocked                — POST update → 403 on read-only
 //	TestSubscribers_Delete_ReadOnlyBlocked                — POST delete → 403 on read-only
 //	TestSubscribers_Create_Redirect                       — successful create → redirect to list
+//	TestSubscribers_Create_RejectsMalformedEmail          — H6: bad email format → 303 inline error, not stored
+//	TestSubscribers_Create_AllowsEmptyEmail               — H6: empty email is allowed (only malformed is rejected)
+//	TestSubscribers_Create_RejectsOverLengthFirstName     — H7: pathological free-text length → 303 inline error
+//	TestSubscribers_Update_RejectsMalformedEmail          — H6: bad email format on update → 303 inline error
+//	TestSubscribers_Update_RejectsOverLengthLastName      — H7: pathological free-text length on update → 303 inline error
+//	TestSubscribers_Update_Redirect                       — normal update persists + redirects with no error
 //	TestSubscribers_Create_AutoGeneratesBlankID           — blank subscriberId → server-minted sub_ id
 //	TestSubscribers_Create_PreservesProvidedID            — provided subscriberId → used verbatim
 //	TestSubscribers_Delete_Redirect                       — successful delete → redirect to list
@@ -665,6 +671,201 @@ func TestSubscribers_Create_Redirect(t *testing.T) {
 	}
 	if got, want := rr.Header().Get("Location"), "/console/subscribers/"+created.ID; got != want {
 		t.Errorf("create subscriber: Location = %q, want %q", got, want)
+	}
+}
+
+// TestSubscribers_Create_RejectsMalformedEmail guards H6: the console's
+// <input type=email> client hint is not a security boundary. A direct POST
+// with a garbage email value must be rejected server-side (303 back to /new
+// with an inline error), not stored and echoed back to the operator.
+func TestSubscribers_Create_RejectsMalformedEmail(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers",
+		url.Values{
+			"subscriberId": {"bad-email-001"},
+			"email":        {"totally-not-an-email"},
+			"csrf_token":   {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("malformed email create: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "/console/subscribers/new") {
+		t.Errorf("malformed email create: Location = %q, want redirect back to /new", loc)
+	}
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("malformed email create: Location = %q, missing error param", loc)
+	}
+	if _, err := tc.deps.Audience.Get(testBackground(), tc.scope, "bad-email-001"); err == nil {
+		t.Error("malformed email was persisted; want no row written")
+	}
+}
+
+// TestSubscribers_Create_AllowsEmptyEmail pins the "no email" case: a
+// subscriber may legitimately have no email address at all — only a
+// NON-EMPTY malformed value must be rejected.
+func TestSubscribers_Create_AllowsEmptyEmail(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers",
+		url.Values{
+			"subscriberId": {"no-email-001"},
+			"firstName":    {"NoEmail"},
+			"csrf_token":   {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("empty email create: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Header().Get("Location"), "error=") {
+		t.Errorf("empty email create: Location = %q, must not carry an error", rr.Header().Get("Location"))
+	}
+	if _, err := tc.deps.Audience.Get(testBackground(), tc.scope, "no-email-001"); err != nil {
+		t.Fatalf("empty-email subscriber not persisted: %v", err)
+	}
+}
+
+// TestSubscribers_Create_RejectsOverLengthFirstName guards H7: a pathological
+// unbroken free-text value (e.g. a 5000-char last/first name) must be
+// rejected server-side rather than reaching the store and blowing out the
+// detail-page layout.
+func TestSubscribers_Create_RejectsOverLengthFirstName(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers",
+		url.Values{
+			"subscriberId": {"long-name-001"},
+			"firstName":    {strings.Repeat("x", 5000)},
+			"csrf_token":   {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("over-length firstName create: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "/console/subscribers/new") {
+		t.Errorf("over-length firstName create: Location = %q, want redirect back to /new", loc)
+	}
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("over-length firstName create: Location = %q, missing error param", loc)
+	}
+	if _, err := tc.deps.Audience.Get(testBackground(), tc.scope, "long-name-001"); err == nil {
+		t.Error("over-length firstName was persisted; want no row written")
+	}
+}
+
+// TestSubscribers_Update_RejectsMalformedEmail is the update-path twin of
+// TestSubscribers_Create_RejectsMalformedEmail: a PATCH-style update with a
+// garbage email must be rejected server-side and must not clobber the
+// existing valid record.
+func TestSubscribers_Update_RejectsMalformedEmail(t *testing.T) {
+	tc := newTestConsole(t)
+	existing := tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "upd-bad-email",
+		Email:        "original@example.com",
+		FirstName:    "Original",
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+existing.ID,
+		url.Values{
+			"email":      {"still-not-an-email"},
+			"firstName":  {"Original"},
+			"csrf_token": {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("malformed email update: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "/console/subscribers/"+existing.ID) {
+		t.Errorf("malformed email update: Location = %q, want redirect back to detail page", loc)
+	}
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("malformed email update: Location = %q, missing error param", loc)
+	}
+
+	got, err := tc.deps.Audience.Get(testBackground(), tc.scope, "upd-bad-email")
+	if err != nil {
+		t.Fatalf("get after malformed email update: %v", err)
+	}
+	if got.Email != existing.Email {
+		t.Errorf("malformed email update clobbered email: got %q, want %q", got.Email, existing.Email)
+	}
+}
+
+// TestSubscribers_Update_RejectsOverLengthLastName is the update-path twin
+// of TestSubscribers_Create_RejectsOverLengthFirstName.
+func TestSubscribers_Update_RejectsOverLengthLastName(t *testing.T) {
+	tc := newTestConsole(t)
+	existing := tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "upd-long-name",
+		LastName:     "Original",
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+existing.ID,
+		url.Values{
+			"lastName":   {strings.Repeat("y", 5000)},
+			"csrf_token": {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("over-length lastName update: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("over-length lastName update: Location = %q, missing error param", loc)
+	}
+
+	got, err := tc.deps.Audience.Get(testBackground(), tc.scope, "upd-long-name")
+	if err != nil {
+		t.Fatalf("get after over-length lastName update: %v", err)
+	}
+	if got.LastName != existing.LastName {
+		t.Errorf("over-length lastName update clobbered lastName: got %q, want %q", got.LastName, existing.LastName)
+	}
+}
+
+// TestSubscribers_Update_Redirect pins the plain happy path: a normal update
+// with valid, in-bounds fields must persist and redirect to the detail page
+// with no error.
+func TestSubscribers_Update_Redirect(t *testing.T) {
+	tc := newTestConsole(t)
+	existing := tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "upd-normal",
+		Email:        "before@example.com",
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+existing.ID,
+		url.Values{
+			"email":      {"after@example.com"},
+			"firstName":  {"After"},
+			"csrf_token": {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("normal update: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	if got, want := rr.Header().Get("Location"), "/console/subscribers/"+existing.ID; got != want {
+		t.Errorf("normal update: Location = %q, want %q", got, want)
+	}
+
+	got, err := tc.deps.Audience.Get(testBackground(), tc.scope, "upd-normal")
+	if err != nil {
+		t.Fatalf("get after normal update: %v", err)
+	}
+	if got.Email != "after@example.com" {
+		t.Errorf("normal update: Email = %q, want %q", got.Email, "after@example.com")
+	}
+	if got.FirstName != "After" {
+		t.Errorf("normal update: FirstName = %q, want %q", got.FirstName, "After")
 	}
 }
 

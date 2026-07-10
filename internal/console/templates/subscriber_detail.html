@@ -86,6 +86,9 @@
       {{if not $page.ReadOnly}}
       <div class="console-card-actions">
         <h3 class="console-card-title" style="margin-top:var(--space-4)">Edit profile</h3>
+        {{if $page.FormError}}
+        <p class="console-form-error" role="alert">{{$page.FormError}}</p>
+        {{end}}
         <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}" class="subscriber-edit-form">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           <div class="form-row">

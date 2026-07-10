@@ -594,7 +594,7 @@ input[type="checkbox"]:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ===== page header + KPI tiles ==================================== */
 
-.page-header h1 { margin: 0; font-size: 1.45rem; }
+.page-header h1 { margin: 0; font-size: 1.45rem; overflow-wrap: break-word; word-break: break-word; }
 .page-header-title-row { display: flex; align-items: center; gap: var(--space-2); }
 
 .page-header-tiles {
@@ -2417,7 +2417,16 @@ a.activity-item-run { color: var(--accent); }
   color: var(--text-secondary);
   font-weight: 500;
 }
-.wf-meta-row dd { margin: 0; color: var(--text-primary); }
+.wf-meta-row dd {
+  margin: 0;
+  color: var(--text-primary);
+  /* Defense-in-depth against pathological unbroken values (e.g. a
+     multi-thousand-character subscriber name) blowing out the fixed-width
+     detail-page layout — see H7. Server-side length validation is the
+     primary guard; this is the layout backstop. */
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
 
 /* Form rows in edit panels */
 .form-row {

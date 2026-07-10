@@ -15,6 +15,7 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"sort"
 	"strconv"
@@ -40,7 +41,47 @@ var subscriberSignalKeys = []string{
 const (
 	subscribersDefaultLimit = 50
 	subscribersMaxLimit     = 200
+
+	// maxSubscriberFieldLen bounds console-editable free-text subscriber
+	// profile fields. The client's <input type=email> and any maxlength
+	// attributes are UX hints only, not a security boundary — a direct POST
+	// can send an unbroken multi-thousand-character value that blows out the
+	// fixed-width detail-page layout (headings, title, profile table all
+	// overflow with no wrapping). 256 chars comfortably covers real-world
+	// names, emails, phone numbers, locales, and timezones.
+	maxSubscriberFieldLen = 256
 )
+
+// validateSubscriberProfileInput server-side validates the console-editable
+// free-text subscriber fields shared by create and update. Returns a
+// human-readable message for the first invalid field, or "" when the input
+// is acceptable to persist. Email may be empty — a subscriber can legitimately
+// have no email address — but a NON-EMPTY value must be a well-formed
+// address; the client's HTML5 type=email attribute is not a security boundary.
+func validateSubscriberProfileInput(in audience.SubscriberInput) string {
+	if in.Email != "" {
+		if _, err := mail.ParseAddress(in.Email); err != nil {
+			return "Enter a valid email address"
+		}
+	}
+	fields := []struct {
+		label string
+		value string
+	}{
+		{"Email", in.Email},
+		{"First name", in.FirstName},
+		{"Last name", in.LastName},
+		{"Phone", in.Phone},
+		{"Locale", in.Locale},
+		{"Timezone", in.Timezone},
+	}
+	for _, f := range fields {
+		if len(f.value) > maxSubscriberFieldLen {
+			return f.label + " is too long (max " + strconv.Itoa(maxSubscriberFieldLen) + " characters)"
+		}
+	}
+	return ""
+}
 
 // ─── view structs ─────────────────────────────────────────────────────────────
 
@@ -101,6 +142,10 @@ type subscriberDetailView struct {
 	// ConfirmDelete renders the inline two-step delete confirmation
 	// (?confirmDelete=true).
 	ConfirmDelete bool
+	// FormError is an inline validation error surfaced from ?error= after a
+	// failed profile update (e.g. malformed email, over-length field).
+	// Rendered in the overview tab next to the edit-profile form.
+	FormError string
 }
 
 // subscriberChannelsView is the channels-tab content for a subscriber: the
@@ -572,6 +617,7 @@ func (c *Console) serveSubscriberDetail(w http.ResponseWriter, r *http.Request) 
 		ReadOnly:      c.deps.ReadOnly,
 		ActiveTab:     tab,
 		ConfirmDelete: r.URL.Query().Get("confirmDelete") == "true",
+		FormError:     r.URL.Query().Get("error"),
 	}
 	c.renderPage(w, r, http.StatusOK, "subscriber-detail", title, view)
 }
@@ -1022,6 +1068,25 @@ func (c *Console) handleSubscriberCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	in := audience.SubscriberInput{
+		Email:     strings.TrimSpace(r.FormValue("email")),
+		FirstName: strings.TrimSpace(r.FormValue("firstName")),
+		LastName:  strings.TrimSpace(r.FormValue("lastName")),
+		Phone:     strings.TrimSpace(r.FormValue("phone")),
+		Locale:    strings.TrimSpace(r.FormValue("locale")),
+		Timezone:  strings.TrimSpace(r.FormValue("timezone")),
+	}
+	// Server-side validation (H6/H7): the client's <input type=email> and any
+	// maxlength attributes are UX hints only. Reject before touching the
+	// store so a malformed email or pathological free-text value never
+	// reaches the subscriber record or the rendered detail page.
+	if msg := validateSubscriberProfileInput(in); msg != "" {
+		http.Redirect(w, r,
+			"/console/subscribers/new?error="+url.QueryEscape(msg),
+			http.StatusSeeOther)
+		return
+	}
+
 	// Console-only convenience: a subscriber needs a stable, non-empty external
 	// key (triggers address subscribers by it), but operators creating one by
 	// hand don't always have an external id. When left blank, mint one
@@ -1071,15 +1136,8 @@ func (c *Console) handleSubscriberCreate(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	created, err := c.deps.Audience.Upsert(r.Context(), scope, audience.SubscriberInput{
-		SubscriberID: subID,
-		Email:        strings.TrimSpace(r.FormValue("email")),
-		FirstName:    strings.TrimSpace(r.FormValue("firstName")),
-		LastName:     strings.TrimSpace(r.FormValue("lastName")),
-		Phone:        strings.TrimSpace(r.FormValue("phone")),
-		Locale:       strings.TrimSpace(r.FormValue("locale")),
-		Timezone:     strings.TrimSpace(r.FormValue("timezone")),
-	})
+	in.SubscriberID = subID
+	created, err := c.deps.Audience.Upsert(r.Context(), scope, in)
 	if err != nil {
 		c.deps.Logger.Error("console: create subscriber", "err", err)
 		http.Error(w, "create failed", http.StatusInternalServerError)
@@ -1117,14 +1175,25 @@ func (c *Console) handleSubscriberUpdate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	_, err := c.deps.Audience.PatchSubscriber(r.Context(), scope, id, audience.SubscriberInput{
+	in := audience.SubscriberInput{
 		Email:     strings.TrimSpace(r.FormValue("email")),
 		FirstName: strings.TrimSpace(r.FormValue("firstName")),
 		LastName:  strings.TrimSpace(r.FormValue("lastName")),
 		Phone:     strings.TrimSpace(r.FormValue("phone")),
 		Locale:    strings.TrimSpace(r.FormValue("locale")),
 		Timezone:  strings.TrimSpace(r.FormValue("timezone")),
-	})
+	}
+	// Server-side validation (H6/H7): same guard as create — reject before
+	// touching the store, redirect back to the detail page (overview tab)
+	// with an inline error instead of persisting garbage.
+	if msg := validateSubscriberProfileInput(in); msg != "" {
+		http.Redirect(w, r,
+			"/console/subscribers/"+id+"?error="+url.QueryEscape(msg),
+			http.StatusSeeOther)
+		return
+	}
+
+	_, err := c.deps.Audience.PatchSubscriber(r.Context(), scope, id, in)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			c.serveNotFound(w, r)
