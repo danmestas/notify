@@ -96,7 +96,8 @@
       {{end}}
 
       {{if not $page.ReadOnly}}
-      <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/save">
+      <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/save"
+            data-on:submit="evt.submitter && (evt.submitter.setAttribute('aria-busy', 'true'), evt.submitter.disabled = true)">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="wf-name">Name</label>

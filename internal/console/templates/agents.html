@@ -40,7 +40,8 @@
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
                 data-on:click="$agentNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
-      <form method="POST" action="/console/agents" class="console-form">
+      <form method="POST" action="/console/agents" class="console-form"
+            data-on:submit="evt.submitter && (evt.submitter.setAttribute('aria-busy', 'true'), evt.submitter.disabled = true)">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="new-identifier">Identifier *</label>

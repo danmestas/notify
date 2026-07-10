@@ -71,7 +71,8 @@
       <p id="wf-form-error" class="console-form-error" role="alert">{{$page.FormError}}</p>
       {{end}}
 
-      <form method="POST" action="/console/api/workflows">
+      <form method="POST" action="/console/api/workflows"
+            data-on:submit="evt.submitter && (evt.submitter.setAttribute('aria-busy', 'true'), evt.submitter.disabled = true)">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="new-wf-name">Name *</label>
