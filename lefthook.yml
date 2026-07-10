@@ -14,8 +14,11 @@ pre-commit:
 pre-push:
   commands:
     golangci-lint:
+      glob: "*.go"
       run: mise exec -- golangci-lint run
     vet:
+      glob: "*.go"
       run: go vet ./...
     test:
+      glob: "*.go"
       run: go test -race ./...

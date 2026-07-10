@@ -6,6 +6,11 @@ linters:
     - unconvert
     - bodyclose
   exclusions:
+    paths:
+      # .claude/worktrees holds sibling git worktrees (separate module copies).
+      # Never lint them — a removed worktree leaves dangling cache refs that
+      # otherwise surface as phantom issues and block unrelated pushes.
+      - (^|/)\.claude/
     rules:
       - path: _test\.go
         linters:
