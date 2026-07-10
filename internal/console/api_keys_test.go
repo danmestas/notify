@@ -4,6 +4,8 @@
 //
 //	TestAPIKeys_PageRenders                      — page renders with masked key (not raw)
 //	TestAPIKeys_MaskedKeyInList                  — list shows mask, never raw key
+//	TestAPIKeys_InitialPageOmitsRawKey           — H1: initial render never ships the plaintext secret
+//	TestAPIKeys_RevealEndpointReturnsRawKey      — ?reveal=1 is a separate authenticated request that returns plaintext
 //	TestAPIKeys_UnauthenticatedRedirectsToLogin  — no cookie → 303 to /console/login
 //	TestAPIKeys_NavEntryIsLive                   — nav link present + is-active
 //	TestAPIKeys_Regenerate_ReadOnlyBlocked       — POST regenerate → 403 when ReadOnly
@@ -12,7 +14,7 @@
 //	TestAPIKeys_MaskedInNormalView               — raw key NOT in normal page body
 //	TestAPIKeys_RotateMintNewKey                 — old key no longer authenticates
 //	TestAPIKeys_NonDatastarPOSTRedirects         — native form POST gets 303 not SSE
-//	TestAPIKeys_RouteAuth                        — routes → 303 /console/login without session
+//	TestAPIKeys_RouteAuth                        — routes (incl. ?reveal=1) → 303 /console/login without session
 package console
 
 import (
@@ -56,16 +58,13 @@ func TestAPIKeys_MaskedKeyInList(t *testing.T) {
 	if !strings.Contains(body, "••") {
 		t.Errorf("api-keys page missing masked key (•• sentinel not found)")
 	}
-	// The raw key appears in the data-text reveal attribute so the Datastar
-	// toggle can show it client-side. That is intentional; the prior assertion
-	// ("raw key must not appear") was incompatible with in-place reveal.
 }
 
-// TestAPIKeys_RevealArmContainsRawKey verifies that the Secret Key card's
-// data-text expression contains the real raw key in its true (reveal) arm so
-// clicking the Reveal button actually shows it. This is the regression test
-// for the bug where both ternary arms used the masked string.
-func TestAPIKeys_RevealArmContainsRawKey(t *testing.T) {
+// TestAPIKeys_InitialPageOmitsRawKey is the regression test for H1: the
+// plaintext API key secret must never be shipped in the initial page HTML,
+// masked-or-not-via-client-toggle. Only the mask (plus last4, which is
+// already safe to display) may appear until an explicit ?reveal=1 request.
+func TestAPIKeys_InitialPageOmitsRawKey(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)
 
@@ -75,15 +74,41 @@ func TestAPIKeys_RevealArmContainsRawKey(t *testing.T) {
 	}
 	body := rr.Body.String()
 
-	// The raw key must appear in the data-text attribute's reveal arm.
-	// DecryptForDisplay returns rawHex; it flows into the template as RawKey.
-	if !strings.Contains(body, tc.key) {
-		t.Errorf("data-text reveal arm does not contain raw key %q — reveal toggle is broken", tc.key)
+	if strings.Contains(body, tc.key) {
+		t.Errorf("H1 regression: initial /console/settings/api-keys HTML contains the plaintext secret %q", tc.key)
 	}
-	// The masked sentinel must also be present (in the false/hidden arm and
-	// as the static fallback inside the <code> element).
+	// The masked sentinel must be present — that's the only thing that should
+	// render before an explicit reveal.
 	if !strings.Contains(body, "••") {
 		t.Errorf("masked key sentinel •• missing from api-keys page")
+	}
+	// The reveal control must be a link to the on-demand reveal endpoint, not
+	// a client-side toggle carrying the secret.
+	if !strings.Contains(body, `href="/console/settings/api-keys?reveal=1"`) {
+		t.Errorf("api-keys page missing reveal link to ?reveal=1")
+	}
+}
+
+// TestAPIKeys_RevealEndpointReturnsRawKey proves the reveal-on-demand
+// pattern mirrored from Environment Variables: GET
+// /console/settings/api-keys?reveal=1 is a separate authenticated request
+// that returns the plaintext secret only when explicitly asked for.
+func TestAPIKeys_RevealEndpointReturnsRawKey(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/settings/api-keys?reveal=1", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, tc.key) {
+		t.Errorf("reveal endpoint does not contain raw key %q", tc.key)
+	}
+	// A "Hide" link must be present to fold the secret back away.
+	if !strings.Contains(body, `href="/console/settings/api-keys"`) {
+		t.Errorf("revealed page missing Hide link back to masked view")
 	}
 }
 
@@ -215,8 +240,9 @@ func TestAPIKeys_MaskedInNormalView(t *testing.T) {
 		t.Fatalf("normal page after rotate: status = %d, want 200", rr2.Code)
 	}
 	body := rr2.Body.String()
-	// Raw key appears in the data-text reveal attribute (intentional — the
-	// Reveal button needs it client-side). Only verify the masked sentinel.
+	if strings.Contains(body, newRaw) {
+		t.Errorf("H1 regression: normal api-keys page contains the plaintext secret %q", newRaw)
+	}
 	if !strings.Contains(body, "••") {
 		t.Errorf("normal api-keys page missing masked key")
 	}
@@ -277,6 +303,7 @@ func TestAPIKeys_RouteAuth(t *testing.T) {
 	tc := newTestConsole(t)
 	routes := []string{
 		"/console/settings/api-keys",
+		"/console/settings/api-keys?reveal=1",
 	}
 	for _, path := range routes {
 		rr := tc.get(t, path, nil)

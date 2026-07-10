@@ -4,15 +4,22 @@ package console
 // /console/settings/api-keys.
 //
 // Security model (fail-closed):
-//   - Raw API keys are NEVER rendered in any list or masked view.
-//   - The raw hex is shown exactly once: immediately after a create or rotate
-//     action, embedded in the one-time reveal card. The handler that produces
-//     it redirects to a page that shows it via a query parameter — the raw key
-//     is only surfaced in the redirect target page view struct and immediately
-//     discarded from the handler stack.
-//   - No raw key is ever written to a log line.
+//   - Raw API keys are NEVER rendered in the page's initial/default render.
 //   - The masked display (••••…last4) is always safe; DecryptForDisplay
-//     decrypts for the last4 only.
+//     decrypts for the last4 only, and that's all that flows into the page
+//     view struct unless the caller explicitly asked for more (see below).
+//   - Reveal-on-demand mirrors Environment Variables (variables.go): a
+//     ?reveal=1 query param on the same authenticated GET route triggers a
+//     separate render that includes the plaintext. The plaintext is never
+//     embedded client-side for a Datastar/JS toggle to flip — the browser
+//     must make a fresh authenticated request to see it, so view-source /
+//     devtools on the masked page never leaks the live secret.
+//   - The raw hex is also shown exactly once immediately after a create or
+//     rotate action, embedded in the one-time reveal card. The handler that
+//     produces it redirects to a page that shows it via a query parameter —
+//     the raw key is only surfaced in the redirect target page view struct
+//     and immediately discarded from the handler stack.
+//   - No raw key is ever written to a log line.
 //   - Rotate is a two-step: first click shows the confirm form, second click
 //     POSTs the rotate action.
 
@@ -36,10 +43,11 @@ type apiKeysPageView struct {
 	// shown once. Empty on all other renders.
 	NewRawKey     string
 	NewKeyRotated bool // true when NewRawKey comes from a rotation
-	// RawKey is the current active key, surfaced only via the data-text
-	// reveal attribute so the Reveal toggle can show it client-side.
-	// It is never logged.
+	// RawKey is the current active key's plaintext. It is populated ONLY
+	// when Revealed is true (an explicit ?reveal=1 request) — never on the
+	// default render. It is never logged.
 	RawKey   string
+	Revealed bool
 	ReadOnly bool
 	CSRF     string
 }
@@ -80,6 +88,17 @@ func (c *Console) serveAPIKeysPage(w http.ResponseWriter, r *http.Request) {
 	newRaw := r.URL.Query().Get("newKey")
 	rotated := r.URL.Query().Get("rotated") == "1"
 
+	// Reveal-on-demand, mirroring Environment Variables: the plaintext only
+	// flows into the rendered page when the caller explicitly asked for it
+	// via ?reveal=1 on this same authenticated route. The default render
+	// (and thus every page load from a bookmark, a link, or a refresh) only
+	// ever carries the masked form.
+	revealed := r.URL.Query().Get("reveal") == "1"
+	rawForView := ""
+	if revealed {
+		rawForView = rawHex
+	}
+
 	header := pageHeader{
 		Title:    "API Keys",
 		Subtitle: "Application credentials for this environment.",
@@ -93,7 +112,8 @@ func (c *Console) serveAPIKeysPage(w http.ResponseWriter, r *http.Request) {
 		Env:           env,
 		MaskedKey:     masked,
 		Last4:         last4,
-		RawKey:        rawHex, // never logged; flows into data-text reveal attribute only
+		RawKey:        rawForView, // never logged; empty unless Revealed
+		Revealed:      revealed,
 		APIURL:        c.deps.HTTPAddr,
 		ConfirmRotate: r.URL.Query().Get("confirmRotate") == "1",
 		NewRawKey:     newRaw,

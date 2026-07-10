@@ -31,21 +31,26 @@
   </div>
 
   {{/* Secret Key card */}}
-  <div class="console-card" data-signals="{showKey: false}">
+  <div class="console-card">
     <div class="console-card-header">
       <h2 class="console-card-title">Secret Key</h2>
       <p class="console-card-subtitle">Authenticate server-side requests. Keep this secret — never expose it in client-side code.</p>
     </div>
     <div class="console-card-body">
       <div class="console-secret-reveal">
-        {{/* Masked display by default; data-text swaps to the real key when $showKey is true */}}
-        <code class="console-secret-value"
-              data-text="$showKey ? {{$page.RawKey | jsEscape}} : {{$page.MaskedKey | jsEscape}}">{{$page.MaskedKey}}</code>
+        {{/* Masked by default. The plaintext is only ever rendered when the
+             server has already decided to reveal it (Revealed==true, driven
+             by an explicit ?reveal=1 request) — never shipped in the HTML of
+             a masked page for a client-side toggle to flip. */}}
+        {{if $page.Revealed}}
+        <code id="secret-key-value" class="console-secret-value">{{$page.RawKey}}</code>
         <button type="button" class="btn btn-outline btn-sm"
-                data-on:click="$showKey = !$showKey"
-                aria-label="Toggle key visibility">
-          <span data-text="$showKey ? 'Hide' : 'Reveal'">Reveal</span>
-        </button>
+                data-on:click="navigator.clipboard.writeText(document.getElementById('secret-key-value').textContent)">Copy</button>
+        <a class="btn btn-outline btn-sm" href="/console/settings/api-keys" aria-label="Hide key">Hide</a>
+        {{else}}
+        <code class="console-secret-value">{{$page.MaskedKey}}</code>
+        <a class="btn btn-outline btn-sm" href="/console/settings/api-keys?reveal=1" aria-label="Reveal key">Reveal</a>
+        {{end}}
       </div>
       {{if not $page.ReadOnly}}
       <div class="console-card-actions">
