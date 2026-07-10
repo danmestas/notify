@@ -7,14 +7,148 @@ package audience
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/mail"
+	"regexp"
+	"strings"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
 )
 
+// topicKeyPattern is the URL-safe slug allowlist for topic keys: lowercase
+// letters, digits, hyphens, and underscores, starting with a letter or
+// digit. A topic key is used verbatim as a console URL path segment
+// (view/edit/delete/subscriber routes); a key containing '/' (path
+// separator) or other reserved/URL-unsafe characters produces a topic every
+// console route 404s on, permanently orphaning it (same class as H2, see
+// authoring.triggerIdentifierPattern).
+var topicKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// ErrInvalidTopicKey is returned by CreateTopic when key fails
+// topicKeyPattern. Checked before any store write.
+var ErrInvalidTopicKey = fmt.Errorf("audience: topic key may only contain lowercase letters, numbers, hyphens, and underscores")
+
 // Service owns subscriber persistence.
 type Service struct {
 	store *store.Store
+}
+
+// MaxSubscriberFieldLen bounds subscriber profile free-text fields (email,
+// name, phone, locale, timezone) and each custom-field key/value. Enforced
+// here — not just in the console handler — so a direct /v1 API call is
+// bound by the same guard as the console's forms. 256 chars comfortably
+// covers real-world values without letting an unbroken multi-thousand-char
+// string reach storage and blow out fixed-width layouts.
+const MaxSubscriberFieldLen = 256
+
+// MaxSubscriberCustomFields caps the number of custom key/value entries a
+// subscriber's Data map may hold. The console's custom-fields editor
+// (subscriberCustomFieldRowPool in internal/console/subscribers.go) renders
+// this many rows by default; this is the server-side enforcement so a
+// direct /v1 API call can't create more fields than the console's editor is
+// designed around.
+//
+// Subscribers that already carry more than this many fields — written
+// before this guard existed, or via a direct store edit — are grandfathered
+// by PatchSubscriber: an update is rejected only if it would INCREASE the
+// field count past what is already stored, never merely for re-saving the
+// existing data unchanged. Upsert (create / full re-upsert by external id)
+// has no such row to grandfather against and enforces the flat cap.
+const MaxSubscriberCustomFields = 10
+
+// ValidationError is returned by Upsert and PatchSubscriber when the
+// caller-supplied subscriber input fails validation: a malformed email, an
+// oversized profile field, too many custom fields, an oversized custom-field
+// key/value, or an empty custom-field key. Msg is a human-readable,
+// caller-safe message that HTTP layers (console, /v1 API) can surface
+// directly instead of a generic 500. Detect this case with
+// errors.As(err, &target).
+type ValidationError struct {
+	Msg string
+}
+
+func (e *ValidationError) Error() string { return e.Msg }
+
+// validateSubscriberInput server-side validates the subscriber profile and
+// custom-field data shared by Upsert and PatchSubscriber. maxCustomFields is
+// the ceiling on len(in.Data) as a flat key/value map — callers pass
+// MaxSubscriberCustomFields for a fresh subscriber, or a higher grandfathered
+// value when updating a subscriber that already exceeds the cap (see
+// MaxSubscriberCustomFields). Returns nil when the input is acceptable to
+// persist, or a *ValidationError otherwise.
+//
+// Email may be empty — a subscriber can legitimately have no email address —
+// but a NON-EMPTY value must be a well-formed address.
+func validateSubscriberInput(in SubscriberInput, maxCustomFields int) error {
+	if in.Email != "" {
+		if _, err := mail.ParseAddress(in.Email); err != nil {
+			return &ValidationError{Msg: "invalid email address"}
+		}
+	}
+	fields := []struct {
+		label string
+		value string
+	}{
+		{"email", in.Email},
+		{"firstName", in.FirstName},
+		{"lastName", in.LastName},
+		{"phone", in.Phone},
+		{"locale", in.Locale},
+		{"timezone", in.Timezone},
+	}
+	for _, f := range fields {
+		if len(f.value) > MaxSubscriberFieldLen {
+			return &ValidationError{Msg: fmt.Sprintf("%s is too long (max %d characters)", f.label, MaxSubscriberFieldLen)}
+		}
+	}
+	return validateSubscriberCustomFields(in.Data, maxCustomFields)
+}
+
+// validateSubscriberCustomFields validates in.Data when it decodes as a flat
+// map[string]string — the shape the console's custom-fields editor always
+// produces. Richer structured JSON sent directly via the /v1 API (nested
+// objects, arrays, non-string values) does not match that shape and is left
+// alone here: enforcing a key/value schema on it is outside the scope of the
+// custom-fields cap/length/empty-key guard.
+func validateSubscriberCustomFields(data json.RawMessage, maxFields int) error {
+	if len(data) == 0 {
+		return nil
+	}
+	var fields map[string]string
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil
+	}
+	if len(fields) > maxFields {
+		return &ValidationError{Msg: fmt.Sprintf("too many custom fields (max %d)", maxFields)}
+	}
+	for k, v := range fields {
+		if strings.TrimSpace(k) == "" {
+			return &ValidationError{Msg: "custom field key is required"}
+		}
+		if len(k) > MaxSubscriberFieldLen {
+			return &ValidationError{Msg: fmt.Sprintf("custom field key is too long (max %d characters)", MaxSubscriberFieldLen)}
+		}
+		if len(v) > MaxSubscriberFieldLen {
+			return &ValidationError{Msg: fmt.Sprintf("custom field value is too long (max %d characters)", MaxSubscriberFieldLen)}
+		}
+	}
+	return nil
+}
+
+// countCustomFields returns the number of entries in data when it decodes as
+// a flat map[string]string, or 0 when data is empty or a different shape.
+// Used by PatchSubscriber to compute the grandfathered cap for a subscriber
+// that already exceeds MaxSubscriberCustomFields.
+func countCustomFields(data json.RawMessage) int {
+	if len(data) == 0 {
+		return 0
+	}
+	var fields map[string]string
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return 0
+	}
+	return len(fields)
 }
 
 // New builds a Service over the given store.
@@ -39,6 +173,9 @@ type SubscriberInput struct {
 // same SubscriberID within scope updates the existing row in place rather than
 // creating a duplicate.
 func (svc *Service) Upsert(ctx context.Context, scope domain.Scope, in SubscriberInput) (domain.Subscriber, error) {
+	if err := validateSubscriberInput(in, MaxSubscriberCustomFields); err != nil {
+		return domain.Subscriber{}, err
+	}
 	sub := domain.Subscriber{
 		SubscriberID: in.SubscriberID,
 		Email:        in.Email,
@@ -79,6 +216,9 @@ func (svc *Service) ListChannels(ctx context.Context, scope domain.Scope, subscr
 
 // CreateTopic upserts a topic by (scope, key) and returns the persisted row.
 func (svc *Service) CreateTopic(ctx context.Context, scope domain.Scope, key, name string) (domain.Topic, error) {
+	if !topicKeyPattern.MatchString(key) {
+		return domain.Topic{}, ErrInvalidTopicKey
+	}
 	return svc.store.Topics().Create(ctx, scope, key, name)
 }
 
@@ -116,6 +256,19 @@ func (svc *Service) PatchSubscriber(ctx context.Context, scope domain.Scope, id 
 	if err != nil {
 		return domain.Subscriber{}, err
 	}
+
+	maxCustomFields := MaxSubscriberCustomFields
+	if baseline := countCustomFields(existing.Data); baseline > maxCustomFields {
+		// Grandfather: this subscriber already carries more custom fields
+		// than the cap allows. Only reject if the update would grow the
+		// count further — re-saving the existing data unchanged (e.g. the
+		// console edit form's Save button) must never be blocked by the cap.
+		maxCustomFields = baseline
+	}
+	if err := validateSubscriberInput(in, maxCustomFields); err != nil {
+		return domain.Subscriber{}, err
+	}
+
 	// Merge: non-empty incoming fields overwrite the stored value.
 	if in.Email != "" {
 		existing.Email = in.Email

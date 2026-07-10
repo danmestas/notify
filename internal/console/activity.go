@@ -352,7 +352,7 @@ func (c *Console) fetchMessagesForNotification(ctx context.Context, scope domain
 	if n.RunID == "" {
 		return nil, nil
 	}
-	channels := []string{"in_app", "email", "push", "sms", "chat"}
+	channels := []string{"in_app", "email", "push", "sms", "chat", "stream"}
 	var matched []domain.Message
 	for _, ch := range channels {
 		msgs, err := c.deps.Messages.List(ctx, scope, n.SubscriberID, ch)

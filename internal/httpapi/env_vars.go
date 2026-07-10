@@ -96,6 +96,10 @@ func postEnvVar(ev *envvars.Service) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		item, err := ev.Set(r.Context(), scope, req.Key, req.IsSecret, req.Value)
 		if err != nil {
+			if errors.Is(err, envvars.ErrInvalidKey) {
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
 			http.Error(w, "failed to create env var", http.StatusInternalServerError)
 			return
 		}

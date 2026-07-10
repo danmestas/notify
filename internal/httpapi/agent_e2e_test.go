@@ -225,6 +225,28 @@ func TestAgents_RuntimeEnumMessage(t *testing.T) {
 	}
 }
 
+// TestAgents_CreateRejectsInvalidIdentifier proves the same H2-class fix for
+// agent identifiers: an identifier with URL-unsafe characters is rejected
+// with 422 before any store write, and no agent row is persisted. The
+// identifier is used verbatim as a console URL path segment
+// (view/edit/delete/save routes), so an unvalidated identifier would create
+// an agent every console route 404s on, permanently orphaning it.
+func TestAgents_CreateRejectsInvalidIdentifier(t *testing.T) {
+	srv, authHeader := startAgentServer(t)
+
+	for _, id := range []string{"q2adv5 bad key!! <script>", "foo/bar", "a b", "Foo", "<script>"} {
+		idJSON, err := json.Marshal(id)
+		if err != nil {
+			t.Fatalf("marshal id %q: %v", id, err)
+		}
+		body := `{"identifier":` + string(idJSON) + `,"runtime":"mesh"}`
+		status, resp := doPost(t, srv.URL+"/v1/agents", authHeader, body)
+		if status != http.StatusUnprocessableEntity {
+			t.Errorf("id=%q: status = %d, want 422 (resp: %s)", id, status, resp)
+		}
+	}
+}
+
 // TestAgents_LinkUnlinkIntegrations drives the agent_links surface: link a
 // channel integration, list it, re-link to update config, unlink.
 func TestAgents_LinkUnlinkIntegrations(t *testing.T) {

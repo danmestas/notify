@@ -79,6 +79,67 @@ func TestCreateSMTP_ThenResolveEmail(t *testing.T) {
 	}
 }
 
+// TestCreateIntegration_RejectsInvalidIdentifier proves the same H2-class
+// fix for integration identifiers: an identifier containing a character
+// outside the URL-safe slug allowlist (^[a-z0-9][a-z0-9_-]*$) is rejected
+// before any store write, across every Create* provider constructor (they
+// all route through the shared createIntegration helper). Previously such an
+// identifier was persisted verbatim and used as a URL path segment by every
+// console route (view/edit/delete), permanently orphaning the integration
+// once it 404'd forever.
+func TestCreateIntegration_RejectsInvalidIdentifier(t *testing.T) {
+	ctx := context.Background()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	cases := []string{"foo/bar", "a b", "Foo", "<script>", ""}
+	for _, id := range cases {
+		t.Run("smtp/"+id, func(t *testing.T) {
+			svc := New(openTemp(t), testKey())
+			if _, err := svc.CreateSMTP(ctx, scope, id, SMTPConfig{}, false); !errors.Is(err, ErrInvalidIdentifier) {
+				t.Fatalf("CreateSMTP(%q) error = %v, want ErrInvalidIdentifier", id, err)
+			}
+			rows, err := svc.store.Integrations().List(ctx, scope)
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if len(rows) != 0 {
+				t.Fatalf("CreateSMTP(%q): integration row was written despite invalid identifier; want no row", id)
+			}
+		})
+		t.Run("discord/"+id, func(t *testing.T) {
+			svc := New(openTemp(t), testKey())
+			if _, err := svc.CreateDiscord(ctx, scope, id, DiscordConfig{}, false); !errors.Is(err, ErrInvalidIdentifier) {
+				t.Fatalf("CreateDiscord(%q) error = %v, want ErrInvalidIdentifier", id, err)
+			}
+			rows, err := svc.store.Integrations().List(ctx, scope)
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if len(rows) != 0 {
+				t.Fatalf("CreateDiscord(%q): integration row was written despite invalid identifier; want no row", id)
+			}
+		})
+	}
+}
+
+// TestCreateIntegration_AcceptsValidIdentifier proves the allowlist isn't
+// overly strict: lowercase alphanumerics plus hyphen/underscore, starting
+// with a letter or digit, is accepted.
+func TestCreateIntegration_AcceptsValidIdentifier(t *testing.T) {
+	ctx := context.Background()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	svc := New(openTemp(t), testKey())
+
+	cases := []string{"a", "smtp-1", "primary_smtp", "smtp123"}
+	for _, id := range cases {
+		t.Run(id, func(t *testing.T) {
+			if _, err := svc.CreateSMTP(ctx, scope, id, SMTPConfig{}, false); err != nil {
+				t.Fatalf("CreateSMTP(%q): %v", id, err)
+			}
+		})
+	}
+}
+
 func TestResolveEmail_NoIntegration(t *testing.T) {
 	ctx := context.Background()
 	svc := New(openTemp(t), testKey())

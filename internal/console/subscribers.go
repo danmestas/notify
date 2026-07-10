@@ -96,11 +96,20 @@ func validateSubscriberProfileInput(in audience.SubscriberInput) string {
 // "remove" doing a positional shift (see condRemoveExpr in workflows.go for
 // the full rationale) rather than leaving a hole in the middle of the list.
 
-// subscriberCustomFieldRowPool is the fixed pool of key/value rows the
-// custom-fields editor renders server-side (mirrors stepConditionRows in
-// workflows.go). "Add field" reveals rows up to this count; it also bounds
-// subscriberCustomFieldsFromForm's parse loop and is therefore the hard cap
-// on the number of custom fields a subscriber can carry via the console.
+// subscriberCustomFieldRowPool is the default pool of key/value rows the
+// custom-fields editor renders server-side for a subscriber with no (or few)
+// existing custom fields (mirrors stepConditionRows in workflows.go).
+// "Add field" reveals rows up to this count.
+//
+// It is NOT a hard cap: audience.MaxSubscriberCustomFields is the real
+// server-side cap, enforced in the service layer so both the console and the
+// /v1 API are covered. A subscriber that already carries more fields than
+// this pool (legacy data predating the cap, or written directly to the
+// store) gets a wider pool — see subscriberCustomFieldsEditor — so the
+// editor always renders every existing field and Save never silently
+// truncates the ones past row 10 (this was a data-loss bug: the old fixed
+// 10-row pool both rendered only the first 10 AND was the parse loop's hard
+// bound, so re-saving such a subscriber unchanged deleted the rest).
 const subscriberCustomFieldRowPool = 10
 
 // subscriberCustomFieldRow is one row in the custom-fields editor or the
@@ -124,13 +133,16 @@ type subscriberCustomFieldsEditorView struct {
 var subscriberCustomFieldRowSignals = [...]string{"cfKey", "cfValue"}
 
 // subscriberCustomFieldRemoveExpr builds the Datastar data-on:click expression
-// for row k's remove (×) button. See condRemoveExpr in workflows.go for the
-// full rationale (a naive "blank + decrement" leaves a hole when k is a
-// middle row); this applies the identical positional-shift technique to the
-// custom-fields editor's two-signal (key, value) rows.
-func subscriberCustomFieldRemoveExpr(k int) template.JS {
+// for row k's remove (×) button, given the actual pool size (total) rendered
+// for this subscriber — which may exceed subscriberCustomFieldRowPool for a
+// legacy over-cap subscriber, see subscriberCustomFieldsEditor. See
+// condRemoveExpr in workflows.go for the full rationale (a naive "blank +
+// decrement" leaves a hole when k is a middle row); this applies the
+// identical positional-shift technique to the custom-fields editor's
+// two-signal (key, value) rows.
+func subscriberCustomFieldRemoveExpr(k, total int) template.JS {
 	var b strings.Builder
-	for j := k; j < subscriberCustomFieldRowPool-1; j++ {
+	for j := k; j < total-1; j++ {
 		copies := make([]string, 0, len(subscriberCustomFieldRowSignals))
 		blanks := make([]string, 0, len(subscriberCustomFieldRowSignals))
 		for _, sig := range subscriberCustomFieldRowSignals {
@@ -175,41 +187,57 @@ func decodeSubscriberCustomFields(data json.RawMessage) []subscriberCustomFieldR
 
 // subscriberCustomFieldsEditor builds the editor view from a subscriber's
 // stored Data: existing fields fill the first rows (sorted by key for stable
-// rendering), padded with blank rows to subscriberCustomFieldRowPool. Visible
-// is the number of existing fields, clamped to [1, pool] so the editor always
-// shows at least one row — the create form's fresh empty row, or the first
-// row on a subscriber with no custom data yet.
+// rendering), padded with blank rows up to the pool size. The pool is
+// subscriberCustomFieldRowPool, EXPANDED to fit len(existing) when a
+// subscriber already carries more fields than that (legacy data predating
+// audience.MaxSubscriberCustomFields, or a direct store write) — this is the
+// W1 fix: truncating here is what caused Save to silently delete every field
+// past row 10, since the old fixed pool was also subscriberCustomFieldsFromForm's
+// parse bound. Visible is the number of existing fields, clamped to at least
+// 1 so the editor always shows a row — the create form's fresh empty row, or
+// the first row on a subscriber with no custom data yet.
 func subscriberCustomFieldsEditor(data json.RawMessage) subscriberCustomFieldsEditorView {
 	existing := decodeSubscriberCustomFields(data)
-	rows := make([]subscriberCustomFieldRow, 0, subscriberCustomFieldRowPool)
-	for i, row := range existing {
-		if i >= subscriberCustomFieldRowPool {
-			break
-		}
-		rows = append(rows, row)
+	poolSize := subscriberCustomFieldRowPool
+	if len(existing) > poolSize {
+		poolSize = len(existing)
 	}
-	visible := len(rows)
+	rows := make([]subscriberCustomFieldRow, 0, poolSize)
+	rows = append(rows, existing...)
+	visible := len(existing)
 	if visible < 1 {
 		visible = 1
 	}
-	if visible > subscriberCustomFieldRowPool {
-		visible = subscriberCustomFieldRowPool
-	}
-	for len(rows) < subscriberCustomFieldRowPool {
+	for len(rows) < poolSize {
 		rows = append(rows, subscriberCustomFieldRow{})
 	}
 	return subscriberCustomFieldsEditorView{Rows: rows, Visible: visible}
 }
 
+// subscriberCustomFieldMaxRowPool bounds the cf_row_pool value a form POST
+// may claim (see subscriberCustomFieldsFromForm): far above any realistic
+// legacy-data pool size, but finite, so a forged cf_row_pool can't force an
+// unbounded parse loop.
+const subscriberCustomFieldMaxRowPool = 1000
+
 // subscriberCustomFieldsFromForm parses the posted custom_key_N/custom_value_N
-// rows (N in [0, subscriberCustomFieldRowPool)) into a JSON object suitable
-// for SubscriberInput.Data. A row with both key and value blank is an unused
-// slot and is skipped — this is how the client-side "remove row" control
-// works (it blanks the row's signals before submit). A row with a blank key
-// but a non-blank value is rejected: the operator started a field but never
-// named it. Keys and values are bounded by maxSubscriberFieldLen, the same
-// guard already applied to the other free-text profile fields. Duplicate
-// keys: the last row wins. The caller must call r.ParseForm() first.
+// rows into a JSON object suitable for SubscriberInput.Data. The row count to
+// parse comes from the posted cf_row_pool hidden field (written by the
+// "subscriber-custom-fields" template to the actual pool size it rendered —
+// see subscriberCustomFieldsEditor), clamped to
+// [subscriberCustomFieldRowPool, subscriberCustomFieldMaxRowPool] and
+// defaulting to subscriberCustomFieldRowPool when absent or invalid. This is
+// what lets a legacy subscriber with more than subscriberCustomFieldRowPool
+// fields round-trip through Save without the parse loop truncating rows past
+// 10 (see subscriberCustomFieldsEditor's doc for the full W1 rationale). A
+// row with both key and value blank is an unused slot and is skipped — this
+// is how the client-side "remove row" control works (it blanks the row's
+// signals before submit). A row with a blank key but a non-blank value is
+// rejected: the operator started a field but never named it. Keys and values
+// are bounded by maxSubscriberFieldLen, the same guard already applied to
+// the other free-text profile fields (audience.Service enforces this too,
+// and additionally the audience.MaxSubscriberCustomFields field-count cap).
+// Duplicate keys: the last row wins. The caller must call r.ParseForm() first.
 //
 // Unlike the other profile fields (which the store's merge-upsert preserves
 // when posted blank), this always returns a well-formed JSON object, never
@@ -222,8 +250,17 @@ func subscriberCustomFieldsEditor(data json.RawMessage) subscriberCustomFieldsEd
 // the request actually posted row 0 — i.e. the real edit form was
 // submitted).
 func subscriberCustomFieldsFromForm(r *http.Request) (json.RawMessage, string) {
+	rowPool := subscriberCustomFieldRowPool
+	if v := strings.TrimSpace(r.FormValue("cf_row_pool")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > rowPool {
+			if n > subscriberCustomFieldMaxRowPool {
+				n = subscriberCustomFieldMaxRowPool
+			}
+			rowPool = n
+		}
+	}
 	fields := make(map[string]string)
-	for i := 0; i < subscriberCustomFieldRowPool; i++ {
+	for i := 0; i < rowPool; i++ {
 		suffix := strconv.Itoa(i)
 		key := strings.TrimSpace(r.FormValue("custom_key_" + suffix))
 		val := r.FormValue("custom_value_" + suffix)
@@ -1330,6 +1367,18 @@ func (c *Console) handleSubscriberCreate(w http.ResponseWriter, r *http.Request)
 	in.SubscriberID = subID
 	created, err := c.deps.Audience.Upsert(r.Context(), scope, in)
 	if err != nil {
+		// A *audience.ValidationError means the audience service itself
+		// rejected the input (e.g. the custom-field count cap, which this
+		// handler never pre-checks). Surface it the same way as the console's
+		// own pre-checks above rather than a generic 500 — it's a caller
+		// error, not a server fault.
+		var verr *audience.ValidationError
+		if errors.As(err, &verr) {
+			http.Redirect(w, r,
+				"/console/subscribers/new?error="+url.QueryEscape(verr.Msg),
+				http.StatusSeeOther)
+			return
+		}
 		c.deps.Logger.Error("console: create subscriber", "err", err)
 		http.Error(w, "create failed", http.StatusInternalServerError)
 		return
@@ -1405,6 +1454,17 @@ func (c *Console) handleSubscriberUpdate(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			c.serveNotFound(w, r)
+			return
+		}
+		// A *audience.ValidationError means the audience service itself
+		// rejected the input (e.g. the custom-field count cap growing past
+		// the grandfathered baseline). Surface it the same way as the
+		// console's own pre-checks above rather than a generic 500.
+		var verr *audience.ValidationError
+		if errors.As(err, &verr) {
+			http.Redirect(w, r,
+				"/console/subscribers/"+id+"?error="+url.QueryEscape(verr.Msg),
+				http.StatusSeeOther)
 			return
 		}
 		c.deps.Logger.Error("console: update subscriber", "err", err)

@@ -1034,6 +1034,10 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			redirectIntegrationsCreateErr(w, r, "Identifier already exists.")
 			return
 		}
+		if errors.Is(createErr, connectivity.ErrInvalidIdentifier) {
+			redirectIntegrationsCreateErr(w, r, "Identifier may only contain lowercase letters, numbers, hyphens, and underscores.")
+			return
+		}
 		c.deps.Logger.Error("console: create integration", "provider", providerID, "err", createErr)
 		redirectIntegrationsCreateErr(w, r, "Create failed.")
 		return

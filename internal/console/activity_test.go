@@ -451,6 +451,134 @@ func TestFragment_ActivityList_FilterByChannel(t *testing.T) {
 	}
 }
 
+// ─── regression: "All channels" silently excluded stream messages ─────────────
+//
+// Shape A added the "stream" channel (the "stream" step type's built-in feed
+// publish) but fetchMessagesForNotification's hardcoded channel fan-out list
+// and the filter-bar dropdown were never updated. "All channels" (no filter)
+// undercounted vs Dashboard/Analytics, which correctly include stream.
+
+// TestFragment_ActivityList_AllChannelsIncludesStream seeds an in_app message
+// and a stream message on two different notifications and asserts both appear
+// with no channel filter applied ("All channels" must include stream).
+func TestFragment_ActivityList_AllChannelsIncludesStream(t *testing.T) {
+	tc := newTestConsole(t)
+
+	nInApp := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-allch-inapp",
+		RunID:        "run-allch-inapp",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     nInApp.WorkflowID,
+		NotificationID: nInApp.ID,
+		RunID:          nInApp.RunID,
+		SubscriberID:   nInApp.SubscriberID,
+		Channel:        "in_app",
+		Status:         "sent",
+	})
+
+	nStream := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-allch-stream",
+		RunID:        "run-allch-stream",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     nStream.WorkflowID,
+		NotificationID: nStream.ID,
+		RunID:          nStream.RunID,
+		SubscriberID:   nStream.SubscriberID,
+		Channel:        "stream",
+		Status:         "sent",
+	})
+
+	cookie, _ := tc.login(t)
+	rr := tc.get(t, "/console/api/fragments/activity-list", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("activity-list (all channels): status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "sub-allch-inapp") {
+		t.Errorf("all-channels view missing in_app row")
+	}
+	if !strings.Contains(body, "sub-allch-stream") {
+		t.Errorf("all-channels view missing stream row entirely")
+	}
+	// The stream row's channel badge must show "stream", not the "unknown"
+	// placeholder — before the fix, fetchMessagesForNotification's hardcoded
+	// channel fan-out list omitted "stream", so the stream message was never
+	// fetched and the row rendered with an empty/unknown channel.
+	if !strings.Contains(body, `activity-channel-badge--stream`) {
+		t.Errorf("all-channels view: stream row missing its stream channel badge — stream message never fetched, body: %.800s", body)
+	}
+}
+
+// TestFragment_ActivityList_FilterByStreamChannel proves a "stream" channel
+// filter value scopes the list to stream-channel rows only.
+func TestFragment_ActivityList_FilterByStreamChannel(t *testing.T) {
+	tc := newTestConsole(t)
+
+	nInApp := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-strfilt-inapp",
+		RunID:        "run-strfilt-inapp",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     nInApp.WorkflowID,
+		NotificationID: nInApp.ID,
+		RunID:          nInApp.RunID,
+		SubscriberID:   nInApp.SubscriberID,
+		Channel:        "in_app",
+		Status:         "sent",
+	})
+
+	nStream := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-strfilt-stream",
+		RunID:        "run-strfilt-stream",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     nStream.WorkflowID,
+		NotificationID: nStream.ID,
+		RunID:          nStream.RunID,
+		SubscriberID:   nStream.SubscriberID,
+		Channel:        "stream",
+		Status:         "sent",
+	})
+
+	cookie, _ := tc.login(t)
+	rr := tc.get(t, "/console/api/fragments/activity-list?channel=stream", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("channel=stream filter: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "sub-strfilt-stream") {
+		t.Errorf("channel=stream filter missing sub-strfilt-stream row")
+	}
+	if strings.Contains(body, "sub-strfilt-inapp") {
+		t.Errorf("channel=stream filter leaked sub-strfilt-inapp row")
+	}
+}
+
+// TestActivity_ChannelDropdownHasStreamOption proves the channel filter
+// dropdown offers a "Stream" option.
+func TestActivity_ChannelDropdownHasStreamOption(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/activity", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/activity: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `data-value="stream"`) {
+		t.Errorf("channel filter dropdown missing a stream option (data-value=\"stream\")")
+	}
+	if !strings.Contains(body, "Stream") {
+		t.Errorf("channel filter dropdown missing \"Stream\" label")
+	}
+}
+
 // TestFragment_ActivityList_FilterByChannelSignal proves the same filter
 // via the Datastar activityChannel signal (the path the UI actually takes).
 func TestFragment_ActivityList_FilterByChannelSignal(t *testing.T) {

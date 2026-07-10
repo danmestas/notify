@@ -595,6 +595,88 @@ func TestIntegrations_Create_DuplicateIdentifierRejected(t *testing.T) {
 	}
 }
 
+// TestIntegrations_Create_RejectsInvalidIdentifier proves the same H2-class
+// fix for integration identifiers: an identifier with URL-unsafe characters
+// (space, '/', '<script>') is rejected inline instead of being persisted and
+// permanently orphaned (every view/edit/delete route 404s on an un-encoded
+// path segment).
+func TestIntegrations_Create_RejectsInvalidIdentifier(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	for _, id := range []string{"q2adv5 bad key!! <script>", "foo/bar", "a b", "Foo", "<script>"} {
+		form := url.Values{
+			"provider_id": {"smtp"}, "identifier": {id},
+			"addr": {"smtp.example.com:587"}, "host": {"smtp.example.com"},
+			"username": {"user"}, "password": {"pass"},
+			"from":       {"noreply@example.com"},
+			"csrf_token": {csrf},
+		}
+		rr := tc.postForm(t, "/console/integrations", form, cookie)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("id=%q: create integration: status = %d, want 303 (body: %s)", id, rr.Code, rr.Body.String())
+		}
+		loc := rr.Header().Get("Location")
+		if !strings.Contains(loc, "/console/integrations") {
+			t.Errorf("id=%q: Location = %q, want redirect back to /console/integrations", id, loc)
+		}
+		if !strings.Contains(loc, "createError=") {
+			t.Errorf("id=%q: Location = %q, missing an error param", id, loc)
+		}
+
+		integrations, err := tc.st.Integrations().List(testBackground(), tc.scope)
+		if err != nil {
+			t.Fatalf("id=%q: list integrations: %v", id, err)
+		}
+		for _, in := range integrations {
+			if in.Identifier == id {
+				t.Fatalf("id=%q: integration row was written despite invalid identifier; want no row", id)
+			}
+		}
+
+		rrGet := tc.get(t, loc, cookie)
+		if rrGet.Code != http.StatusOK {
+			t.Fatalf("id=%q: GET %s: status = %d, want 200", id, loc, rrGet.Code)
+		}
+		if !strings.Contains(rrGet.Body.String(), "lowercase letters, numbers, hyphens, and underscores") {
+			t.Errorf("id=%q: page missing validation error message; body snippet: %s", id, rrGet.Body.String()[:min(500, rrGet.Body.Len())])
+		}
+	}
+}
+
+// TestIntegrations_Create_AcceptsValidIdentifier proves a valid identifier is
+// created (the inverse of TestIntegrations_Create_RejectsInvalidIdentifier).
+func TestIntegrations_Create_AcceptsValidIdentifier(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	form := url.Values{
+		"provider_id": {"smtp"}, "identifier": {"valid-smtp-id"},
+		"addr": {"smtp.example.com:587"}, "host": {"smtp.example.com"},
+		"username": {"user"}, "password": {"pass"},
+		"from":       {"noreply@example.com"},
+		"csrf_token": {csrf},
+	}
+	rr := tc.postForm(t, "/console/integrations", form, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("create integration: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	integrations, err := tc.st.Integrations().List(testBackground(), tc.scope)
+	if err != nil {
+		t.Fatalf("list integrations: %v", err)
+	}
+	found := false
+	for _, in := range integrations {
+		if in.Identifier == "valid-smtp-id" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("valid identifier was not persisted")
+	}
+}
+
 func TestIntegrations_PageEmptyState(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)

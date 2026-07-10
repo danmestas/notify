@@ -41,6 +41,12 @@ type AnalyticsRepo interface {
 	// when there are no subscribers. The optional filter may restrict results
 	// to a specific workflow_id (GAP-AF-05, M1).
 	AverageMessagesPerSubscriber(ctx context.Context, scope domain.Scope, since time.Time, f AnalyticsFilter) (float64, error)
+	// RunsByDay returns ordered per-day counts of DISTINCT workflow runs,
+	// scope-filtered. Backs the Workflow Runs Trend chart — a run that fans
+	// out to N channels contributes N delivery rows but counts as 1 run here.
+	// Rows with an empty run_id (pre-M2 data) are excluded. The optional
+	// filter may restrict results to a specific workflow_id (M2).
+	RunsByDay(ctx context.Context, scope domain.Scope, f AnalyticsFilter) ([]domain.RunDayCount, error)
 }
 
 type analyticsRepo struct {
@@ -61,10 +67,10 @@ func (repo *analyticsRepo) Insert(ctx context.Context, scope domain.Scope, d dom
 		ctx,
 		`INSERT INTO analytics_deliveries
 		   (id, org_id, environment_id, channel, status, subscriber_id,
-		    workflow_id, transaction_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    workflow_id, transaction_id, run_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ID, d.OrgID, d.EnvID, d.Channel, d.Status, d.SubscriberID,
-		d.WorkflowID, d.TransactionID, d.CreatedAt,
+		d.WorkflowID, d.TransactionID, d.RunID, d.CreatedAt,
 	)
 	return err
 }
@@ -202,6 +208,48 @@ func QueryAverageMessagesPerSubscriber(ctx context.Context, db *sql.DB, scope do
 		return 0, nil
 	}
 	return float64(total) / float64(distinct), nil
+}
+
+func (repo *analyticsRepo) RunsByDay(ctx context.Context, scope domain.Scope, f AnalyticsFilter) ([]domain.RunDayCount, error) {
+	return QueryRunsByDay(ctx, repo.r, scope, f)
+}
+
+// QueryRunsByDay runs the workflow-runs over-time query against db and returns
+// ordered per-day counts of DISTINCT run_id. It is shared by the SQLite repo
+// and the DuckDB analytics backend. Rows with an empty run_id (pre-M2 data,
+// or any row that never carried one) are excluded so they don't inflate or
+// distort the count. The optional AnalyticsFilter may add a workflow_id
+// predicate, matching QueryDeliveriesByDay's scoping (M2).
+func QueryRunsByDay(ctx context.Context, db *sql.DB, scope domain.Scope, f AnalyticsFilter) ([]domain.RunDayCount, error) {
+	q := `SELECT substr(created_at, 1, 10) AS day, COUNT(DISTINCT run_id)
+	      FROM analytics_deliveries
+	      WHERE org_id = ? AND environment_id = ?
+	        AND run_id IS NOT NULL AND run_id != ''`
+	args := []any{scope.OrgID, scope.EnvID}
+	if f.WorkflowID != "" {
+		q += ` AND workflow_id = ?`
+		args = append(args, f.WorkflowID)
+	}
+	q += ` GROUP BY day ORDER BY day`
+
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.RunDayCount
+	for rows.Next() {
+		var c domain.RunDayCount
+		if err := rows.Scan(&c.Day, &c.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // buildSubscriberQuery returns the inner SELECT used by both CountActiveSubscribers

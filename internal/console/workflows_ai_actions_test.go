@@ -10,9 +10,23 @@ import (
 	"testing"
 
 	"github.com/danmestas/notify/internal/aibuilder"
+	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/store"
 )
+
+// fakeKeepEngine is a structural stand-in for authoring.New's unexported
+// registerer interface: it satisfies RegisterWorkflow so authoring.Update
+// actually registers (and, post-Fix-1, records a version). The default console
+// harness wires a nil engine, which versions nothing — this lets the
+// double-record test observe versioning end-to-end.
+type fakeKeepEngine struct{ calls int }
+
+func (f *fakeKeepEngine) RegisterWorkflow(context.Context, engine.WorkflowDef) error {
+	f.calls++
+	return nil
+}
 
 // smtpForEmail seeds an active SMTP integration so the email step type is
 // available to authoring.Create/Update (mirrors the confirm/apply tests).
@@ -119,6 +133,65 @@ func TestAIKeep_RefineSessionUpdatesWorkflow(t *testing.T) {
 	}
 	if got.Status != store.BuilderSessionConfirmed {
 		t.Errorf("session status = %q, want confirmed", got.Status)
+	}
+}
+
+// TestAIKeep_RefineSession_RecordsExactlyOneVersion is the Fix 2 proof: a single
+// AI-refine "Keep" must record EXACTLY ONE new version, not two. The refine leg
+// now calls authoring.Update alone (which registers the def AND records the
+// version); the prior back-to-back Update+Publish on the same target would
+// double-record a byte-identical version for one logical Keep. The default
+// harness uses a nil engine (versions nothing), so this test swaps in a fake
+// engine to observe versioning end-to-end.
+func TestAIKeep_RefineSession_RecordsExactlyOneVersion(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.smtpForEmail(t)
+	tc.seedWorkflowWithSteps(t, "Welcome", "welcome", []domain.Step{
+		{StepID: "step_email1", Type: "email", Name: "Greeting", ControlValues: json.RawMessage(`{"subject":"Hi","body":"Welcome"}`)},
+	})
+
+	// Swap in a fake engine so authoring.Update actually registers + versions,
+	// then re-mount the console over the new Authoring service.
+	tc.deps.Authoring = authoring.New(tc.st, &fakeKeepEngine{})
+	tc.rebuild()
+
+	ctx := context.Background()
+	wf, err := tc.deps.Authoring.GetBySlug(ctx, tc.scope, "welcome")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	before, err := tc.st.WorkflowVersions().ListByWorkflow(ctx, tc.scope, wf.ID)
+	if err != nil {
+		t.Fatalf("ListByWorkflow (before): %v", err)
+	}
+	if len(before) != 0 {
+		t.Fatalf("precondition: versions before keep = %d, want 0 (Create records nothing)", len(before))
+	}
+
+	sessID := tc.seedRefineDraft(t, tc.scope, "welcome", aibuilder.WorkflowDraft{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome",
+		Steps: []domain.Step{
+			{StepID: "step_email1", Type: "email", Name: "Greeting", ControlValues: json.RawMessage(`{"subject":"Hi","body":"Welcome"}`)},
+			{StepID: "step_inapp1", Type: "in_app", Name: "Nudge", ControlValues: json.RawMessage(`{"body":"Still here?"}`)},
+		},
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/ai/"+sessID+"/keep", url.Values{
+		"csrf_token": {csrf},
+		"msg_id":     {"turn-1"},
+	}, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("keep status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	after, err := tc.st.WorkflowVersions().ListByWorkflow(ctx, tc.scope, wf.ID)
+	if err != nil {
+		t.Fatalf("ListByWorkflow (after): %v", err)
+	}
+	if got := len(after) - len(before); got != 1 {
+		t.Fatalf("AI-refine Keep recorded %d versions, want exactly 1 (double-record regression)", got)
 	}
 }
 

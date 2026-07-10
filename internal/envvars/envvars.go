@@ -7,6 +7,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"fmt"
+	"regexp"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
@@ -14,6 +15,21 @@ import (
 
 // ValueMaskSentinel is returned in API responses when reveal=false.
 const ValueMaskSentinel = "••••••"
+
+// keyPattern is the URL-safe slug allowlist for env var keys: letters
+// (upper or lower case — the "API_KEY"-style convention is uppercase),
+// digits, hyphens, and underscores, starting with a letter or digit. A key
+// is used verbatim as a console URL path segment (the variable detail
+// route); a key containing '/' (path separator) or other reserved/URL-unsafe
+// characters produces a var every console route 404s on, permanently
+// orphaning it (same class as H2, see authoring.triggerIdentifierPattern).
+// Unlike the trigger-identifier/topic-key allowlist, uppercase is allowed
+// here because it is the established convention for env var keys.
+var keyPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
+// ErrInvalidKey is returned by Set when key fails keyPattern. Checked before
+// any store write.
+var ErrInvalidKey = fmt.Errorf("envvars: key may only contain letters, numbers, hyphens, and underscores")
 
 // Service wraps EnvVarRepo with AES-GCM encrypt/decrypt for values.
 type Service struct {
@@ -36,6 +52,9 @@ func New(st *store.Store, masterKey []byte) (*Service, error) {
 
 // Set encrypts value and upserts the env var.
 func (svc *Service) Set(ctx context.Context, scope domain.Scope, key string, isSecret bool, value string) (domain.EnvVar, error) {
+	if !keyPattern.MatchString(key) {
+		return domain.EnvVar{}, ErrInvalidKey
+	}
 	enc, err := svc.encrypt([]byte(value))
 	if err != nil {
 		return domain.EnvVar{}, fmt.Errorf("envvars: encrypt: %w", err)

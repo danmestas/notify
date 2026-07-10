@@ -178,6 +178,51 @@ func TestPostIntegration_UnifiedCreate_UnknownProvider(t *testing.T) {
 	}
 }
 
+// TestPostIntegration_UnifiedCreate_InvalidIdentifier_422 proves the unified
+// create endpoint rejects an identifier with URL-unsafe characters (same
+// H2-class fix as the console handler): the identifier becomes a URL path
+// segment for every integration route (view/edit/delete), so an unvalidated
+// identifier would be created but permanently unreachable.
+func TestPostIntegration_UnifiedCreate_InvalidIdentifier_422(t *testing.T) {
+	srv, authHeader, _ := startOperatorServer(t)
+
+	for _, id := range []string{"q2adv5 bad key!! <script>", "foo/bar", "a b", "Foo", "<script>"} {
+		idJSON, err := json.Marshal(id)
+		if err != nil {
+			t.Fatalf("marshal id %q: %v", id, err)
+		}
+		body := `{"providerId":"smtp","identifier":` + string(idJSON) + `,"credentials":{"host":"smtp.example.com","from":"x@example.com"}}`
+		status, resp := doPost(t, srv.URL+"/v1/integrations", authHeader, body)
+		if status != http.StatusUnprocessableEntity {
+			t.Errorf("id=%q: status = %d, want 422 (resp: %s)", id, status, resp)
+		}
+	}
+}
+
+// TestPostPushIntegration_InvalidIdentifier_422 proves the /v1/integrations/push
+// legacy endpoint rejects the same class of bad identifier.
+func TestPostPushIntegration_InvalidIdentifier_422(t *testing.T) {
+	srv, authHeader, _ := startOperatorServer(t)
+
+	body := `{"provider":"expo","identifier":"foo/bar"}`
+	status, resp := doPost(t, srv.URL+"/v1/integrations/push", authHeader, body)
+	if status != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422 (resp: %s)", status, resp)
+	}
+}
+
+// TestPostChatIntegration_InvalidIdentifier_422 proves the /v1/integrations/chat
+// legacy endpoint rejects the same class of bad identifier.
+func TestPostChatIntegration_InvalidIdentifier_422(t *testing.T) {
+	srv, authHeader, _ := startOperatorServer(t)
+
+	body := `{"provider":"discord","identifier":"foo/bar","webhookUrl":"https://discord.example/webhook"}`
+	status, resp := doPost(t, srv.URL+"/v1/integrations/chat", authHeader, body)
+	if status != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422 (resp: %s)", status, resp)
+	}
+}
+
 // TestPostIntegration_ErrorPathNeverLeaksCredentials forces a store error (dup
 // identifier) and verifies the error body contains no credential values.
 func TestPostIntegration_ErrorPathNeverLeaksCredentials(t *testing.T) {

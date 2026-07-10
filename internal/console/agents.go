@@ -670,6 +670,14 @@ func (c *Console) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		redirectAgentNewErr(w, r, "Identifier is required.")
 		return
 	}
+	// Reject identifiers outside the URL-safe slug allowlist — the identifier
+	// is used verbatim as a console URL path segment (view/edit/delete/save
+	// routes), so an unvalidated identifier would create an agent every
+	// console route 404s on, permanently orphaning it (same class as H2).
+	if !agentdomain.ValidIdentifier(identifier) {
+		redirectAgentNewErr(w, r, "Identifier may only contain lowercase letters, numbers, hyphens, and underscores.")
+		return
+	}
 	runtime := strings.TrimSpace(r.FormValue("runtime"))
 	// Reject runtimes without a registered executor — bridge/managed are
 	// defined constants but unimplemented, so an agent saved with them would

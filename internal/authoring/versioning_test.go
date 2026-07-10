@@ -130,6 +130,179 @@ func TestPublish_TwoPublishesIncreasingSeq(t *testing.T) {
 	}
 }
 
+// TestUpdate_RecordsNewVersion proves that a plain Update (the step-editor Save
+// path, not Publish) records a new version reflecting exactly what it just
+// registered with the engine — so Version History's "current" tracks what
+// Update delivered, not a stale Publish. Also guards that a single Update
+// appends EXACTLY ONE version row (folding in the one-change-one-version
+// check), not two.
+func TestUpdate_RecordsNewVersion(t *testing.T) {
+	ctx := context.Background()
+	st := newVersioningTestStore(t)
+	fake := &fakeRegisterer{}
+	svc := authoring.New(st, fake)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	wf, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := svc.Publish(ctx, scope, "welcome"); err != nil {
+		t.Fatalf("Publish v1: %v", err)
+	}
+
+	updatedSteps := []domain.Step{
+		{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)},
+		{StepID: "S2", Type: "in_app", ControlValues: json.RawMessage(`{"body":"bye"}`)},
+	}
+	if _, err := svc.Update(ctx, scope, "welcome", authoring.UpdateInput{
+		Name:  "Welcome",
+		Steps: updatedSteps,
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	versions, err := st.WorkflowVersions().ListByWorkflow(ctx, scope, wf.ID)
+	if err != nil {
+		t.Fatalf("ListByWorkflow: %v", err)
+	}
+	// Publish v1 = 1 row, Update = exactly 1 more = 2 (not 1, not 3).
+	if len(versions) != 2 {
+		t.Fatalf("versions = %d, want 2 (Publish + Update, exactly one each)", len(versions))
+	}
+
+	newest := versions[1]
+	if newest.Seq != 2 {
+		t.Fatalf("newest Seq = %d, want 2", newest.Seq)
+	}
+	// The newest version's compiled_def must be the exact def Update registered.
+	var newestDef engine.WorkflowDef
+	if err := json.Unmarshal(newest.CompiledDef, &newestDef); err != nil {
+		t.Fatalf("unmarshal newest compiled_def: %v", err)
+	}
+	if !reflect.DeepEqual(newestDef, fake.last()) {
+		t.Fatalf("newest compiled_def = %+v, want registered def %+v", newestDef, fake.last())
+	}
+	if len(newestDef.Steps) != 2 {
+		t.Fatalf("newest def steps = %d, want 2 (Update's two-step def)", len(newestDef.Steps))
+	}
+	// The newest version's steps snapshot must match the updated steps.
+	var snapSteps []domain.Step
+	if err := json.Unmarshal([]byte(newest.Steps), &snapSteps); err != nil {
+		t.Fatalf("unmarshal newest steps snapshot: %v", err)
+	}
+	if len(snapSteps) != 2 || snapSteps[0].StepID != "S1" || snapSteps[1].StepID != "S2" {
+		t.Fatalf("newest steps snapshot = %+v, want [S1,S2]", snapSteps)
+	}
+}
+
+// TestUpdate_TwoUpdatesRecordTwoIncreasingSeqVersions proves each Update appends
+// its own version row with a strictly increasing Seq and distinct id, and the
+// newest row carries the SECOND update's content (not the first's).
+func TestUpdate_TwoUpdatesRecordTwoIncreasingSeqVersions(t *testing.T) {
+	ctx := context.Background()
+	st := newVersioningTestStore(t)
+	fake := &fakeRegisterer{}
+	svc := authoring.New(st, fake)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	wf, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := svc.Publish(ctx, scope, "welcome"); err != nil {
+		t.Fatalf("Publish v1: %v", err)
+	}
+
+	if _, err := svc.Update(ctx, scope, "welcome", authoring.UpdateInput{
+		Name: "Welcome",
+		Steps: []domain.Step{
+			{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)},
+			{StepID: "S2", Type: "in_app", ControlValues: json.RawMessage(`{"body":"bye"}`)},
+		},
+	}); err != nil {
+		t.Fatalf("Update 1: %v", err)
+	}
+	if _, err := svc.Update(ctx, scope, "welcome", authoring.UpdateInput{
+		Name: "Welcome",
+		Steps: []domain.Step{
+			{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)},
+			{StepID: "S2", Type: "in_app", ControlValues: json.RawMessage(`{"body":"bye"}`)},
+			{StepID: "S3", Type: "in_app", ControlValues: json.RawMessage(`{"body":"third"}`)},
+		},
+	}); err != nil {
+		t.Fatalf("Update 2: %v", err)
+	}
+
+	versions, err := st.WorkflowVersions().ListByWorkflow(ctx, scope, wf.ID)
+	if err != nil {
+		t.Fatalf("ListByWorkflow: %v", err)
+	}
+	if len(versions) != 3 {
+		t.Fatalf("versions = %d, want 3 (Publish + two Updates)", len(versions))
+	}
+	if versions[0].Seq != 1 || versions[1].Seq != 2 || versions[2].Seq != 3 {
+		t.Fatalf("seqs = [%d,%d,%d], want [1,2,3]", versions[0].Seq, versions[1].Seq, versions[2].Seq)
+	}
+	ids := map[string]bool{versions[0].ID: true, versions[1].ID: true, versions[2].ID: true}
+	if len(ids) != 3 {
+		t.Fatalf("version ids not distinct: %v", []string{versions[0].ID, versions[1].ID, versions[2].ID})
+	}
+	// The newest row must carry the SECOND update's three-step content.
+	var newestSteps []domain.Step
+	if err := json.Unmarshal([]byte(versions[2].Steps), &newestSteps); err != nil {
+		t.Fatalf("unmarshal newest steps: %v", err)
+	}
+	if len(newestSteps) != 3 || newestSteps[2].StepID != "S3" {
+		t.Fatalf("newest steps snapshot = %+v, want the second update's [S1,S2,S3]", newestSteps)
+	}
+}
+
+// TestUpdate_NilEngineRecordsNoVersion locks in the Fix 1 guard: with a nil
+// engine (store-only wiring, e.g. the console in tests), Update persists the row
+// but records NO version — Create records nothing, and a nil-engine Update must
+// match that, keeping every existing nil-engine test's version-count at zero.
+func TestUpdate_NilEngineRecordsNoVersion(t *testing.T) {
+	ctx := context.Background()
+	st := newVersioningTestStore(t)
+	svc := authoring.New(st, nil)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	wf, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := svc.Update(ctx, scope, "welcome", authoring.UpdateInput{
+		Name: "Welcome",
+		Steps: []domain.Step{
+			{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)},
+			{StepID: "S2", Type: "in_app", ControlValues: json.RawMessage(`{"body":"bye"}`)},
+		},
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	versions, err := st.WorkflowVersions().ListByWorkflow(ctx, scope, wf.ID)
+	if err != nil {
+		t.Fatalf("ListByWorkflow: %v", err)
+	}
+	if len(versions) != 0 {
+		t.Fatalf("versions = %d, want 0 (nil engine records nothing)", len(versions))
+	}
+}
+
 // TestRollback_ReregistersEarlierVersionByteForByte proves Rollback loads the
 // target version's compiled_def, re-registers it EXACTLY (skipping Compile —
 // a later edit changed the workflow's live steps, but the rolled-back def
@@ -176,8 +349,11 @@ func TestRollback_ReregistersEarlierVersionByteForByte(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListByWorkflow: %v", err)
 	}
-	if len(versions) != 2 {
-		t.Fatalf("versions before rollback = %d, want 2", len(versions))
+	// Sequence: Create (0), Publish v1 (1), Update (records its own version, 2),
+	// Publish v2 (3). Update now records a version too, so the stack is 3 before
+	// rollback.
+	if len(versions) != 3 {
+		t.Fatalf("versions before rollback = %d, want 3", len(versions))
 	}
 	v1ID := versions[0].ID
 
@@ -188,7 +364,8 @@ func TestRollback_ReregistersEarlierVersionByteForByte(t *testing.T) {
 	// RegisterWorkflow must have been called once more by Rollback, with v1's
 	// exact def (1 step) — not a recompile of the workflow's now-2-step live
 	// steps. Prior calls: Publish v1 (1), Update's own re-register (2),
-	// Publish v2 (3); Rollback adds the 4th.
+	// Publish v2 (3); Rollback adds the 4th. (Versioning adds version rows, not
+	// RegisterWorkflow calls, so this count is unchanged by Fix 1.)
 	if len(fake.calls) != 4 {
 		t.Fatalf("RegisterWorkflow calls after Rollback = %d, want 4", len(fake.calls))
 	}
@@ -200,20 +377,21 @@ func TestRollback_ReregistersEarlierVersionByteForByte(t *testing.T) {
 		t.Fatal("Rollback registered v2's def; want v1's")
 	}
 
-	// Rollback is itself a publish: the stack grows to 3, and the newest row
-	// carries v1's def again (append-only, auditable).
+	// Rollback is itself a publish: the stack grows to 4 (Publish v1, Update,
+	// Publish v2, Rollback), and the newest row carries v1's def again
+	// (append-only, auditable).
 	versionsAfter, err := st.WorkflowVersions().ListByWorkflow(ctx, scope, wf.ID)
 	if err != nil {
 		t.Fatalf("ListByWorkflow after rollback: %v", err)
 	}
-	if len(versionsAfter) != 3 {
-		t.Fatalf("versions after rollback = %d, want 3", len(versionsAfter))
+	if len(versionsAfter) != 4 {
+		t.Fatalf("versions after rollback = %d, want 4", len(versionsAfter))
 	}
-	if versionsAfter[2].Seq != 3 {
-		t.Fatalf("newest version Seq = %d, want 3", versionsAfter[2].Seq)
+	if versionsAfter[3].Seq != 4 {
+		t.Fatalf("newest version Seq = %d, want 4", versionsAfter[3].Seq)
 	}
 	var newestDef engine.WorkflowDef
-	if err := json.Unmarshal(versionsAfter[2].CompiledDef, &newestDef); err != nil {
+	if err := json.Unmarshal(versionsAfter[3].CompiledDef, &newestDef); err != nil {
 		t.Fatalf("unmarshal newest compiled_def: %v", err)
 	}
 	if !reflect.DeepEqual(newestDef, v1Def) {

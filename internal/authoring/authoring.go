@@ -421,12 +421,19 @@ func (e *ErrCompileFailure) Unwrap() error { return e.Cause }
 var ErrNoSteps = errors.New("authoring: workflow has no steps to publish")
 
 // Update persists a new name/steps/payload_schema for the identified workflow,
-// recompiles the DAG, and re-registers it with the engine so edits take effect
-// on the next trigger. A step configuration that fails Compile (e.g. invalid
-// delay amount) is rejected with an ErrCompileFailure before any write occurs.
-// Returns store.ErrNotFound when the workflow does not exist in this scope.
-// Returns ErrNoSteps when in.Steps is empty: the config write still happens,
-// but engine re-registration is skipped (see ErrNoSteps).
+// recompiles the DAG, re-registers it with the engine so edits take effect on
+// the next trigger, and — on successful registration — appends the exact
+// registered bytes (plus the full editable-row snapshot) to the workflow's
+// version stack, exactly as Publish does. Update is the plain step-editor Save
+// path (and the AI-refine Keep path): it changes what the engine runs LIVE, so
+// that change must be captured in Version History too, or history would keep
+// showing a stale Publish as "current" while the engine already runs the edit
+// (an H8-class "history lies about what's live" bug). A step configuration that
+// fails Compile (e.g. invalid delay amount) is rejected with an
+// ErrCompileFailure before any write occurs. Returns store.ErrNotFound when the
+// workflow does not exist in this scope. Returns ErrNoSteps when in.Steps is
+// empty: the config write still happens, but engine re-registration — and
+// therefore versioning — is skipped (see ErrNoSteps).
 func (s *Service) Update(ctx context.Context, scope domain.Scope, slug string, in UpdateInput) (domain.Workflow, error) {
 	// Load the existing row to obtain its ID (required for the UPDATE predicate).
 	existing, err := s.store.Workflows().GetByTriggerIdentifier(ctx, scope, slug)
@@ -477,6 +484,13 @@ func (s *Service) Update(ctx context.Context, scope domain.Scope, slug string, i
 		def, _ := Compile(candidate)
 		if err := s.eng.RegisterWorkflow(ctx, def); err != nil {
 			return domain.Workflow{}, fmt.Errorf("authoring: re-register workflow: %w", err)
+		}
+		// Capture the just-registered def in Version History so "current"
+		// reflects what Update delivered — mirrors Publish. Guarded by the same
+		// nil-engine check: store-only wiring records nothing (consistent with
+		// Create), keeping every nil-engine caller's version count unchanged.
+		if err := s.recordVersion(ctx, scope, candidate.ID, candidate.Name, candidate.TriggerIdentifier, candidate.Steps, candidate.PayloadSchema, candidate.Critical, def); err != nil {
+			return domain.Workflow{}, err
 		}
 	}
 

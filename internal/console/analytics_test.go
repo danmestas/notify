@@ -191,6 +191,77 @@ func TestAnalytics_WorkflowFilterRendersDropdown(t *testing.T) {
 	}
 }
 
+// TestAnalytics_WorkflowFilter_DropdownValueMatchesStoredWorkflowID is the
+// make-or-break regression test for the QA finding that selecting any
+// workflow in the analytics filter zeroed every KPI. Root cause: the
+// dropdown emitted the workflow's trigger_identifier (slug) as its option
+// value, but analytics_deliveries.workflow_id stores the workflow's internal
+// ULID (trigger.go sets WorkflowID: wf.ID on the envelope that eventually
+// becomes the delivery-status event's WorkflowID) — the two never matched,
+// so the workflow_id predicate silently excluded every row.
+//
+// This test seeds two workflows with real deliveries scoped by their ULIDs
+// (mirroring the production trigger -> delivery -> analytics-projector
+// pipeline) and proves: (1) the rendered dropdown option value is the
+// workflow's ULID, not its trigger identifier, and (2) filtering by that
+// emitted value actually scopes the KPI fragment to the selected workflow's
+// real non-zero numbers while excluding the other workflow's data.
+func TestAnalytics_WorkflowFilter_DropdownValueMatchesStoredWorkflowID(t *testing.T) {
+	tc := newTestConsole(t)
+	wfOne := tc.seedWorkflowAndReturn(t, "Workflow One", "q2an-wf-one")
+	wfTwo := tc.seedWorkflowAndReturn(t, "Workflow Two", "q2an-wf-two")
+
+	// Deliveries scoped by the workflow's ULID (wf.ID), exactly as the
+	// trigger -> delivery -> analytics pipeline actually writes them.
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "email", Status: "sent", WorkflowID: wfOne.ID},
+		{Channel: "email", Status: "sent", WorkflowID: wfOne.ID},
+		{Channel: "email", Status: "sent", WorkflowID: wfOne.ID},
+		{Channel: "email", Status: "sent", WorkflowID: wfTwo.ID},
+		{Channel: "email", Status: "sent", WorkflowID: wfTwo.ID},
+	})
+	cookie, _ := tc.login(t)
+
+	// (1) The dropdown must render the ULID as the option's value, not the
+	// trigger identifier slug.
+	rr := tc.get(t, "/console/analytics", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/analytics: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `data-value="`+wfOne.ID+`"`) {
+		t.Errorf("workflow dropdown option value is not the workflow ULID %q; body: %.500s", wfOne.ID, body)
+	}
+	if strings.Contains(body, `data-value="`+wfOne.TriggerIdentifier+`"`) {
+		t.Errorf("workflow dropdown still emits the trigger identifier %q as the option value", wfOne.TriggerIdentifier)
+	}
+
+	// (2) Filtering by the emitted (ULID) value must show wfOne's real
+	// non-zero numbers and exclude wfTwo's.
+	rr = tc.get(t, "/console/api/fragments/analytics-kpis?workflow_id="+wfOne.ID, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("analytics-kpis?workflow_id=%s: %d", wfOne.ID, rr.Code)
+	}
+	body = rr.Body.String()
+	if !strings.Contains(body, `<span class="analytics-kpi-value">3</span>`) {
+		t.Errorf("workflow_id=%s (ULID): expected delivered=3, body: %.400s", wfOne.ID, body)
+	}
+	if strings.Contains(body, `<span class="analytics-kpi-value">5</span>`) {
+		t.Errorf("workflow_id=%s (ULID): filter leaked the other workflow's rows (showed total=5)", wfOne.ID)
+	}
+
+	// Filtering by the trigger identifier (the old, broken dropdown value)
+	// must NOT match anything — documents the mismatch this test guards.
+	rr = tc.get(t, "/console/api/fragments/analytics-kpis?workflow_id="+wfOne.TriggerIdentifier, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("analytics-kpis?workflow_id=%s: %d", wfOne.TriggerIdentifier, rr.Code)
+	}
+	body = rr.Body.String()
+	if !strings.Contains(body, `<span class="analytics-kpi-value">0</span>`) {
+		t.Errorf("workflow_id=%s (trigger identifier): expected 0 delivered (ULID-keyed data never matches a slug), body: %.400s", wfOne.TriggerIdentifier, body)
+	}
+}
+
 // TestAnalytics_WorkflowFilter_IsolatesKPIs proves that the workflow_id query
 // param scopes the KPI fragment to only that workflow's rows (GAP-AF-06).
 func TestAnalytics_WorkflowFilter_IsolatesKPIs(t *testing.T) {
@@ -324,6 +395,45 @@ func TestAnalytics_RunsTrendChart(t *testing.T) {
 	body := rr.Body.String()
 	if !strings.Contains(body, "Workflow Runs Trend") {
 		t.Errorf("Workflow Runs Trend chart section missing from analytics-charts fragment")
+	}
+}
+
+// TestAnalytics_RunsTrendChart_CountsDistinctRunsNotMessages is the
+// end-to-end make-or-break test for QA finding B. It seeds one workflow run
+// that fans out to two channels (in_app + stream — mirroring a real
+// multi-step workflow's delivery rows, which all share one run_id) and
+// asserts the Workflow Runs Trend chart counts 1 run that day, not 2
+// messages, and that its total genuinely differs from the message-count
+// Delivery Trend series (before the fix, both plotted the identical
+// per-day delivery-row count under different labels).
+func TestAnalytics_RunsTrendChart_CountsDistinctRunsNotMessages(t *testing.T) {
+	tc := newTestConsole(t)
+	now := time.Now().UTC()
+	today := now.Format("2006-01-02") + "T12:00:00Z"
+
+	// One trigger fans out to 2 channels: 2 delivery rows, 1 run_id.
+	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
+		{Channel: "in_app", Status: "sent", RunID: "run-fanout-1", CreatedAt: today},
+		{Channel: "stream", Status: "sent", RunID: "run-fanout-1", CreatedAt: today},
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/analytics-charts", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("analytics-charts: %d", rr.Code)
+	}
+	body := rr.Body.String()
+
+	// Delivery Trend (message count): 2 sent rows.
+	if !strings.Contains(body, "2 sent") {
+		t.Errorf("Delivery Trend expected 2 sent (message rows), body: %.500s", body)
+	}
+	// Workflow Runs Trend (distinct runs): 1 run, NOT 2 messages.
+	if !strings.Contains(body, "1 runs") {
+		t.Errorf("Workflow Runs Trend expected 1 runs (distinct run_id), body: %.500s", body)
+	}
+	if strings.Contains(body, "2 runs") {
+		t.Errorf("Workflow Runs Trend counted messages instead of distinct runs (showed 2 runs)")
 	}
 }
 
@@ -753,7 +863,7 @@ func TestAnalytics_BuildCharts_WindowExclusion(t *testing.T) {
 		{Day: old, Channel: "email", Status: "sent", Count: 999},
 		{Day: recent, Channel: "email", Status: "sent", Count: 5},
 	}
-	charts := buildAnalyticsCharts(series, analyticsRange7d, nil, now)
+	charts := buildAnalyticsCharts(series, nil, analyticsRange7d, nil, now)
 	if charts.TrendChart.Total != 5 {
 		t.Errorf("window did not exclude old data: Total = %d, want 5", charts.TrendChart.Total)
 	}
@@ -819,7 +929,7 @@ func TestAnalytics_BuildCharts_ChannelFilter(t *testing.T) {
 		{Day: day, Channel: "in_app", Status: "sent", Count: 20},
 	}
 	active := map[string]bool{"email": true}
-	charts := buildAnalyticsCharts(series, analyticsRange7d, active, now)
+	charts := buildAnalyticsCharts(series, nil, analyticsRange7d, active, now)
 	if charts.TrendChart.Total != 10 {
 		t.Errorf("channel filter did not work: Total = %d, want 10", charts.TrendChart.Total)
 	}
@@ -831,27 +941,40 @@ func TestAnalytics_BuildCharts_ChannelFilter(t *testing.T) {
 	}
 }
 
-// TestAnalytics_BuildCharts_RunsTrendIncludesAllStatuses verifies that
-// RunsTrendChart counts all delivery rows regardless of status or channel filter,
-// while TrendChart counts only sent rows through the filter.
-func TestAnalytics_BuildCharts_RunsTrendIncludesAllStatuses(t *testing.T) {
+// TestAnalytics_BuildCharts_RunsTrendCountsDistinctRunsNotMessages is the
+// pure-function regression test for QA finding B: RunsTrendChart must plot
+// COUNT(DISTINCT run_id) per day from runsSeries — a separate query from the
+// (channel, status) delivery series — not a per-row/per-message count. Before
+// the fix, RunsTrendChart derived from the same `series` as TrendChart and
+// counted every delivery row (all statuses, ignoring the channel toggle),
+// so a run fanned out to 2 channels counted as 2 "runs" and the chart's shape
+// duplicated Delivery Trend under a different label.
+func TestAnalytics_BuildCharts_RunsTrendCountsDistinctRunsNotMessages(t *testing.T) {
 	now := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
 	day := now.Format("2006-01-02")
+	// 9 delivery rows across channels/statuses (what the old, buggy
+	// implementation would have summed into RunsTrendChart.Total).
 	series := []domain.DeliveryDayCount{
 		{Day: day, Channel: "email", Status: "sent", Count: 3},
 		{Day: day, Channel: "email", Status: "failed", Count: 2},
 		{Day: day, Channel: "sms", Status: "sent", Count: 4},
 	}
-	// Filter to email only.
+	// Only 2 distinct runs occurred that day, independent of how many
+	// delivery rows/channels each run fanned out to.
+	runsSeries := []domain.RunDayCount{
+		{Day: day, Count: 2},
+	}
 	active := map[string]bool{"email": true}
-	charts := buildAnalyticsCharts(series, analyticsRange7d, active, now)
-	// TrendChart: only email+sent = 3.
+	charts := buildAnalyticsCharts(series, runsSeries, analyticsRange7d, active, now)
+	// TrendChart: only email+sent = 3 (unaffected by this change).
 	if charts.TrendChart.Total != 3 {
 		t.Errorf("TrendChart.Total = %d, want 3", charts.TrendChart.Total)
 	}
-	// RunsTrendChart: all rows regardless of filter = 9.
-	if charts.RunsTrendChart.Total != 9 {
-		t.Errorf("RunsTrendChart.Total = %d, want 9 (all rows)", charts.RunsTrendChart.Total)
+	// RunsTrendChart: the real distinct-run count (2), NOT the 9 delivery
+	// rows and NOT filtered by the email channel toggle (5, if it wrongly
+	// applied the toggle to runsSeries).
+	if charts.RunsTrendChart.Total != 2 {
+		t.Errorf("RunsTrendChart.Total = %d, want 2 (distinct runs, not delivery rows)", charts.RunsTrendChart.Total)
 	}
 }
 

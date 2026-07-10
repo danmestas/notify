@@ -38,6 +38,7 @@ const schema = `CREATE TABLE IF NOT EXISTS analytics_deliveries (
 	subscriber_id  VARCHAR,
 	workflow_id    VARCHAR,
 	transaction_id VARCHAR,
+	run_id         VARCHAR,
 	created_at     VARCHAR NOT NULL
 )`
 
@@ -75,10 +76,10 @@ func (r *Repo) Insert(ctx context.Context, scope domain.Scope, d domain.Analytic
 		ctx,
 		`INSERT INTO analytics_deliveries
 		   (id, org_id, environment_id, channel, status, subscriber_id,
-		    workflow_id, transaction_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    workflow_id, transaction_id, run_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ID, d.OrgID, d.EnvID, d.Channel, d.Status, d.SubscriberID,
-		d.WorkflowID, d.TransactionID, d.CreatedAt,
+		d.WorkflowID, d.TransactionID, d.RunID, d.CreatedAt,
 	)
 	return err
 }
@@ -110,4 +111,12 @@ func (r *Repo) CountActiveSubscribers(ctx context.Context, scope domain.Scope, s
 // filter may restrict results to a specific workflow_id (GAP-AF-05, M1).
 func (r *Repo) AverageMessagesPerSubscriber(ctx context.Context, scope domain.Scope, since time.Time, f store.AnalyticsFilter) (float64, error) {
 	return store.QueryAverageMessagesPerSubscriber(ctx, r.db, scope, since, f)
+}
+
+// RunsByDay returns ordered per-day counts of DISTINCT workflow runs for the
+// DuckDB backend, delegating to the shared store.QueryRunsByDay so both
+// backends answer identically. The optional filter may restrict results to a
+// specific workflow_id (M2).
+func (r *Repo) RunsByDay(ctx context.Context, scope domain.Scope, f store.AnalyticsFilter) ([]domain.RunDayCount, error) {
+	return store.QueryRunsByDay(ctx, r.db, scope, f)
 }

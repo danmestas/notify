@@ -64,6 +64,7 @@ func (svc *Service) ingest(ctx context.Context, data []byte) {
 		SubscriberID  string
 		WorkflowID    string
 		TransactionID string
+		RunID         string
 		CreatedAt     string
 	}
 	if err := json.Unmarshal(data, &ev); err != nil {
@@ -80,6 +81,7 @@ func (svc *Service) ingest(ctx context.Context, data []byte) {
 		SubscriberID:  ev.SubscriberID,
 		WorkflowID:    ev.WorkflowID,
 		TransactionID: ev.TransactionID,
+		RunID:         ev.RunID,
 		CreatedAt:     ev.CreatedAt,
 	}); err != nil {
 		log.Printf("analytics: insert: %v", err)
@@ -110,6 +112,13 @@ func (svc *Service) CountActiveSubscribers(ctx context.Context, scope domain.Sco
 // f.WorkflowID (GAP-AF-05, M1). Returns 0 when no data.
 func (svc *Service) AverageMessagesPerSubscriber(ctx context.Context, scope domain.Scope, since time.Time, f store.AnalyticsFilter) (float64, error) {
 	return svc.repo.AverageMessagesPerSubscriber(ctx, scope, since, f)
+}
+
+// RunsOverTime returns the per-day time-series of DISTINCT workflow runs for
+// scope, optionally filtered by workflow_id. Backs the Workflow Runs Trend
+// chart — a run fanned out to N channels counts once, not N times (M2).
+func (svc *Service) RunsOverTime(ctx context.Context, scope domain.Scope, f store.AnalyticsFilter) ([]domain.RunDayCount, error) {
+	return svc.repo.RunsByDay(ctx, scope, f)
 }
 
 // Routes mounts the analytics query API. Callers MUST mount it inside the

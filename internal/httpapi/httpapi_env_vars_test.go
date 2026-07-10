@@ -74,6 +74,35 @@ func TestEnvVarsAPI_CreateAndListMasked(t *testing.T) {
 	}
 }
 
+// TestEnvVarsAPI_CreateRejectsInvalidKey proves the API layer rejects an env
+// var key with URL-unsafe characters (same H2-class fix as the console
+// handler): the key becomes a URL path segment for the variable detail
+// route, so an unvalidated key would be created but permanently unreachable.
+func TestEnvVarsAPI_CreateRejectsInvalidKey(t *testing.T) {
+	srv, auth := startEnvVarServer(t)
+
+	for _, body := range []string{
+		`{"key":"q2adv5 bad key!! <script>","value":"v"}`,
+		`{"key":"foo/bar","value":"v"}`,
+		`{"key":"a b","value":"v"}`,
+		`{"key":"<script>","value":"v"}`,
+	} {
+		status, resp := doPost(t, srv.URL+"/v1/env-vars", auth, body)
+		if status != http.StatusUnprocessableEntity {
+			t.Errorf("body=%s: status = %d, want 422 (resp: %s)", body, status, resp)
+		}
+	}
+
+	// No row created despite the rejected attempts.
+	status, listBody := doGet(t, srv.URL+"/v1/env-vars", auth)
+	if status != http.StatusOK {
+		t.Fatalf("GET /v1/env-vars: status=%d body=%s", status, listBody)
+	}
+	if strings.Contains(listBody, "script") {
+		t.Errorf("rejected key leaked into list: %s", listBody)
+	}
+}
+
 func TestEnvVarsAPI_Reveal(t *testing.T) {
 	srv, auth := startEnvVarServer(t)
 

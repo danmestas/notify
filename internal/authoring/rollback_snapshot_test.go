@@ -68,8 +68,11 @@ func TestRollback_RestoresEditableRowFullSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListByWorkflow: %v", err)
 	}
-	if len(versions) != 2 {
-		t.Fatalf("versions before rollback = %d, want 2", len(versions))
+	// Create (0), Publish v1 (1), Update (records its own version, 2), Publish
+	// v2 (3): Update now records a version too, so the stack is 3 before
+	// rollback. versions[0] is still Publish v1's full snapshot.
+	if len(versions) != 3 {
+		t.Fatalf("versions before rollback = %d, want 3", len(versions))
 	}
 	v1 := versions[0]
 
@@ -124,10 +127,10 @@ func TestRollback_RestoresEditableRowFullSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListByWorkflow after rollback: %v", err)
 	}
-	if len(versionsAfter) != 3 {
-		t.Fatalf("versions after rollback = %d, want 3", len(versionsAfter))
+	if len(versionsAfter) != 4 {
+		t.Fatalf("versions after rollback = %d, want 4", len(versionsAfter))
 	}
-	v3 := versionsAfter[2]
+	v3 := versionsAfter[3]
 	if v3.Steps != v1.Steps {
 		t.Fatalf("v3.Steps = %q, want v1.Steps %q", v3.Steps, v1.Steps)
 	}

@@ -317,3 +317,111 @@ func TestSubscriber_CrossEnvIsolation(t *testing.T) {
 		t.Errorf("scopeB totalCount = %d, want 0", respB.TotalCount)
 	}
 }
+
+// ─── W5: subscriber input validation must be enforced at the /v1 API layer,
+// not just the console handler. Before this fix, the audience.Service had no
+// validation at all, so POST/PATCH /v1/subscribers accepted a malformed
+// email (and any other console-only-validated field) and persisted it. ────
+
+// TestSubscriber_Create_RejectsMalformedEmail proves POST /v1/subscribers
+// rejects a non-empty malformed email with 400, and does not persist it.
+func TestSubscriber_Create_RejectsMalformedEmail(t *testing.T) {
+	srv, authHeader, _, _, _ := startConsoleServer(t)
+
+	body := `{"subscriberId":"bad-email-api","email":"not-an-email"}`
+	status, respBody := doPost(t, srv.URL+"/v1/subscribers", authHeader, body)
+	if status != http.StatusBadRequest {
+		t.Fatalf("POST /v1/subscribers with malformed email: status=%d, want 400 (body: %s)", status, respBody)
+	}
+
+	getStatus, _ := doGet(t, srv.URL+"/v1/subscribers/bad-email-api", authHeader)
+	if getStatus != http.StatusNotFound {
+		t.Errorf("subscriber with malformed email should not have been created (GET by external id isn't a route, checking by id): status=%d", getStatus)
+	}
+}
+
+// TestSubscriber_Create_AllowsValidOrEmptyEmail proves the API still accepts
+// a well-formed email, and an absent one, unchanged from before this fix.
+func TestSubscriber_Create_AllowsValidOrEmptyEmail(t *testing.T) {
+	srv, authHeader, _, _, _ := startConsoleServer(t)
+
+	status, respBody := doPost(t, srv.URL+"/v1/subscribers", authHeader,
+		`{"subscriberId":"good-email-api","email":"ok@example.com"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("POST /v1/subscribers with valid email: status=%d, want 201 (body: %s)", status, respBody)
+	}
+
+	status, respBody = doPost(t, srv.URL+"/v1/subscribers", authHeader,
+		`{"subscriberId":"no-email-api"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("POST /v1/subscribers with no email: status=%d, want 201 (body: %s)", status, respBody)
+	}
+}
+
+// TestSubscriber_Patch_RejectsMalformedEmail proves PATCH /v1/subscribers/{id}
+// rejects a malformed email with 400 and leaves the stored subscriber
+// untouched.
+func TestSubscriber_Patch_RejectsMalformedEmail(t *testing.T) {
+	srv, authHeader, _, _, _ := startConsoleServer(t)
+
+	status, createBody := doPost(t, srv.URL+"/v1/subscribers", authHeader,
+		`{"subscriberId":"patch-bad-email-api","email":"first@example.com"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("create: status=%d body=%s", status, createBody)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(createBody), &created); err != nil {
+		t.Fatalf("decode create response: %v (body=%s)", err, createBody)
+	}
+
+	status, patchBody := doPatch(t, srv.URL+"/v1/subscribers/"+created.ID, authHeader,
+		`{"email":"still-not-an-email"}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("PATCH with malformed email: status=%d, want 400 (body: %s)", status, patchBody)
+	}
+
+	getStatus, getBody := doGet(t, srv.URL+"/v1/subscribers/"+created.ID, authHeader)
+	if getStatus != http.StatusOK {
+		t.Fatalf("GET after rejected patch: status=%d", getStatus)
+	}
+	if !bytes.Contains([]byte(getBody), []byte("first@example.com")) {
+		t.Errorf("email changed after rejected patch: %s", getBody)
+	}
+}
+
+// TestSubscriber_Create_RejectsTooManyCustomFields proves W2's server-side
+// cap (audience.MaxSubscriberCustomFields) is enforced on the /v1 PATCH path
+// (POST /v1/subscribers has no Data field in its request body — Data is only
+// settable via PATCH).
+func TestSubscriber_Patch_RejectsTooManyCustomFields(t *testing.T) {
+	srv, authHeader, _, _, _ := startConsoleServer(t)
+
+	status, createBody := doPost(t, srv.URL+"/v1/subscribers", authHeader,
+		`{"subscriberId":"patch-too-many-fields-api"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("create: status=%d body=%s", status, createBody)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(createBody), &created); err != nil {
+		t.Fatalf("decode create response: %v (body=%s)", err, createBody)
+	}
+
+	fields := map[string]string{}
+	for i := 0; i < audience.MaxSubscriberCustomFields+1; i++ {
+		fields[fmt.Sprintf("k%d", i)] = "v"
+	}
+	dataJSON, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("marshal fields: %v", err)
+	}
+	patchBody := fmt.Sprintf(`{"data":%s}`, dataJSON)
+
+	status, respBody := doPatch(t, srv.URL+"/v1/subscribers/"+created.ID, authHeader, patchBody)
+	if status != http.StatusBadRequest {
+		t.Fatalf("PATCH with too many custom fields: status=%d, want 400 (body: %s)", status, respBody)
+	}
+}

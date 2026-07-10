@@ -184,6 +184,31 @@ func TestGetWorkflows_List(t *testing.T) {
 	if wfs[0]["triggerIdentifier"] != "my-flow" {
 		t.Errorf("triggerIdentifier = %v, want my-flow", wfs[0]["triggerIdentifier"])
 	}
+	// The list DTO exposes the no-opt-out `critical` flag (API completeness).
+	// The create body above omits it, so it defaults to false — but the key
+	// must be present in the response shape.
+	crit, ok := wfs[0]["critical"]
+	if !ok {
+		t.Errorf("list DTO missing `critical` key; body: %s", respBody)
+	}
+	if crit != false {
+		t.Errorf("critical = %v, want false (create omitted it)", crit)
+	}
+}
+
+// TestPostEmailIntegration_InvalidIdentifier_422 proves POST
+// /v1/integrations/email rejects an identifier with URL-unsafe characters
+// (same H2-class fix as the console handler): the identifier becomes a URL
+// path segment for every integration route, so an unvalidated identifier
+// would be created but permanently unreachable.
+func TestPostEmailIntegration_InvalidIdentifier_422(t *testing.T) {
+	srv, authHeader, _ := startOperatorServer(t)
+
+	body := `{"identifier":"foo/bar","host":"smtp.example.com","from":"noreply@example.com"}`
+	status, resp := doPost(t, srv.URL+"/v1/integrations/email", authHeader, body)
+	if status != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422 (resp: %s)", status, resp)
+	}
 }
 
 // TestPostEmailIntegration_PasswordNeverEchoed proves POST /v1/integrations/email

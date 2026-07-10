@@ -12,12 +12,20 @@
 */}}
 {{define "subscriber-custom-fields"}}
 {{$rows := .Rows}}
+{{$total := len $rows}}
 <fieldset class="wf-conditions subscriber-custom-fields" data-signals="{cfRowCount:{{.Visible}}}">
   <legend class="form-label wf-conditions-legend">Custom fields</legend>
   <p class="console-lede wf-conditions-hint">
     Arbitrary key/value data attached to this subscriber. Available in message
     templates as <code>{{"{{"}}subscriber.data.KEY{{"}}"}}</code>.
   </p>
+  {{/* Tells subscriberCustomFieldsFromForm how many custom_key_N/custom_value_N
+       rows were actually rendered, so a subscriber with more fields than the
+       default subscriberCustomFieldRowPool (a legacy row predating the
+       server-side cap) round-trips through Save without truncation — see
+       subscriberCustomFieldsEditor and subscriberCustomFieldsFromForm in
+       subscribers.go for the full W1 rationale. */}}
+  <input type="hidden" name="cf_row_pool" value="{{$total}}">
   {{range $i, $row := $rows}}
   <div class="wf-condition-row subscriber-custom-field-row"{{if gt $i 0}} data-show="$cfRowCount > {{$i}}"{{end}}>
     <div class="form-row wf-condition-field">
@@ -35,14 +43,14 @@
     <div class="form-row wf-condition-remove">
       <button type="button" class="btn btn-ghost btn-icon wf-condition-remove-btn"
               aria-label="Remove custom field"
-              data-on:click="{{subscriberCustomFieldRemoveExpr $i}}">{{uiIcon "x"}}</button>
+              data-on:click="{{subscriberCustomFieldRemoveExpr $i $total}}">{{uiIcon "x"}}</button>
     </div>
   </div>
   {{end}}
   <div class="wf-conditions-actions">
     <button type="button" class="btn btn-outline wf-condition-add-btn"
-            data-show="$cfRowCount < {{len $rows}}"
-            data-on:click="$cfRowCount = ($cfRowCount < {{len $rows}} ? $cfRowCount + 1 : {{len $rows}})">{{uiIcon "plus"}} Add field</button>
+            data-show="$cfRowCount < {{$total}}"
+            data-on:click="$cfRowCount = ($cfRowCount < {{$total}} ? $cfRowCount + 1 : {{$total}})">{{uiIcon "plus"}} Add field</button>
   </div>
 </fieldset>
 {{end}}

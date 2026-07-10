@@ -179,7 +179,12 @@ type AnalyticsDelivery struct {
 	SubscriberID  string `db:"subscriber_id"`
 	WorkflowID    string `db:"workflow_id"`
 	TransactionID string `db:"transaction_id"`
-	CreatedAt     string `db:"created_at"`
+	// RunID is the workflow run (engine run id) this delivery belongs to —
+	// shared by every channel a single trigger fans out to. Backs the
+	// Workflow Runs Trend chart's COUNT(DISTINCT run_id) query so it counts
+	// runs, not per-channel delivery rows (M2, GAP-AF-06 follow-up).
+	RunID     string `db:"run_id"`
+	CreatedAt string `db:"created_at"`
 }
 
 // DeliveryDayCount is one row of the delivery time-series: the per-day count of
@@ -189,6 +194,14 @@ type DeliveryDayCount struct {
 	Channel string `json:"channel"`
 	Status  string `json:"status"`
 	Count   int    `json:"count"`
+}
+
+// RunDayCount is one row of the workflow-runs time-series: the per-day count
+// of DISTINCT workflow runs within a scope, optionally filtered to one
+// workflow. Backs the analytics Workflow Runs Trend chart.
+type RunDayCount struct {
+	Day   string `json:"day"`
+	Count int    `json:"count"`
 }
 
 type Topic struct {

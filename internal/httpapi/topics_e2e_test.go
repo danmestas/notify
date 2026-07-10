@@ -376,6 +376,32 @@ func TestTopic_AddSubscriber_UnknownSubscriber_422(t *testing.T) {
 	}
 }
 
+// TestTopic_Create_InvalidKey_422 proves the API layer rejects a topic key
+// with URL-unsafe characters (same H2-class fix as the console handler): the
+// key becomes a URL path segment for every topic route (view/update/delete/
+// subscribers), so an unvalidated key would be created but permanently
+// unreachable.
+func TestTopic_Create_InvalidKey_422(t *testing.T) {
+	ctx := context.Background()
+	srv, authHeader, scope, _, st := startConsoleServer(t)
+	aud := audience.New(st)
+
+	for _, key := range []string{"q2adv5 bad key!! <script>", "foo/bar", "a b", "Foo", "<script>"} {
+		keyJSON, err := json.Marshal(key)
+		if err != nil {
+			t.Fatalf("marshal key %q: %v", key, err)
+		}
+		body := `{"key":` + string(keyJSON) + `,"name":"Bad Topic"}`
+		status, resp := doPost(t, srv.URL+"/v1/topics", authHeader, body)
+		if status != http.StatusUnprocessableEntity {
+			t.Errorf("key=%q: status = %d, want 422 (resp: %s)", key, status, resp)
+		}
+		if _, err := aud.GetTopic(ctx, scope, key); err == nil {
+			t.Errorf("key=%q: topic row was written despite invalid key; want no row", key)
+		}
+	}
+}
+
 // TestTopic_GetByKey_MemberCountMatchesList pins defect 5: the single-topic
 // GET must carry the same memberCount that GET /v1/topics computes.
 func TestTopic_GetByKey_MemberCountMatchesList(t *testing.T) {

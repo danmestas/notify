@@ -3,6 +3,7 @@ package envvars_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -139,5 +140,52 @@ func TestEnvVars_ScopeIsolation(t *testing.T) {
 
 	if _, err := svc.Get(ctx, s2, "ISOLATED"); err == nil {
 		t.Fatal("Get in s2: want error (not found), got nil")
+	}
+}
+
+// TestSet_RejectsInvalidKey proves the same H2-class fix for env var keys: a
+// key containing a character outside the URL-safe slug allowlist
+// (^[A-Za-z0-9][A-Za-z0-9_-]*$) is rejected by Set before any store write.
+// Previously such a key was persisted verbatim and used as a URL path
+// segment by the console variable detail route, permanently orphaning it
+// once it 404'd forever.
+func TestSet_RejectsInvalidKey(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	cases := []string{"foo/bar", "a b", "<script>", ""}
+	for _, key := range cases {
+		t.Run(key, func(t *testing.T) {
+			_, err := svc.Set(ctx, scope, key, false, "val")
+			if !errors.Is(err, envvars.ErrInvalidKey) {
+				t.Fatalf("Set(%q) error = %v, want envvars.ErrInvalidKey", key, err)
+			}
+			if _, gErr := svc.Get(ctx, scope, key); gErr == nil {
+				t.Fatalf("Set(%q): env var row was written despite invalid key; want no row", key)
+			}
+		})
+	}
+}
+
+// TestSet_AcceptsValidKey proves the allowlist isn't overly strict:
+// uppercase/lowercase alphanumerics plus hyphen/underscore, starting with a
+// letter or digit, is accepted — matching the existing "KEY_A"-style
+// convention used throughout this package's other tests.
+func TestSet_AcceptsValidKey(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	cases := []string{"API_KEY", "my-key", "key_2", "a"}
+	for _, key := range cases {
+		t.Run(key, func(t *testing.T) {
+			if _, err := svc.Set(ctx, scope, key, false, "val"); err != nil {
+				t.Fatalf("Set(%q): %v", key, err)
+			}
+			if _, err := svc.Get(ctx, scope, key); err != nil {
+				t.Fatalf("Get(%q) after Set: %v", key, err)
+			}
+		})
 	}
 }

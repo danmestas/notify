@@ -88,6 +88,14 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "identifier is required", http.StatusUnprocessableEntity)
 		return
 	}
+	// Reject identifiers outside the URL-safe slug allowlist — the identifier
+	// is used verbatim as a console URL path segment (view/edit/delete/save
+	// routes), so an unvalidated identifier would create an agent every
+	// console route 404s on, permanently orphaning it (same class as H2).
+	if !agentdomain.ValidIdentifier(req.Identifier) {
+		http.Error(w, "identifier may only contain lowercase letters, numbers, hyphens, and underscores", http.StatusUnprocessableEntity)
+		return
+	}
 	// Enforce supported-on-creation: only runtimes with a registered executor
 	// may be minted, otherwise the API can create a dead agent (#113 Part A).
 	if !agentdomain.IsSupportedRuntime(req.Runtime) {

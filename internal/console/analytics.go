@@ -17,17 +17,26 @@ import (
 // Channel, and Workflow Runs Trend charts.
 //
 // Backed by: DeliveriesByChannel (CountByChannelStatus), DeliveriesOverTime
-// (DeliveriesByDay), CountActiveSubscribers, and AverageMessagesPerSubscriber —
-// all accept the optional AnalyticsFilter for workflow_id scoping (GAP-AF-05,
-// GAP-AF-06). CountActiveSubscribers and AverageMessagesPerSubscriber only
-// gained the filter in M1 — until then they silently ignored the workflow
-// filter and could render self-contradictory KPI pairs.
+// (DeliveriesByDay), CountActiveSubscribers, AverageMessagesPerSubscriber, and
+// RunsOverTime (RunsByDay) — all accept the optional AnalyticsFilter for
+// workflow_id scoping (GAP-AF-05, GAP-AF-06). CountActiveSubscribers and
+// AverageMessagesPerSubscriber only gained the filter in M1 — until then they
+// silently ignored the workflow filter and could render self-contradictory
+// KPI pairs.
 //
 // There used to be a fifth chart, "Active Subscribers Trend" — it plotted the
 // same per-day sent-volume series as Delivery Trend under a different label,
 // because there is no per-day distinct-subscriber query backing it. Removed
 // rather than relabeled: relabeling would have left two identical lines on
 // the page under different names, which is its own kind of dishonest.
+//
+// Workflow Runs Trend (M2) plots COUNT(DISTINCT run_id) per day (RunsOverTime),
+// not delivery/message-row counts. Before M2 it double-counted a run that fans
+// out to multiple channels (e.g. in_app + stream = 2 rows, 1 run) and its
+// per-day shape was identical to Delivery Trend under a different label — the
+// same "dishonest chart" class the Active Subscribers Trend removal targeted,
+// except here a real per-day distinct-run query was cheaply available (run_id
+// already flows through the delivery-status event; RunsByDay just counts it).
 
 // analyticsRange is the closed set of time-window tokens the analytics page
 // accepts. The token is echoed back through the template so the range-tab
@@ -93,7 +102,15 @@ func (v analyticsView) WorkflowSelectOptions() []uiSelectOption {
 
 // workflowOption is one entry in the workflow filter dropdown.
 type workflowOption struct {
-	ID    string // workflow trigger identifier (slug)
+	// ID is the workflow's internal ULID (domain.Workflow.ID) — NOT its
+	// trigger identifier/slug. analytics_deliveries.workflow_id stores the
+	// ULID (trigger.go sets WorkflowID: wf.ID on the envelope that becomes
+	// the delivery-status event), so the dropdown's option value must be the
+	// ULID for AnalyticsFilter.WorkflowID to ever match a row. Emitting the
+	// trigger identifier here zeroed every KPI/chart for any selected
+	// workflow (QA finding A) — the ULID is already available from
+	// Authoring.List, so no per-request lookup is needed.
+	ID    string
 	Name  string
 	Label string // display label: "Name (slug)" when both differ, else just Name
 }
@@ -125,7 +142,8 @@ type analyticsChartsView struct {
 	ByChannelChart analyticsBarChart
 	// FailedChart is the small failed-by-day line chart.
 	FailedChart analyticsLineChart
-	// RunsTrendChart is the Workflow Runs Trend chart (total deliveries per day).
+	// RunsTrendChart is the Workflow Runs Trend chart — distinct workflow
+	// runs per day (COUNT(DISTINCT run_id), M2), not a delivery/message count.
 	RunsTrendChart analyticsLineChart
 }
 
@@ -243,15 +261,23 @@ func (c *Console) buildAnalyticsChartsView(
 	if err != nil {
 		return analyticsChartsView{}, fmt.Errorf("deliveries over time: %w", err)
 	}
-	v := buildAnalyticsCharts(series, rang, activeChannels, time.Now().UTC())
+	runsSeries, err := c.deps.Analytics.RunsOverTime(r.Context(), scope, f)
+	if err != nil {
+		return analyticsChartsView{}, fmt.Errorf("runs over time: %w", err)
+	}
+	v := buildAnalyticsCharts(series, runsSeries, rang, activeChannels, time.Now().UTC())
 	v.WorkflowID = workflowID
 	return v, nil
 }
 
 // buildAnalyticsCharts separates construction from HTTP I/O for pure
-// testability (mirrors buildSparkline in dashboard.go).
+// testability (mirrors buildSparkline in dashboard.go). runsSeries backs
+// RunsTrendChart with real per-day DISTINCT-run counts (M2) — it is a
+// separate query from series (per-day (channel,status) delivery counts)
+// because a single run can fan out to multiple channels/rows.
 func buildAnalyticsCharts(
 	series []domain.DeliveryDayCount,
+	runsSeries []domain.RunDayCount,
 	rang analyticsRange,
 	activeChannels map[string]bool,
 	now time.Time,
@@ -290,15 +316,12 @@ func buildAnalyticsCharts(
 	// the channel toggle (empty activeChannels = all channels).
 	sentPerDay := make(map[string]int, days)
 	failedPerDay := make(map[string]int, days)
-	totalPerDay := make(map[string]int, days) // all statuses, for Runs Trend
 	channelTotals := make(map[string]int, len(channels))
 
 	for _, row := range series {
 		if _, inWindow := daySet[row.Day]; !inWindow {
 			continue
 		}
-		// Runs Trend counts all rows regardless of channel toggle.
-		totalPerDay[row.Day] += row.Count
 		if len(activeChannels) > 0 && !activeChannels[row.Channel] {
 			continue
 		}
@@ -311,10 +334,21 @@ func buildAnalyticsCharts(
 		}
 	}
 
+	// Runs Trend counts DISTINCT workflow runs per day (runsSeries), never
+	// per-channel delivery rows — independent of the channel toggle, since a
+	// run's channel fan-out isn't a property of the run itself.
+	runsPerDay := make(map[string]int, days)
+	for _, row := range runsSeries {
+		if _, inWindow := daySet[row.Day]; !inWindow {
+			continue
+		}
+		runsPerDay[row.Day] += row.Count
+	}
+
 	trend := buildLineChart(dayLabels, sentPerDay)
 	failed := buildLineChart(dayLabels, failedPerDay)
 	bar := buildBarChart(channels, channelTotals)
-	runs := buildLineChart(dayLabels, totalPerDay)
+	runs := buildLineChart(dayLabels, runsPerDay)
 
 	return analyticsChartsView{
 		Range:          rang,
@@ -446,7 +480,7 @@ func (c *Console) buildWorkflowOptions(r *http.Request, scope domain.Scope) ([]w
 			label = wf.Name + " (" + wf.TriggerIdentifier + ")"
 		}
 		opts = append(opts, workflowOption{
-			ID:    wf.TriggerIdentifier,
+			ID:    wf.ID,
 			Name:  wf.Name,
 			Label: label,
 		})

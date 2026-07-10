@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
 )
@@ -496,6 +497,10 @@ func (c *Console) handleTopicCreate(w http.ResponseWriter, r *http.Request) {
 
 	created, err := c.deps.Audience.CreateTopic(r.Context(), scope, key, name)
 	if err != nil {
+		if errors.Is(err, audience.ErrInvalidTopicKey) {
+			redirectTopicNewErr(w, r, "Topic key may only contain lowercase letters, numbers, hyphens, and underscores.")
+			return
+		}
 		c.deps.Logger.Error("console: create topic", "err", err)
 		redirectTopicNewErr(w, r, "Create failed.")
 		return

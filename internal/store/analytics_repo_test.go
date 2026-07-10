@@ -12,7 +12,7 @@ import (
 func TestMigrate_0006_AppliesAnalytics(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 28 {
+	if n := migrationCount(t, s); n != 29 {
 		t.Fatalf("expected 27 recorded migrations, got %d", n)
 	}
 
@@ -183,6 +183,83 @@ func TestAnalyticsRepo_DeliveriesByDay_WorkflowFilter(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DeliveriesByDay(wf-a) mismatch:\n got=%v\nwant=%v", got, want)
+	}
+}
+
+// TestAnalyticsRepo_RunsByDay proves RunsByDay counts DISTINCT run_ids per
+// day, not delivery rows — the store-layer regression guard for QA finding B.
+// A single run fanned out to 2 channels (in_app + stream) contributes 2 rows
+// but must count as 1 run.
+func TestAnalyticsRepo_RunsByDay(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Analytics()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	rows := []domain.AnalyticsDelivery{
+		// run-1 fans out to in_app + stream: 2 rows, 1 run.
+		{Channel: "in_app", Status: "sent", RunID: "run-1", CreatedAt: "2026-06-08T10:00:00Z"},
+		{Channel: "stream", Status: "sent", RunID: "run-1", CreatedAt: "2026-06-08T10:00:01Z"},
+		// run-2: a second, distinct run the same day.
+		{Channel: "email", Status: "sent", RunID: "run-2", CreatedAt: "2026-06-08T11:00:00Z"},
+		// run-3: a run on the next day.
+		{Channel: "email", Status: "sent", RunID: "run-3", CreatedAt: "2026-06-09T09:00:00Z"},
+		// A row with no run_id (pre-M2/legacy data) must not be counted as a run.
+		{Channel: "email", Status: "sent", CreatedAt: "2026-06-09T09:30:00Z"},
+	}
+	for i, r := range rows {
+		if err := repo.Insert(ctx, scope, r); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+	// A row under a different environment must not leak into scope's series.
+	other := domain.Scope{OrgID: "o1", EnvID: "e2"}
+	if err := repo.Insert(ctx, other, domain.AnalyticsDelivery{Channel: "email", Status: "sent", RunID: "run-other", CreatedAt: "2026-06-08T10:00:00Z"}); err != nil {
+		t.Fatalf("insert isolation row: %v", err)
+	}
+
+	got, err := repo.RunsByDay(ctx, scope, AnalyticsFilter{})
+	if err != nil {
+		t.Fatalf("RunsByDay: %v", err)
+	}
+	want := []domain.RunDayCount{
+		{Day: "2026-06-08", Count: 2}, // run-1 (fanned out to 2 channels) + run-2
+		{Day: "2026-06-09", Count: 1}, // run-3 only; the no-run_id row is excluded
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("RunsByDay mismatch:\n got=%v\nwant=%v", got, want)
+	}
+}
+
+// TestAnalyticsRepo_RunsByDay_WorkflowFilter proves workflow_id scoping on
+// the runs-per-day query (M2, mirrors DeliveriesByDay_WorkflowFilter).
+func TestAnalyticsRepo_RunsByDay_WorkflowFilter(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Analytics()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	rows := []domain.AnalyticsDelivery{
+		{Channel: "in_app", Status: "sent", WorkflowID: "wf-a", RunID: "run-a1", CreatedAt: "2026-06-09T10:00:00Z"},
+		{Channel: "stream", Status: "sent", WorkflowID: "wf-a", RunID: "run-a1", CreatedAt: "2026-06-09T10:00:01Z"},
+		{Channel: "email", Status: "sent", WorkflowID: "wf-a", RunID: "run-a2", CreatedAt: "2026-06-09T11:00:00Z"},
+		{Channel: "email", Status: "sent", WorkflowID: "wf-b", RunID: "run-b1", CreatedAt: "2026-06-09T12:00:00Z"},
+	}
+	for i, r := range rows {
+		if err := repo.Insert(ctx, scope, r); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+
+	got, err := repo.RunsByDay(ctx, scope, AnalyticsFilter{WorkflowID: "wf-a"})
+	if err != nil {
+		t.Fatalf("RunsByDay(wf-a): %v", err)
+	}
+	want := []domain.RunDayCount{
+		{Day: "2026-06-09", Count: 2}, // run-a1 (2 channels) + run-a2; wf-b's run-b1 excluded
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("RunsByDay(wf-a) mismatch:\n got=%v\nwant=%v", got, want)
 	}
 }
 

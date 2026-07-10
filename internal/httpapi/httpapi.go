@@ -237,6 +237,15 @@ func postSubscriber(aud *audience.Service) http.HandlerFunc {
 			Locale:       req.Locale,
 		})
 		if err != nil {
+			// A *audience.ValidationError is a caller error (malformed
+			// email, oversized field, too many/invalid custom fields) — the
+			// same validation the console form applies, now enforced here
+			// too so the API can't be used to bypass it. See W5.
+			var verr *audience.ValidationError
+			if errors.As(err, &verr) {
+				http.Error(w, verr.Msg, http.StatusBadRequest)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -351,6 +360,10 @@ func postPushIntegration(conn *connectivity.Service) http.HandlerFunc {
 			return
 		}
 		if err != nil {
+			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
 			// Never surface the underlying error: wrapped marshal/encrypt/store
 			// detail could carry credential-bearing config fields.
 			http.Error(w, "failed to create push integration", http.StatusInternalServerError)
@@ -405,6 +418,10 @@ func postTopic(aud *audience.Service) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		topic, err := aud.CreateTopic(r.Context(), scope, req.Key, req.Name)
 		if err != nil {
+			if errors.Is(err, audience.ErrInvalidTopicKey) {
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -573,6 +590,10 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 		}
 
 		if err != nil {
+			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
 			// Never surface the underlying error: wrapped marshal/encrypt/store
 			// detail could carry credential-bearing config fields.
 			http.Error(w, "failed to create email integration", http.StatusInternalServerError)
@@ -667,6 +688,10 @@ func postChatIntegration(conn *connectivity.Service) http.HandlerFunc {
 			return
 		}
 		if err != nil {
+			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
 			// Never surface the underlying error: wrapped marshal/encrypt/store
 			// detail could carry credential-bearing config fields.
 			http.Error(w, "failed to create chat integration", http.StatusInternalServerError)
@@ -787,6 +812,10 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 			return
 		}
 		if err != nil {
+			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
 			// Never surface the underlying error: wrapped marshal/encrypt/store
 			// detail could carry credential-bearing config fields.
 			http.Error(w, "failed to create sms integration", http.StatusInternalServerError)
@@ -905,6 +934,7 @@ type workflowDTO struct {
 	Name              string `json:"name"`
 	TriggerIdentifier string `json:"triggerIdentifier"`
 	Active            bool   `json:"active"`
+	Critical          bool   `json:"critical"`
 }
 
 // getWorkflows lists all workflows for the request Scope.
@@ -923,6 +953,7 @@ func getWorkflows(au *authoring.Service) http.HandlerFunc {
 				Name:              wf.Name,
 				TriggerIdentifier: wf.TriggerIdentifier,
 				Active:            wf.Active,
+				Critical:          wf.Critical,
 			})
 		}
 		writeJSON(w, http.StatusOK, dtos)
@@ -938,6 +969,7 @@ type workflowDetailDTO struct {
 	TriggerIdentifier string          `json:"triggerIdentifier"`
 	Active            bool            `json:"active"`
 	Origin            string          `json:"origin"`
+	Critical          bool            `json:"critical"`
 	Steps             json.RawMessage `json:"steps"`
 	PayloadSchema     json.RawMessage `json:"payloadSchema,omitempty"`
 }
@@ -964,6 +996,7 @@ func getWorkflow(au *authoring.Service) http.HandlerFunc {
 			TriggerIdentifier: wf.TriggerIdentifier,
 			Active:            wf.Active,
 			Origin:            wf.Origin,
+			Critical:          wf.Critical,
 			Steps:             wf.Steps,
 			PayloadSchema:     wf.PayloadSchema,
 		})
@@ -1036,6 +1069,7 @@ func putWorkflow(au *authoring.Service) http.HandlerFunc {
 			TriggerIdentifier: wf.TriggerIdentifier,
 			Active:            wf.Active,
 			Origin:            wf.Origin,
+			Critical:          wf.Critical,
 			Steps:             wf.Steps,
 			PayloadSchema:     wf.PayloadSchema,
 		})
@@ -1093,6 +1127,7 @@ func patchWorkflowActivate(au *authoring.Service) http.HandlerFunc {
 			TriggerIdentifier: wf.TriggerIdentifier,
 			Active:            wf.Active,
 			Origin:            wf.Origin,
+			Critical:          wf.Critical,
 			Steps:             wf.Steps,
 			PayloadSchema:     wf.PayloadSchema,
 		})
@@ -1144,6 +1179,7 @@ func postWorkflowDuplicate(au *authoring.Service) http.HandlerFunc {
 			TriggerIdentifier: wf.TriggerIdentifier,
 			Active:            wf.Active,
 			Origin:            wf.Origin,
+			Critical:          wf.Critical,
 			Steps:             wf.Steps,
 			PayloadSchema:     wf.PayloadSchema,
 		})
@@ -1518,6 +1554,10 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 			return
 		}
 		if err != nil {
+			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
 			// Never echo request detail into the error body.
 			http.Error(w, "failed to create integration", http.StatusInternalServerError)
 			return
@@ -1794,6 +1834,14 @@ func patchSubscriber(aud *audience.Service) http.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, "subscriber not found", http.StatusNotFound)
+				return
+			}
+			// A *audience.ValidationError is a caller error (malformed
+			// email, oversized field, too many/invalid custom fields) — see
+			// the matching comment in postSubscriber (W5).
+			var verr *audience.ValidationError
+			if errors.As(err, &verr) {
+				http.Error(w, verr.Msg, http.StatusBadRequest)
 				return
 			}
 			http.Error(w, "failed to update subscriber", http.StatusInternalServerError)

@@ -6,7 +6,9 @@
     1. Delivery Trend — per-day sent count area/line chart
     2. Delivery by Channel — horizontal bar chart of totals per channel
     3. Failed by Day — per-day failed count line chart
-    4. Workflow Runs Trend — total deliveries per day (all statuses, GAP-AF-06)
+    4. Workflow Runs Trend — COUNT(DISTINCT run_id) per day (M2); NOT a
+       delivery/message-row count — a run fanned out to N channels still
+       counts once
 
   There used to be a fifth "Active Subscribers Trend" chart (GAP-AF-05); it
   plotted the same per-day sent-volume series as Delivery Trend under a

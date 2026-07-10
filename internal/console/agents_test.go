@@ -251,6 +251,61 @@ func TestAgents_Create_UnsupportedRuntimeRejected(t *testing.T) {
 	}
 }
 
+// TestAgents_Create_RejectsInvalidIdentifier proves the same H2-class fix for
+// agent identifiers: an identifier with URL-unsafe characters (space, '/',
+// '<script>') is rejected inline instead of being persisted and permanently
+// orphaned (every view/edit/delete route 404s on an un-encoded path
+// segment).
+func TestAgents_Create_RejectsInvalidIdentifier(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	for _, id := range []string{"q2adv5 bad key!! <script>", "foo/bar", "a b", "Foo", "<script>"} {
+		form := url.Values{"csrf_token": {csrf}, "identifier": {id}, "runtime": {"mesh"}}
+		rr := tc.postForm(t, "/console/agents", form, cookie)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("id=%q: status = %d, want 303 (body: %s)", id, rr.Code, rr.Body.String())
+		}
+		loc := rr.Header().Get("Location")
+		if !strings.Contains(loc, "error=") {
+			t.Errorf("id=%q: Location = %q, want error redirect", id, loc)
+		}
+		if _, err := tc.agentStore.Agents().GetByIdentifier(testBackground(), tc.scope, id); err == nil {
+			t.Fatalf("id=%q: agent row was written despite invalid identifier; want no row", id)
+		}
+
+		rrGet := tc.get(t, loc, cookie)
+		if rrGet.Code != http.StatusOK {
+			t.Fatalf("id=%q: GET %s: status = %d, want 200", id, loc, rrGet.Code)
+		}
+		if !strings.Contains(rrGet.Body.String(), "lowercase letters, numbers, hyphens, and underscores") {
+			t.Errorf("id=%q: page missing validation error message; body snippet: %s", id, rrGet.Body.String()[:min(500, rrGet.Body.Len())])
+		}
+	}
+}
+
+// TestAgents_Create_AcceptsValidIdentifier proves a valid identifier is
+// created and its view route resolves (the inverse of
+// TestAgents_Create_RejectsInvalidIdentifier).
+func TestAgents_Create_AcceptsValidIdentifier(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	form := url.Values{"csrf_token": {csrf}, "identifier": {"valid-agent-id"}, "runtime": {"mesh"}}
+	rr := tc.postForm(t, "/console/agents", form, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if loc != "/console/agents/valid-agent-id" {
+		t.Fatalf("Location = %q, want /console/agents/valid-agent-id", loc)
+	}
+	rrGet := tc.get(t, loc, cookie)
+	if rrGet.Code != http.StatusOK {
+		t.Fatalf("GET %s: status = %d, want 200", loc, rrGet.Code)
+	}
+}
+
 // TestAgents_Save_LegacyUnsupportedRuntimeEditable asserts an agent whose
 // stored runtime is unsupported (a row predating the create guard, e.g. the
 // seeded managed `ember`) remains editable through the console: the save guard

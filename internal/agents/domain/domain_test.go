@@ -28,3 +28,30 @@ func TestIsSupportedRuntime(t *testing.T) {
 		}
 	}
 }
+
+// TestValidIdentifier proves the H2-class fix for agent identifiers: the
+// URL-safe slug allowlist (^[a-z0-9][a-z0-9_-]*$) rejects characters that
+// would otherwise be used verbatim as a console URL path segment
+// (view/edit/delete/save/activate routes), permanently orphaning the agent
+// once it 404'd forever. Mirrors authoring.triggerIdentifierPattern (H2).
+func TestValidIdentifier(t *testing.T) {
+	cases := []struct {
+		id   string
+		want bool
+	}{
+		{"a", true},
+		{"support-bot", true},
+		{"agent_2", true},
+		{"agent123", true},
+		{"foo/bar", false},
+		{"a b", false},
+		{"Foo", false},
+		{"<script>", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := ValidIdentifier(tc.id); got != tc.want {
+			t.Errorf("ValidIdentifier(%q) = %v, want %v", tc.id, got, tc.want)
+		}
+	}
+}

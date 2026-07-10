@@ -338,6 +338,10 @@ func (c *Console) handleVariableCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := c.deps.EnvVars.Set(r.Context(), scope, key, isSecret, value); err != nil {
+		if errors.Is(err, envvars.ErrInvalidKey) {
+			redirectVariableNewErr(w, r, "Variable key may only contain letters, numbers, hyphens, and underscores.")
+			return
+		}
 		c.deps.Logger.Error("console: create variable", "err", err)
 		redirectVariableNewErr(w, r, "Create failed.")
 		return

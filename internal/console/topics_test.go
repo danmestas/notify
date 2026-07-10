@@ -447,6 +447,73 @@ func TestTopics_Create_RejectsDuplicateKey(t *testing.T) {
 	}
 }
 
+// TestTopics_Create_RejectsInvalidKey proves the same H2-class fix for topic
+// keys: a key with URL-unsafe characters (space, '/', '<script>') is
+// rejected inline instead of being persisted and permanently orphaned (every
+// view/delete route 404s on an un-encoded path segment).
+func TestTopics_Create_RejectsInvalidKey(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	for _, key := range []string{"q2adv5 bad key!! <script>", "foo/bar", "a b", "Foo", "<script>", ""} {
+		rr := tc.postForm(t, "/console/topics",
+			url.Values{"key": {key}, "name": {"Bad Topic"}, "csrf_token": {csrf}},
+			cookie)
+		if key == "" {
+			// Empty key is caught by the pre-existing "key is required" check.
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("key=%q: status = %d, want 400", key, rr.Code)
+			}
+			continue
+		}
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("key=%q: create topic: status = %d, want 303 (body: %s)", key, rr.Code, rr.Body.String())
+		}
+		loc := rr.Header().Get("Location")
+		if !strings.Contains(loc, "/console/topics/new") {
+			t.Errorf("key=%q: Location = %q, want redirect back to /new", key, loc)
+		}
+		if !strings.Contains(loc, "error=") {
+			t.Errorf("key=%q: Location = %q, missing error param", key, loc)
+		}
+
+		if _, err := tc.deps.Audience.GetTopic(testBackground(), tc.scope, key); err == nil {
+			t.Fatalf("key=%q: topic row was written despite invalid key; want no row", key)
+		}
+
+		rrGet := tc.get(t, loc, cookie)
+		if rrGet.Code != http.StatusOK {
+			t.Fatalf("key=%q: GET %s: status = %d, want 200", key, loc, rrGet.Code)
+		}
+		if !strings.Contains(rrGet.Body.String(), "lowercase letters, numbers, hyphens, and underscores") {
+			t.Errorf("key=%q: form missing validation error message; body snippet: %s", key, rrGet.Body.String()[:min(500, rrGet.Body.Len())])
+		}
+	}
+}
+
+// TestTopics_Create_AcceptsValidKey proves a valid key is created and its
+// view route resolves (the inverse of TestTopics_Create_RejectsInvalidKey).
+func TestTopics_Create_AcceptsValidKey(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/topics",
+		url.Values{"key": {"valid-topic-key"}, "name": {"Valid Topic"}, "csrf_token": {csrf}},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("create topic: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if loc != "/console/topics/valid-topic-key" {
+		t.Fatalf("Location = %q, want /console/topics/valid-topic-key", loc)
+	}
+
+	rrGet := tc.get(t, loc, cookie)
+	if rrGet.Code != http.StatusOK {
+		t.Fatalf("GET %s: status = %d, want 200", loc, rrGet.Code)
+	}
+}
+
 func TestTopics_AddRemoveSubscriber(t *testing.T) {
 	tc := newTestConsole(t)
 	tc.seedTopic(t, "mgmt-topic", "Mgmt Topic")

@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 )
 
 // Allowed values of Agent.Runtime. The runtime selects how a turn is executed:
@@ -48,6 +49,22 @@ func IsSupportedRuntime(r string) bool {
 		}
 	}
 	return false
+}
+
+// identifierPattern is the URL-safe slug allowlist for Agent.Identifier:
+// lowercase letters, digits, hyphens, and underscores, starting with a
+// letter or digit. An identifier is used verbatim as a console URL path
+// segment (view/edit/delete/save/activate routes); an identifier containing
+// '/' (path separator) or other reserved/URL-unsafe characters produces an
+// agent every console route 404s on, permanently orphaning it (same class as
+// H2, see authoring.triggerIdentifierPattern).
+var identifierPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// ValidIdentifier reports whether id is a URL-safe agent identifier.
+// Checked by both the console and API create handlers before any store
+// write.
+func ValidIdentifier(id string) bool {
+	return identifierPattern.MatchString(id)
 }
 
 // Agent is a conversational endpoint registered with the platform, uniquely

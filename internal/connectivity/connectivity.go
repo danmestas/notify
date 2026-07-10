@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/danmestas/notify/internal/delivery/httpaction"
@@ -297,6 +298,29 @@ func (svc *Service) deliveryClient() *http.Client {
 	return httpaction.NewSSRFSafeClientWithTimeout(10 * time.Second)
 }
 
+// identifierPattern is the URL-safe slug allowlist for integration
+// identifiers: lowercase letters, digits, hyphens, and underscores, starting
+// with a letter or digit. An identifier is used verbatim as a console URL
+// path segment (view/edit/delete routes); an identifier containing '/' (path
+// separator) or other reserved/URL-unsafe characters produces an
+// integration every console route 404s on, permanently orphaning it (same
+// class as H2, see authoring.triggerIdentifierPattern).
+var identifierPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// ErrInvalidIdentifier is returned by every Create* provider constructor
+// when identifier fails identifierPattern. Checked before any store write.
+var ErrInvalidIdentifier = fmt.Errorf("connectivity: identifier may only contain lowercase letters, numbers, hyphens, and underscores")
+
+// createIntegration validates in.Identifier and persists in. Every Create*
+// provider constructor routes through this single choke point so the
+// allowlist is enforced regardless of provider.
+func (svc *Service) createIntegration(ctx context.Context, scope domain.Scope, in domain.Integration) (domain.Integration, error) {
+	if !identifierPattern.MatchString(in.Identifier) {
+		return domain.Integration{}, ErrInvalidIdentifier
+	}
+	return svc.store.Integrations().Create(ctx, scope, in)
+}
+
 // CreateSMTP stores an SMTP email integration for the Scope: it AES-GCM-encrypts
 // the JSON-encoded cfg into EncCredentials, with ProviderID="smtp" and
 // Channel="email". When primary is set the integration becomes the preferred
@@ -310,7 +334,7 @@ func (svc *Service) CreateSMTP(ctx context.Context, scope domain.Scope, identifi
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt smtp config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "smtp",
 		Channel:        "email",
 		EncCredentials: enc,
@@ -333,7 +357,7 @@ func (svc *Service) CreateCloudflareEmail(ctx context.Context, scope domain.Scop
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt cloudflare email config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "cloudflare-email",
 		Channel:        "email",
 		EncCredentials: enc,
@@ -356,7 +380,7 @@ func (svc *Service) CreateEmailWebhook(ctx context.Context, scope domain.Scope, 
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt email-webhook config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "email-webhook",
 		Channel:        "email",
 		EncCredentials: enc,
@@ -379,7 +403,7 @@ func (svc *Service) CreateResend(ctx context.Context, scope domain.Scope, identi
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt resend config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "resend",
 		Channel:        "email",
 		EncCredentials: enc,
@@ -402,7 +426,7 @@ func (svc *Service) CreateSES(ctx context.Context, scope domain.Scope, identifie
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt ses config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "ses",
 		Channel:        "email",
 		EncCredentials: enc,
@@ -524,7 +548,7 @@ func (svc *Service) CreateNtfy(ctx context.Context, scope domain.Scope, identifi
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt ntfy config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "ntfy",
 		Channel:        "push",
 		EncCredentials: enc,
@@ -547,7 +571,7 @@ func (svc *Service) CreateExpo(ctx context.Context, scope domain.Scope, identifi
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt expo config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "expo",
 		Channel:        "push",
 		EncCredentials: enc,
@@ -570,7 +594,7 @@ func (svc *Service) CreateFCM(ctx context.Context, scope domain.Scope, identifie
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt fcm config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "fcm",
 		Channel:        "push",
 		EncCredentials: enc,
@@ -593,7 +617,7 @@ func (svc *Service) CreatePushWebhook(ctx context.Context, scope domain.Scope, i
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt push-webhook config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "push-webhook",
 		Channel:        "push",
 		EncCredentials: enc,
@@ -698,7 +722,7 @@ func (svc *Service) CreateDiscord(ctx context.Context, scope domain.Scope, ident
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt discord config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "discord",
 		Channel:        "chat",
 		EncCredentials: enc,
@@ -721,7 +745,7 @@ func (svc *Service) CreateTelegram(ctx context.Context, scope domain.Scope, iden
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt telegram config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "telegram",
 		Channel:        "chat",
 		EncCredentials: enc,
@@ -744,7 +768,7 @@ func (svc *Service) CreateChatWebhook(ctx context.Context, scope domain.Scope, i
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt chat-webhook config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "chat-webhook",
 		Channel:        "chat",
 		EncCredentials: enc,
@@ -767,7 +791,7 @@ func (svc *Service) CreateSlack(ctx context.Context, scope domain.Scope, identif
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt slack config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "slack",
 		Channel:        "chat",
 		EncCredentials: enc,
@@ -790,7 +814,7 @@ func (svc *Service) CreateWhatsApp(ctx context.Context, scope domain.Scope, iden
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt whatsapp config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "whatsapp",
 		Channel:        "chat",
 		EncCredentials: enc,
@@ -885,7 +909,7 @@ func (svc *Service) CreateTwilio(ctx context.Context, scope domain.Scope, identi
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt twilio config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "twilio",
 		Channel:        "sms",
 		EncCredentials: enc,
@@ -908,7 +932,7 @@ func (svc *Service) CreateSignalWire(ctx context.Context, scope domain.Scope, id
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt signalwire config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "signalwire",
 		Channel:        "sms",
 		EncCredentials: enc,
@@ -931,7 +955,7 @@ func (svc *Service) CreateSNS(ctx context.Context, scope domain.Scope, identifie
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: encrypt sns config: %w", err)
 	}
-	return svc.store.Integrations().Create(ctx, scope, domain.Integration{
+	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "sns",
 		Channel:        "sms",
 		EncCredentials: enc,

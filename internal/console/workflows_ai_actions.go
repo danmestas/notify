@@ -18,8 +18,10 @@ import (
 // the per-turn "Keep all" action. It persists the session's current draft as a
 // real workflow: a create session goes through authoring.Create (the ai-confirm
 // path), a refine session through authoring.Update against its target slug (the
-// ai-apply path). On success it marks the session confirmed and patches the
-// turn's action bar to a "Saved · Open workflow" state linking to the workflow.
+// ai-apply path — Update alone registers the def and records the Version History
+// entry, so no separate Publish follows). On success it marks the session
+// confirmed and patches the turn's action bar to a "Saved · Open workflow"
+// state linking to the workflow.
 // The Ready guard mirrors ai-confirm/ai-apply: a still-generating or already
 // terminal session is rejected inline in the action bar.
 func (c *Console) handleWorkflowAIKeep(w http.ResponseWriter, r *http.Request) {
@@ -96,9 +98,13 @@ func (c *Console) handleWorkflowAIKeep(w http.ResponseWriter, r *http.Request) {
 
 // keepPersist commits the draft as a workflow, routing on the session's mode:
 // create → authoring.Create (+ Publish), refine → authoring.Update against the
-// session's target slug (+ Publish). It returns the workflow's slug on success,
-// or a user-facing error string to render inline. Mirrors the create/apply
-// handlers' error mapping so Keep behaves identically to the terminal actions.
+// session's target slug (Update alone: it registers the just-persisted
+// definition with the engine AND records the Version History entry, so no
+// follow-up Publish is needed — a redundant Publish here would record a
+// byte-identical SECOND version for one logical "Keep"). It returns the
+// workflow's slug on success, or a user-facing error string to render inline.
+// Mirrors the create/apply handlers' error mapping so Keep behaves identically
+// to the terminal actions.
 func (c *Console) keepPersist(r *http.Request, scope domain.Scope, sess store.BuilderSession, draft *aibuilder.WorkflowDraft) (slug, errMsg string) {
 	if sess.Mode == store.BuilderSessionModeRefine {
 		target := sess.TargetSlug
@@ -133,9 +139,11 @@ func (c *Console) keepPersist(r *http.Request, scope domain.Scope, sess store.Bu
 			c.deps.Logger.Error("console: ai keep update", "err", err)
 			return "", "Saving the changes failed."
 		}
-		if err := c.deps.Authoring.Publish(r.Context(), scope, target); err != nil {
-			c.deps.Logger.Error("console: ai keep publish (refine)", "err", err)
-		}
+		// No Publish here: Update already registered the just-persisted def with
+		// the engine and recorded its Version History entry. A follow-up Publish
+		// would reload the same row, recompile the identical steps, register
+		// again, and record a byte-identical SECOND version — a double-record of
+		// one logical "Keep".
 		return target, ""
 	}
 

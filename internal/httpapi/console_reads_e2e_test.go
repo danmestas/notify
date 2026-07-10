@@ -126,6 +126,52 @@ func TestConsole_GetWorkflow_ReturnsFullDTO(t *testing.T) {
 	}
 }
 
+// TestConsole_GetWorkflow_ExposesCritical proves the detail DTO carries the
+// workflow's no-opt-out `critical` flag for both a critical=true and a
+// critical=false workflow (API completeness — the console/operator needs to
+// know a workflow is critical without a separate lookup).
+func TestConsole_GetWorkflow_ExposesCritical(t *testing.T) {
+	ctx := context.Background()
+	srv, authHeader, scope, au, _ := startConsoleServer(t)
+
+	if _, err := au.Create(ctx, scope, authoring.WorkflowInput{
+		Name: "Password Reset", TriggerIdentifier: "password-reset",
+		Steps:    []domain.Step{{StepID: "s1", Type: "email", ControlValues: json.RawMessage(`{"subject":"Reset","body":"link"}`)}},
+		Critical: true,
+	}); err != nil {
+		t.Fatalf("authoring.Create critical: %v", err)
+	}
+	if _, err := au.Create(ctx, scope, authoring.WorkflowInput{
+		Name: "Newsletter", TriggerIdentifier: "newsletter",
+		Steps:    []domain.Step{{StepID: "s1", Type: "email", ControlValues: json.RawMessage(`{"subject":"News","body":"body"}`)}},
+		Critical: false,
+	}); err != nil {
+		t.Fatalf("authoring.Create non-critical: %v", err)
+	}
+
+	for _, tc := range []struct {
+		slug string
+		want bool
+	}{
+		{"password-reset", true},
+		{"newsletter", false},
+	} {
+		status, body := doGet(t, srv.URL+"/v1/workflows/"+tc.slug, authHeader)
+		if status != 200 {
+			t.Fatalf("GET %s: status=%d body=%s", tc.slug, status, body)
+		}
+		var got struct {
+			Critical bool `json:"critical"`
+		}
+		if err := json.Unmarshal([]byte(body), &got); err != nil {
+			t.Fatalf("decode %s: %v (body=%s)", tc.slug, err, body)
+		}
+		if got.Critical != tc.want {
+			t.Errorf("%s: critical = %v, want %v (body=%s)", tc.slug, got.Critical, tc.want, body)
+		}
+	}
+}
+
 // TestConsole_GetWorkflow_ScopeIsolation verifies that a workflow in env-A
 // cannot be fetched from env-B (different API key / scope).
 func TestConsole_GetWorkflow_ScopeIsolation(t *testing.T) {

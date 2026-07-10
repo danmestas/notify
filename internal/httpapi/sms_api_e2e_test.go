@@ -35,6 +35,21 @@ func TestAllowedStepTypes_IncludesSMS(t *testing.T) {
 	}
 }
 
+// TestPostSMSIntegration_InvalidIdentifier_422 proves POST
+// /v1/integrations/sms rejects an identifier with URL-unsafe characters
+// (same H2-class fix as the console handler): the identifier becomes a URL
+// path segment for every integration route, so an unvalidated identifier
+// would be created but permanently unreachable.
+func TestPostSMSIntegration_InvalidIdentifier_422(t *testing.T) {
+	srv, authHeader, _ := startOperatorServer(t)
+
+	body := `{"provider":"twilio","identifier":"foo/bar","accountSid":"AC_sid","authToken":"tok","from":"+15550001111"}`
+	status, resp := doPost(t, srv.URL+"/v1/integrations/sms", authHeader, body)
+	if status != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422 (resp: %s)", status, resp)
+	}
+}
+
 // TestPostSMSIntegration_Twilio_SecretsNeverEchoed proves POST
 // /v1/integrations/sms creates a twilio integration and never echoes the auth
 // token, and that a subsequent GET masks the secret field.

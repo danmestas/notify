@@ -29,7 +29,7 @@
       <label class="activity-filter-pill">
         <span class="activity-filter-pill-label">Channel</span>
         {{template "ui-select" (uiSelect "activity-channel" "" "activityChannel"
-          (uiSelectOptions "" "All channels" "in_app" "In-app" "email" "Email" "push" "Push" "sms" "SMS" "chat" "Chat")
+          (uiSelectOptions "" "All channels" "in_app" "In-app" "email" "Email" "push" "Push" "sms" "SMS" "chat" "Chat" "stream" "Stream")
           "All channels" "@get('/console/api/fragments/activity-list')" false)}}
       </label>
 

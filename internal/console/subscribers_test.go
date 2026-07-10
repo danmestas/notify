@@ -41,9 +41,11 @@
 //	TestSubscribers_Create_RejectsCustomField_EmptyKey    — value with no key → 303 inline error, not stored
 //	TestSubscribers_Update_RejectsCustomField_OverLengthValue — over-length value → 303 inline error
 //	TestSubscribers_DetailPage_NoCustomFields_CleanEmptyState — no custom data → empty state, no broken UI
+//	TestSubscribers_EditForm_LegacyOverCapCustomFields_RendersAllAndSavePreserves — W1: >10 legacy fields all render + unchanged save preserves all
 package console
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1875,4 +1877,182 @@ func TestSubscribers_DetailPage_NoCustomFields_CleanEmptyState(t *testing.T) {
 	if !strings.Contains(body, "empty@example.com") {
 		t.Errorf("detail page missing unrelated existing field (email) — page likely broke rendering")
 	}
+}
+
+// TestSubscribers_Create_RejectsTooManyCustomFields guards W2: the
+// service-layer cap on custom-field count (audience.MaxSubscriberCustomFields)
+// surfaces as an inline 303 error from the console create form, not a 500.
+func TestSubscribers_Create_RejectsTooManyCustomFields(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	form := url.Values{"subscriberId": {"too-many-fields"}, "csrf_token": {csrf}}
+	for i := 0; i < audience.MaxSubscriberCustomFields+1; i++ {
+		form.Set(fmt.Sprintf("custom_key_%d", i), fmt.Sprintf("k%d", i))
+		form.Set(fmt.Sprintf("custom_value_%d", i), "v")
+	}
+	form.Set("cf_row_pool", fmt.Sprintf("%d", audience.MaxSubscriberCustomFields+1))
+
+	rr := tc.postForm(t, "/console/subscribers", form, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("too many custom fields: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("too many custom fields: Location = %q, missing error param", loc)
+	}
+	if _, err := tc.deps.Audience.Get(testBackground(), tc.scope, "too-many-fields"); err == nil {
+		t.Errorf("too many custom fields: subscriber should not have been created")
+	}
+}
+
+// seedSubscriberDirect writes a subscriber straight through the store,
+// bypassing every audience.Service validation (including the
+// audience.MaxSubscriberCustomFields cap). This is how a subscriber with
+// more custom fields than the console's editor pool could exist: written
+// before the cap existed, or by a direct store edit outside this codebase.
+func (tc *testConsole) seedSubscriberDirect(t *testing.T, sub domain.Subscriber) domain.Subscriber {
+	t.Helper()
+	saved, err := tc.st.Subscribers().Upsert(testBackground(), tc.scope, sub)
+	if err != nil {
+		t.Fatalf("seed subscriber direct: %v", err)
+	}
+	return saved
+}
+
+// TestSubscribers_EditForm_LegacyOverCapCustomFields_RendersAllAndSavePreserves
+// is the W1 make-or-break test. The custom-fields editor's row pool is fixed
+// at subscriberCustomFieldRowPool (10) rows; before this fix a subscriber
+// carrying more fields than that (only possible via a direct store write,
+// since the cap now blocks the console/API from creating one) would render
+// only the first 10, and clicking Save — even untouched — replaced the
+// stored Data with just those 10, silently destroying the rest. This proves
+// the fix: the edit form renders every existing field, and saving unchanged
+// preserves all of them.
+func TestSubscribers_EditForm_LegacyOverCapCustomFields_RendersAllAndSavePreserves(t *testing.T) {
+	tc := newTestConsole(t)
+
+	fields := make(map[string]string, 12)
+	for i := 0; i < 12; i++ {
+		fields[fmt.Sprintf("field%02d", i)] = fmt.Sprintf("value%02d", i)
+	}
+	data, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("marshal seed data: %v", err)
+	}
+	sub := tc.seedSubscriberDirect(t, domain.Subscriber{
+		SubscriberID: "legacy-over-cap",
+		Email:        "legacy@example.com",
+		Data:         data,
+	})
+
+	cookie, csrf := tc.login(t)
+
+	// The detail page's edit form must render all 12 rows, not just the
+	// first 10.
+	detailRR := tc.get(t, "/console/subscribers/"+sub.ID, cookie)
+	if detailRR.Code != http.StatusOK {
+		t.Fatalf("GET subscriber detail: status = %d, want 200", detailRR.Code)
+	}
+	body := detailRR.Body.String()
+	for k, v := range fields {
+		if !strings.Contains(body, `value="`+k+`"`) {
+			t.Errorf("edit form missing input for key %q — field not rendered;\nbody snippet around custom fields:\n%s",
+				k, extractAround(body, "subscriber-custom-fields", 4000))
+		}
+		if !strings.Contains(body, `value="`+v+`"`) {
+			t.Errorf("edit form missing input value %q for key %q — field not rendered", v, k)
+		}
+	}
+
+	// Build the form post that resubmits every row exactly as rendered
+	// (i.e. simulates clicking Save without touching anything), including
+	// the hidden row-pool marker the (fixed) template must now emit so the
+	// server-side parser knows to read all 12 rows, not just 10.
+	form := url.Values{"email": {"legacy@example.com"}, "csrf_token": {csrf}}
+	i := 0
+	for k, v := range fields {
+		form.Set(fmt.Sprintf("custom_key_%d", i), k)
+		form.Set(fmt.Sprintf("custom_value_%d", i), v)
+		i++
+	}
+	if !strings.Contains(body, `name="cf_row_pool"`) {
+		t.Fatalf("edit form missing cf_row_pool hidden field needed to round-trip >10 rows;\nbody:\n%s", body)
+	}
+	// Extract the rendered pool size so the posted form matches what a real
+	// browser would submit.
+	poolVal := extractInputValue(t, body, "cf_row_pool")
+	form.Set("cf_row_pool", poolVal)
+
+	saveRR := tc.postForm(t, "/console/subscribers/"+sub.ID, form, cookie)
+	if saveRR.Code != http.StatusSeeOther {
+		t.Fatalf("save unchanged: status = %d, want 303 (body: %s)", saveRR.Code, saveRR.Body.String())
+	}
+
+	got, err := tc.deps.Audience.Get(testBackground(), tc.scope, "legacy-over-cap")
+	if err != nil {
+		t.Fatalf("get after unchanged save: %v", err)
+	}
+	var after map[string]string
+	if err := json.Unmarshal(got.Data, &after); err != nil {
+		t.Fatalf("unmarshal data after save: %v", err)
+	}
+	if len(after) != 12 {
+		t.Fatalf("field count after unchanged save = %d, want 12 (none dropped); data=%s", len(after), got.Data)
+	}
+	for k, v := range fields {
+		if after[k] != v {
+			t.Errorf("field %q = %q after save, want %q (preserved)", k, after[k], v)
+		}
+	}
+}
+
+// extractAround returns a substring of body centered on the first
+// occurrence of marker, for readable test-failure diffs.
+func extractAround(body, marker string, span int) string {
+	idx := strings.Index(body, marker)
+	if idx < 0 {
+		return "(marker not found)"
+	}
+	start := idx - span/2
+	if start < 0 {
+		start = 0
+	}
+	end := idx + span/2
+	if end > len(body) {
+		end = len(body)
+	}
+	return body[start:end]
+}
+
+// extractInputValue does a minimal, test-only extraction of
+// `name="<name>" ... value="<v>"` (or `value="<v>" ... name="<name>"`) from
+// rendered HTML for a single hidden input.
+func extractInputValue(t *testing.T, body, name string) string {
+	t.Helper()
+	marker := `name="` + name + `"`
+	idx := strings.Index(body, marker)
+	if idx < 0 {
+		t.Fatalf("input %q not found in body", name)
+	}
+	// Search a bounded window around the marker for value="...".
+	windowStart := idx - 200
+	if windowStart < 0 {
+		windowStart = 0
+	}
+	windowEnd := idx + 200
+	if windowEnd > len(body) {
+		windowEnd = len(body)
+	}
+	window := body[windowStart:windowEnd]
+	valIdx := strings.Index(window, `value="`)
+	if valIdx < 0 {
+		t.Fatalf("input %q has no value attribute in window %q", name, window)
+	}
+	rest := window[valIdx+len(`value="`):]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		t.Fatalf("input %q value attribute not terminated", name)
+	}
+	return rest[:end]
 }
