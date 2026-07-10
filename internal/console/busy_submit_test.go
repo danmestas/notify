@@ -1,9 +1,13 @@
-// busy_submit_test.go guards QA finding L5 (docs/qa/console-qa-2026-07-09.md):
-// primary submit buttons gave no feedback on click, so a slow or missed click
-// was indistinguishable from a no-op. It pins two things: the shared
-// .btn[aria-busy="true"] CSS busy cue (mirrors TestAssets_AnalyticsRunsLineCSSIsVisible),
-// and the data-on:submit wiring that sets aria-busy + disables the submitter
-// on a representative sample of the native POST→303 forms it was applied to.
+// busy_submit_test.go guards the L5 regression (QA cycle 2): PR #219 added a
+// data-on:submit="…aria-busy…" handler to native POST→303 forms to show a busy
+// cue. But Datastar auto-calls preventDefault() on any element carrying a
+// data-on:* handler, on the assumption the expression performs the request
+// itself (e.g. @post(...)). The L5 handler only set the busy state and never
+// submitted, so the native submission was cancelled and NOTHING replaced it —
+// Create/Save silently did nothing across the whole console. The handler was
+// removed; this file keeps the (harmless, reusable) .btn[aria-busy] CSS and a
+// regression guard that fails if any native POST form regains a state-only
+// data-on:submit handler.
 package console
 
 import (
@@ -22,22 +26,11 @@ func TestAssets_BusyButtonCSSIsVisible(t *testing.T) {
 	}
 	css := rr.Body.String()
 
+	// The .btn[aria-busy="true"] cue is retained for future use (e.g. a form
+	// that genuinely drives its own @post request and can safely set aria-busy).
 	busyRE := regexp.MustCompile(`(?s)\.btn\[aria-busy="true"\]\s*\{([^}]*)\}`)
-	m := busyRE.FindStringSubmatch(css)
-	if m == nil {
-		t.Fatal(`.btn[aria-busy="true"] rule not found in app.css — submit buttons give no feedback while a request is in flight (QA L5)`)
-	}
-	if !strings.Contains(m[1], "opacity") {
-		t.Errorf(`.btn[aria-busy="true"] rule does not dim the button: %q`, m[1])
-	}
-
-	spinRE := regexp.MustCompile(`(?s)\.btn\[aria-busy="true"\]::after\s*\{([^}]*)\}`)
-	sm := spinRE.FindStringSubmatch(css)
-	if sm == nil {
-		t.Fatal(`.btn[aria-busy="true"]::after spinner rule not found in app.css`)
-	}
-	if !strings.Contains(sm[1], "animation") {
-		t.Errorf(`.btn[aria-busy="true"]::after rule does not animate a spinner: %q`, sm[1])
+	if busyRE.FindStringSubmatch(css) == nil {
+		t.Fatal(`.btn[aria-busy="true"] rule not found in app.css`)
 	}
 }
 
@@ -57,29 +50,23 @@ func formSlice(t *testing.T, body, actionAnchor string) string {
 	return body[idx : idx+end]
 }
 
-// assertBusyOnSubmit checks that a form carries the shared busy-on-submit
-// convention: a data-on:submit handler that (only when evt.submitter is set)
-// marks the submitter aria-busy and disables it.
-func assertBusyOnSubmit(t *testing.T, form, label string) {
+// assertNativeFormSubmits guards against the L5 hazard: a native POST form
+// (one that relies on the browser's own submission → 303) must NOT carry a
+// data-on:submit handler, because Datastar preventDefault()s such forms and
+// our handlers never issued the request themselves, so submission was
+// silently cancelled. A form that legitimately drives its own @post request
+// is a different shape and would not match action="…"-anchored native forms.
+func assertNativeFormSubmits(t *testing.T, form, label string) {
 	t.Helper()
-	submitRE := regexp.MustCompile(`data-on:submit="([^"]*)"`)
-	m := submitRE.FindStringSubmatch(form)
-	if m == nil {
-		t.Fatalf("%s form missing data-on:submit busy wiring: %s", label, form)
+	if strings.Contains(form, "data-on:submit") {
+		t.Errorf("%s is a native POST form but carries data-on:submit — Datastar will preventDefault() it and the native submission is cancelled (L5 regression). Form:\n%s", label, form)
 	}
-	handler := m[1]
-	if !strings.Contains(handler, "evt.submitter") {
-		t.Errorf("%s form's data-on:submit does not gate on evt.submitter: %q", label, handler)
-	}
-	if !strings.Contains(handler, "aria-busy") {
-		t.Errorf("%s form's data-on:submit does not set aria-busy: %q", label, handler)
-	}
-	if !strings.Contains(handler, "disabled") {
-		t.Errorf("%s form's data-on:submit does not disable the submitter: %q", label, handler)
+	if strings.Contains(form, `disabled = true`) && strings.Contains(form, "submitter") {
+		t.Errorf("%s disables its submitter via a data-on handler — this can drop the submitter's value or cancel submission (L5 regression). Form:\n%s", label, form)
 	}
 }
 
-func TestWorkflowDetail_SaveFormHasBusyOnSubmitWiring(t *testing.T) {
+func TestWorkflowDetail_SaveFormSubmitsNatively(t *testing.T) {
 	tc := newTestConsole(t)
 	tc.seedWorkflow(t, "MyFlow", "my-flow")
 	cookie, _ := tc.login(t)
@@ -89,10 +76,10 @@ func TestWorkflowDetail_SaveFormHasBusyOnSubmitWiring(t *testing.T) {
 		t.Fatalf("GET /console/workflows/my-flow: status = %d, want 200", rr.Code)
 	}
 	form := formSlice(t, rr.Body.String(), `action="/console/api/workflows/my-flow/save"`)
-	assertBusyOnSubmit(t, form, "workflow save")
+	assertNativeFormSubmits(t, form, "workflow save")
 }
 
-func TestSubscribers_CreateFormHasBusyOnSubmitWiring(t *testing.T) {
+func TestSubscribers_CreateFormSubmitsNatively(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)
 
@@ -101,10 +88,10 @@ func TestSubscribers_CreateFormHasBusyOnSubmitWiring(t *testing.T) {
 		t.Fatalf("GET /console/subscribers: status = %d, want 200", rr.Code)
 	}
 	form := formSlice(t, rr.Body.String(), `action="/console/subscribers"`)
-	assertBusyOnSubmit(t, form, "subscriber create")
+	assertNativeFormSubmits(t, form, "subscriber create")
 }
 
-func TestFragment_IntegrationProviderForm_ConnectFormHasBusyOnSubmitWiring(t *testing.T) {
+func TestFragment_IntegrationProviderForm_ConnectFormSubmitsNatively(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)
 
@@ -114,5 +101,5 @@ func TestFragment_IntegrationProviderForm_ConnectFormHasBusyOnSubmitWiring(t *te
 		t.Fatalf("GET integration-provider-form (smtp): status = %d, want 200", rr.Code)
 	}
 	form := formSlice(t, rr.Body.String(), `action="/console/integrations"`)
-	assertBusyOnSubmit(t, form, "integration connect")
+	assertNativeFormSubmits(t, form, "integration connect")
 }

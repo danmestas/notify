@@ -103,8 +103,7 @@
         {{if $page.FormError}}
         <p class="console-form-error" role="alert">{{$page.FormError}}</p>
         {{end}}
-        <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}" class="subscriber-edit-form"
-              data-on:submit="evt.submitter && (evt.submitter.setAttribute('aria-busy', 'true'), evt.submitter.disabled = true)">
+        <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}" class="subscriber-edit-form">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           <div class="form-row">
             <label class="form-label" for="sub-firstName">First name</label>

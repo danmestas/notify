@@ -30,8 +30,7 @@
   <form method="post"
         action="/console/integrations"
         class="integration-create-form"
-        autocomplete="off"
-        data-on:submit="evt.submitter && (evt.submitter.setAttribute('aria-busy', 'true'), evt.submitter.disabled = true)">
+        autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <input type="hidden" name="provider_id" value="{{.ProviderID}}">
 

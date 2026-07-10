@@ -37,8 +37,7 @@
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
                 data-on:click="$topicNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
-      <form method="POST" action="/console/topics" class="topic-edit-form"
-            data-on:submit="evt.submitter && (evt.submitter.setAttribute('aria-busy', 'true'), evt.submitter.disabled = true)">
+      <form method="POST" action="/console/topics" class="topic-edit-form">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="new-topic-key">Key *</label>
