@@ -47,9 +47,17 @@
         {{range $s := .Suggestions}}
         {{/* Set the textarea's DOM value directly (then fire input so data-bind
              syncs $aiPrompt) so the form serialization at @post time sees the
-             prompt — assigning the signal alone can race the DOM flush. */}}
+             prompt — assigning the signal alone can race the DOM flush.
+             requestCancellation: 'disabled' stops Datastar's default same-
+             (method, URL) auto-abort from killing an in-flight turn's own
+             connection the instant another send hits the same endpoint (H3) —
+             the server's "Still generating…" guard is what rejects a
+             concurrent send, not a client-side connection kill. The composer
+             is cleared server-side on a successful dispatch (a $aiPrompt
+             signal patch), not here, so a rejection preserves what was typed
+             (M8). */}}
         <button type="button" class="ai-copilot-starter"
-                data-on:click="document.getElementById('ai-copilot-input').value = {{jsEscape $s}}; document.getElementById('ai-copilot-input').dispatchEvent(new Event('input')); $aiStarted = true; ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}})); document.getElementById('ai-copilot-input').value = ''; $aiPrompt = ''">
+                data-on:click="document.getElementById('ai-copilot-input').value = {{jsEscape $s}}; document.getElementById('ai-copilot-input').dispatchEvent(new Event('input')); $aiStarted = true; ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}))">
           {{uiIcon "star"}}
           <span>{{$s}}</span>
         </button>
@@ -71,7 +79,16 @@
          failure) patch #ai-copilot-note here rather than a full-screen preview. */}}
     {{template "ai-copilot-note" ""}}
 
-    {{/* Composer — Enter sends, Shift+Enter newlines. */}}
+    {{/* Composer — Enter sends, Shift+Enter newlines. requestCancellation:
+         'disabled' on both @post calls stops Datastar's default same-
+         (method, URL) auto-abort from silently killing an in-flight turn's
+         own connection when a second send hits the same endpoint (H3) — the
+         server's "Still generating…" guard is what rejects a concurrent
+         send, not a client-side connection kill. Neither handler clears
+         $aiPrompt itself: the composer is cleared server-side, via a signal
+         patch, only once a turn is actually accepted (streamAICopilotTurn),
+         so a REJECTED send (rate limit, over-long, still generating) leaves
+         the typed text in place for the user to edit and resend (M8). */}}
     <form id="ai-copilot-form" class="ai-copilot-composer" data-on:submit="evt.preventDefault()">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <input type="hidden" name="view" value="copilot">
@@ -79,10 +96,10 @@
       <textarea id="ai-copilot-input" class="console-input ai-copilot-input" name="prompt" rows="2"
                 placeholder="Message the copilot…"
                 data-bind="aiPrompt"
-                data-on:keydown="evt.key === 'Enter' && !evt.shiftKey && (evt.preventDefault(), $aiPrompt.trim() && ($aiStarted = true, ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}})), $aiPrompt = ''))"></textarea>
+                data-on:keydown="evt.key === 'Enter' && !evt.shiftKey && (evt.preventDefault(), $aiPrompt.trim() && ($aiStarted = true, ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}))))"></textarea>
       <button type="button" class="btn btn-primary ai-copilot-send"
               data-attr:disabled="$aiPrompt.trim() === '' ? 'disabled' : null"
-              data-on:click="$aiPrompt.trim() && ($aiStarted = true, ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}})), $aiPrompt = '')">Send</button>
+              data-on:click="$aiPrompt.trim() && ($aiStarted = true, ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'})))">Send</button>
     </form>
     {{else}}
     <div class="ai-copilot-empty">

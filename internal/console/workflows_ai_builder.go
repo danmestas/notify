@@ -289,6 +289,17 @@ func (c *Console) streamAICopilotTurn(w http.ResponseWriter, r *http.Request, sc
 			c.deps.Logger.Debug("console: ai copilot patch session signal", "err", perr)
 		}
 	}
+	// Clear the composer now that the turn is definitely accepted (dispatched
+	// and streaming) — never on the client, and never on a pre-turn rejection
+	// (patchAIError, which never reaches this function), so a rejected send
+	// (rate limit, over-long, still generating) leaves the typed text in place
+	// for the user to edit and resend (M8). A Try-again re-stream reuses the
+	// stored instruction rather than the composer, so it does not touch it.
+	if !isRetry {
+		if perr := sse.MarshalAndPatchSignals(map[string]string{"aiPrompt": ""}); perr != nil {
+			c.deps.Logger.Debug("console: ai copilot clear prompt signal", "err", perr)
+		}
+	}
 
 	turn := &copilotTurnState{TurnID: userMsgID}
 	for {

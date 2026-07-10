@@ -48,8 +48,13 @@ func systemPrompt(catalog []steptype.StepEntry, gatedTypes []string) string {
 
 	w("## Available step types")
 	w("You may ONLY add steps of the types listed here. Channel steps appear only when")
-	w("the environment has an active provider for that channel; never assume an")
-	w("unavailable channel.")
+	w("the environment has an active provider for that channel.")
+	w("Available step types in this environment: " + strings.Join(gatedTypes, ", ") + ".")
+	w("Every type in that list IS available right now — never tell the user a listed type is unavailable,")
+	w("and never silently substitute a different step type for one the user asked for.")
+	w("If the user asks for a step type that is NOT in that list, say so plainly in your")
+	w("summary and ask how they'd like to proceed instead of silently swapping in a")
+	w("different channel.")
 	for _, e := range catalog {
 		if !gated[e.Name] {
 			continue
@@ -147,8 +152,13 @@ func refineSystemPrompt(catalog []steptype.StepEntry, gatedTypes []string, exist
 
 	w("## Available step types")
 	w("You may ONLY add steps of the types listed here. Channel steps appear only when")
-	w("the environment has an active provider for that channel; never assume an")
-	w("unavailable channel.")
+	w("the environment has an active provider for that channel.")
+	w("Available step types in this environment: " + strings.Join(gatedTypes, ", ") + ".")
+	w("Every type in that list IS available right now — never tell the user a listed type is unavailable,")
+	w("and never silently substitute a different step type for one the user asked for.")
+	w("If the user asks for a step type that is NOT in that list, say so plainly in your")
+	w("summary and ask how they'd like to proceed instead of silently swapping in a")
+	w("different channel.")
 	for _, e := range catalog {
 		if !gated[e.Name] {
 			continue
