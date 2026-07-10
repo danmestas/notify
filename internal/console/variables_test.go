@@ -162,6 +162,53 @@ func TestVariables_TwoStepDelete(t *testing.T) {
 	}
 }
 
+// TestVariables_Create_RejectsDuplicateKey guards H5: POSTing create with a
+// key that already exists must NOT silently overwrite the stored value (can
+// clobber a live secret via a typo). The handler must 303 back to /new with
+// an inline error and leave the existing value unchanged.
+func TestVariables_Create_RejectsDuplicateKey(t *testing.T) {
+	tc := newTestConsole(t)
+	if _, err := tc.deps.EnvVars.Set(testBackground(), tc.scope, "DUP_KEY", false, "original-value"); err != nil {
+		t.Fatalf("seed variable: %v", err)
+	}
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/variables",
+		url.Values{
+			"key":        {"DUP_KEY"},
+			"value":      {"clobbered-value"},
+			"csrf_token": {csrf},
+		}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("duplicate create: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "/console/variables/new") {
+		t.Errorf("duplicate create: Location = %q, want redirect back to /new", loc)
+	}
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("duplicate create: Location = %q, missing error param", loc)
+	}
+
+	// The existing value must not have been clobbered.
+	got, err := tc.deps.EnvVars.GetValue(testBackground(), tc.scope, "DUP_KEY")
+	if err != nil {
+		t.Fatalf("get value after duplicate create attempt: %v", err)
+	}
+	if got != "original-value" {
+		t.Errorf("clobber: value = %q, want %q (original must be preserved)", got, "original-value")
+	}
+
+	// /new must re-render with the inline error, not a raw 500.
+	rrGet := tc.get(t, loc, cookie)
+	if rrGet.Code != http.StatusOK {
+		t.Fatalf("GET %s: status = %d, want 200", loc, rrGet.Code)
+	}
+	if !strings.Contains(rrGet.Body.String(), "already exists") {
+		t.Errorf("error page missing 'already exists' message; body snippet: %s", rrGet.Body.String()[:min(500, rrGet.Body.Len())])
+	}
+}
+
 func TestVariables_ValueNeverRawInMaskedView(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, csrf := tc.login(t)

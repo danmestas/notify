@@ -13,6 +13,7 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -35,6 +36,9 @@ type variablesPageView struct {
 	Fragment variablesListView
 	Signals  template.JS
 	ReadOnly bool
+	// FormError carries an inline validation error surfaced from ?error= after
+	// a failed create (e.g. a duplicate key), read on the /new redirect target.
+	FormError string
 }
 
 type variablesListView struct {
@@ -199,8 +203,9 @@ func (c *Console) serveVariableNew(w http.ResponseWriter, r *http.Request) {
 		Fragment: frag,
 		// /new seeds variableNewOpen=true so the slide-over opens on direct visit
 		// without re-rendering the page — no layout shift versus the list.
-		Signals:  variablesSignalsJSON("", !c.deps.ReadOnly),
-		ReadOnly: c.deps.ReadOnly,
+		Signals:   variablesSignalsJSON("", !c.deps.ReadOnly),
+		ReadOnly:  c.deps.ReadOnly,
+		FormError: r.URL.Query().Get("error"),
 	}
 	c.renderPage(w, r, http.StatusOK, "variables", "Variables", view)
 }
@@ -318,12 +323,32 @@ func (c *Console) handleVariableCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// EnvVars.Set is an upsert (no unique-constraint failure to catch), so a
+	// re-used key would otherwise silently clobber the stored value —
+	// possibly a live secret via a typo (H5). Pre-check existence and reject
+	// the create instead; an intentional edit of an existing var stays via
+	// the update route.
+	if _, err := c.deps.EnvVars.Get(r.Context(), scope, key); err == nil {
+		redirectVariableNewErr(w, r, "Variable already exists.")
+		return
+	} else if !errors.Is(err, store.ErrNotFound) {
+		c.deps.Logger.Error("console: check existing variable", "err", err)
+		redirectVariableNewErr(w, r, "Create failed.")
+		return
+	}
+
 	if _, err := c.deps.EnvVars.Set(r.Context(), scope, key, isSecret, value); err != nil {
 		c.deps.Logger.Error("console: create variable", "err", err)
-		http.Error(w, "create failed", http.StatusInternalServerError)
+		redirectVariableNewErr(w, r, "Create failed.")
 		return
 	}
 	http.Redirect(w, r, "/console/variables/"+key, http.StatusSeeOther)
+}
+
+// redirectVariableNewErr 303-redirects back to /console/variables/new with an
+// inline ?error= banner instead of a raw 4xx/5xx plaintext response (H5).
+func redirectVariableNewErr(w http.ResponseWriter, r *http.Request, msg string) {
+	http.Redirect(w, r, "/console/variables/new?error="+url.QueryEscape(msg), http.StatusSeeOther)
 }
 
 func (c *Console) handleVariableUpdate(w http.ResponseWriter, r *http.Request) {

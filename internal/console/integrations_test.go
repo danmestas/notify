@@ -464,6 +464,73 @@ func TestIntegrations_Create_Resend(t *testing.T) {
 	}
 }
 
+// TestIntegrations_Create_DuplicateIdentifierRejected guards H4: POSTing
+// create with an identifier that already exists in scope must NOT 500 and
+// must NOT overwrite the existing integration. The handler must 303 back to
+// the integrations page with an inline ?createError= banner, matching the
+// Agents duplicate-identifier pattern.
+func TestIntegrations_Create_DuplicateIdentifierRejected(t *testing.T) {
+	tc := newTestConsole(t)
+	_, err := tc.deps.Connectivity.CreateSMTP(
+		testBackground(), tc.scope, "dup-smtp",
+		connectivity.SMTPConfig{
+			Addr:     "smtp.example.com:587",
+			Host:     "smtp.example.com",
+			Username: "user@example.com",
+			Password: "orig-pass",
+			From:     "noreply@example.com",
+		},
+		false,
+	)
+	if err != nil {
+		t.Fatalf("seed CreateSMTP: %v", err)
+	}
+
+	cookie, csrf := tc.login(t)
+	form := url.Values{
+		"provider_id": {"smtp"}, "identifier": {"dup-smtp"},
+		"addr": {"evil.example.com:587"}, "host": {"evil.example.com"},
+		"username": {"attacker"}, "password": {"clobber"},
+		"from":       {"attacker@example.com"},
+		"csrf_token": {csrf},
+	}
+	rr := tc.postForm(t, "/console/integrations", form, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("duplicate create: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "/console/integrations") {
+		t.Errorf("duplicate create: Location = %q, want redirect back to /console/integrations", loc)
+	}
+	if !strings.Contains(loc, "createError=") {
+		t.Errorf("duplicate create: Location = %q, missing an error param", loc)
+	}
+
+	// The existing integration must not have been clobbered or duplicated.
+	integrations, err := tc.st.Integrations().List(testBackground(), tc.scope)
+	if err != nil {
+		t.Fatalf("list integrations: %v", err)
+	}
+	count := 0
+	for _, in := range integrations {
+		if in.Identifier == "dup-smtp" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("duplicate create: identifier count = %d, want 1 (no clobber, no dupe row)", count)
+	}
+
+	// The redirect target must render the inline error banner, not a raw 500.
+	rrGet := tc.get(t, loc, cookie)
+	if rrGet.Code != http.StatusOK {
+		t.Fatalf("GET %s: status = %d, want 200", loc, rrGet.Code)
+	}
+	if !strings.Contains(rrGet.Body.String(), "already exists") {
+		t.Errorf("error page missing 'already exists' message; body snippet: %s", rrGet.Body.String()[:min(500, rrGet.Body.Len())])
+	}
+}
+
 func TestIntegrations_PageEmptyState(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)

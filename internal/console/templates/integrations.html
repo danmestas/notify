@@ -9,6 +9,10 @@
          data-signals="{{$page.Signals}}">
   {{template "page-header" $page.Header}}
 
+  {{if $page.CreateError}}
+  <p class="console-form-error" role="alert" id="integration-create-error-page">{{$page.CreateError}}</p>
+  {{end}}
+
   <div class="integration-toolbar">
     {{/* Channel filter — segmented button group */}}
     <nav class="integration-channel-tabs" role="group" id="integration-channel-tabs" aria-label="Filter by channel">

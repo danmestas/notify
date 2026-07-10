@@ -12,6 +12,7 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -35,6 +36,9 @@ type topicsPageView struct {
 	Fragment topicsListView
 	Signals  template.JS
 	ReadOnly bool
+	// FormError carries an inline validation error surfaced from ?error= after
+	// a failed create (e.g. a duplicate key), read on the /new redirect target.
+	FormError string
 }
 
 // topicsListView is the #topics-tbody fragment binding.
@@ -75,6 +79,9 @@ type topicDetailView struct {
 	// ConfirmRemove names the member subscriberId awaiting inline removal
 	// confirmation (?confirmRemove=<id>).
 	ConfirmRemove string
+	// FormError carries an inline error surfaced from ?error= after a failed
+	// mutation on this page (e.g. add-member against an unknown subscriber id).
+	FormError string
 }
 
 // topicActivityView is the Activity tab content for a topic.
@@ -238,10 +245,11 @@ func (c *Console) serveTopicNew(w http.ResponseWriter, r *http.Request) {
 		header = pageHeader{Title: "Topics"}
 	}
 	view := topicsPageView{
-		Header:   header,
-		Fragment: frag,
-		Signals:  topicsSignalsJSON("", "", !c.deps.ReadOnly),
-		ReadOnly: c.deps.ReadOnly,
+		Header:    header,
+		Fragment:  frag,
+		Signals:   topicsSignalsJSON("", "", !c.deps.ReadOnly),
+		ReadOnly:  c.deps.ReadOnly,
+		FormError: r.URL.Query().Get("error"),
 	}
 	c.renderPage(w, r, http.StatusOK, "topics", "Topics", view)
 }
@@ -385,6 +393,7 @@ func (c *Console) serveTopicDetail(w http.ResponseWriter, r *http.Request) {
 		ActiveTab:     tab,
 		ConfirmDelete: r.URL.Query().Get("confirmDelete") == "true",
 		ConfirmRemove: r.URL.Query().Get("confirmRemove"),
+		FormError:     r.URL.Query().Get("error"),
 	}
 	c.renderPage(w, r, http.StatusOK, "topic-detail", topic.Name, view)
 }
@@ -472,14 +481,33 @@ func (c *Console) handleTopicCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Audience.CreateTopic upserts by (environment_id, key) — a re-used key
+	// would otherwise silently rename the existing topic (M3). Pre-check
+	// existence and reject the create instead; an intentional rename stays via
+	// handleTopicUpdate, which legitimately relies on the upsert.
+	if _, err := c.deps.Audience.GetTopic(r.Context(), scope, key); err == nil {
+		redirectTopicNewErr(w, r, "Topic key already exists.")
+		return
+	} else if !errors.Is(err, store.ErrNotFound) {
+		c.deps.Logger.Error("console: check existing topic", "err", err)
+		redirectTopicNewErr(w, r, "Create failed.")
+		return
+	}
+
 	created, err := c.deps.Audience.CreateTopic(r.Context(), scope, key, name)
 	if err != nil {
 		c.deps.Logger.Error("console: create topic", "err", err)
-		http.Error(w, "create failed", http.StatusInternalServerError)
+		redirectTopicNewErr(w, r, "Create failed.")
 		return
 	}
 
 	http.Redirect(w, r, "/console/topics/"+created.Key, http.StatusSeeOther)
+}
+
+// redirectTopicNewErr 303-redirects back to /console/topics/new with an
+// inline ?error= banner instead of a raw 4xx/5xx plaintext response (M3).
+func redirectTopicNewErr(w http.ResponseWriter, r *http.Request, msg string) {
+	http.Redirect(w, r, "/console/topics/new?error="+url.QueryEscape(msg), http.StatusSeeOther)
 }
 
 // handleTopicUpdate handles POST /console/topics/{key} (?_method=PATCH).
@@ -597,25 +625,37 @@ func (c *Console) handleTopicAddSubscriber(w http.ResponseWriter, r *http.Reques
 	// nothing (same guard as the public API; prevents phantom member rows).
 	if _, err := c.deps.Audience.Get(r.Context(), scope, subID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			http.Error(w, "subscriber not found", http.StatusUnprocessableEntity)
+			// A nonexistent subscriber id must not surface a raw 422 plaintext
+			// dead-end (no console chrome, no way back) — redirect to the topic
+			// page with an inline error banner instead (M4).
+			redirectTopicAddSubscriberErr(w, r, key, "Subscriber not found.")
 			return
 		}
 		c.deps.Logger.Error("console: add topic subscriber lookup", "err", err)
-		http.Error(w, "add failed", http.StatusInternalServerError)
+		redirectTopicAddSubscriberErr(w, r, key, "Add failed.")
 		return
 	}
 
 	if err := c.deps.Audience.AddTopicSubscriber(r.Context(), scope, key, subID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			http.Error(w, "topic not found", http.StatusNotFound)
+			redirectTopicAddSubscriberErr(w, r, key, "Topic not found.")
 			return
 		}
 		c.deps.Logger.Error("console: add topic subscriber", "err", err)
-		http.Error(w, "add failed", http.StatusInternalServerError)
+		redirectTopicAddSubscriberErr(w, r, key, "Add failed.")
 		return
 	}
 
 	http.Redirect(w, r, "/console/topics/"+key+"?tab=subscribers", http.StatusSeeOther)
+}
+
+// redirectTopicAddSubscriberErr 303-redirects back to the topic's subscribers
+// tab with an inline ?error= banner instead of a raw 4xx/5xx plaintext
+// response (M4).
+func redirectTopicAddSubscriberErr(w http.ResponseWriter, r *http.Request, key, msg string) {
+	http.Redirect(w, r,
+		"/console/topics/"+key+"?tab=subscribers&error="+url.QueryEscape(msg),
+		http.StatusSeeOther)
 }
 
 // handleTopicRemoveSubscriber handles POST /console/topics/{key}/subscribers/{subscriberId}/remove.

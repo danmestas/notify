@@ -3,6 +3,10 @@
          data-signals="{{$page.Signals}}">
   {{template "page-header" $page.Header}}
 
+  {{if $page.FormError}}
+  <p class="console-form-error" role="alert">{{$page.FormError}}</p>
+  {{end}}
+
   <div class="console-action-row">
     <a class="btn btn-outline" href="/console/topics">{{ uiIcon "arrow-left" }} Back to topics</a>
     {{if not $page.ReadOnly}}

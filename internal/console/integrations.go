@@ -124,6 +124,11 @@ type integrationsListView struct {
 	VerifyError   string
 	TestSendOK    bool
 	TestSendError string
+	// CreateError carries the post-create failure banner (e.g. a duplicate
+	// identifier). The create handler 303-redirects to
+	// /console/integrations?createError=<msg> instead of returning a raw 4xx/5xx
+	// plaintext dead-end (H4).
+	CreateError string
 }
 
 // integrationsGridView is what the integrations-grid fragment binds.
@@ -438,6 +443,7 @@ func (c *Console) serveIntegrationsPage(w http.ResponseWriter, r *http.Request) 
 		VerifyError:   r.URL.Query().Get("verifyError"),
 		TestSendOK:    r.URL.Query().Get("testSendOK") == "1",
 		TestSendError: r.URL.Query().Get("testSendError"),
+		CreateError:   r.URL.Query().Get("createError"),
 	}
 
 	c.renderPage(w, r, http.StatusOK, "integrations", "Integration Store", view)
@@ -973,12 +979,26 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 	}
 
 	if createErr != nil {
+		// A duplicate (environment_id, identifier) trips the integrations table's
+		// UNIQUE constraint. Surface it as an inline error, matching the Agents
+		// duplicate-identifier pattern — never a raw 500 dead-end (H4).
+		if strings.Contains(createErr.Error(), "UNIQUE constraint failed") {
+			redirectIntegrationsCreateErr(w, r, "Identifier already exists.")
+			return
+		}
 		c.deps.Logger.Error("console: create integration", "provider", providerID, "err", createErr)
-		http.Error(w, "create failed", http.StatusInternalServerError)
+		redirectIntegrationsCreateErr(w, r, "Create failed.")
 		return
 	}
 
 	http.Redirect(w, r, "/console/integrations", http.StatusSeeOther)
+}
+
+// redirectIntegrationsCreateErr 303-redirects back to the integrations list
+// with an inline ?createError= banner instead of a raw 4xx/5xx plaintext
+// response (H4).
+func redirectIntegrationsCreateErr(w http.ResponseWriter, r *http.Request, msg string) {
+	http.Redirect(w, r, "/console/integrations?createError="+url.QueryEscape(msg), http.StatusSeeOther)
 }
 
 // handleIntegrationUpdate handles POST /console/integrations/{id}

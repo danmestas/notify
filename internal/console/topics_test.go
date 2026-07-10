@@ -404,6 +404,49 @@ func TestTopics_Create_Redirect(t *testing.T) {
 	}
 }
 
+// TestTopics_Create_RejectsDuplicateKey guards M3: POSTing create with a key
+// that already exists must NOT silently rename the existing topic (CreateTopic
+// is an upsert at the store layer — ON CONFLICT DO UPDATE SET name). The
+// console handler must pre-check and reject with a 303 back to /new plus an
+// inline error, leaving the existing topic's name unchanged.
+func TestTopics_Create_RejectsDuplicateKey(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedTopic(t, "dup-topic", "Original Name")
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/topics",
+		url.Values{"key": {"dup-topic"}, "name": {"Clobbered Name"}, "csrf_token": {csrf}},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("duplicate create: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "/console/topics/new") {
+		t.Errorf("duplicate create: Location = %q, want redirect back to /new", loc)
+	}
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("duplicate create: Location = %q, missing error param", loc)
+	}
+
+	// The existing topic must not have been renamed.
+	got, err := tc.deps.Audience.GetTopic(testBackground(), tc.scope, "dup-topic")
+	if err != nil {
+		t.Fatalf("get topic after duplicate create attempt: %v", err)
+	}
+	if got.Name != "Original Name" {
+		t.Errorf("clobber: name = %q, want %q (original must be preserved)", got.Name, "Original Name")
+	}
+
+	// /new must re-render with the inline error, not a raw 500.
+	rrGet := tc.get(t, loc, cookie)
+	if rrGet.Code != http.StatusOK {
+		t.Fatalf("GET %s: status = %d, want 200", loc, rrGet.Code)
+	}
+	if !strings.Contains(rrGet.Body.String(), "already exists") {
+		t.Errorf("error page missing 'already exists' message; body snippet: %s", rrGet.Body.String()[:min(500, rrGet.Body.Len())])
+	}
+}
+
 func TestTopics_AddRemoveSubscriber(t *testing.T) {
 	tc := newTestConsole(t)
 	tc.seedTopic(t, "mgmt-topic", "Mgmt Topic")
@@ -658,7 +701,10 @@ func TestTopics_AddSubscriber_EmptyRejected(t *testing.T) {
 
 // TestTopics_AddSubscriber_UnknownSubscriberRejected pins the existence
 // guard: memberships can never reference a subscriber that does not exist
-// in scope.
+// in scope. Guards M4: a nonexistent subscriber id must NOT surface a raw
+// 422 plaintext dead-end (no console chrome, no way back) — the handler
+// must 303 back to the topic page with an inline error banner, matching the
+// duplicate-subscriber-id inline-error idiom elsewhere in the console.
 func TestTopics_AddSubscriber_UnknownSubscriberRejected(t *testing.T) {
 	tc := newTestConsole(t)
 	tc.seedTopic(t, "ghost-add-topic", "Ghost Add")
@@ -667,8 +713,24 @@ func TestTopics_AddSubscriber_UnknownSubscriberRejected(t *testing.T) {
 	rr := tc.postForm(t, "/console/topics/ghost-add-topic/subscribers",
 		url.Values{"subscriberId": {"no-such-subscriber"}, "csrf_token": {csrf}},
 		cookie)
-	if rr.Code != http.StatusUnprocessableEntity {
-		t.Errorf("add unknown member: status = %d, want 422", rr.Code)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("add unknown member: status = %d, want 303 (back to topic page with inline error) (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "/console/topics/ghost-add-topic") {
+		t.Errorf("add unknown member: Location = %q, want redirect back to the topic page", loc)
+	}
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("add unknown member: Location = %q, missing error param", loc)
+	}
+
+	// The redirect target must render the inline error banner, not a raw 422.
+	rrGet := tc.get(t, loc, cookie)
+	if rrGet.Code != http.StatusOK {
+		t.Fatalf("GET %s: status = %d, want 200", loc, rrGet.Code)
+	}
+	if !strings.Contains(rrGet.Body.String(), "not found") {
+		t.Errorf("error page missing 'not found' message; body snippet: %s", rrGet.Body.String()[:min(500, rrGet.Body.Len())])
 	}
 
 	ids, err := tc.deps.Audience.ListTopicSubscriberIDs(testBackground(), tc.scope, "ghost-add-topic")
