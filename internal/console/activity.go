@@ -107,9 +107,12 @@ type activityListView struct {
 // activityRow is one <tr> in the feed table.
 type activityRow struct {
 	// ID is the notification's opaque store id; set as data-id on the <tr>.
-	ID                 string
-	WorkflowID         string
-	WorkflowName       string // human name from authoring; falls back to WorkflowID
+	ID           string
+	WorkflowID   string
+	WorkflowName string // human name from authoring; falls back to WorkflowID
+	// WorkflowURL links to the workflow's editor page; empty when the
+	// workflow no longer exists (deleted) so the template renders plain text.
+	WorkflowURL        string
 	SubscriberID       string
 	TransactionID      string
 	TransactionIDShort string // first 26 chars for display
@@ -127,6 +130,13 @@ type activityRow struct {
 // activityDetailView is the #activity-detail-panel fragment binding.
 type activityDetailView struct {
 	Notification domain.Notification
+	// WorkflowName is the resolved human-readable name for
+	// Notification.WorkflowID; falls back to the raw id when the workflow no
+	// longer exists.
+	WorkflowName string
+	// WorkflowURL links to the workflow's editor page; empty when the
+	// workflow no longer exists (deleted) so the template renders plain text.
+	WorkflowURL string
 	// PayloadText is the notification payload rendered as a UTF-8 string so
 	// that html/template emits it verbatim. Notification.Payload is a
 	// json.RawMessage ([]byte); html/template renders []byte as its decimal
@@ -297,8 +307,9 @@ func statusFromMessages(msgs []domain.Message) string {
 }
 
 // buildActivityRow converts a domain.Notification and its messages into a
-// display row. workflowName and runURL are pre-resolved by the caller.
-func (c *Console) buildActivityRow(n domain.Notification, msgs []domain.Message, workflowName, runURL string) activityRow {
+// display row. workflowName, workflowURL, and runURL are pre-resolved by the
+// caller.
+func (c *Console) buildActivityRow(n domain.Notification, msgs []domain.Message, workflowName, workflowURL, runURL string) activityRow {
 	if c == nil {
 		panic("buildActivityRow: c is nil")
 	}
@@ -312,6 +323,7 @@ func (c *Console) buildActivityRow(n domain.Notification, msgs []domain.Message,
 		ID:                 n.ID,
 		WorkflowID:         n.WorkflowID,
 		WorkflowName:       name,
+		WorkflowURL:        workflowURL,
 		SubscriberID:       n.SubscriberID,
 		TransactionID:      n.TransactionID,
 		TransactionIDShort: shortTxID(n.TransactionID),
@@ -356,20 +368,28 @@ func (c *Console) fetchMessagesForNotification(ctx context.Context, scope domain
 	return matched, nil
 }
 
-// workflowName resolves a human-readable name for workflowID via authoring.
-// Returns workflowID on any error so the display always has something.
-func (c *Console) workflowName(ctx context.Context, scope domain.Scope, workflowID string) string {
+// workflowInfo resolves a human-readable name and editor-page URL for
+// workflowID (domain.Notification.WorkflowID: the workflow's internal ULID
+// id — see trigger.go's Notification{WorkflowID: wf.ID} — NOT its trigger
+// identifier/slug, so this must look up by id). Returns (workflowID, "") on
+// any error — deleted workflow, empty id — so the display always has
+// something and never links to a page that doesn't exist (L1).
+func (c *Console) workflowInfo(ctx context.Context, scope domain.Scope, workflowID string) (name, url string) {
 	if c == nil {
-		panic("workflowName: c is nil")
+		panic("workflowInfo: c is nil")
 	}
 	if workflowID == "" {
-		return ""
+		return "", ""
 	}
-	wf, err := c.deps.Authoring.GetBySlug(ctx, scope, workflowID)
+	wf, err := c.deps.Authoring.GetByID(ctx, scope, workflowID)
 	if err != nil {
-		return workflowID
+		return workflowID, ""
 	}
-	return wf.Name
+	name = wf.Name
+	if name == "" {
+		name = workflowID
+	}
+	return name, "/console/workflows/" + wf.TriggerIdentifier
 }
 
 // buildActivityListView fetches one page of notifications and builds rows.
@@ -397,8 +417,8 @@ func (c *Console) buildActivityListView(ctx context.Context, scope domain.Scope,
 				"notification_id", n.ID, "err", msgErr)
 			msgs = nil
 		}
-		wfName := c.workflowName(ctx, scope, n.WorkflowID)
-		rows = append(rows, c.buildActivityRow(n, msgs, wfName, c.runURL(n.RunID)))
+		wfName, wfURL := c.workflowInfo(ctx, scope, n.WorkflowID)
+		rows = append(rows, c.buildActivityRow(n, msgs, wfName, wfURL, c.runURL(n.RunID)))
 	}
 
 	// Channel and Status are derived from messages, not stored on notifications,
@@ -651,8 +671,11 @@ func (c *Console) serveFragmentActivityDetail(w http.ResponseWriter, r *http.Req
 	if rid := r.URL.Query().Get("resendRun"); rid != "" {
 		resendRunURL = c.runURL(rid)
 	}
+	wfName, wfURL := c.workflowInfo(r.Context(), scope, n.WorkflowID)
 	html, err := renderFragment(c.ts.base, "activity-detail-panel", activityDetailView{
 		Notification:  n,
+		WorkflowName:  wfName,
+		WorkflowURL:   wfURL,
 		PayloadText:   string(n.Payload),
 		Messages:      msgs,
 		RunURL:        c.runURL(n.RunID),

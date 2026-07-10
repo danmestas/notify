@@ -71,7 +71,13 @@
       <dd><code class="activity-monospace">{{$n.TransactionID}}</code></dd>
 
       <dt>Workflow</dt>
-      <dd><code class="activity-monospace">{{$n.WorkflowID}}</code></dd>
+      <dd>
+        {{if .WorkflowURL}}
+        <a class="console-link" href="{{.WorkflowURL}}" title="{{$n.WorkflowID}}">{{.WorkflowName}}</a>
+        {{else}}
+        <span title="{{$n.WorkflowID}}">{{.WorkflowName}}</span>
+        {{end}}
+      </dd>
 
       <dt>Subscriber</dt>
       <dd><code class="activity-monospace">{{$n.SubscriberID}}</code></dd>

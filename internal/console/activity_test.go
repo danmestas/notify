@@ -765,6 +765,98 @@ func TestActivity_SignalsJSONOmitsSelectedNotificationId(t *testing.T) {
 	}
 }
 
+// ─── regression: L1 — activity feed showed the raw workflow ULID ────────────
+//
+// Before the fix, workflowName looked up domain.Notification.WorkflowID (the
+// workflow's internal ULID id — see trigger.go's Notification{WorkflowID:
+// wf.ID}) via Authoring.GetBySlug, which expects the trigger identifier
+// (slug), not the id. The lookup therefore always missed and silently fell
+// back to the raw id, so both the list row and the run-detail panel rendered
+// a bare ULID with no link. The fix resolves the id via Authoring.GetByID and
+// links to the workflow's editor page.
+
+// TestFragment_ActivityList_ShowsWorkflowNameAndLink seeds a real workflow via
+// Authoring, seeds a notification pointing at its internal id (mirroring how
+// trigger.Ingest actually populates Notification.WorkflowID), and asserts the
+// list row renders the workflow's NAME (not its raw id) linked to its editor
+// page.
+func TestFragment_ActivityList_ShowsWorkflowNameAndLink(t *testing.T) {
+	tc := newTestConsole(t)
+	wf := tc.seedWorkflowAndReturn(t, "Welcome Series", "welcome-series")
+	tc.seedNotification(t, domain.Notification{
+		WorkflowID:   wf.ID,
+		SubscriberID: "sub-l1",
+		RunID:        "run-l1",
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/activity-list", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Welcome Series") {
+		t.Errorf("activity list missing resolved workflow name; body snippet:\n%s", body[:min(800, len(body))])
+	}
+	// The raw id is still allowed in a title="" tooltip attribute (same
+	// convention as the other columns); the DISPLAYED link text must be the
+	// name, not the id.
+	if strings.Contains(body, ">"+wf.ID+"<") {
+		t.Errorf("activity list displays the raw workflow ULID %q instead of the resolved name", wf.ID)
+	}
+	if !strings.Contains(body, `href="/console/workflows/welcome-series"`) {
+		t.Errorf("activity list workflow name missing link to the editor page; body snippet:\n%s", body[:min(800, len(body))])
+	}
+}
+
+// TestFragment_ActivityDetail_ShowsWorkflowNameAndLink is the run-detail-panel
+// counterpart: the "Workflow" field must show the resolved name linked to the
+// editor page, not the bare id.
+func TestFragment_ActivityDetail_ShowsWorkflowNameAndLink(t *testing.T) {
+	tc := newTestConsole(t)
+	wf := tc.seedWorkflowAndReturn(t, "Payment Failed", "payment-failed")
+	n := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   wf.ID,
+		SubscriberID: "sub-l1-detail",
+		RunID:        "run-l1-detail",
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/activity-detail?notification_id="+n.ID, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Payment Failed") {
+		t.Errorf("detail panel missing resolved workflow name; body snippet:\n%s", body[:min(800, len(body))])
+	}
+	if !strings.Contains(body, `href="/console/workflows/payment-failed"`) {
+		t.Errorf("detail panel workflow name missing link to the editor page; body snippet:\n%s", body[:min(800, len(body))])
+	}
+}
+
+// TestFragment_ActivityDetail_UnknownWorkflowFallsBackToID proves a
+// notification whose workflow was deleted (or never existed) degrades
+// gracefully: the raw id is shown, with no link (never a broken href).
+func TestFragment_ActivityDetail_UnknownWorkflowFallsBackToID(t *testing.T) {
+	tc := newTestConsole(t)
+	n := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf-does-not-exist",
+		SubscriberID: "sub-l1-orphan",
+		RunID:        "run-l1-orphan",
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/activity-detail?notification_id="+n.ID, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "wf-does-not-exist") {
+		t.Errorf("detail panel should fall back to the raw id for an unresolvable workflow; body snippet:\n%s", body[:min(800, len(body))])
+	}
+}
+
 // TestFragment_ActivityDetail_PersistsAcrossListRefresh verifies that fetching
 // the activity-list fragment (a list refresh) does NOT produce HTML that would
 // reset the selectedNotificationId signal. Specifically, the list fragment

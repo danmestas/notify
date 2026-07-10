@@ -313,7 +313,7 @@ func (c *Console) streamAICopilotTurn(w http.ResponseWriter, r *http.Request, sc
 				c.finalizeCopilotTurn(sse, r, scope, sessionID, turn.TurnID, "")
 				return
 			}
-			c.appendTurnReasoning(sse, turn.TurnID, "Generation did not finish — please try again.")
+			c.appendTurnReasoning(sse, turn.TurnID, "Generation did not finish - please try again.")
 			c.clearTurnStatus(sse, turn.TurnID)
 			c.resetInFlight(scope, sessionID)
 			return
@@ -326,7 +326,7 @@ func (c *Console) streamAICopilotTurn(w http.ResponseWriter, r *http.Request, sc
 			}
 		case <-ticker.C:
 			if failed, ferr := c.aiBuilder.RunFailed(ctx, runID); ferr == nil && failed {
-				c.appendTurnReasoning(sse, turn.TurnID, "Generation did not finish — please try again.")
+				c.appendTurnReasoning(sse, turn.TurnID, "Generation did not finish - please try again.")
 				if turn.LastChipID != "" {
 					c.patchChip(sse, turn.LastChipID, turn.LastChipLabel, "error")
 				}

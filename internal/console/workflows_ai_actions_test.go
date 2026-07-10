@@ -240,6 +240,103 @@ func TestAIDiscardTurn_RevertsDraftAndLeavesNoWorkflow(t *testing.T) {
 	}
 }
 
+// TestAIDiscardTurn_OnlyTurn_ResetsStartedSignal is the L8 regression: when
+// Discard removes the SESSION'S ONLY turn (leaving zero messages, the same
+// condition serveWorkflowAIBuilder's resume path uses to decide $aiStarted -
+// see aiBuilderSignalsJSON's len(view.Messages) > 0 rule), the copilot panel
+// must revert to the friendly starter-cards empty state rather than showing a
+// bare, message-less thread. The handler must patch $aiStarted back to false.
+func TestAIDiscardTurn_OnlyTurn_ResetsStartedSignal(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.smtpForEmail(t)
+	cookie, csrf := tc.login(t)
+
+	draft := &aibuilder.WorkflowDraft{
+		Name:              "Welcome Flow",
+		TriggerIdentifier: "welcome-flow",
+		Steps:             []domain.Step{{StepID: "s1", Type: "email", Name: "Greeting", ControlValues: json.RawMessage(`{}`)}},
+	}
+	tc.injectStreamingBuilder("run-1", draft, false, [][]byte{
+		aiStreamMsg(t, "canvas", "", draft, ""),
+		aiStreamMsg(t, "done", "Built the workflow.", draft, ""),
+	})
+	rr := tc.postForm(t, "/console/api/workflows/ai-generate", url.Values{
+		"prompt": {"build a welcome flow"}, "view": {"copilot"}, "csrf_token": {csrf},
+	}, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("generate status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	sessID := onlyBuilderSession(t, tc).ID
+
+	rr2 := tc.postForm(t, "/console/api/workflows/ai/"+sessID+"/discard-turn", url.Values{
+		"csrf_token": {csrf}, "msg_id": {"ignored"},
+	}, cookie)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("discard status = %d, want 200 (body: %s)", rr2.Code, rr2.Body.String())
+	}
+	body := rr2.Body.String()
+	if !strings.Contains(body, "datastar-patch-signals") {
+		t.Errorf("discarding the only turn must patch signals to restore the empty state; body: %s", body)
+	}
+	if !strings.Contains(body, `"aiStarted":false`) {
+		t.Errorf("discarding the only turn must reset $aiStarted so the starter-cards empty state shows again; body: %s", body)
+	}
+
+	msgs, err := tc.st.BuilderSessions().Messages(context.Background(), tc.scope, sessID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected no messages after discarding the only turn, got %d", len(msgs))
+	}
+}
+
+// TestAIDiscardTurn_MultiTurn_KeepsStartedSignal proves the companion case:
+// discarding a LATER turn that leaves an earlier turn's message behind must
+// NOT reset $aiStarted — the thread still has content to show.
+func TestAIDiscardTurn_MultiTurn_KeepsStartedSignal(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.smtpForEmail(t)
+	cookie, csrf := tc.login(t)
+
+	draft1 := &aibuilder.WorkflowDraft{
+		Name:              "Welcome Flow",
+		TriggerIdentifier: "welcome-flow",
+		Steps:             []domain.Step{{StepID: "s1", Type: "email", Name: "Greeting", ControlValues: json.RawMessage(`{}`)}},
+	}
+	tc.injectStreamingBuilder("run-1", draft1, false, [][]byte{
+		aiStreamMsg(t, "canvas", "", draft1, ""),
+		aiStreamMsg(t, "done", "Built the workflow.", draft1, ""),
+	})
+	rr := tc.postForm(t, "/console/api/workflows/ai-generate", url.Values{
+		"prompt": {"build a welcome flow"}, "view": {"copilot"}, "csrf_token": {csrf},
+	}, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("generate status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	sessID := onlyBuilderSession(t, tc).ID
+
+	draft2 := &aibuilder.WorkflowDraft{
+		Name:              "Welcome Flow",
+		TriggerIdentifier: "welcome-flow",
+		Steps: []domain.Step{
+			{StepID: "s1", Type: "email", Name: "Greeting", ControlValues: json.RawMessage(`{}`)},
+			{StepID: "s2", Type: "sms", Name: "Nudge", ControlValues: json.RawMessage(`{"body":"psst"}`)},
+		},
+	}
+	tc.runOneCopilotTurn(t, sessID, "run-2", "add an sms reminder", draft2, cookie, csrf)
+
+	rr2 := tc.postForm(t, "/console/api/workflows/ai/"+sessID+"/discard-turn", url.Values{
+		"csrf_token": {csrf}, "msg_id": {"ignored"},
+	}, cookie)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("discard status = %d, want 200 (body: %s)", rr2.Code, rr2.Body.String())
+	}
+	if body := rr2.Body.String(); strings.Contains(body, `"aiStarted":false`) {
+		t.Errorf("discarding a later turn with a remaining prior turn must not reset $aiStarted; body: %s", body)
+	}
+}
+
 // TestAIRetry_RevertsThenRedispatches proves Try-again reverts to the pre-turn
 // checkpoint and re-dispatches the same instruction, rebuilding the draft as a
 // fresh turn (the checkpoint survives; the assistant reply is replaced).

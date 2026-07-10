@@ -1832,7 +1832,9 @@ func (c *Console) buildWFActivityListView(ctx context.Context, scope domain.Scop
 				"notification_id", n.ID, "err", msgErr)
 			msgs = nil
 		}
-		row := c.buildActivityRow(n, msgs, wf.Name, c.runURL(n.RunID))
+		// This view is scoped to a single workflow (workflow_activity_row.html
+		// has no Workflow column), so the editor link is not needed here.
+		row := c.buildActivityRow(n, msgs, wf.Name, "", c.runURL(n.RunID))
 		// Status filter is applied in-memory (the store filter does not yet
 		// carry a status predicate — messages derive status, not notifications).
 		if filterStatus != "" && row.Status != filterStatus {

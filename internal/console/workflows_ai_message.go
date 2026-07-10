@@ -68,7 +68,7 @@ func (c *Console) handleWorkflowAIMessage(w http.ResponseWriter, r *http.Request
 	// (the two would race on one draft). Reject inline; the client shows the note
 	// and keeps the composer's text.
 	if sess.Status == store.BuilderSessionGenerating {
-		c.patchAIError(w, r, "Still generating… wait for the current turn to finish.")
+		c.patchAIError(w, r, "Still generating... wait for the current turn to finish.")
 		return
 	}
 
@@ -82,11 +82,11 @@ func (c *Console) handleWorkflowAIMessage(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if len([]rune(prompt)) > aiPromptMaxLen {
-		c.patchAIError(w, r, "Message is too long — please keep it under 2 000 characters.")
+		c.patchAIError(w, r, "Message is too long - please keep it under 2 000 characters.")
 		return
 	}
 	if !c.aiLimiter.Allow(scope) {
-		c.patchAIError(w, r, "You're generating a lot right now — wait a moment and try again.")
+		c.patchAIError(w, r, "You're generating a lot right now - wait a moment and try again.")
 		return
 	}
 

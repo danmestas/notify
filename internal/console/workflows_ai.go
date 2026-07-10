@@ -114,11 +114,11 @@ func (c *Console) handleWorkflowAIGenerate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if len([]rune(prompt)) > aiPromptMaxLen {
-		c.patchAIError(w, r, "Prompt is too long — please keep it under 2 000 characters.")
+		c.patchAIError(w, r, "Prompt is too long - please keep it under 2 000 characters.")
 		return
 	}
 	if !c.aiLimiter.Allow(scope) {
-		c.patchAIError(w, r, "You're generating a lot right now — wait a moment and try again.")
+		c.patchAIError(w, r, "You're generating a lot right now - wait a moment and try again.")
 		return
 	}
 

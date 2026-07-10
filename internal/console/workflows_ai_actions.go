@@ -64,7 +64,7 @@ func (c *Console) handleWorkflowAIKeep(w http.ResponseWriter, r *http.Request) {
 	// invariant ai-confirm/ai-apply hold. Every other status is a no-op with an
 	// inline explanation in the action bar.
 	if sess.Status != store.BuilderSessionReady {
-		msg := "Still generating — try again in a moment."
+		msg := "Still generating - try again in a moment."
 		switch sess.Status {
 		case store.BuilderSessionConfirmed:
 			msg = "Already saved."
@@ -245,6 +245,24 @@ func (c *Console) handleWorkflowAIDiscardTurn(w http.ResponseWriter, r *http.Req
 	// The previous turn (if any) is now the latest — repopulate its action bar.
 	if prevTurnID != "" {
 		c.patchTurnActions(sse, aiTurnActionsView{SessionID: sessionID, TurnID: prevTurnID, CSRF: csrfFromRequest(r)})
+		return
+	}
+	// No previous turn: check whether the session has any messages left at all.
+	// serveWorkflowAIBuilder's resume path seeds $aiStarted from exactly this
+	// condition (len(messages) > 0, see aiBuilderSignalsJSON) — so mirroring it
+	// here keeps a discarded session in the same state a fresh page load of it
+	// would show. Discarding the session's only turn leaves zero messages, so
+	// without this the panel is left showing a bare, message-less thread instead
+	// of the friendly starter-cards empty state (L8).
+	remaining, merr := c.deps.BuilderSessions.Messages(r.Context(), scope, sessionID)
+	if merr != nil {
+		c.deps.Logger.Debug("console: ai discard-turn list remaining messages", "err", merr)
+		return
+	}
+	if len(remaining) == 0 {
+		if perr := sse.MarshalAndPatchSignals(map[string]bool{"aiStarted": false}); perr != nil {
+			c.deps.Logger.Debug("console: ai discard-turn reset started signal", "err", perr)
+		}
 	}
 }
 
@@ -294,7 +312,7 @@ func (c *Console) handleWorkflowAIRetry(w http.ResponseWriter, r *http.Request) 
 
 	// In-flight guard: never dispatch a second run while one is generating.
 	if sess.Status == store.BuilderSessionGenerating {
-		c.serveTurnActions(w, r, aiTurnActionsView{SessionID: sessionID, TurnID: formTurnID, CSRF: csrfFromRequest(r), Error: "Still generating…"})
+		c.serveTurnActions(w, r, aiTurnActionsView{SessionID: sessionID, TurnID: formTurnID, CSRF: csrfFromRequest(r), Error: "Still generating..."})
 		return
 	}
 

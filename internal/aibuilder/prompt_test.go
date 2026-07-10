@@ -97,6 +97,57 @@ func TestRefineSystemPrompt_ExplicitlyEnumeratesAvailableTypesAndForbidsHallucin
 	}
 }
 
+// TestSystemPrompt_AskThenStopBeforeBuildingUnconfirmedGuess is the M9
+// regression test. Browser QA observed the copilot asking a clarifying
+// question ("Could you clarify...?" / "Would you like me to build X
+// instead?") and then, in the SAME turn, building a guessed workflow anyway
+// and offering Keep - so "Keep all" could commit something the user never
+// confirmed. The fix hardens the "How to work" section: when the model needs
+// clarification or proposes an alternative, it must ask and STOP calling
+// tools until the user confirms, rather than building a guess in the same
+// turn.
+func TestSystemPrompt_AskThenStopBeforeBuildingUnconfirmedGuess(t *testing.T) {
+	reg := steptype.Default()
+	gated := AvailableStepTypes(reg, []domain.Integration{{Channel: "email", Active: true}})
+	p := systemPrompt(reg.Catalog(), gated)
+
+	if !strings.Contains(p, "If the request is ambiguous, impossible, or you want to propose") {
+		t.Error("prompt missing the ask-then-stop guidance for ambiguous/impossible requests")
+	}
+	if !strings.Contains(p, "ask the question and STOP") {
+		t.Error("prompt missing the explicit ask-and-stop instruction")
+	}
+	if !strings.Contains(p, "do NOT add or edit any steps in the same turn") {
+		t.Error("prompt missing the instruction forbidding building a guess in the same turn as a clarifying question")
+	}
+	if !strings.Contains(p, "wait for the user's reply before making any changes") {
+		t.Error("prompt missing the instruction to wait for user confirmation before proceeding")
+	}
+}
+
+// TestRefineSystemPrompt_AskThenStopBeforeBuildingUnconfirmedGuess mirrors the
+// M9 regression for the refine (edit) system prompt, which carries the same
+// "How to work" section.
+func TestRefineSystemPrompt_AskThenStopBeforeBuildingUnconfirmedGuess(t *testing.T) {
+	reg := steptype.Default()
+	gated := AvailableStepTypes(reg, []domain.Integration{{Channel: "email", Active: true}})
+	existing := &WorkflowDraft{Name: "Flow", TriggerIdentifier: "flow"}
+	p := refineSystemPrompt(reg.Catalog(), gated, existing)
+
+	if !strings.Contains(p, "If the request is ambiguous, impossible, or you want to propose") {
+		t.Error("refine prompt missing the ask-then-stop guidance for ambiguous/impossible requests")
+	}
+	if !strings.Contains(p, "ask the question and STOP") {
+		t.Error("refine prompt missing the explicit ask-and-stop instruction")
+	}
+	if !strings.Contains(p, "do NOT add or edit any steps in the same turn") {
+		t.Error("refine prompt missing the instruction forbidding building a guess in the same turn as a clarifying question")
+	}
+	if !strings.Contains(p, "wait for the user's reply before making any changes") {
+		t.Error("refine prompt missing the instruction to wait for user confirmation before proceeding")
+	}
+}
+
 // TestAvailableStepTypes_Deterministic proves the gated-type computation the
 // prompt and tool schema are built from carries no hidden nondeterminism
 // (e.g. unsorted map iteration) across repeated calls with the same inputs —

@@ -27,7 +27,11 @@
           title="{{.Status}}">{{.Status}}</span>
   </td>
   <td class="activity-col-workflow">
+    {{if .WorkflowURL}}
+    <a class="activity-workflow-name console-link" href="{{.WorkflowURL}}" title="{{.WorkflowID}}">{{.WorkflowName}}</a>
+    {{else}}
     <span class="activity-workflow-name" title="{{.WorkflowID}}">{{.WorkflowName}}</span>
+    {{end}}
   </td>
   <td class="activity-col-subscriber">
     <code class="activity-monospace">{{.SubscriberID}}</code>

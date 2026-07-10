@@ -215,8 +215,8 @@ func TestLiveRowFromEvent_MapsEventToRow(t *testing.T) {
 		CreatedAt:      "2026-06-13T12:00:00Z",
 	}
 
-	nameFn := tc.c.buildWorkflowNamer(context.Background(), tc.scope)
-	row, keep := tc.c.liveRowFromEvent(deliveryMsg(t, msg), tc.scope, "", nameFn)
+	infoFn := tc.c.buildWorkflowInfoer(context.Background(), tc.scope)
+	row, keep := tc.c.liveRowFromEvent(deliveryMsg(t, msg), tc.scope, "", infoFn)
 	if !keep {
 		t.Fatal("keep = false, want true for an in-scope event")
 	}
@@ -225,6 +225,9 @@ func TestLiveRowFromEvent_MapsEventToRow(t *testing.T) {
 	}
 	if row.WorkflowName != "Welcome" {
 		t.Errorf("row.WorkflowName = %q, want Welcome (resolved via authoring)", row.WorkflowName)
+	}
+	if row.WorkflowURL != "/console/workflows/welcome-flow" {
+		t.Errorf("row.WorkflowURL = %q, want /console/workflows/welcome-flow", row.WorkflowURL)
 	}
 	if row.SubscriberID != "sub-9" {
 		t.Errorf("row.SubscriberID = %q, want sub-9", row.SubscriberID)

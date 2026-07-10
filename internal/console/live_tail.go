@@ -133,38 +133,41 @@ func (c *Console) serveActivityStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = unsub() }()
 
-	// Build the workflow id→name map once per connection. The delivered
+	// Build the workflow id→(name,url) map once per connection. The delivered
 	// message carries the internal workflow id (trigger.go sets
 	// envelope.WorkflowID = wf.ID), so names must be resolved by id, not by
-	// trigger identifier. A miss falls back to the id. A new workflow created
-	// mid-stream shows its id until the operator reconnects — acceptable for a
-	// live tail.
-	nameFn := c.buildWorkflowNamer(r.Context(), scope)
+	// trigger identifier. A miss falls back to the id (and no link). A new
+	// workflow created mid-stream shows its id until the operator reconnects —
+	// acceptable for a live tail.
+	infoFn := c.buildWorkflowInfoer(r.Context(), scope)
 
 	sse := datastar.NewSSE(w, r)
-	c.pumpActivityStream(r.Context(), sse, events, scope, workflowFilter, target, nameFn)
+	c.pumpActivityStream(r.Context(), sse, events, scope, workflowFilter, target, infoFn)
 }
 
-// buildWorkflowNamer returns a workflow id→display-name resolver for the scope,
-// built from one Authoring.List call. On a list error or a miss it returns the
-// id unchanged, so buildActivityRow still renders something meaningful.
-func (c *Console) buildWorkflowNamer(ctx context.Context, scope domain.Scope) func(workflowID string) string {
-	names := map[string]string{}
+// buildWorkflowInfoer returns a workflow id→(display-name, editor-URL)
+// resolver for the scope, built from one Authoring.List call. On a list error
+// or a miss it returns (id, "") — the raw id and no link — so
+// buildActivityRow still renders something meaningful and never links to a
+// page that doesn't exist (L1).
+func (c *Console) buildWorkflowInfoer(ctx context.Context, scope domain.Scope) func(workflowID string) (name, url string) {
+	type info struct{ name, url string }
+	infos := map[string]info{}
 	if c.deps.Authoring != nil {
 		wfs, err := c.deps.Authoring.List(ctx, scope)
 		if err != nil {
 			c.deps.Logger.Debug("console: activity stream workflow names", "err", err)
 		} else {
 			for _, wf := range wfs {
-				names[wf.ID] = wf.Name
+				infos[wf.ID] = info{name: wf.Name, url: "/console/workflows/" + wf.TriggerIdentifier}
 			}
 		}
 	}
-	return func(workflowID string) string {
-		if n := names[workflowID]; n != "" {
-			return n
+	return func(workflowID string) (name, url string) {
+		if in, ok := infos[workflowID]; ok && in.name != "" {
+			return in.name, in.url
 		}
-		return workflowID
+		return workflowID, ""
 	}
 }
 
@@ -179,7 +182,7 @@ func (c *Console) pumpActivityStream(
 	scope domain.Scope,
 	workflowFilter string,
 	target liveStreamTarget,
-	nameFn func(workflowID string) string,
+	infoFn func(workflowID string) (name, url string),
 ) {
 	if c == nil {
 		panic("pumpActivityStream: c is nil")
@@ -187,8 +190,8 @@ func (c *Console) pumpActivityStream(
 	if sse == nil {
 		panic("pumpActivityStream: sse is nil")
 	}
-	if nameFn == nil {
-		nameFn = func(id string) string { return id }
+	if infoFn == nil {
+		infoFn = func(id string) (string, string) { return id, "" }
 	}
 	for {
 		select {
@@ -198,7 +201,7 @@ func (c *Console) pumpActivityStream(
 			if !ok {
 				return
 			}
-			row, keep := c.liveRowFromEvent(data, scope, workflowFilter, nameFn)
+			row, keep := c.liveRowFromEvent(data, scope, workflowFilter, infoFn)
 			if !keep {
 				continue
 			}
@@ -219,14 +222,15 @@ func (c *Console) pumpActivityStream(
 //     (the load-bearing isolation guard),
 //   - a workflow filter that doesn't match (per-workflow tab consumer).
 //
-// The workflow display name is resolved via nameFn (an id→name map built once
-// per connection); a miss falls back to the raw workflow id.
-func (c *Console) liveRowFromEvent(data []byte, scope domain.Scope, workflowFilter string, nameFn func(string) string) (activityRow, bool) {
+// The workflow display name/URL are resolved via infoFn (an id→(name,url)
+// map built once per connection); a miss falls back to the raw workflow id
+// and no link.
+func (c *Console) liveRowFromEvent(data []byte, scope domain.Scope, workflowFilter string, infoFn func(string) (name, url string)) (activityRow, bool) {
 	if c == nil {
 		panic("liveRowFromEvent: c is nil")
 	}
-	if nameFn == nil {
-		nameFn = func(id string) string { return id }
+	if infoFn == nil {
+		infoFn = func(id string) (string, string) { return id, "" }
 	}
 	var msg domain.Message
 	if err := json.Unmarshal(data, &msg); err != nil {
@@ -241,8 +245,8 @@ func (c *Console) liveRowFromEvent(data []byte, scope domain.Scope, workflowFilt
 		return activityRow{}, false
 	}
 
-	name := nameFn(msg.WorkflowID)
-	row := c.buildActivityRow(notificationFromMessage(msg), []domain.Message{msg}, name, c.runURL(msg.RunID))
+	name, url := infoFn(msg.WorkflowID)
+	row := c.buildActivityRow(notificationFromMessage(msg), []domain.Message{msg}, name, url, c.runURL(msg.RunID))
 	return row, true
 }
 

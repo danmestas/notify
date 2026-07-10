@@ -99,6 +99,11 @@ func systemPrompt(catalog []steptype.StepEntry, gatedTypes []string) string {
 	w("and set a payload schema. When the workflow is complete, STOP calling tools and")
 	w("reply with a 1-3 sentence summary of what you built. If a validation error is")
 	w("reported back to you, fix the offending step and stop again.")
+	w("If the request is ambiguous, impossible, or you want to propose a different approach")
+	w("than what was asked for (e.g. a requested step type is not in the available list")
+	w("above), do NOT add or edit any steps in the same turn — ask the question and STOP.")
+	w("Reply with ONLY the clarifying question or proposed alternative, then wait for the user's reply before making any changes.")
+	w("Never build a guessed workflow in the same turn as asking for clarification; the user must confirm before you act on a guess.")
 
 	return b.String()
 }
@@ -197,6 +202,11 @@ func refineSystemPrompt(catalog []steptype.StepEntry, gatedTypes []string, exist
 	w("complete, STOP calling tools and reply with a 1-3 sentence summary of what you")
 	w("changed. If a validation error is reported back to you, fix the offending step")
 	w("and stop again.")
+	w("If the request is ambiguous, impossible, or you want to propose a different approach")
+	w("than what was asked for (e.g. a requested step type is not in the available list")
+	w("above), do NOT add or edit any steps in the same turn — ask the question and STOP.")
+	w("Reply with ONLY the clarifying question or proposed alternative, then wait for the user's reply before making any changes.")
+	w("Never build a guessed edit in the same turn as asking for clarification; the user must confirm before you act on a guess.")
 
 	return b.String()
 }
