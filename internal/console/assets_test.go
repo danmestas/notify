@@ -156,6 +156,36 @@ func TestAssets_AnalyticsRunsLineCSSIsVisible(t *testing.T) {
 	}
 }
 
+// TestAssets_TopbarTitleTruncates guards against a browser-verified overflow
+// bug: a page title built from long user data (e.g. a subscriber with a
+// ~200-char last name) does not wrap or truncate in the sticky
+// .console-topbar-title, causing real horizontal page overflow that pushes
+// the topbar's search box, environment switcher, and theme toggle off-screen
+// and inaccessible. A prior fix added overflow-wrap to .page-header h1 and
+// .wf-meta-row dd (the main card body) but missed the topbar title. Unlike
+// the card body, the topbar title must truncate (not wrap) because it lives
+// in a fixed-height sticky flex row alongside the search/env/theme controls.
+func TestAssets_TopbarTitleTruncates(t *testing.T) {
+	tc := newTestConsole(t)
+	rr := tc.get(t, assetManifest["app.css"], nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET app.css: status = %d, want 200", rr.Code)
+	}
+	css := rr.Body.String()
+
+	titleRE := regexp.MustCompile(`(?s)\.console-topbar-title\s*\{([^}]*)\}`)
+	m := titleRE.FindStringSubmatch(css)
+	if m == nil {
+		t.Fatal(".console-topbar-title rule not found in app.css")
+	}
+	rule := m[1]
+	for _, want := range []string{"overflow: hidden", "text-overflow: ellipsis", "white-space: nowrap", "min-width: 0"} {
+		if !strings.Contains(rule, want) {
+			t.Errorf(".console-topbar-title rule does not set %q — long titles will overflow the sticky topbar and push the search/env/theme controls off-screen: %q", want, rule)
+		}
+	}
+}
+
 func TestLayoutHTML_EmitsHashedAssetURLs(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)

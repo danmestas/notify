@@ -324,9 +324,12 @@ code, .console-mono { font-family: var(--font-mono); font-size: 0.92em; }
 }
 .console-topbar-title {
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
   font-size: 1rem;
   font-weight: 600;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .console-search {
