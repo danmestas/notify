@@ -35,6 +35,12 @@
 //	TestSubscribers_Delete_Redirect                       — successful delete → redirect to list
 //	TestSubscribers_ScopeIsolation                        — alt-scope rows not visible
 //	TestSubscribers_RouteAuth                             — all new routes behind session gate
+//	TestSubscribers_Create_WithCustomFields_PersistsAndRenders — custom fields persisted + shown on detail
+//	TestSubscribers_Update_CustomFields_ChangeValue_PreservesOthers — editing one field resends+keeps others
+//	TestSubscribers_Update_CustomFields_RemoveField       — omitting a row on resubmit removes it
+//	TestSubscribers_Create_RejectsCustomField_EmptyKey    — value with no key → 303 inline error, not stored
+//	TestSubscribers_Update_RejectsCustomField_OverLengthValue — over-length value → 303 inline error
+//	TestSubscribers_DetailPage_NoCustomFields_CleanEmptyState — no custom data → empty state, no broken UI
 package console
 
 import (
@@ -1649,5 +1655,224 @@ func TestFragment_SubscribersList_LoadMoreAppends(t *testing.T) {
 			t.Errorf("page2 append payload re-sent page-1 row %q (rows must accumulate, not repeat);\nbody:\n%s",
 				id, body2)
 		}
+	}
+}
+
+// ─── custom fields (L10) ──────────────────────────────────────────────────────
+//
+// The subscriber create/edit forms carry a repeatable key-value editor over
+// domain.Subscriber.Data (a json.RawMessage "data" column already threaded
+// through audience.SubscriberInput and, at trigger time, into the
+// {{subscriber.data.*}} handlebars namespace — see wireSubscriber in
+// internal/trigger/trigger.go). Rows post as indexed custom_key_N/
+// custom_value_N pairs (N in [0, subscriberCustomFieldRowPool)), mirroring the
+// workflow step editor's condition-row convention (cond_field_N).
+
+// TestSubscribers_Create_WithCustomFields_PersistsAndRenders proves a create
+// POST carrying two custom_key_N/custom_value_N rows persists them into
+// Subscriber.Data and the detail page's read-only profile section renders
+// both key and value.
+func TestSubscribers_Create_WithCustomFields_PersistsAndRenders(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers",
+		url.Values{
+			"subscriberId":   {"cf-sub-001"},
+			"email":          {"cf@example.com"},
+			"custom_key_0":   {"tier"},
+			"custom_value_0": {"gold"},
+			"custom_key_1":   {"region"},
+			"custom_value_1": {"us-east"},
+			"csrf_token":     {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("create with custom fields: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	created, err := tc.deps.Audience.Get(testBackground(), tc.scope, "cf-sub-001")
+	if err != nil {
+		t.Fatalf("created subscriber not persisted: %v", err)
+	}
+	if !strings.Contains(string(created.Data), `"tier":"gold"`) {
+		t.Errorf("created subscriber Data = %s, missing tier:gold", created.Data)
+	}
+	if !strings.Contains(string(created.Data), `"region":"us-east"`) {
+		t.Errorf("created subscriber Data = %s, missing region:us-east", created.Data)
+	}
+
+	detailRR := tc.get(t, "/console/subscribers/"+created.ID, cookie)
+	if detailRR.Code != http.StatusOK {
+		t.Fatalf("GET subscriber detail: status = %d, want 200", detailRR.Code)
+	}
+	body := detailRR.Body.String()
+	if !strings.Contains(body, "tier") || !strings.Contains(body, "gold") {
+		t.Errorf("detail page missing custom field tier=gold;\nbody:\n%s", body)
+	}
+	if !strings.Contains(body, "region") || !strings.Contains(body, "us-east") {
+		t.Errorf("detail page missing custom field region=us-east;\nbody:\n%s", body)
+	}
+}
+
+// TestSubscribers_Update_CustomFields_ChangeValue_PreservesOthers proves the
+// edit form's per-row resubmission model: changing one row's value while
+// resending an unrelated existing row unchanged updates the first and
+// preserves the second (no wipe of untouched fields).
+func TestSubscribers_Update_CustomFields_ChangeValue_PreservesOthers(t *testing.T) {
+	tc := newTestConsole(t)
+	existing := tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "cf-upd-001",
+		Data:         []byte(`{"tier":"gold","region":"us-east"}`),
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+existing.ID,
+		url.Values{
+			"custom_key_0":   {"tier"},
+			"custom_value_0": {"platinum"},
+			"custom_key_1":   {"region"},
+			"custom_value_1": {"us-east"},
+			"csrf_token":     {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("update custom fields: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	got, err := tc.deps.Audience.Get(testBackground(), tc.scope, "cf-upd-001")
+	if err != nil {
+		t.Fatalf("get after custom field update: %v", err)
+	}
+	if !strings.Contains(string(got.Data), `"tier":"platinum"`) {
+		t.Errorf("updated Data = %s, want tier:platinum", got.Data)
+	}
+	if !strings.Contains(string(got.Data), `"region":"us-east"`) {
+		t.Errorf("updated Data = %s, want region preserved as us-east", got.Data)
+	}
+}
+
+// TestSubscribers_Update_CustomFields_RemoveField proves that omitting a
+// previously-set row on resubmit removes it — this is how the client-side
+// "remove row" control works: it clears the row before submit, so it's simply
+// absent from the posted rows.
+func TestSubscribers_Update_CustomFields_RemoveField(t *testing.T) {
+	tc := newTestConsole(t)
+	existing := tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "cf-upd-002",
+		Data:         []byte(`{"tier":"gold","region":"us-east"}`),
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+existing.ID,
+		url.Values{
+			"custom_key_0":   {"tier"},
+			"custom_value_0": {"gold"},
+			// region row omitted entirely — removed.
+			"csrf_token": {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("remove custom field: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	got, err := tc.deps.Audience.Get(testBackground(), tc.scope, "cf-upd-002")
+	if err != nil {
+		t.Fatalf("get after custom field removal: %v", err)
+	}
+	if strings.Contains(string(got.Data), "region") {
+		t.Errorf("updated Data = %s, region should have been removed", got.Data)
+	}
+	if !strings.Contains(string(got.Data), `"tier":"gold"`) {
+		t.Errorf("updated Data = %s, want tier:gold preserved", got.Data)
+	}
+}
+
+// TestSubscribers_Create_RejectsCustomField_EmptyKey guards malformed input:
+// a value with no key names is rejected inline (303 back to /new with an
+// error), not silently dropped and not persisted.
+func TestSubscribers_Create_RejectsCustomField_EmptyKey(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers",
+		url.Values{
+			"subscriberId":   {"cf-bad-001"},
+			"custom_key_0":   {""},
+			"custom_value_0": {"orphan-value"},
+			"csrf_token":     {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("empty-key custom field: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("empty-key custom field: Location = %q, missing error param", loc)
+	}
+
+	if _, err := tc.deps.Audience.Get(testBackground(), tc.scope, "cf-bad-001"); err == nil {
+		t.Errorf("empty-key custom field: subscriber should not have been created")
+	}
+}
+
+// TestSubscribers_Update_RejectsCustomField_OverLengthValue guards H7 for
+// custom field values: a pathological length value is rejected server-side
+// (the maxSubscriberFieldLen guard already applied to the other free-text
+// fields), and the existing stored data is left untouched.
+func TestSubscribers_Update_RejectsCustomField_OverLengthValue(t *testing.T) {
+	tc := newTestConsole(t)
+	existing := tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "cf-upd-long",
+		Data:         []byte(`{"tier":"gold"}`),
+	})
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/subscribers/"+existing.ID,
+		url.Values{
+			"custom_key_0":   {"tier"},
+			"custom_value_0": {strings.Repeat("z", 5000)},
+			"csrf_token":     {csrf},
+		},
+		cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("over-length custom field value: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("over-length custom field value: Location = %q, missing error param", loc)
+	}
+
+	got, err := tc.deps.Audience.Get(testBackground(), tc.scope, "cf-upd-long")
+	if err != nil {
+		t.Fatalf("get after over-length custom field update: %v", err)
+	}
+	if !strings.Contains(string(got.Data), `"tier":"gold"`) {
+		t.Errorf("over-length custom field value clobbered existing Data: got %s", got.Data)
+	}
+}
+
+// TestSubscribers_DetailPage_NoCustomFields_CleanEmptyState proves a
+// subscriber with no custom data renders a clean empty state on the detail
+// page — no broken markup, no panic, the profile section still renders the
+// rest of the fields.
+func TestSubscribers_DetailPage_NoCustomFields_CleanEmptyState(t *testing.T) {
+	tc := newTestConsole(t)
+	sub := tc.seedSubscriber(t, audience.SubscriberInput{
+		SubscriberID: "cf-empty-001",
+		Email:        "empty@example.com",
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/subscribers/"+sub.ID, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET subscriber detail (no custom fields): status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Custom fields") {
+		t.Errorf("detail page missing Custom fields section label;\nbody:\n%s", body)
+	}
+	if !strings.Contains(body, "empty@example.com") {
+		t.Errorf("detail page missing unrelated existing field (email) — page likely broke rendering")
 	}
 }

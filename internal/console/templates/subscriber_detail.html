@@ -81,6 +81,20 @@
           <dt>Timezone</dt>
           <dd>{{if $page.Sub.Timezone}}{{$page.Sub.Timezone}}{{else}}<span class="console-muted">—</span>{{end}}</dd>
         </div>
+        <div class="wf-meta-row">
+          <dt>Custom fields</dt>
+          <dd>
+            {{if $page.CustomFields}}
+            <ul class="subscriber-custom-fields-list">
+              {{range $page.CustomFields}}
+              <li><code>{{.Key}}</code>: <span>{{.Value}}</span></li>
+              {{end}}
+            </ul>
+            {{else}}
+            <span class="console-muted">—</span>
+            {{end}}
+          </dd>
+        </div>
       </dl>
 
       {{if not $page.ReadOnly}}
@@ -117,6 +131,7 @@
             <input class="console-input" type="text" id="sub-locale" name="locale"
                    value="{{$page.Sub.Locale}}" placeholder="en-US">
           </div>
+          {{template "subscriber-custom-fields" $page.CustomFieldsEditor}}
           <button type="submit" class="btn btn-primary">Save changes</button>
         </form>
       </div>

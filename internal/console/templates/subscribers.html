@@ -84,6 +84,7 @@
           <input class="console-input" type="text" id="new-timezone" name="timezone"
                  placeholder="America/New_York">
         </div>
+        {{template "subscriber-custom-fields" $page.CustomFieldsEditor}}
         <div class="console-slideover-actions">
           <button type="button" class="btn btn-outline" data-on:click="$subNewOpen = false">Cancel</button>
           <button type="submit" class="btn btn-primary">Create subscriber</button>

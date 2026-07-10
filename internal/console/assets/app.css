@@ -2483,6 +2483,28 @@ a.activity-item-run { color: var(--accent); }
 .subscriber-edit-form,
 .topic-edit-form { max-width: 480px; }
 
+/* Subscriber custom-fields editor (L10) — lays the key/value/remove row out
+   horizontally instead of the wf-condition-row default vertical stack (the
+   step-condition editor it's mirrored from has 4 fields per row, so it never
+   needed this; a 2-field key/value row reads better side by side). */
+.subscriber-custom-field-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+.subscriber-custom-field-row .form-row { flex: 1; margin-bottom: 0; }
+.subscriber-custom-field-row .wf-condition-remove { flex: none; }
+
+/* Read-only custom-fields list on the subscriber detail page. */
+.subscriber-custom-fields-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
 /* Subscriber avatar cell in tables */
 .subscriber-avatar-cell {
   display: flex;

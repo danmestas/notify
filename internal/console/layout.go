@@ -156,6 +156,11 @@ func staticFuncMap() template.FuncMap {
 		// positional shift that moves later rows up into the vacated slot so the
 		// visible rows stay a dense, hole-free block (see workflows.go).
 		"condRemoveExpr": condRemoveExpr,
+		// subscriberCustomFieldRemoveExpr is condRemoveExpr's sibling for the
+		// subscriber custom-fields editor (L10, subscribers.go) -- same
+		// positional-shift remove, two per-row signals (key, value) instead of
+		// four.
+		"subscriberCustomFieldRemoveExpr": subscriberCustomFieldRemoveExpr,
 		// actionArgs packs the action-button partial's inputs so callers
 		// (templates and Go views alike) bind the one actionButton shape.
 		"actionArgs": func(label, href string, readOnly bool) actionButton {

@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/mail"
@@ -83,6 +84,170 @@ func validateSubscriberProfileInput(in audience.SubscriberInput) string {
 	return ""
 }
 
+// ─── custom fields (L10) ─────────────────────────────────────────────────────
+//
+// Subscribers already carry a free-form data map (domain.Subscriber.Data, a
+// json.RawMessage "data" column threaded through audience.SubscriberInput and,
+// at trigger time, into the {{subscriber.data.*}} handlebars namespace — see
+// wireSubscriber in internal/trigger/trigger.go). This section adds a
+// repeatable key-value editor for it on the console create/edit forms,
+// mirroring the workflow step editor's condition-row pattern: a fixed pool of
+// rows rendered server-side, revealed via a $cfRowCount signal, with
+// "remove" doing a positional shift (see condRemoveExpr in workflows.go for
+// the full rationale) rather than leaving a hole in the middle of the list.
+
+// subscriberCustomFieldRowPool is the fixed pool of key/value rows the
+// custom-fields editor renders server-side (mirrors stepConditionRows in
+// workflows.go). "Add field" reveals rows up to this count; it also bounds
+// subscriberCustomFieldsFromForm's parse loop and is therefore the hard cap
+// on the number of custom fields a subscriber can carry via the console.
+const subscriberCustomFieldRowPool = 10
+
+// subscriberCustomFieldRow is one row in the custom-fields editor or the
+// read-only detail-page list.
+type subscriberCustomFieldRow struct {
+	Key   string
+	Value string
+}
+
+// subscriberCustomFieldsEditorView is what the "subscriber-custom-fields"
+// partial binds: a fixed-size Rows slice (padded to subscriberCustomFieldRowPool)
+// plus Visible, the initial $cfRowCount signal value.
+type subscriberCustomFieldsEditorView struct {
+	Rows    []subscriberCustomFieldRow
+	Visible int
+}
+
+// subscriberCustomFieldRowSignals are the two per-row signals the editor
+// binds: cfKey{i} / cfValue{i}. Mirrors condRowSignals in workflows.go — same
+// positional-shift remove technique, two signals per row instead of four.
+var subscriberCustomFieldRowSignals = [...]string{"cfKey", "cfValue"}
+
+// subscriberCustomFieldRemoveExpr builds the Datastar data-on:click expression
+// for row k's remove (×) button. See condRemoveExpr in workflows.go for the
+// full rationale (a naive "blank + decrement" leaves a hole when k is a
+// middle row); this applies the identical positional-shift technique to the
+// custom-fields editor's two-signal (key, value) rows.
+func subscriberCustomFieldRemoveExpr(k int) template.JS {
+	var b strings.Builder
+	for j := k; j < subscriberCustomFieldRowPool-1; j++ {
+		copies := make([]string, 0, len(subscriberCustomFieldRowSignals))
+		blanks := make([]string, 0, len(subscriberCustomFieldRowSignals))
+		for _, sig := range subscriberCustomFieldRowSignals {
+			cur := fmt.Sprintf("$%s%d", sig, j)
+			next := fmt.Sprintf("$%s%d", sig, j+1)
+			copies = append(copies, cur+" = "+next)
+			blanks = append(blanks, cur+" = ''")
+		}
+		fmt.Fprintf(
+			&b,
+			"$cfRowCount > %d ? (%s) : ($cfRowCount === %d ? (%s) : null); ",
+			j+1, strings.Join(copies, ", "),
+			j+1, strings.Join(blanks, ", "),
+		)
+	}
+	b.WriteString("$cfRowCount = ($cfRowCount > 1 ? $cfRowCount - 1 : 1)")
+	return template.JS(b.String())
+}
+
+// decodeSubscriberCustomFields unmarshals a subscriber's stored custom-data
+// JSON object into a sorted-by-key slice. Malformed or absent data (nil, "",
+// non-object JSON) degrades to an empty slice rather than erroring — a
+// hand-edited or /v1-set Data value that isn't a flat string map just doesn't
+// render in the console editor/list, it is never dropped from storage by this
+// (read-only) helper.
+func decodeSubscriberCustomFields(data json.RawMessage) []subscriberCustomFieldRow {
+	fields := map[string]string{}
+	if len(data) > 0 {
+		_ = json.Unmarshal(data, &fields)
+	}
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	rows := make([]subscriberCustomFieldRow, 0, len(keys))
+	for _, k := range keys {
+		rows = append(rows, subscriberCustomFieldRow{Key: k, Value: fields[k]})
+	}
+	return rows
+}
+
+// subscriberCustomFieldsEditor builds the editor view from a subscriber's
+// stored Data: existing fields fill the first rows (sorted by key for stable
+// rendering), padded with blank rows to subscriberCustomFieldRowPool. Visible
+// is the number of existing fields, clamped to [1, pool] so the editor always
+// shows at least one row — the create form's fresh empty row, or the first
+// row on a subscriber with no custom data yet.
+func subscriberCustomFieldsEditor(data json.RawMessage) subscriberCustomFieldsEditorView {
+	existing := decodeSubscriberCustomFields(data)
+	rows := make([]subscriberCustomFieldRow, 0, subscriberCustomFieldRowPool)
+	for i, row := range existing {
+		if i >= subscriberCustomFieldRowPool {
+			break
+		}
+		rows = append(rows, row)
+	}
+	visible := len(rows)
+	if visible < 1 {
+		visible = 1
+	}
+	if visible > subscriberCustomFieldRowPool {
+		visible = subscriberCustomFieldRowPool
+	}
+	for len(rows) < subscriberCustomFieldRowPool {
+		rows = append(rows, subscriberCustomFieldRow{})
+	}
+	return subscriberCustomFieldsEditorView{Rows: rows, Visible: visible}
+}
+
+// subscriberCustomFieldsFromForm parses the posted custom_key_N/custom_value_N
+// rows (N in [0, subscriberCustomFieldRowPool)) into a JSON object suitable
+// for SubscriberInput.Data. A row with both key and value blank is an unused
+// slot and is skipped — this is how the client-side "remove row" control
+// works (it blanks the row's signals before submit). A row with a blank key
+// but a non-blank value is rejected: the operator started a field but never
+// named it. Keys and values are bounded by maxSubscriberFieldLen, the same
+// guard already applied to the other free-text profile fields. Duplicate
+// keys: the last row wins. The caller must call r.ParseForm() first.
+//
+// Unlike the other profile fields (which the store's merge-upsert preserves
+// when posted blank), this always returns a well-formed JSON object, never
+// nil: an editor submitted with zero populated rows returns "{}", which
+// explicitly CLEARS any previously stored custom data on update — see the
+// COALESCE/NULLIF merge in subscriberRepo.Upsert (store/subscriber_repo.go):
+// a non-empty "{}" always replaces the stored data, only a true zero-byte
+// value would have preserved the old row. The caller decides whether to
+// apply that clear (see handleSubscriberUpdate, which only calls this when
+// the request actually posted row 0 — i.e. the real edit form was
+// submitted).
+func subscriberCustomFieldsFromForm(r *http.Request) (json.RawMessage, string) {
+	fields := make(map[string]string)
+	for i := 0; i < subscriberCustomFieldRowPool; i++ {
+		suffix := strconv.Itoa(i)
+		key := strings.TrimSpace(r.FormValue("custom_key_" + suffix))
+		val := r.FormValue("custom_value_" + suffix)
+		if key == "" && val == "" {
+			continue
+		}
+		if key == "" {
+			return nil, "Custom field key is required"
+		}
+		if len(key) > maxSubscriberFieldLen {
+			return nil, "Custom field key is too long (max " + strconv.Itoa(maxSubscriberFieldLen) + " characters)"
+		}
+		if len(val) > maxSubscriberFieldLen {
+			return nil, "Custom field value is too long (max " + strconv.Itoa(maxSubscriberFieldLen) + " characters)"
+		}
+		fields[key] = val // last-wins on duplicate keys
+	}
+	b, err := json.Marshal(fields)
+	if err != nil {
+		return nil, "Invalid custom field data"
+	}
+	return b, ""
+}
+
 // ─── view structs ─────────────────────────────────────────────────────────────
 
 // subscribersPageView is what subscribers.html binds.
@@ -95,6 +260,10 @@ type subscribersPageView struct {
 	// failed create (e.g. duplicate subscriberId). The slide-over stays open
 	// via subNewOpen=true so the operator sees the error in context.
 	FormError string
+	// CustomFieldsEditor seeds the create slide-over's repeatable custom-field
+	// rows. A brand-new subscriber has no stored Data, so this is always the
+	// empty-row-pool state (one visible blank row).
+	CustomFieldsEditor subscriberCustomFieldsEditorView
 }
 
 // subscribersListView is the #subscribers-tbody fragment binding.
@@ -146,6 +315,12 @@ type subscriberDetailView struct {
 	// failed profile update (e.g. malformed email, over-length field).
 	// Rendered in the overview tab next to the edit-profile form.
 	FormError string
+	// CustomFields is the read-only sorted list of Sub.Data entries, rendered
+	// in the profile card. Empty when the subscriber has no custom data.
+	CustomFields []subscriberCustomFieldRow
+	// CustomFieldsEditor seeds the edit-profile form's repeatable custom-field
+	// rows, pre-populated from Sub.Data.
+	CustomFieldsEditor subscriberCustomFieldsEditorView
 }
 
 // subscriberChannelsView is the channels-tab content for a subscriber: the
@@ -391,10 +566,11 @@ func (c *Console) serveSubscribersPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := subscribersPageView{
-		Header:   header,
-		Fragment: frag,
-		Signals:  subscribersSignalsJSON("", "", "", "", false),
-		ReadOnly: c.deps.ReadOnly,
+		Header:             header,
+		Fragment:           frag,
+		Signals:            subscribersSignalsJSON("", "", "", "", false),
+		ReadOnly:           c.deps.ReadOnly,
+		CustomFieldsEditor: subscriberCustomFieldsEditor(nil),
 	}
 	c.renderPage(w, r, http.StatusOK, "subscribers", "Subscribers", view)
 }
@@ -430,11 +606,12 @@ func (c *Console) serveSubscriberNew(w http.ResponseWriter, r *http.Request) {
 		header = pageHeader{Title: "Subscribers"}
 	}
 	view := subscribersPageView{
-		Header:    header,
-		Fragment:  frag,
-		Signals:   subscribersSignalsJSON("", "", "", "", !c.deps.ReadOnly),
-		ReadOnly:  c.deps.ReadOnly,
-		FormError: r.URL.Query().Get("error"),
+		Header:             header,
+		Fragment:           frag,
+		Signals:            subscribersSignalsJSON("", "", "", "", !c.deps.ReadOnly),
+		ReadOnly:           c.deps.ReadOnly,
+		FormError:          r.URL.Query().Get("error"),
+		CustomFieldsEditor: subscriberCustomFieldsEditor(nil),
 	}
 	c.renderPage(w, r, http.StatusOK, "subscribers", "Subscribers", view)
 }
@@ -608,16 +785,18 @@ func (c *Console) serveSubscriberDetail(w http.ResponseWriter, r *http.Request) 
 	sigs, _ := json.Marshal(map[string]string{"subscriberTab": tab})
 
 	view := subscriberDetailView{
-		Header:        header,
-		Sub:           sub,
-		Activity:      activity,
-		Preferences:   prefs,
-		Channels:      channels,
-		Signals:       template.JS(sigs),
-		ReadOnly:      c.deps.ReadOnly,
-		ActiveTab:     tab,
-		ConfirmDelete: r.URL.Query().Get("confirmDelete") == "true",
-		FormError:     r.URL.Query().Get("error"),
+		Header:             header,
+		Sub:                sub,
+		Activity:           activity,
+		Preferences:        prefs,
+		Channels:           channels,
+		Signals:            template.JS(sigs),
+		ReadOnly:           c.deps.ReadOnly,
+		ActiveTab:          tab,
+		ConfirmDelete:      r.URL.Query().Get("confirmDelete") == "true",
+		FormError:          r.URL.Query().Get("error"),
+		CustomFields:       decodeSubscriberCustomFields(sub.Data),
+		CustomFieldsEditor: subscriberCustomFieldsEditor(sub.Data),
 	}
 	c.renderPage(w, r, http.StatusOK, "subscriber-detail", title, view)
 }
@@ -1086,6 +1265,18 @@ func (c *Console) handleSubscriberCreate(w http.ResponseWriter, r *http.Request)
 			http.StatusSeeOther)
 		return
 	}
+	// L10: parse the repeatable custom-field rows (custom_key_N/custom_value_N)
+	// into Data. A brand-new subscriber has nothing to preserve, so this is
+	// applied unconditionally — an editor submitted with no populated rows
+	// just yields "{}".
+	customData, customMsg := subscriberCustomFieldsFromForm(r)
+	if customMsg != "" {
+		http.Redirect(w, r,
+			"/console/subscribers/new?error="+url.QueryEscape(customMsg),
+			http.StatusSeeOther)
+		return
+	}
+	in.Data = customData
 
 	// Console-only convenience: a subscriber needs a stable, non-empty external
 	// key (triggers address subscribers by it), but operators creating one by
@@ -1191,6 +1382,23 @@ func (c *Console) handleSubscriberUpdate(w http.ResponseWriter, r *http.Request)
 			"/console/subscribers/"+id+"?error="+url.QueryEscape(msg),
 			http.StatusSeeOther)
 		return
+	}
+	// L10: only touch Data when the request actually posted the custom-field
+	// editor's row 0 — i.e. our real edit form was submitted (it always
+	// renders at least one row, even when empty). A raw PATCH-style POST that
+	// never carries custom_key_0 leaves Data untouched: SubscriberInput.Data
+	// stays its zero value nil, and the store's merge-upsert
+	// (`COALESCE(NULLIF(excluded.data, X''), subscribers.data)`) preserves
+	// whatever was already stored rather than silently wiping it.
+	if r.Form.Has("custom_key_0") {
+		customData, customMsg := subscriberCustomFieldsFromForm(r)
+		if customMsg != "" {
+			http.Redirect(w, r,
+				"/console/subscribers/"+id+"?error="+url.QueryEscape(customMsg),
+				http.StatusSeeOther)
+			return
+		}
+		in.Data = customData
 	}
 
 	_, err := c.deps.Audience.PatchSubscriber(r.Context(), scope, id, in)

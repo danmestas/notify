@@ -1,0 +1,48 @@
+{{/*
+  subscriber-custom-fields (L10) — repeatable key/value editor over
+  Subscriber.Data. Mirrors the workflow step editor's condition-row pattern
+  (see workflow_step_editor.html): a fixed pool of rows rendered server-side,
+  revealed via a $cfRowCount signal, with "remove" doing a positional shift
+  (subscriberCustomFieldRemoveExpr in subscribers.go) so removing a middle row
+  never leaves a visible hole.
+
+  Binds subscriberCustomFieldsEditorView{Rows, Visible}. Row i > 0 is hidden
+  until $cfRowCount grows past its index; "Add field" reveals the next row up
+  to len(Rows) (the fixed pool size).
+*/}}
+{{define "subscriber-custom-fields"}}
+{{$rows := .Rows}}
+<fieldset class="wf-conditions subscriber-custom-fields" data-signals="{cfRowCount:{{.Visible}}}">
+  <legend class="form-label wf-conditions-legend">Custom fields</legend>
+  <p class="console-lede wf-conditions-hint">
+    Arbitrary key/value data attached to this subscriber. Available in message
+    templates as <code>{{"{{"}}subscriber.data.KEY{{"}}"}}</code>.
+  </p>
+  {{range $i, $row := $rows}}
+  <div class="wf-condition-row subscriber-custom-field-row"{{if gt $i 0}} data-show="$cfRowCount > {{$i}}"{{end}}>
+    <div class="form-row wf-condition-field">
+      <label class="form-label" for="cf-key-{{$i}}">Key</label>
+      <input class="console-input" type="text" id="cf-key-{{$i}}" name="custom_key_{{$i}}"
+             data-signals="{cfKey{{$i}}:{{jsEscape $row.Key}}}" data-bind="cfKey{{$i}}"
+             placeholder="planTier" value="{{$row.Key}}">
+    </div>
+    <div class="form-row wf-condition-value">
+      <label class="form-label" for="cf-value-{{$i}}">Value</label>
+      <input class="console-input" type="text" id="cf-value-{{$i}}" name="custom_value_{{$i}}"
+             data-signals="{cfValue{{$i}}:{{jsEscape $row.Value}}}" data-bind="cfValue{{$i}}"
+             placeholder="gold" value="{{$row.Value}}">
+    </div>
+    <div class="form-row wf-condition-remove">
+      <button type="button" class="btn btn-ghost btn-icon wf-condition-remove-btn"
+              aria-label="Remove custom field"
+              data-on:click="{{subscriberCustomFieldRemoveExpr $i}}">{{uiIcon "x"}}</button>
+    </div>
+  </div>
+  {{end}}
+  <div class="wf-conditions-actions">
+    <button type="button" class="btn btn-outline wf-condition-add-btn"
+            data-show="$cfRowCount < {{len $rows}}"
+            data-on:click="$cfRowCount = ($cfRowCount < {{len $rows}} ? $cfRowCount + 1 : {{len $rows}})">{{uiIcon "plus"}} Add field</button>
+  </div>
+</fieldset>
+{{end}}
