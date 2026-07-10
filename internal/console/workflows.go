@@ -103,6 +103,12 @@ type workflowsPageView struct {
 	ShowDuplicate bool
 	// FormError is an inline validation error surfaced above the form.
 	FormError string
+	// FormName and FormTriggerIdentifier repopulate the create form's Name
+	// and Trigger id inputs after a validation-error redirect (?name=,
+	// ?trigger_identifier=) so the operator does not have to retype a value
+	// that was already correct just because a sibling field failed (M7).
+	FormName              string
+	FormTriggerIdentifier string
 	// AIConfigured reports whether the AI workflow builder is wired (an
 	// ANTHROPIC_API_KEY is set). When false the Guided create tab shows a
 	// not-configured note instead of the prompt form.
@@ -582,13 +588,15 @@ func (c *Console) serveWorkflowNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := workflowsPageView{
-		Header:               header,
-		Fragment:             frag,
-		Signals:              workflowsSignalsJSON(!c.deps.ReadOnly),
-		ReadOnly:             c.deps.ReadOnly,
-		FormError:            r.URL.Query().Get("error"),
-		AIConfigured:         c.aiBuilder != nil,
-		AIBuilderSuggestions: aiBuilderCreateSuggestions,
+		Header:                header,
+		Fragment:              frag,
+		Signals:               workflowsSignalsJSON(!c.deps.ReadOnly),
+		ReadOnly:              c.deps.ReadOnly,
+		FormError:             r.URL.Query().Get("error"),
+		FormName:              r.URL.Query().Get("name"),
+		FormTriggerIdentifier: r.URL.Query().Get("trigger_identifier"),
+		AIConfigured:          c.aiBuilder != nil,
+		AIBuilderSuggestions:  aiBuilderCreateSuggestions,
 	}
 	c.renderPage(w, r, http.StatusOK, "workflows", "Workflows", view)
 }
@@ -844,16 +852,24 @@ func (c *Console) handleWorkflowCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	trigger := strings.TrimSpace(r.FormValue("trigger_identifier"))
+
+	// redirectWithError sends the operator back to the create form with an
+	// inline error, preserving the submitted Name + Trigger id (M7) so a
+	// failure on one field doesn't force retyping the other.
+	redirectWithError := func(msg string) {
+		http.Redirect(w, r, "/console/workflows/new?error="+url.QueryEscape(msg)+
+			"&name="+url.QueryEscape(name)+"&trigger_identifier="+url.QueryEscape(trigger),
+			http.StatusSeeOther)
+	}
+
 	if name == "" || trigger == "" {
-		http.Redirect(w, r, "/console/workflows/new?error="+
-			url.QueryEscape("Name and trigger identifier are required."), http.StatusSeeOther)
+		redirectWithError("Name and trigger identifier are required.")
 		return
 	}
 
 	// Reject a duplicate identifier before writing — surface it inline.
 	if _, err := c.deps.Authoring.GetBySlug(r.Context(), scope, trigger); err == nil {
-		http.Redirect(w, r, "/console/workflows/new?error="+
-			url.QueryEscape("Trigger identifier already exists."), http.StatusSeeOther)
+		redirectWithError("Trigger identifier already exists.")
 		return
 	} else if !isNotFound(err) {
 		c.deps.Logger.Error("console: create workflow identifier check", "err", err)
@@ -866,9 +882,12 @@ func (c *Console) handleWorkflowCreate(w http.ResponseWriter, r *http.Request) {
 		TriggerIdentifier: trigger,
 	})
 	if err != nil {
+		if errors.Is(err, authoring.ErrInvalidTriggerIdentifier) {
+			redirectWithError("Trigger identifier may only contain lowercase letters, numbers, hyphens, and underscores.")
+			return
+		}
 		c.deps.Logger.Error("console: create workflow", "err", err)
-		http.Redirect(w, r, "/console/workflows/new?error="+
-			url.QueryEscape("Create failed."), http.StatusSeeOther)
+		redirectWithError("Create failed.")
 		return
 	}
 	if err := c.deps.Authoring.Publish(r.Context(), scope, wf.TriggerIdentifier); err != nil {

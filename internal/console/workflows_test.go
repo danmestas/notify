@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -331,7 +332,10 @@ func TestWorkflowDetail_ScopeIsolation(t *testing.T) {
 // browser-decoded `\'`) rather than a bare, literal-breaking quote.
 func TestWorkflowDetail_TriggerIdentifierJSEscaped(t *testing.T) {
 	tc := newTestConsole(t)
-	tc.seedWorkflow(t, "Quoted", "o'reilly-wf")
+	// Seed the malicious id directly through the store: authoring.Create now
+	// rejects URL-unsafe trigger ids (H2), but the renderer must still escape
+	// any bad id that reached the DB by another path (legacy/direct insert).
+	tc.seedWorkflowRaw(t, "Quoted", "o'reilly-wf")
 	cookie, _ := tc.login(t)
 
 	rr := tc.get(t, "/console/workflows/o'reilly-wf", cookie)
@@ -355,7 +359,9 @@ func TestWorkflowDetail_TriggerIdentifierJSEscaped(t *testing.T) {
 // endpoint also renders.
 func TestWorkflowRow_TriggerIdentifierJSEscaped(t *testing.T) {
 	tc := newTestConsole(t)
-	tc.seedWorkflow(t, "Quoted", "o'reilly-wf")
+	// Direct-store seed: Create rejects this id post-H2, but the row partial
+	// must still JS-escape a bad id that exists in the DB by another path.
+	tc.seedWorkflowRaw(t, "Quoted", "o'reilly-wf")
 	cookie, _ := tc.login(t)
 
 	rr := tc.get(t, "/console/workflows", cookie)
@@ -596,6 +602,49 @@ func TestWorkflowCreate_DuplicateIdentifierRendersError(t *testing.T) {
 	// Should redirect back to /new with an error indication (not 500).
 	if rr.Code == http.StatusInternalServerError {
 		t.Errorf("duplicate identifier returned 500, want redirect with error")
+	}
+}
+
+// TestWorkflowCreate_InvalidTriggerIdentifierRendersError proves H2's console
+// fix: a trigger identifier with URL-unsafe characters is rejected with an
+// inline error (not a 500, and not a silently-written unreachable row) and
+// the submitted Name + Trigger id are preserved on the redirected-to form —
+// the create form previously wiped both fields on any validation failure
+// (M7), forcing the operator to retype everything just to fix one field.
+func TestWorkflowCreate_InvalidTriggerIdentifierRendersError(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	for _, id := range []string{"foo/bar", "a b", "Foo", "<script>"} {
+		rr := tc.postForm(t, "/console/api/workflows", url.Values{
+			"csrf_token":         {csrf},
+			"name":               {"My Test WF"},
+			"trigger_identifier": {id},
+		}, cookie)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("id=%q: create workflow: status = %d, want 303 (body: %s)", id, rr.Code, rr.Body.String())
+		}
+		loc := rr.Header().Get("Location")
+		if !strings.HasPrefix(loc, "/console/workflows/new?") {
+			t.Fatalf("id=%q: Location = %q, want /console/workflows/new?...", id, loc)
+		}
+		if _, err := tc.deps.Authoring.GetBySlug(context.Background(), tc.scope, id); err == nil {
+			t.Fatalf("id=%q: workflow row was written despite invalid identifier; want no row", id)
+		}
+
+		// Follow the redirect: the form must render the inline error and
+		// preserve the submitted Name + Trigger id.
+		follow := tc.get(t, loc, cookie)
+		body := follow.Body.String()
+		if !strings.Contains(body, "lowercase letters, numbers, hyphens, and underscores") {
+			t.Errorf("id=%q: form missing validation error message; body=%s", id, body)
+		}
+		if !strings.Contains(body, `value="My Test WF"`) {
+			t.Errorf("id=%q: form did not preserve Name; body=%s", id, body)
+		}
+		if !strings.Contains(body, `value="`+html.EscapeString(id)+`"`) {
+			t.Errorf("id=%q: form did not preserve Trigger id; body=%s", id, body)
+		}
 	}
 }
 

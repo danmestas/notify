@@ -242,6 +242,72 @@ func TestCreate_RejectsInvalidScheduledCron(t *testing.T) {
 	}
 }
 
+// TestCreate_RejectsInvalidTriggerIdentifier proves H2's fix: a trigger
+// identifier containing a character outside the URL-safe slug allowlist
+// (^[a-z0-9][a-z0-9_-]*$) is rejected by Create before any store write —
+// previously such an id was persisted verbatim and used as a URL path
+// segment by every console route (view/edit/delete), permanently orphaning
+// the workflow once it 404'd forever.
+func TestCreate_RejectsInvalidTriggerIdentifier(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, nil)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	cases := []string{"foo/bar", "a b", "Foo", "<script>", ""}
+	for _, id := range cases {
+		t.Run(id, func(t *testing.T) {
+			_, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+				Name:              "Bad",
+				TriggerIdentifier: id,
+				Steps: []domain.Step{
+					{StepID: "s1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)},
+				},
+			})
+			if !errors.Is(err, authoring.ErrInvalidTriggerIdentifier) {
+				t.Fatalf("Create(%q) error = %v, want authoring.ErrInvalidTriggerIdentifier", id, err)
+			}
+			if _, gErr := svc.GetBySlug(ctx, scope, id); gErr == nil {
+				t.Fatalf("Create(%q): workflow row was written despite invalid identifier; want no row", id)
+			}
+		})
+	}
+}
+
+// TestCreate_AcceptsValidTriggerIdentifier proves the allowlist isn't
+// overly strict: lowercase alphanumerics plus hyphen/underscore, starting
+// with a letter or digit, is accepted.
+func TestCreate_AcceptsValidTriggerIdentifier(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, nil)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	wf, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Good",
+		TriggerIdentifier: "my-workflow_2",
+		Steps: []domain.Step{
+			{StepID: "s1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if wf.TriggerIdentifier != "my-workflow_2" {
+		t.Fatalf("TriggerIdentifier = %q, want my-workflow_2", wf.TriggerIdentifier)
+	}
+}
+
 func TestCompile_DelayUnits(t *testing.T) {
 	wf := domain.Workflow{
 		EnvID:             "env_1",

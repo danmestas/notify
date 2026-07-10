@@ -68,12 +68,13 @@
         <div class="form-row">
           <label class="form-label" for="new-wf-name">Name *</label>
           <input class="console-input" type="text" id="new-wf-name" name="name"
+                 value="{{$page.FormName}}"
                  placeholder="Welcome Email" required aria-required="true" autofocus>
         </div>
         <div class="form-row">
           <label class="form-label" for="new-wf-trigger">Trigger identifier *</label>
           <input class="console-input console-input-mono" type="text" id="new-wf-trigger"
-                 name="trigger_identifier" placeholder="welcome-email"
+                 name="trigger_identifier" value="{{$page.FormTriggerIdentifier}}" placeholder="welcome-email"
                  pattern="[a-z0-9_-]+" title="lowercase letters, digits, hyphens, underscores" required aria-required="true">
         </div>
         <div class="console-slideover-actions">

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
@@ -68,6 +69,21 @@ func DAGName(scope domain.Scope, triggerIdentifier string) string {
 	return scope.EnvID + "-" + triggerIdentifier
 }
 
+// triggerIdentifierPattern is the URL-safe slug allowlist for
+// WorkflowInput.TriggerIdentifier: lowercase letters, digits, hyphens, and
+// underscores, starting with a letter or digit. TriggerIdentifier is used
+// verbatim as a console URL path segment (view/edit/delete routes) and as
+// the DAGName suffix registered with the engine; an id containing '/' (path
+// separator) or other reserved/URL-unsafe characters produces a workflow
+// every console route 404s on, permanently orphaning it (see H2).
+var triggerIdentifierPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// ErrInvalidTriggerIdentifier is returned by Create when
+// WorkflowInput.TriggerIdentifier fails triggerIdentifierPattern. Checked
+// before any store write, mirroring ErrCompileFailure's before-write
+// validation.
+var ErrInvalidTriggerIdentifier = fmt.Errorf("authoring: trigger identifier may only contain lowercase letters, numbers, hyphens, and underscores")
+
 // WorkflowInput is the authoring request: a named workflow with an ordered
 // list of channel steps keyed by TriggerIdentifier.
 type WorkflowInput struct {
@@ -82,6 +98,9 @@ type WorkflowInput struct {
 // Create persists a workflow row. Steps are marshalled into the row's JSON
 // steps column and the workflow is active on creation.
 func (s *Service) Create(ctx context.Context, scope domain.Scope, in WorkflowInput) (domain.Workflow, error) {
+	if !triggerIdentifierPattern.MatchString(in.TriggerIdentifier) {
+		return domain.Workflow{}, ErrInvalidTriggerIdentifier
+	}
 	steps, err := json.Marshal(in.Steps)
 	if err != nil {
 		return domain.Workflow{}, fmt.Errorf("authoring: marshal steps: %w", err)

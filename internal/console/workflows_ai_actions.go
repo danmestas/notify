@@ -152,6 +152,9 @@ func (c *Console) keepPersist(r *http.Request, scope domain.Scope, sess store.Bu
 		if errors.Is(err, authoring.ErrIdentifierConflict) {
 			return "", "A workflow with trigger identifier \"" + draft.TriggerIdentifier + "\" already exists."
 		}
+		if errors.Is(err, authoring.ErrInvalidTriggerIdentifier) {
+			return "", "Trigger identifier may only contain lowercase letters, numbers, hyphens, and underscores."
+		}
 		c.deps.Logger.Error("console: ai keep create", "err", err)
 		return "", "Saving the workflow failed."
 	}

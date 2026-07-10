@@ -344,6 +344,26 @@ func (tc *testConsole) seedWorkflowInScope(t *testing.T, scope domain.Scope, nam
 	}
 }
 
+// seedWorkflowRaw inserts a workflow row DIRECTLY through the store repo,
+// bypassing authoring.Create's trigger-identifier allowlist. Create now
+// rejects URL-unsafe ids (H2), but render-layer escaping (XSS defense) must
+// still hold for any bad id that could already exist in the DB — legacy
+// rows, direct inserts, or a future ingest path. Tests that assert on
+// escaping seed their malicious id through here so Create's validation
+// doesn't (correctly) block the fixture from ever reaching the renderer.
+func (tc *testConsole) seedWorkflowRaw(t *testing.T, name, trigger string) {
+	t.Helper()
+	_, err := tc.st.Workflows().Create(context.Background(), tc.scope, domain.Workflow{
+		Name:              name,
+		TriggerIdentifier: trigger,
+		Active:            true,
+		Steps:             json.RawMessage(`[{"stepId":"s1","type":"in_app","controlValues":{"body":"hi"}}]`),
+	})
+	if err != nil {
+		t.Fatalf("seed workflow raw (%q): %v", trigger, err)
+	}
+}
+
 // altScope bootstraps a second tenant (distinct org + env) on the same
 // store and returns its Scope. Used by scope-isolation tests: a workflow
 // seeded under altScope must never surface for the logged-in tc.scope.
