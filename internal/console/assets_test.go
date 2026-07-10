@@ -186,6 +186,40 @@ func TestAssets_TopbarTitleTruncates(t *testing.T) {
 	}
 }
 
+// TestAssets_WorkflowListNameTruncates guards against L6: a very long
+// workflow name on /console/workflows previously rendered unbroken and
+// pushed the Status/Steps/Updated/Actions columns off-screen. Mirrors
+// TestAssets_TopbarTitleTruncates for the list table's name cell.
+func TestAssets_WorkflowListNameTruncates(t *testing.T) {
+	tc := newTestConsole(t)
+	rr := tc.get(t, assetManifest["app.css"], nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET app.css: status = %d, want 200", rr.Code)
+	}
+	css := rr.Body.String()
+
+	nameRE := regexp.MustCompile(`(?s)\.wf-name-link\s*\{([^}]*)\}`)
+	m := nameRE.FindStringSubmatch(css)
+	if m == nil {
+		t.Fatal(".wf-name-link rule not found in app.css")
+	}
+	rule := m[1]
+	for _, want := range []string{"overflow: hidden", "text-overflow: ellipsis", "white-space: nowrap", "max-width"} {
+		if !strings.Contains(rule, want) {
+			t.Errorf(".wf-name-link rule does not set %q — a long workflow name will overflow the list row and push Status/Steps/Updated/Actions off-screen: %q", want, rule)
+		}
+	}
+
+	colRE := regexp.MustCompile(`(?s)\.wf-col-name\s*\{([^}]*)\}`)
+	cm := colRE.FindStringSubmatch(css)
+	if cm == nil {
+		t.Fatal(".wf-col-name rule not found in app.css")
+	}
+	if !strings.Contains(cm[1], "min-width: 0") {
+		t.Errorf(".wf-col-name rule does not set %q — the cell may refuse to shrink below its content: %q", "min-width: 0", cm[1])
+	}
+}
+
 func TestLayoutHTML_EmitsHashedAssetURLs(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)

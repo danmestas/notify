@@ -1022,6 +1022,15 @@ func (c *Console) handleWorkflowSave(w http.ResponseWriter, r *http.Request) {
 		PayloadSchema: schema,
 		Critical:      critical,
 	}); err != nil {
+		// ErrNoSteps means the config write above already succeeded — Update
+		// only skipped re-registering the (0-step) workflow with the engine.
+		// A blanket "Save failed." would be false: the operator's edits are
+		// on the row. Say so accurately instead (M6).
+		if errors.Is(err, authoring.ErrNoSteps) {
+			http.Redirect(w, r, editURL+"?error="+
+				url.QueryEscape("Configuration saved, but the workflow needs at least one step to publish."), http.StatusSeeOther)
+			return
+		}
 		var compileErr *authoring.ErrCompileFailure
 		if errors.As(err, &compileErr) {
 			http.Redirect(w, r, editURL+"?error="+
@@ -1289,7 +1298,11 @@ func (c *Console) handleWorkflowStepDelete(w http.ResponseWriter, r *http.Reques
 		Steps:         out,
 		PayloadSchema: wf.PayloadSchema,
 		Critical:      wf.Critical,
-	}); err != nil {
+	}); err != nil && !errors.Is(err, authoring.ErrNoSteps) {
+		// ErrNoSteps is expected and non-fatal here: deleting the last
+		// remaining step legitimately leaves zero steps, and the row is
+		// already persisted — Update only skipped the (impossible) engine
+		// re-registration.
 		c.deps.Logger.Error("console: step delete update", "slug", slug, "err", err)
 		http.Error(w, "delete step failed", http.StatusInternalServerError)
 		return

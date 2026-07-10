@@ -1672,7 +1672,7 @@ a.activity-item-run { color: var(--accent); }
 }
 
 /* Column widths */
-.wf-col-name    { width: 32%; }
+.wf-col-name    { width: 32%; min-width: 0; }
 .wf-col-status  { width: 12%; }
 .wf-col-steps   { width: 36%; }
 .wf-col-updated { width: 12%; color: var(--text-secondary); font-size: 0.82rem; white-space: nowrap; }
@@ -1710,9 +1710,16 @@ a.activity-item-run { color: var(--accent); }
   font-size: 0.82rem;
 }
 
-/* Name cell: stacked name + trigger ID */
+/* Name cell: stacked name + trigger ID. A very long workflow name must not
+   push the Status/Steps/Updated/Actions columns off-screen (L6) — truncate
+   with an ellipsis and rely on the row's title attribute for the full name
+   on hover, mirroring the .console-topbar-title pattern. */
 .wf-name-link {
   display: block;
+  overflow: hidden;
+  max-width: 220px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-weight: 600;
   color: var(--text-primary);
 }

@@ -68,6 +68,31 @@ func TestWorkflowsList_RendersSeededRows(t *testing.T) {
 	}
 }
 
+// TestWorkflowsList_LongNameTruncatesWithTitle proves L6: a very long
+// workflow name renders truncated in the list row (the CSS truncation
+// contract is pinned separately by TestAssets_WorkflowListNameTruncates)
+// and carries the full name in a title attribute so it's still available on
+// hover.
+func TestWorkflowsList_LongNameTruncatesWithTitle(t *testing.T) {
+	tc := newTestConsole(t)
+	longName := strings.Repeat("Very Long Workflow Name ", 12)
+	tc.seedWorkflow(t, longName, "long-name-wf")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/workflows: status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, `class="wf-name-link"`) {
+		t.Errorf("list page missing wf-name-link class on the name cell")
+	}
+	if !strings.Contains(body, `title="`+longName+`"`) {
+		t.Errorf("list page missing title=%q on the long workflow name for hover access; body=%s", longName, body)
+	}
+}
+
 func TestWorkflowsList_EmptyStore(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)
@@ -572,6 +597,51 @@ func TestWorkflowNew_RendersCreateForm(t *testing.T) {
 	}
 }
 
+// TestWorkflowNew_TriggerIdentifierAutoSlugifiesFromName proves L7: the
+// create form's Name field derives a slug into Trigger identifier as the
+// operator types, but the Trigger field stays editable — the derivation
+// only runs while $wfNewTriggerTouched is false, and typing directly into
+// Trigger id latches it true so the auto-fill stops overwriting a
+// deliberate edit. This is a template/wiring assertion (no JS execution);
+// the actual slugify behavior is exercised in a real browser.
+func TestWorkflowNew_TriggerIdentifierAutoSlugifiesFromName(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/new", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/console/workflows/new: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, `id="new-wf-name"`) {
+		t.Fatalf("/new missing the Name input")
+	}
+	// The Name field must derive $wfNewTrigger on input, guarded by the
+	// touched signal, and normalize to the server's allowed charset.
+	if !strings.Contains(body, `$wfNewTriggerTouched`) {
+		t.Errorf("/new Name field does not reference $wfNewTriggerTouched — auto-slugify is not guarded against manual edits")
+	}
+	if !strings.Contains(body, `$wfNewTrigger = evt.target.value.toLowerCase()`) {
+		t.Errorf("/new Name field does not derive $wfNewTrigger from its own input value; body=%s", body)
+	}
+	if !strings.Contains(body, `[^a-z0-9_-]`) {
+		t.Errorf("/new Name field's slugify does not strip characters outside the server's allowlist")
+	}
+
+	// The Trigger field must two-way bind to $wfNewTrigger (so the derived
+	// slug is reflected live) and latch $wfNewTriggerTouched on real input.
+	if !strings.Contains(body, `id="new-wf-trigger"`) {
+		t.Fatalf("/new missing the Trigger identifier input")
+	}
+	if !strings.Contains(body, `data-bind="wfNewTrigger"`) {
+		t.Errorf("/new Trigger field is not data-bound to $wfNewTrigger")
+	}
+	if !strings.Contains(body, `data-on:input="$wfNewTriggerTouched = true"`) {
+		t.Errorf("/new Trigger field does not latch $wfNewTriggerTouched on manual edit")
+	}
+}
+
 func TestWorkflowCreate_PostRedirectsToEditor(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, csrf := tc.login(t)
@@ -589,6 +659,11 @@ func TestWorkflowCreate_PostRedirectsToEditor(t *testing.T) {
 	}
 }
 
+// TestWorkflowCreate_DuplicateIdentifierRendersError proves M7 for the
+// duplicate-trigger-identifier branch specifically: the create form must not
+// be wiped on this validation failure either — only the invalid-identifier
+// path had regression coverage before, and the duplicate check runs earlier
+// in handleWorkflowCreate via a separate redirect call site.
 func TestWorkflowCreate_DuplicateIdentifierRendersError(t *testing.T) {
 	tc := newTestConsole(t)
 	tc.seedWorkflow(t, "Existing", "existing-wf")
@@ -600,8 +675,33 @@ func TestWorkflowCreate_DuplicateIdentifierRendersError(t *testing.T) {
 		"trigger_identifier": {"existing-wf"},
 	}, cookie)
 	// Should redirect back to /new with an error indication (not 500).
-	if rr.Code == http.StatusInternalServerError {
-		t.Errorf("duplicate identifier returned 500, want redirect with error")
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("duplicate identifier: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/console/workflows/new?") {
+		t.Fatalf("Location = %q, want /console/workflows/new?...", loc)
+	}
+	if !strings.Contains(loc, "name=Another") {
+		t.Errorf("Location = %q, does not carry the submitted Name back to the form", loc)
+	}
+	if !strings.Contains(loc, "trigger_identifier=existing-wf") {
+		t.Errorf("Location = %q, does not carry the submitted Trigger id back to the form", loc)
+	}
+
+	// Follow the redirect: the form must render the inline error and
+	// preserve the submitted Name + Trigger id (M7) — it previously wiped
+	// both fields on this specific validation failure.
+	follow := tc.get(t, loc, cookie)
+	body := follow.Body.String()
+	if !strings.Contains(body, "Trigger identifier already exists.") {
+		t.Errorf("form missing duplicate-identifier error message; body=%s", body)
+	}
+	if !strings.Contains(body, `value="Another"`) {
+		t.Errorf("form did not preserve Name; body=%s", body)
+	}
+	if !strings.Contains(body, `value="existing-wf"`) {
+		t.Errorf("form did not preserve Trigger id; body=%s", body)
 	}
 }
 
@@ -872,6 +972,49 @@ func TestWorkflowEditor_SaveWithEmptyNameShowsError(t *testing.T) {
 	}, cookie)
 	if rr.Code == http.StatusInternalServerError {
 		t.Errorf("empty name save returned 500")
+	}
+}
+
+// TestWorkflowEditor_SaveZeroStepsShowsAccurateMessage proves M6: saving a
+// 0-step workflow's config (name/schema/critical) must not report a blanket
+// "Save failed." — the config write succeeds even though the workflow can't
+// be published with zero steps. The redirect must carry an accurate message
+// and the config must actually be persisted.
+func TestWorkflowEditor_SaveZeroStepsShowsAccurateMessage(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.seedWorkflowWithSteps(t, "Zero Step WF", "zero-step-wf", nil)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/api/workflows/zero-step-wf/save", url.Values{
+		"csrf_token":     {csrf},
+		"name":           {"Renamed WF"},
+		"payload_schema": {`{"type":"object"}`},
+		"critical":       {"1"},
+	}, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("zero-step save: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if strings.Contains(loc, url.QueryEscape("Save failed.")) {
+		t.Errorf("Location = %q — still reports blanket \"Save failed.\" despite config persisting", loc)
+	}
+	if !strings.Contains(loc, url.QueryEscape("at least one step")) {
+		t.Errorf("Location = %q, want an accurate message mentioning the workflow needs at least one step to publish", loc)
+	}
+
+	// The config write must have happened despite the informational redirect.
+	wf, err := tc.deps.Authoring.GetBySlug(context.Background(), tc.scope, "zero-step-wf")
+	if err != nil {
+		t.Fatalf("GetBySlug after zero-step save: %v", err)
+	}
+	if wf.Name != "Renamed WF" {
+		t.Errorf("Name = %q, want %q — config did not persist", wf.Name, "Renamed WF")
+	}
+	if !wf.Critical {
+		t.Error("Critical = false, want true — config did not persist")
+	}
+	if string(wf.PayloadSchema) != `{"type":"object"}` {
+		t.Errorf("PayloadSchema = %q, want %q — config did not persist", wf.PayloadSchema, `{"type":"object"}`)
 	}
 }
 

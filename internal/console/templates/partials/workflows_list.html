@@ -29,7 +29,7 @@
 {{define "workflow-row"}}
 <tr class="console-table-row" data-component="workflow-row" onclick="location.href='{{.Href}}'" style="cursor:pointer">
   <td class="wf-col-name">
-    <a class="wf-name-link" href="{{.Href}}">{{.Name}}</a>
+    <a class="wf-name-link" href="{{.Href}}" title="{{.Name}}">{{.Name}}</a>
     <span class="wf-trigger-id" onclick="event.stopPropagation()">
       <code class="wf-trigger-id-text">{{.TriggerIdentifier}}</code>
       <button type="button"

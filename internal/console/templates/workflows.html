@@ -11,9 +11,17 @@
   /console/workflows/new. It drives the create slide-over's data-show so
   opening the slide-over causes NO layout shift — the list page renders the
   overlay hidden and the /new route just flips the signal.
+
+  wfNewTrigger/wfNewTriggerTouched drive the create form's Trigger-id
+  auto-slugify (L7): typing into Name derives a slug into Trigger id UNLESS
+  the operator has already typed into Trigger id directly (wfNewTriggerTouched
+  latches true on that field's first real input event — see the
+  data-on:input handlers below). Seeded from FormTriggerIdentifier so a
+  validation-error redirect that already carries a submitted trigger id
+  does not get silently overwritten by the derived slug.
 */}}
 <section class="console-section"
-         data-store='{"wfFilter":{{$frag.FilterQ | json}},"wfStatus":{{$frag.FilterStatus | json}},"wfConfirmDelete":""}'
+         data-store='{"wfFilter":{{$frag.FilterQ | json}},"wfStatus":{{$frag.FilterStatus | json}},"wfConfirmDelete":"","wfNewTrigger":{{$page.FormTriggerIdentifier | json}},"wfNewTriggerTouched":{{ne $page.FormTriggerIdentifier "" | json}}}'
          data-signals="{{$page.Signals}}">
   {{template "page-header" $page.Header}}
 
@@ -67,14 +75,22 @@
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="new-wf-name">Name *</label>
+          {{/* Auto-slugify into Trigger identifier as the operator types
+               (L7) — lowercase, spaces to hyphens, strip anything outside
+               [a-z0-9_-] to match the server's allowlist. Only while
+               $wfNewTriggerTouched is false: once the operator edits Trigger
+               id directly, stop overwriting it. */}}
           <input class="console-input" type="text" id="new-wf-name" name="name"
                  value="{{$page.FormName}}"
+                 data-on:input="!$wfNewTriggerTouched && ($wfNewTrigger = evt.target.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, ''))"
                  placeholder="Welcome Email" required aria-required="true" autofocus>
         </div>
         <div class="form-row">
           <label class="form-label" for="new-wf-trigger">Trigger identifier *</label>
           <input class="console-input console-input-mono" type="text" id="new-wf-trigger"
                  name="trigger_identifier" value="{{$page.FormTriggerIdentifier}}" placeholder="welcome-email"
+                 data-bind="wfNewTrigger"
+                 data-on:input="$wfNewTriggerTouched = true"
                  pattern="[a-z0-9_-]+" title="lowercase letters, digits, hyphens, underscores" required aria-required="true">
         </div>
         <div class="console-slideover-actions">

@@ -581,6 +581,60 @@ func TestUpdate_RecompilesAndReregisters(t *testing.T) {
 	}
 }
 
+// TestUpdate_ZeroStepsPersistsConfigAndReturnsErrNoSteps proves M6: saving a
+// workflow's config (name/schema/critical) down to zero steps must not look
+// like a total failure. dagnats rejects a 0-step registration outright, so
+// Update skips engine re-registration for a 0-step candidate — but the store
+// write already happened. Callers (the console save handler) need a way to
+// tell "config persisted, publish skipped" apart from a real write failure,
+// so Update signals it via the ErrNoSteps sentinel rather than swallowing it
+// as success or reporting a blanket error.
+func TestUpdate_ZeroStepsPersistsConfigAndReturnsErrNoSteps(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	// No live engine needed: a 0-step Update never reaches registration.
+	svc := authoring.New(st, nil)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Original",
+		TriggerIdentifier: "zero-step-wf",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	_, err = svc.Update(ctx, scope, "zero-step-wf", authoring.UpdateInput{
+		Name:          "Renamed",
+		Steps:         nil,
+		PayloadSchema: json.RawMessage(`{"type":"object"}`),
+		Critical:      true,
+	})
+	if !errors.Is(err, authoring.ErrNoSteps) {
+		t.Fatalf("Update with 0 steps: err = %v, want errors.Is(err, authoring.ErrNoSteps)", err)
+	}
+
+	// The config write must have happened despite the ErrNoSteps signal.
+	got, getErr := svc.GetBySlug(ctx, scope, "zero-step-wf")
+	if getErr != nil {
+		t.Fatalf("GetBySlug after 0-step Update: %v", getErr)
+	}
+	if got.Name != "Renamed" {
+		t.Errorf("Name = %q, want %q — config did not persist", got.Name, "Renamed")
+	}
+	if !got.Critical {
+		t.Error("Critical = false, want true — config did not persist")
+	}
+	if string(got.PayloadSchema) != `{"type":"object"}` {
+		t.Errorf("PayloadSchema = %q, want %q — config did not persist", got.PayloadSchema, `{"type":"object"}`)
+	}
+}
+
 func TestUpdate_ReturnsNotFoundForMissingWorkflow(t *testing.T) {
 	natsURL, bridgeURL := dagtest.StartSidecar(t)
 	eng, err := engine.New(natsURL, bridgeURL)

@@ -364,11 +364,23 @@ type ErrCompileFailure struct{ Cause error }
 func (e *ErrCompileFailure) Error() string { return "compile failure: " + e.Cause.Error() }
 func (e *ErrCompileFailure) Unwrap() error { return e.Cause }
 
+// ErrNoSteps signals that Update persisted the workflow's config (name,
+// steps, payload schema, critical) but skipped re-registering it with the
+// engine because the candidate has zero steps — dagnats rejects a 0-step
+// registration outright, so attempting it would either error or corrupt
+// state. The store write already happened by the time this is returned:
+// callers must not treat it as a failed save (M6). It is informational —
+// the workflow will not run until at least one step is added and saved
+// again — not a rejection of the write.
+var ErrNoSteps = errors.New("authoring: workflow has no steps to publish")
+
 // Update persists a new name/steps/payload_schema for the identified workflow,
 // recompiles the DAG, and re-registers it with the engine so edits take effect
 // on the next trigger. A step configuration that fails Compile (e.g. invalid
 // delay amount) is rejected with an ErrCompileFailure before any write occurs.
 // Returns store.ErrNotFound when the workflow does not exist in this scope.
+// Returns ErrNoSteps when in.Steps is empty: the config write still happens,
+// but engine re-registration is skipped (see ErrNoSteps).
 func (s *Service) Update(ctx context.Context, scope domain.Scope, slug string, in UpdateInput) (domain.Workflow, error) {
 	// Load the existing row to obtain its ID (required for the UPDATE predicate).
 	existing, err := s.store.Workflows().GetByTriggerIdentifier(ctx, scope, slug)
@@ -402,6 +414,13 @@ func (s *Service) Update(ctx context.Context, scope domain.Scope, slug string, i
 	// Persist.
 	if err := s.store.Workflows().Update(ctx, scope, candidate); err != nil {
 		return domain.Workflow{}, err
+	}
+
+	// A 0-step candidate cannot be registered (dagnats requires at least one
+	// step): skip registration rather than let the engine reject it, and
+	// signal ErrNoSteps so callers know the config write above succeeded.
+	if len(in.Steps) == 0 {
+		return candidate, ErrNoSteps
 	}
 
 	// Re-register the compiled DAG so in-flight triggers use the new definition.
