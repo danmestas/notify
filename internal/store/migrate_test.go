@@ -97,8 +97,8 @@ func businessTables(t *testing.T, s *Store) []string {
 func TestMigrate_0005_AppliesDigestKey(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 27 {
-		t.Fatalf("expected 26 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 28 {
+		t.Fatalf("expected 28 recorded migrations, got %d", n)
 	}
 
 	var found bool
@@ -128,5 +128,48 @@ func TestMigrate_0005_AppliesDigestKey(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("notifications table missing digest_key column")
+	}
+}
+
+// TestMigrate_0028_AddsWorkflowVersionSnapshotColumns proves migration 0028
+// is additive (workflow_versions gains steps/payload_schema/critical without
+// disturbing any existing column) and idempotent (re-opening the same db path
+// does not re-apply it or change the migration count).
+func TestMigrate_0028_AddsWorkflowVersionSnapshotColumns(t *testing.T) {
+	s := openTemp(t)
+
+	if n := migrationCount(t, s); n != 28 {
+		t.Fatalf("expected 28 recorded migrations, got %d", n)
+	}
+
+	want := map[string]bool{"steps": false, "payload_schema": false, "critical": false}
+	rows, err := s.reader.Query(`PRAGMA table_info(workflow_versions)`)
+	if err != nil {
+		t.Fatalf("pragma table_info: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			ctype      string
+			notnull    int
+			dflt       sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &primaryKey); err != nil {
+			t.Fatalf("scan column: %v", err)
+		}
+		if _, ok := want[name]; ok {
+			want[name] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows err: %v", err)
+	}
+	for col, found := range want {
+		if !found {
+			t.Fatalf("workflow_versions missing column %q", col)
+		}
 	}
 }

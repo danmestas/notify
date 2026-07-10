@@ -177,10 +177,11 @@
   </section>
 
   {{/* Version history / rollback panel (Wave 2). Versions render newest-first;
-       the newest is "current" (no rollback control). Rolling back re-registers
-       an earlier published version's compiled DAG byte-for-byte
-       (authoring.Service.Rollback) via a two-step inline confirm, matching
-       the delete confirm's ?confirmDelete= idiom. */}}
+       the newest is "current" (no rollback control). Rolling back restores
+       that version's whole editable snapshot — steps, name, payload schema,
+       critical (migration 0028) — and re-registers its compiled DAG
+       byte-for-byte (authoring.Service.Rollback) via a two-step inline
+       confirm, matching the delete confirm's ?confirmDelete= idiom. */}}
   {{if $page.VersionsAvailable}}
   <section class="console-card" aria-labelledby="wf-versions-heading" id="wf-version-history">
     <h2 id="wf-versions-heading" class="console-card-title">Version history</h2>
@@ -197,7 +198,7 @@
             <span class="chip chip-success">current</span>
             {{else if not $page.ReadOnly}}
               {{if eq $page.ConfirmRollback $v.ID}}
-              <span class="console-confirm-label">Roll back to v{{$v.Seq}}? This re-registers the live workflow immediately.</span>
+              <span class="console-confirm-label">Roll back to v{{$v.Seq}}? This restores the workflow to that version — steps, name, and settings — and re-registers it immediately.</span>
               <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}">Cancel</a>
               <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/rollback" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{$.CSRF}}">

@@ -23,6 +23,25 @@ type WorkflowVersion struct {
 	TriggerIdentifier string
 	CompiledDef       json.RawMessage
 	CreatedAt         string
+	// Steps, PayloadSchema, and Critical are the full editable-row snapshot
+	// added by migration 0028: the exact workflows.steps/payload_schema/
+	// critical values at the moment this version was published (Steps is the
+	// marshalled JSON of a domain.Step[]). Together with CompiledDef they let
+	// a version stand in for the whole workflow row, not just its compiled
+	// DAG — authoring.Service.Rollback restores workflows.steps/
+	// payload_schema/critical from these fields before re-registering
+	// CompiledDef, so delivery (which reads step CONTENT from workflows.steps
+	// at send time, internal/delivery/rebuild.go) and the engine (which runs
+	// the registered TOPOLOGY) agree again post-rollback.
+	//
+	// Steps == "" identifies a version captured before migration 0028 (the
+	// column defaults empty on ADD COLUMN and no code path wrote it before
+	// this change existed); Rollback treats that as "no snapshot available"
+	// and falls back to its pre-0028 compiled_def-only behavior rather than
+	// overwriting a live row with blank steps.
+	Steps         string
+	PayloadSchema string
+	Critical      bool
 }
 
 // WorkflowVersionRepo persists the per-publish compiled-DAG snapshot stack
@@ -40,12 +59,19 @@ type WorkflowVersionRepo interface {
 	// non-empty value; Create retires it by making it the live pointer to the
 	// latest published version instead of a second, independent marker.
 	//
+	// steps/payloadSchema/critical (migration 0028) are the editable-row
+	// snapshot: pass the workflow's current steps/payload_schema/critical (as
+	// published) so a later Rollback can restore the whole row, not just the
+	// compiled DAG. Pass steps="" only when there is no snapshot to record
+	// (the caller has no basis for one) — Rollback reads that back as "this
+	// version predates full-row snapshots."
+	//
 	// Retention: Create also caps the version stack at maxVersionsPerWorkflow
 	// (50) rows per workflow, pruning the oldest rows beyond that in the same
 	// transaction. The latest version is always retained, so LatestByWorkflow
 	// (RepublishAll's boot-time source of truth) is unaffected; Rollback is
 	// bounded to targeting a version still within that retained window.
-	Create(ctx context.Context, scope domain.Scope, workflowID, name, triggerIdentifier string, compiledDef json.RawMessage) (WorkflowVersion, error)
+	Create(ctx context.Context, scope domain.Scope, workflowID, name, triggerIdentifier string, compiledDef json.RawMessage, steps, payloadSchema string, critical bool) (WorkflowVersion, error)
 	// Get loads a single version row by id, scope-checked via a
 	// workflow_id -> workflows join so a cross-tenant version id returns
 	// ErrNotFound rather than leaking another tenant's compiled DAG.
@@ -77,7 +103,7 @@ type workflowVersionRepo struct {
 	r *sql.DB
 }
 
-func (repo *workflowVersionRepo) Create(ctx context.Context, scope domain.Scope, workflowID, name, triggerIdentifier string, compiledDef json.RawMessage) (WorkflowVersion, error) {
+func (repo *workflowVersionRepo) Create(ctx context.Context, scope domain.Scope, workflowID, name, triggerIdentifier string, compiledDef json.RawMessage, steps, payloadSchema string, critical bool) (WorkflowVersion, error) {
 	wv := WorkflowVersion{
 		ID:                newULID(),
 		WorkflowID:        workflowID,
@@ -85,6 +111,9 @@ func (repo *workflowVersionRepo) Create(ctx context.Context, scope domain.Scope,
 		TriggerIdentifier: triggerIdentifier,
 		CompiledDef:       compiledDef,
 		CreatedAt:         time.Now().UTC().Format(time.RFC3339Nano),
+		Steps:             steps,
+		PayloadSchema:     payloadSchema,
+		Critical:          critical,
 	}
 	// The seq allocation, its read-back, and the compiled_dag_version repoint
 	// run in one transaction so the version row and the workflow's
@@ -103,10 +132,11 @@ func (repo *workflowVersionRepo) Create(ctx context.Context, scope domain.Scope,
 	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO workflow_versions
-		   (id, workflow_id, seq, name, trigger_identifier, compiled_def, created_at)
-		 SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?
+		   (id, workflow_id, seq, name, trigger_identifier, compiled_def, created_at, steps, payload_schema, critical)
+		 SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ?
 		   FROM workflow_versions WHERE workflow_id = ?`,
-		wv.ID, wv.WorkflowID, wv.Name, wv.TriggerIdentifier, string(wv.CompiledDef), wv.CreatedAt, wv.WorkflowID,
+		wv.ID, wv.WorkflowID, wv.Name, wv.TriggerIdentifier, string(wv.CompiledDef), wv.CreatedAt,
+		wv.Steps, wv.PayloadSchema, wv.Critical, wv.WorkflowID,
 	); err != nil {
 		return WorkflowVersion{}, err
 	}
@@ -163,13 +193,14 @@ func (repo *workflowVersionRepo) LatestByWorkflow(ctx context.Context, workflowI
 	)
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, workflow_id, seq, name, trigger_identifier, compiled_def, created_at
+		`SELECT id, workflow_id, seq, name, trigger_identifier, compiled_def, created_at, steps, payload_schema, critical
 		 FROM workflow_versions
 		 WHERE workflow_id = ?
 		 ORDER BY seq DESC
 		 LIMIT 1`,
 		workflowID,
-	).Scan(&wv.ID, &wv.WorkflowID, &wv.Seq, &wv.Name, &wv.TriggerIdentifier, &compiledDef, &wv.CreatedAt)
+	).Scan(&wv.ID, &wv.WorkflowID, &wv.Seq, &wv.Name, &wv.TriggerIdentifier, &compiledDef, &wv.CreatedAt,
+		&wv.Steps, &wv.PayloadSchema, &wv.Critical)
 	if errors.Is(err, sql.ErrNoRows) {
 		return WorkflowVersion{}, ErrNotFound
 	}
@@ -187,12 +218,13 @@ func (repo *workflowVersionRepo) Get(ctx context.Context, scope domain.Scope, ve
 	)
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT wv.id, wv.workflow_id, wv.seq, wv.name, wv.trigger_identifier, wv.compiled_def, wv.created_at
+		`SELECT wv.id, wv.workflow_id, wv.seq, wv.name, wv.trigger_identifier, wv.compiled_def, wv.created_at, wv.steps, wv.payload_schema, wv.critical
 		 FROM workflow_versions wv
 		 JOIN workflows w ON w.id = wv.workflow_id
 		 WHERE wv.id = ? AND w.org_id = ? AND w.environment_id = ?`,
 		versionID, scope.OrgID, scope.EnvID,
-	).Scan(&wv.ID, &wv.WorkflowID, &wv.Seq, &wv.Name, &wv.TriggerIdentifier, &compiledDef, &wv.CreatedAt)
+	).Scan(&wv.ID, &wv.WorkflowID, &wv.Seq, &wv.Name, &wv.TriggerIdentifier, &compiledDef, &wv.CreatedAt,
+		&wv.Steps, &wv.PayloadSchema, &wv.Critical)
 	if errors.Is(err, sql.ErrNoRows) {
 		return WorkflowVersion{}, ErrNotFound
 	}
@@ -206,7 +238,7 @@ func (repo *workflowVersionRepo) Get(ctx context.Context, scope domain.Scope, ve
 func (repo *workflowVersionRepo) ListByWorkflow(ctx context.Context, scope domain.Scope, workflowID string) ([]WorkflowVersion, error) {
 	rows, err := repo.r.QueryContext(
 		ctx,
-		`SELECT wv.id, wv.workflow_id, wv.seq, wv.name, wv.trigger_identifier, wv.compiled_def, wv.created_at
+		`SELECT wv.id, wv.workflow_id, wv.seq, wv.name, wv.trigger_identifier, wv.compiled_def, wv.created_at, wv.steps, wv.payload_schema, wv.critical
 		 FROM workflow_versions wv
 		 JOIN workflows w ON w.id = wv.workflow_id
 		 WHERE wv.workflow_id = ? AND w.org_id = ? AND w.environment_id = ?
@@ -223,7 +255,8 @@ func (repo *workflowVersionRepo) ListByWorkflow(ctx context.Context, scope domai
 			wv          WorkflowVersion
 			compiledDef []byte
 		)
-		if err := rows.Scan(&wv.ID, &wv.WorkflowID, &wv.Seq, &wv.Name, &wv.TriggerIdentifier, &compiledDef, &wv.CreatedAt); err != nil {
+		if err := rows.Scan(&wv.ID, &wv.WorkflowID, &wv.Seq, &wv.Name, &wv.TriggerIdentifier, &compiledDef, &wv.CreatedAt,
+			&wv.Steps, &wv.PayloadSchema, &wv.Critical); err != nil {
 			return nil, err
 		}
 		wv.CompiledDef = compiledDef

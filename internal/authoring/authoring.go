@@ -200,31 +200,52 @@ func (s *Service) Publish(ctx context.Context, scope domain.Scope, triggerIdenti
 	if err := s.eng.RegisterWorkflow(ctx, def); err != nil {
 		return err
 	}
-	return s.recordVersion(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, def)
+	return s.recordVersion(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, wf.Steps, wf.PayloadSchema, wf.Critical, def)
 }
 
 // recordVersion marshals def (the exact bytes just registered with the
-// engine) and appends it to the workflow's version stack. Shared by Publish
-// and Rollback — rollback is itself a publish, so it too grows the
-// append-only stack rather than mutating history. name/triggerIdentifier are
-// the metadata stored alongside the def: Rollback passes the ROLLED-BACK
-// version's name/trigger (not the current live row's) so the audit row
-// describes the def it actually carries.
-func (s *Service) recordVersion(ctx context.Context, scope domain.Scope, workflowID, name, triggerIdentifier string, def engine.WorkflowDef) error {
+// engine) and appends it, together with the full editable-row snapshot
+// (steps/payloadSchema/critical — migration 0028), to the workflow's version
+// stack. Shared by Publish and Rollback — rollback is itself a publish, so it
+// too grows the append-only stack rather than mutating history.
+// name/triggerIdentifier are the metadata stored alongside the def: Rollback
+// passes the ROLLED-BACK version's name/trigger (not the current live row's)
+// so the audit row describes the def it actually carries. steps/
+// payloadSchema/critical make each version a complete snapshot of the
+// editable workflow row at the moment it was published, not just its
+// compiled DAG — this is what lets Rollback restore the whole row (see
+// Rollback) instead of only re-registering the engine def.
+func (s *Service) recordVersion(ctx context.Context, scope domain.Scope, workflowID, name, triggerIdentifier string, steps, payloadSchema json.RawMessage, critical bool, def engine.WorkflowDef) error {
 	defJSON, err := json.Marshal(def)
 	if err != nil {
 		return fmt.Errorf("authoring: marshal compiled def: %w", err)
 	}
-	if _, err := s.store.WorkflowVersions().Create(ctx, scope, workflowID, name, triggerIdentifier, defJSON); err != nil {
+	if _, err := s.store.WorkflowVersions().Create(ctx, scope, workflowID, name, triggerIdentifier, defJSON, string(steps), string(payloadSchema), critical); err != nil {
 		return fmt.Errorf("authoring: record version: %w", err)
 	}
 	return nil
 }
 
-// Rollback re-registers an earlier published version's compiled DAG
-// byte-for-byte (skipping Compile — the persisted compiled_def IS the def
-// that was registered) and appends a new version row copying it, keeping the
-// version stack append-only and auditable: a rollback is itself a publish.
+// Rollback restores an earlier published version's FULL editable snapshot —
+// steps, name, payload_schema, critical (migration 0028) — and re-registers
+// its compiled DAG byte-for-byte (skipping Compile — the persisted
+// compiled_def IS the def that was registered), then appends a new version
+// row copying that snapshot, keeping the version stack append-only and
+// auditable: a rollback is itself a publish.
+//
+// Restoring the whole row (not just re-registering the def) fixes a
+// correctness bug, not just a UI-honesty gap: delivery reads step CONTENT
+// from the live workflows.steps row at send time
+// (internal/delivery/rebuild.go), not from the compiled def. A rollback that
+// only re-registered compiled_def would run the ROLLED-BACK version's
+// TOPOLOGY (step ids, ordering) against the CURRENT row's CONTENT — a hybrid
+// that errors outright at delivery when a later edit renamed or removed a
+// step id the older def still references (H8).
+//
+// A version captured before migration 0028 (ver.Steps == "", the column's
+// ADD COLUMN default) carries no snapshot to restore from: Rollback falls
+// back to the original engine-only behavior — register the compiled def,
+// leave the editable row untouched — rather than blank workflows.steps.
 //
 // versionID is scope-checked via a workflow_id -> workflows join
 // (store.WorkflowVersionRepo.Get) and, additionally, checked against the
@@ -247,19 +268,44 @@ func (s *Service) Rollback(ctx context.Context, scope domain.Scope, triggerIdent
 	if err := json.Unmarshal(ver.CompiledDef, &def); err != nil {
 		return fmt.Errorf("authoring: unmarshal version %s: %w", versionID, err)
 	}
+
+	// steps/payloadSchema/critical default to the LIVE row's current values
+	// and are only overwritten below when ver carries a full-row snapshot;
+	// this makes the pre-0028 fallback record its new version entry against
+	// the (untouched) live row rather than blank values.
+	steps, payloadSchema, critical := wf.Steps, wf.PayloadSchema, wf.Critical
+
+	if ver.Steps != "" {
+		restored := wf
+		restored.Name = ver.Name
+		restored.Steps = json.RawMessage(ver.Steps)
+		restored.PayloadSchema = json.RawMessage(ver.PayloadSchema)
+		restored.Critical = ver.Critical
+		if err := s.store.Workflows().Update(ctx, scope, restored); err != nil {
+			return fmt.Errorf("authoring: restore editable row for rollback: %w", err)
+		}
+		steps, payloadSchema, critical = restored.Steps, restored.PayloadSchema, restored.Critical
+	} else {
+		slog.Default().Warn("authoring: rollback target predates full-row snapshots (migration 0028); registering compiled def only, editable row left unchanged",
+			"workflow_id", wf.ID, "trigger_identifier", triggerIdentifier, "version_id", versionID)
+	}
+
 	// Mirrors Publish's nil-engine store-only wiring: no live engine means
-	// there is nothing to re-register.
+	// there is nothing to re-register (the row restore above, when it
+	// happened, still stands — it is a pure store operation independent of
+	// engine wiring).
 	if s.eng == nil {
 		return nil
 	}
 	if err := s.eng.RegisterWorkflow(ctx, def); err != nil {
 		return fmt.Errorf("authoring: rollback register: %w", err)
 	}
-	// Append the rolled-back def as the new latest version, tagged with the
-	// version it restored (ver.Name/TriggerIdentifier) so the audit row and
-	// RepublishAll's boot-time re-registration both track v1's def, not the
-	// current live row's.
-	return s.recordVersion(ctx, scope, wf.ID, ver.Name, ver.TriggerIdentifier, def)
+	// Append the rolled-back def (and, when available, its full-row snapshot)
+	// as the new latest version, tagged with the version it restored
+	// (ver.Name/TriggerIdentifier) so the audit row and RepublishAll's
+	// boot-time re-registration both track v1's def, not the current live
+	// row's.
+	return s.recordVersion(ctx, scope, wf.ID, ver.Name, ver.TriggerIdentifier, steps, payloadSchema, critical, def)
 }
 
 // RepublishAll re-registers every persisted workflow with the engine. It is

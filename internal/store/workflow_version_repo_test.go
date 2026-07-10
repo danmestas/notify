@@ -28,7 +28,7 @@ func TestWorkflowVersionRepo_CreateAllocatesIncreasingSeq(t *testing.T) {
 	}
 
 	repo := s.WorkflowVersions()
-	v1, err := repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome","steps":[]}`))
+	v1, err := repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome","steps":[]}`), "[]", "", false)
 	if err != nil {
 		t.Fatalf("Create v1: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestWorkflowVersionRepo_CreateAllocatesIncreasingSeq(t *testing.T) {
 		t.Fatalf("v1.Seq = %d, want 1", v1.Seq)
 	}
 
-	v2, err := repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome","steps":[{"id":"S1"}]}`))
+	v2, err := repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome","steps":[{"id":"S1"}]}`), `[{"stepId":"S1"}]`, "", false)
 	if err != nil {
 		t.Fatalf("Create v2: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestWorkflowVersionRepo_Get_CrossTenant404s(t *testing.T) {
 	}
 
 	repo := s.WorkflowVersions()
-	v1, err := repo.Create(ctx, scopeA, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome"}`))
+	v1, err := repo.Create(ctx, scopeA, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome"}`), "[]", "", false)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestWorkflowVersions_RetentionCap(t *testing.T) {
 	repo := s.WorkflowVersions()
 	var last WorkflowVersion
 	for i := 0; i < 55; i++ {
-		last, err = repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome","steps":[]}`))
+		last, err = repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome","steps":[]}`), "[]", "", false)
 		if err != nil {
 			t.Fatalf("Create #%d: %v", i+1, err)
 		}
@@ -196,12 +196,12 @@ func TestWorkflowVersions_RetentionCap_PerWorkflowIsolation(t *testing.T) {
 
 	repo := s.WorkflowVersions()
 	for i := 0; i < 55; i++ {
-		if _, err := repo.Create(ctx, scope, wfA.ID, wfA.Name, wfA.TriggerIdentifier, json.RawMessage(`{"name":"a"}`)); err != nil {
+		if _, err := repo.Create(ctx, scope, wfA.ID, wfA.Name, wfA.TriggerIdentifier, json.RawMessage(`{"name":"a"}`), "[]", "", false); err != nil {
 			t.Fatalf("Create A #%d: %v", i+1, err)
 		}
 	}
 	for i := 0; i < 55; i++ {
-		if _, err := repo.Create(ctx, scope, wfB.ID, wfB.Name, wfB.TriggerIdentifier, json.RawMessage(`{"name":"b"}`)); err != nil {
+		if _, err := repo.Create(ctx, scope, wfB.ID, wfB.Name, wfB.TriggerIdentifier, json.RawMessage(`{"name":"b"}`), "[]", "", false); err != nil {
 			t.Fatalf("Create B #%d: %v", i+1, err)
 		}
 	}
@@ -248,7 +248,7 @@ func TestWorkflowVersions_UnderCap_NoPrune(t *testing.T) {
 
 	repo := s.WorkflowVersions()
 	for i := 0; i < 10; i++ {
-		if _, err := repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome"}`)); err != nil {
+		if _, err := repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome"}`), "[]", "", false); err != nil {
 			t.Fatalf("Create #%d: %v", i+1, err)
 		}
 	}
@@ -286,7 +286,7 @@ func TestWorkflowVersions_RollbackWithinRetainedWindow_StillResolves(t *testing.
 	repo := s.WorkflowVersions()
 	var versions []WorkflowVersion
 	for i := 0; i < 55; i++ {
-		v, err := repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome"}`))
+		v, err := repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"name":"env-a-welcome"}`), "[]", "", false)
 		if err != nil {
 			t.Fatalf("Create #%d: %v", i+1, err)
 		}
@@ -310,5 +310,107 @@ func TestWorkflowVersions_RollbackWithinRetainedWindow_StillResolves(t *testing.
 	pruned := versions[0]
 	if _, err := repo.Get(ctx, scope, pruned.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Get pruned version err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestWorkflowVersionRepo_Create_PersistsSnapshotFields proves migration
+// 0028's steps/payload_schema/critical columns round-trip through Create and
+// every read path (Get, ListByWorkflow, LatestByWorkflow): a version is a
+// full snapshot of the editable workflow row, not just the compiled def.
+func TestWorkflowVersionRepo_Create_PersistsSnapshotFields(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "org-1", EnvID: "env-a"}
+
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome",
+		Steps:             json.RawMessage(`[]`),
+	})
+	if err != nil {
+		t.Fatalf("Workflows().Create: %v", err)
+	}
+
+	const (
+		wantSteps         = `[{"stepId":"S1","type":"in_app","controlValues":{"body":"hi"}}]`
+		wantPayloadSchema = `{"type":"object"}`
+	)
+	repo := s.WorkflowVersions()
+	v1, err := repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier,
+		json.RawMessage(`{"name":"env-a-welcome","steps":[{"id":"S1"}]}`), wantSteps, wantPayloadSchema, true)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if v1.Steps != wantSteps {
+		t.Fatalf("Create result Steps = %q, want %q", v1.Steps, wantSteps)
+	}
+	if v1.PayloadSchema != wantPayloadSchema {
+		t.Fatalf("Create result PayloadSchema = %q, want %q", v1.PayloadSchema, wantPayloadSchema)
+	}
+	if !v1.Critical {
+		t.Fatal("Create result Critical = false, want true")
+	}
+
+	got, err := repo.Get(ctx, scope, v1.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Steps != wantSteps || got.PayloadSchema != wantPayloadSchema || !got.Critical {
+		t.Fatalf("Get = %+v, want Steps=%q PayloadSchema=%q Critical=true", got, wantSteps, wantPayloadSchema)
+	}
+
+	listed, err := repo.ListByWorkflow(ctx, scope, wf.ID)
+	if err != nil {
+		t.Fatalf("ListByWorkflow: %v", err)
+	}
+	if len(listed) != 1 || listed[0].Steps != wantSteps || listed[0].PayloadSchema != wantPayloadSchema || !listed[0].Critical {
+		t.Fatalf("ListByWorkflow = %+v, want one row with Steps=%q PayloadSchema=%q Critical=true", listed, wantSteps, wantPayloadSchema)
+	}
+
+	latest, err := repo.LatestByWorkflow(ctx, wf.ID)
+	if err != nil {
+		t.Fatalf("LatestByWorkflow: %v", err)
+	}
+	if latest.Steps != wantSteps || latest.PayloadSchema != wantPayloadSchema || !latest.Critical {
+		t.Fatalf("LatestByWorkflow = %+v, want Steps=%q PayloadSchema=%q Critical=true", latest, wantSteps, wantPayloadSchema)
+	}
+}
+
+// TestWorkflowVersionRepo_Create_EmptySnapshotFieldsMeansPre0028 proves a
+// version created with an empty steps string (simulating a row captured
+// before migration 0028 introduced the snapshot columns) round-trips as
+// empty rather than erroring or substituting a default — this is the exact
+// signal authoring.Service.Rollback uses to detect a pre-0028 version and
+// fall back to its old compiled_def-only restore behavior.
+func TestWorkflowVersionRepo_Create_EmptySnapshotFieldsMeansPre0028(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "org-1", EnvID: "env-a"}
+
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome",
+		Steps:             json.RawMessage(`[]`),
+	})
+	if err != nil {
+		t.Fatalf("Workflows().Create: %v", err)
+	}
+
+	repo := s.WorkflowVersions()
+	v1, err := repo.Create(ctx, scope, wf.ID, wf.Name, wf.TriggerIdentifier,
+		json.RawMessage(`{"name":"env-a-welcome"}`), "", "", false)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if v1.Steps != "" {
+		t.Fatalf("Steps = %q, want empty (pre-0028 signal)", v1.Steps)
+	}
+
+	got, err := repo.Get(ctx, scope, v1.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Steps != "" {
+		t.Fatalf("Get Steps = %q, want empty (pre-0028 signal)", got.Steps)
 	}
 }

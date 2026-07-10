@@ -2894,7 +2894,7 @@ func TestWorkflowDetail_VersionsNewestIsCurrent(t *testing.T) {
 	ctx := context.Background()
 	for i := 1; i <= 3; i++ {
 		if _, err := tc.st.WorkflowVersions().Create(ctx, tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier,
-			json.RawMessage(`{"v":`+strconv.Itoa(i)+`}`)); err != nil {
+			json.RawMessage(`{"v":`+strconv.Itoa(i)+`}`), "[]", "", false); err != nil {
 			t.Fatalf("seed version %d: %v", i, err)
 		}
 	}
@@ -2944,11 +2944,11 @@ func TestWorkflowDetail_ConfirmRollbackShowsForm(t *testing.T) {
 	tc := newTestConsole(t)
 	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
 	ctx := context.Background()
-	v1, err := tc.st.WorkflowVersions().Create(ctx, tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`))
+	v1, err := tc.st.WorkflowVersions().Create(ctx, tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`), "[]", "", false)
 	if err != nil {
 		t.Fatalf("seed version: %v", err)
 	}
-	if _, err := tc.st.WorkflowVersions().Create(ctx, tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":2}`)); err != nil {
+	if _, err := tc.st.WorkflowVersions().Create(ctx, tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":2}`), "[]", "", false); err != nil {
 		t.Fatalf("seed version 2: %v", err)
 	}
 	cookie, _ := tc.login(t)
@@ -2964,8 +2964,8 @@ func TestWorkflowDetail_ConfirmRollbackShowsForm(t *testing.T) {
 	if !strings.Contains(body, "Confirm roll back") {
 		t.Errorf("confirm rollback form missing 'Confirm roll back' button")
 	}
-	if !strings.Contains(body, "re-registers the live workflow immediately") {
-		t.Errorf("confirm rollback label missing immediate-effect warning copy (body: %s)", body)
+	if !strings.Contains(body, "restores the workflow to that version") {
+		t.Errorf("confirm rollback label missing full-restore warning copy (body: %s)", body)
 	}
 }
 
@@ -3004,7 +3004,7 @@ func TestWorkflowDetail_VersionsListErrorShowsDistinctMessage(t *testing.T) {
 func TestWorkflowRollback_NoCSRF403(t *testing.T) {
 	tc := newTestConsole(t)
 	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
-	v1, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`))
+	v1, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`), "[]", "", false)
 	if err != nil {
 		t.Fatalf("seed version: %v", err)
 	}
@@ -3047,7 +3047,7 @@ func TestWorkflowRollback_CrossScopeVersionID404s(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed alt-scope workflow: %v", err)
 	}
-	altVersion, err := tc.st.WorkflowVersions().Create(context.Background(), altScope, otherWF.ID, otherWF.Name, otherWF.TriggerIdentifier, json.RawMessage(`{"v":1}`))
+	altVersion, err := tc.st.WorkflowVersions().Create(context.Background(), altScope, otherWF.ID, otherWF.Name, otherWF.TriggerIdentifier, json.RawMessage(`{"v":1}`), "[]", "", false)
 	if err != nil {
 		t.Fatalf("seed alt-scope version: %v", err)
 	}
@@ -3072,7 +3072,7 @@ func TestWorkflowRollback_CrossWorkflowSameScope404s(t *testing.T) {
 	tc := newTestConsole(t)
 	tc.seedWorkflow(t, "My WF", "my-wf")
 	otherWF := tc.seedWorkflowAndReturn(t, "Other WF", "other-wf")
-	otherVersion, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, otherWF.ID, otherWF.Name, otherWF.TriggerIdentifier, json.RawMessage(`{"v":1}`))
+	otherVersion, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, otherWF.ID, otherWF.Name, otherWF.TriggerIdentifier, json.RawMessage(`{"v":1}`), "[]", "", false)
 	if err != nil {
 		t.Fatalf("seed other-workflow version: %v", err)
 	}
@@ -3096,7 +3096,7 @@ func TestWorkflowRollback_CrossWorkflowSameScope404s(t *testing.T) {
 func TestWorkflowRollback_HappyPathRedirects(t *testing.T) {
 	tc := newTestConsole(t)
 	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
-	v1, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`))
+	v1, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`), "[]", "", false)
 	if err != nil {
 		t.Fatalf("seed version: %v", err)
 	}
@@ -3117,7 +3117,7 @@ func TestWorkflowRollback_HappyPathRedirects(t *testing.T) {
 func TestWorkflowRollback_ReadOnlyBlocked(t *testing.T) {
 	tc := newTestConsoleReadOnly(t)
 	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
-	v1, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`))
+	v1, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`), "[]", "", false)
 	if err != nil {
 		t.Fatalf("seed version: %v", err)
 	}
@@ -3135,10 +3135,10 @@ func TestWorkflowRollback_ReadOnlyBlocked(t *testing.T) {
 func TestWorkflowDetail_ReadOnlyNoRollbackButtons(t *testing.T) {
 	tc := newTestConsoleReadOnly(t)
 	wf := tc.seedWorkflowAndReturn(t, "My WF", "my-wf")
-	if _, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`)); err != nil {
+	if _, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":1}`), "[]", "", false); err != nil {
 		t.Fatalf("seed version: %v", err)
 	}
-	if _, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":2}`)); err != nil {
+	if _, err := tc.st.WorkflowVersions().Create(context.Background(), tc.scope, wf.ID, wf.Name, wf.TriggerIdentifier, json.RawMessage(`{"v":2}`), "[]", "", false); err != nil {
 		t.Fatalf("seed version 2: %v", err)
 	}
 	cookie, _ := tc.login(t)
