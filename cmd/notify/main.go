@@ -37,6 +37,7 @@ import (
 	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/eventbus"
 	"github.com/danmestas/notify/internal/feedapi"
+	"github.com/danmestas/notify/internal/feedingest"
 	"github.com/danmestas/notify/internal/httpapi"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inbound"
@@ -46,6 +47,7 @@ import (
 	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/replyhook"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/streamsource"
 	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/version"
 	"github.com/danmestas/notify/internal/webhooksout"
@@ -378,6 +380,12 @@ func runServe(args []string) error {
 	inbox := inboxapi.New(st)
 	rt := realtime.New(bus)
 	feed := feedapi.New(bus)
+	// Inbound webhook-push: the source service (per-source secret lifecycle,
+	// under the same master key as identity/connectivity) plus the ingest
+	// gateway that authenticates SourceKeys, limits, normalizes, and publishes
+	// batches into the durable feed.
+	srcSvc := streamsource.New(st, mk)
+	srcIngest := feedingest.New(srcSvc, bus)
 	inb := inbound.New(trg)
 	ag := agentsapi.New(ags)
 
@@ -397,7 +405,7 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = anStop() }()
 
-	handler := httpapi.New(id, aud, trg, inbox, rt, feed, inb, an, ag, ing, conn, st, ev, eml, au)
+	handler := httpapi.New(id, aud, trg, inbox, rt, feed, inb, an, ag, ing, conn, st, ev, eml, srcIngest, au)
 
 	// Operator console: same listener, mounted at /console ahead of the
 	// public API. All console reads go through the same Scope-carrying

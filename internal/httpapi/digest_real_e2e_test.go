@@ -84,7 +84,7 @@ func newDigestHarness(t *testing.T) *digestHarness {
 	}
 
 	h := &digestHarness{authHeader: "ApiKey " + key}
-	h.srv = httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil))
+	h.srv = httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil))
 	t.Cleanup(h.srv.Close)
 	h.ctx = ctx
 	h.auth = auth

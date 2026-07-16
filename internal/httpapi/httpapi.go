@@ -24,6 +24,7 @@ import (
 	"github.com/danmestas/notify/internal/emailloop"
 	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/feedapi"
+	"github.com/danmestas/notify/internal/feedingest"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inbound"
 	"github.com/danmestas/notify/internal/inbounddomains"
@@ -44,7 +45,10 @@ import (
 // (GET/POST /v1/webhooks/endpoints, GET/PUT/DELETE /v1/webhooks/endpoints/{id}).
 // feed may be nil; when non-nil it enables the durable stream-channel feed
 // SSE route (GET /v1/feed/stream).
-func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, feed *feedapi.Gateway, inb *inbound.Service, an *analytics.Service, ag *agentsapi.Service, ing *ingress.Service, conn *connectivity.Service, st *store.Store, ev *envvars.Service, eml *emailloop.Service, auth ...*authoring.Service) http.Handler {
+// src may be nil; when non-nil it enables the inbound webhook-push ingest route
+// (POST /v1/sources/{sourceID}/events), mounted OUTSIDE the identity.Middleware
+// group with its own per-source SourceKey auth.
+func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, feed *feedapi.Gateway, inb *inbound.Service, an *analytics.Service, ag *agentsapi.Service, ing *ingress.Service, conn *connectivity.Service, st *store.Store, ev *envvars.Service, eml *emailloop.Service, src *feedingest.Gateway, auth ...*authoring.Service) http.Handler {
 	if len(auth) > 1 {
 		panic("httpapi.New: at most one *authoring.Service")
 	}
@@ -78,6 +82,13 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 	// unmounted.
 	if eml != nil {
 		r.Post("/v1/inbound/email", eml.HandleInbound)
+	}
+	// Inbound webhook-push ingest. Mounted OUTSIDE the API-key group: an external
+	// producer holds a per-source SourceKey, not a console ApiKey, and the
+	// handler authenticates that scheme itself. A nil gateway leaves the route
+	// unmounted.
+	if src != nil {
+		src.Routes(r)
 	}
 	r.Group(func(pr chi.Router) {
 		pr.Use(id.Middleware)

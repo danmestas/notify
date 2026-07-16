@@ -29,7 +29,7 @@ func startInboundDomainsServer(t *testing.T) (*httptest.Server, string) {
 	if err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	h := httpapi.New(id, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, st, nil, nil)
+	h := httpapi.New(id, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, st, nil, nil, nil)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return srv, "ApiKey " + key

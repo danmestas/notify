@@ -36,7 +36,7 @@ func startContextServer(t *testing.T) (*httptest.Server, string) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 	inbox := inboxapi.New(st)
-	handler := httpapi.New(id, nil, nil, inbox, nil, nil, nil, nil, nil, nil, nil, st, nil, nil)
+	handler := httpapi.New(id, nil, nil, inbox, nil, nil, nil, nil, nil, nil, nil, st, nil, nil, nil)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	return srv, "ApiKey " + key
@@ -148,7 +148,7 @@ func TestContexts_ScopeIsolation(t *testing.T) {
 	}
 
 	inbox := inboxapi.New(st)
-	handler := httpapi.New(id, nil, nil, inbox, nil, nil, nil, nil, nil, nil, nil, st, nil, nil)
+	handler := httpapi.New(id, nil, nil, inbox, nil, nil, nil, nil, nil, nil, nil, st, nil, nil, nil)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 

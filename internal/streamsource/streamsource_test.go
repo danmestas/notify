@@ -253,3 +253,36 @@ func TestService_SetActiveAndDelete(t *testing.T) {
 		t.Fatalf("Get after delete: want ErrNotFound, got %v", err)
 	}
 }
+
+func TestService_TouchActivity(t *testing.T) {
+	ctx := context.Background()
+	svc, scope := newTestService(t)
+
+	src, _, err := svc.Create(ctx, scope, "relay", "orders")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// TouchActivity is fire-and-forget (no return); the write is observable via Get.
+	svc.TouchActivity(ctx, src.ID, "2026-07-15T00:00:00Z", "")
+	got, err := svc.Get(ctx, scope, src.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.LastEventAt != "2026-07-15T00:00:00Z" {
+		t.Fatalf("LastEventAt = %q, want the touched value", got.LastEventAt)
+	}
+	if got.LastError != "" {
+		t.Fatalf("LastError = %q, want empty", got.LastError)
+	}
+
+	// A rejection touch records the reason without clearing forward progress.
+	svc.TouchActivity(ctx, src.ID, "2026-07-15T00:01:00Z", "rate limited")
+	got, _ = svc.Get(ctx, scope, src.ID)
+	if got.LastError != "rate limited" {
+		t.Fatalf("LastError = %q, want %q", got.LastError, "rate limited")
+	}
+
+	// An unknown id is a silent no-op (best-effort contract), never a panic/error.
+	svc.TouchActivity(ctx, "does-not-exist", "x", "y")
+}

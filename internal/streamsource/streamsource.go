@@ -184,6 +184,17 @@ func (svc *Service) Delete(ctx context.Context, scope domain.Scope, id string) e
 	return svc.store.StreamSources().Delete(ctx, scope, id)
 }
 
+// TouchActivity records best-effort ingest activity (last event time and last
+// rejection reason) on a source by id. It is the fire-and-forget hot-path write
+// the ingest handler makes after publishing (or after rejecting) a batch: the
+// id already came from an authenticated source row, so the write is unscoped,
+// and the underlying repo error is intentionally swallowed — this method has no
+// return because a failed activity write must never block or fail an ingest
+// response (feedingest.SourceToucher relies on that contract).
+func (svc *Service) TouchActivity(ctx context.Context, id, lastEventAt, lastError string) {
+	_ = svc.store.StreamSources().TouchActivity(ctx, id, lastEventAt, lastError)
+}
+
 // UpdateLimits clamps the four ingest limits into their guardrail range and
 // persists them, scope-checked. Non-positive values fall back to the default
 // for that field; rate and byte budget are ceilinged so a tenant cannot edit
