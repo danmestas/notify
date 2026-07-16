@@ -28,6 +28,7 @@ import (
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/streamsource"
 	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/webhooksout"
 )
@@ -134,6 +135,13 @@ type Deps struct {
 	// allowed only when no integration mutation routes are mounted; in
 	// practice New panics when Integrations is non-nil and Connectivity is nil.
 	Connectivity *connectivity.Service
+	// StreamSources is the inbound webhook-push source service backing the
+	// Stream Sources console page (S5): per-source secret lifecycle (create →
+	// reveal-once, rotate → new reveal), topic scoping, ingest limits. Every
+	// call is scope-checked. Required — New panics when nil, mirroring the
+	// other core services, because the stream-sources routes are always
+	// mounted and would nil-panic on first request otherwise.
+	StreamSources *streamsource.Service
 	// Audience is the audience service for subscriber and topic management
 	// (W2-C3, W2-C4, W2-C5). Nil is allowed only when no subscriber/topic
 	// routes are mounted; in practice New panics when Audience is nil.
@@ -298,6 +306,9 @@ func New(deps Deps) *Console {
 	}
 	if deps.Integrations != nil && deps.Connectivity == nil {
 		panic("console.New: Connectivity must be set when Integrations is provided")
+	}
+	if deps.StreamSources == nil {
+		panic("console.New: deps.StreamSources is nil")
 	}
 	if deps.Audience == nil {
 		panic("console.New: deps.Audience is nil")
@@ -487,6 +498,17 @@ func (c *Console) Routes() http.Handler {
 		pr.Get("/console/api/fragments/integration-detail", c.serveFragmentIntegrationDetail)
 		pr.Get("/console/api/fragments/integration-activity", c.serveFragmentIntegrationActivity)
 		pr.Get("/console/api/fragments/integration-provider-form", c.serveFragmentIntegrationProviderForm)
+		// S5: stream sources (inbound webhook-push). Management is console-only
+		// (no REST CRUD); every handler scopes via the console session and calls
+		// through streamsource.Service. Native POST→303 forms; the secret is
+		// revealed once via the create/rotate redirect.
+		pr.Get("/console/stream-sources", c.serveStreamSourcesPage)
+		pr.Post("/console/stream-sources", c.handleStreamSourceCreate)
+		pr.Post("/console/stream-sources/{id}", c.handleStreamSourceUpdateLimits)
+		pr.Post("/console/stream-sources/{id}/rotate", c.handleStreamSourceRotate)
+		pr.Post("/console/stream-sources/{id}/delete", c.handleStreamSourceDelete)
+		pr.Post("/console/stream-sources/{id}/active", c.handleStreamSourceToggleActive)
+		pr.Get("/console/api/fragments/stream-sources-list", c.serveFragmentStreamSourcesList)
 		// W2-C3: subscriber management
 		pr.Get("/console/subscribers", c.serveSubscribersPage)
 		pr.Get("/console/subscribers/new", c.serveSubscriberNew)

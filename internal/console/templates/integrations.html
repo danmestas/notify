@@ -60,6 +60,13 @@
       </button>
     </nav>
 
+    {{/* Signpost to the inbound stream-sources catalog. Inbound webhook-push
+         sources are NOT rows in this outbound catalog (different lifecycle) —
+         this is a wayfinding link, not a channel filter. */}}
+    <a class="integration-tab integration-signpost-link" href="/console/stream-sources">
+      Stream sources {{ uiIcon "arrow-right" }}
+    </a>
+
     {{if not $page.ReadOnly}}
     {{/* Primary create action — sits in the toolbar's action slot, right-aligned,
          matching the "+ New" CTA on the other list pages. */}}

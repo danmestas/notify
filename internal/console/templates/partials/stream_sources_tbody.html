@@ -1,0 +1,110 @@
+{{/*
+  stream-sources-tbody — PatchElements fragment target for the stream sources
+  list. Binds streamSourcesListView. Row actions are native POST→303 forms;
+  the inline confirm-delete and edit-limits rows are toggled by @get params
+  (confirmDelete / editLimits), mirroring the webhooks tbody.
+*/}}
+{{define "stream-sources-tbody"}}{{$v := .}}
+<div id="stream-sources-tbody" data-component="stream-sources-tbody">
+  {{if eq (len $v.Rows) 0}}
+  {{template "empty-state" $v.Empty}}
+  {{else}}
+  <table class="console-table">
+    <thead>
+      <tr>
+        <th>Source</th>
+        <th>Topic</th>
+        <th>Secret</th>
+        <th>Limits</th>
+        <th>Activity</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range $v.Rows}}
+      {{if eq $v.EditLimits .ID}}
+      {{/* Inline limits edit form row — native POST → 303. */}}
+      <tr id="stream-source-row-{{.ID}}" class="edit-row">
+        <td colspan="7">
+          <form method="POST" action="/console/stream-sources/{{.ID}}" class="stream-source-limits-form">
+            <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
+            <span class="console-confirm-label">Ingest limits for <code>{{.Name}}</code> (values are server-clamped to safe bounds):</span>
+            <label class="form-inline-label">Events/min
+              <input class="console-input console-input-sm" type="number" name="rate_limit_per_min" min="1" value="{{.RateLimitPerMin}}"></label>
+            <label class="form-inline-label">Max event bytes
+              <input class="console-input console-input-sm" type="number" name="max_event_bytes" min="1" value="{{.MaxEventBytes}}"></label>
+            <label class="form-inline-label">Max batch events
+              <input class="console-input console-input-sm" type="number" name="max_batch_events" min="1" value="{{.MaxBatchEvents}}"></label>
+            <label class="form-inline-label">Byte budget/hr
+              <input class="console-input console-input-sm" type="number" name="byte_budget" min="1" value="{{.ByteBudget}}"></label>
+            <button type="button" class="btn btn-outline btn-sm"
+                    data-on:click="@get('/console/api/fragments/stream-sources-list')">Cancel</button>
+            <button type="submit" class="btn btn-primary btn-sm">Save limits</button>
+          </form>
+        </td>
+      </tr>
+      {{else if eq $v.ConfirmDelete .ID}}
+      {{/* Two-step inline confirm-delete row. */}}
+      <tr id="stream-source-row-{{.ID}}" class="confirm-row">
+        <td colspan="5">
+          <span class="console-confirm-label">Delete <code>{{.Name}}</code>? Its secret stops working immediately and this cannot be undone.</span>
+        </td>
+        <td colspan="2">
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/stream-sources-list')">Cancel</button>
+          <form method="POST" action="/console/stream-sources/{{.ID}}/delete" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
+            <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr id="stream-source-row-{{.ID}}">
+        <td><span class="chip chip-default">{{.Name}}</span></td>
+        <td><code>{{.Topic}}</code></td>
+        <td><code class="console-secret-value">{{.MaskedSecret}}</code></td>
+        <td>
+          <span class="console-muted">{{.RateLimitPerMin}}/min · {{.MaxBatchEvents}}/batch · {{.MaxEventBytes}}B/event · {{.ByteBudget}}B/hr</span>
+        </td>
+        <td>
+          {{if .LastError}}
+          <span class="chip chip-danger" title="{{.LastError}}">error</span>
+          {{else if .LastEventAt}}
+          <span class="console-muted" title="last event">{{.LastEventAt}}</span>
+          {{else}}
+          <span class="console-muted">—</span>
+          {{end}}
+        </td>
+        <td>
+          {{if .Active}}
+          <span class="chip chip-success">Active</span>
+          {{else}}
+          <span class="chip chip-warning">Inactive</span>
+          {{end}}
+        </td>
+        <td class="console-action-row">
+          {{if not $v.ReadOnly}}
+          <form method="POST" action="/console/stream-sources/{{.ID}}/active" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
+            <input type="hidden" name="active" value="{{if .Active}}false{{else}}true{{end}}">
+            <button type="submit" class="btn btn-outline btn-sm">{{if .Active}}Disable{{else}}Enable{{end}}</button>
+          </form>
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/stream-sources-list?editLimits={{.ID | urlquery}}')">Edit limits</button>
+          <form method="POST" action="/console/stream-sources/{{.ID}}/rotate" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
+            <button type="submit" class="btn btn-outline btn-sm">Rotate secret</button>
+          </form>
+          <button type="button" class="btn btn-outline btn-sm btn-danger"
+                  data-on:click="@get('/console/api/fragments/stream-sources-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</div>
+{{end}}

@@ -1,0 +1,80 @@
+{{define "content"}}{{$page := .Page}}
+{{/*
+  Stream Sources — the inbound webhook-push mirror of the integrations
+  catalog. A FRESH template (not an integrations reuse): the lifecycle is
+  mint-secret / reveal-once / rotate / limits, with no editable credential
+  form and nothing to verify.
+
+  data-signals seeds streamSourceNewOpen, which gates the create slide-over.
+*/}}
+<section class="console-section" data-signals="{{$page.Signals}}">
+  {{template "page-header" $page.Header}}
+
+  {{if $page.CreateError}}
+  <p class="console-form-error" role="alert" id="stream-source-create-error">{{$page.CreateError}}</p>
+  {{end}}
+
+  {{/* One-time reveal card — shown only immediately after a create or rotate.
+       The secret appears exactly once, inside the ready-to-copy producer
+       snippet; there is no separate plaintext copy (so view-source on a later
+       page load never re-leaks it). */}}
+  {{if $page.NewSecret}}
+  <div class="console-alert console-alert-success" role="alert" id="stream-source-reveal-card">
+    <strong>{{if $page.Rotated}}Secret rotated.{{else}}Stream source created.{{end}}</strong>
+    Copy this secret now — it will not be shown again. Hand it to your producer; it works only on the ingest endpoint.
+    <div class="console-secret-reveal">
+      <code id="stream-source-snippet" class="console-secret-value">curl -X POST {{$page.IngestBase}}/v1/sources/{{$page.NewSourceID}}/events -H 'Authorization: SourceKey {{$page.NewSecret}}' -H 'Content-Type: application/json' -d '{"events":[{"data":{"hello":"world"}}]}'</code>
+      <button type="button" class="btn btn-outline btn-sm"
+              data-on:click="navigator.clipboard.writeText(document.getElementById('stream-source-snippet').textContent)">Copy</button>
+    </div>
+  </div>
+  {{end}}
+
+  <div class="console-filter-bar">
+    {{if not $page.ReadOnly}}
+    <button type="button" class="btn btn-primary" data-on:click="$streamSourceNewOpen = true">+ Add source</button>
+    {{end}}
+  </div>
+
+  {{/* Create slide-over — a client-side overlay gated on streamSourceNewOpen.
+       Native POST → 303 (no data-on:submit — the L5 regression guard). */}}
+  <div id="stream-source-slideover">
+    {{if not $page.ReadOnly}}
+    <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="stream-source-create-heading"
+         data-component="stream-source-create"
+         data-show="$streamSourceNewOpen"
+         data-on:keydown__window="evt.key === 'Escape' && ($streamSourceNewOpen = false)">
+      <div class="console-slideover-header">
+        <h2 id="stream-source-create-heading" class="console-card-title">Add stream source</h2>
+        <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
+                data-on:click="$streamSourceNewOpen = false">{{ uiIcon "x" }}</button>
+      </div>
+      <form method="POST" action="/console/stream-sources" class="stream-source-edit-form">
+        <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+        <div class="form-row">
+          <label class="form-label" for="new-stream-source-name">Name *</label>
+          <input class="console-input" type="text" id="new-stream-source-name" name="name"
+                 placeholder="token-relay" required aria-required="true" autofocus>
+          <p class="form-help">Lowercase letters, numbers, hyphens, and underscores.</p>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="new-stream-source-topic">Topic *</label>
+          <input class="console-input" type="text" id="new-stream-source-topic" name="topic"
+                 placeholder="agent.tokens" required aria-required="true">
+          <p class="form-help">Dot-separated tokens (letters, numbers, <code>_</code>, <code>-</code>). This is the topic your producers publish under and your consumers subscribe to; batches may extend it with a dot suffix.</p>
+        </div>
+        <div class="console-slideover-actions">
+          <button type="button" class="btn btn-outline" data-on:click="$streamSourceNewOpen = false">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create source</button>
+        </div>
+      </form>
+    </div>
+    {{end}}
+  </div>
+
+  {{/* Main list — server-rendered for the no-JS fallback, refreshed via @get. */}}
+  <div data-on-load="@get('/console/api/fragments/stream-sources-list')">
+    {{template "stream-sources-tbody" $page.Fragment}}
+  </div>
+</section>
+{{end}}

@@ -36,6 +36,7 @@ import (
 	"github.com/danmestas/notify/internal/inbounddomains"
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/streamsource"
 	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/webhooksout"
 )
@@ -172,6 +173,7 @@ func newTestConsole(t *testing.T) *testConsole {
 		Messages:         st.Messages(),
 		Integrations:     st.Integrations(),
 		Connectivity:     conn,
+		StreamSources:    streamsource.New(st, masterKey),
 		Audience:         audience.New(st),
 		Webhooks:         webhooksout.NewManagement(st),
 		Contexts:         contexts.New(st),
