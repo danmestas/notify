@@ -41,6 +41,23 @@ const (
 	// practical throttle window; the extra day of grace ensures a counter is
 	// never evicted mid-window even for a full 30-day window configuration.
 	maxThrottleBucketTTL = 31 * 24 * time.Hour
+
+	// budgetBucket holds the cost-weighted fixed-window ingest counters that
+	// BudgetAllow reads and writes (see budget.go).
+	budgetBucket = "notify_ingest_budget"
+
+	// maxBudgetBucketTTL is the bucket-wide eviction ceiling on
+	// notify_ingest_budget. dagnats/NATS KV TTL is bucket-wide (a MaxAge on the
+	// backing stream), NOT per-key, so BudgetAllow bakes the window epoch into
+	// the key (like ThrottleAllow) and relies on this ceiling only to evict
+	// dead past-window keys. It MUST exceed the longest window BudgetAllow is
+	// ever called with (feedingest's 1h byte-budget window) by a safe margin —
+	// otherwise a live long-window counter could age out mid-window and reset
+	// to zero, undercounting and leaking the retention guard. 2h is >=2x the
+	// longest current window; a tight ceiling also bounds stale-key growth
+	// (short windows would otherwise strand tens of thousands of dead keys per
+	// source before eviction).
+	maxBudgetBucketTTL = 2 * time.Hour
 )
 
 // Bus is notify's handle on the event bus. It holds the client connection
@@ -51,6 +68,7 @@ type Bus struct {
 	kv       jetstream.KeyValue
 	throttle jetstream.KeyValue
 	digest   jetstream.KeyValue
+	budget   jetstream.KeyValue
 }
 
 // Connect dials natsURL, waits for the connection to be established, and
@@ -97,6 +115,16 @@ func Connect(ctx context.Context, natsURL string) (*Bus, error) {
 		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", digestBucket, err)
 	}
 
+	budget, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:  budgetBucket,
+		History: 1,
+		TTL:     maxBudgetBucketTTL,
+	})
+	if err != nil {
+		nc.Close()
+		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", budgetBucket, err)
+	}
+
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:     analyticsStream,
 		Subjects: []string{analyticsSubject},
@@ -120,7 +148,7 @@ func Connect(ctx context.Context, natsURL string) (*Bus, error) {
 		return nil, err
 	}
 
-	return &Bus{nc: nc, js: js, kv: kv, throttle: throttle, digest: digest}, nil
+	return &Bus{nc: nc, js: js, kv: kv, throttle: throttle, digest: digest, budget: budget}, nil
 }
 
 // Close drains and closes the underlying NATS connection.
