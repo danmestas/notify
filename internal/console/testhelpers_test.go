@@ -298,6 +298,20 @@ func (tc *testConsole) login(t *testing.T) (*http.Cookie, string) {
 	return cookie, s.CSRF
 }
 
+// sessionCookie returns the session cookie a response set, or nil if it set
+// none. Mirrors a browser's cookie jar: handlers that re-seal the session
+// (e.g. regenerate, which rotates the operator's own key) emit a fresh
+// Set-Cookie the follow-up request must carry forward.
+func sessionCookie(rr *httptest.ResponseRecorder) *http.Cookie {
+	var ck *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			ck = c
+		}
+	}
+	return ck
+}
+
 // get issues an authenticated GET and returns the recorder.
 func (tc *testConsole) get(t *testing.T, path string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()

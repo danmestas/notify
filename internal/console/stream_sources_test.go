@@ -24,6 +24,11 @@ import (
 // 64-hex CSRF token that appears in every form on the page.
 var secretRE = regexp.MustCompile(`SourceKey ([0-9a-f]{64})`)
 
+// hexSecretRE matches a 64-hex-char value — the exact shape of a raw
+// stream-source secret. Used to prove a redirect Location never carries a
+// raw secret, only an opaque (shorter) reveal token.
+var hexSecretRE = regexp.MustCompile(`[0-9a-f]{64}`)
+
 // createSource mints a source through the service under the test scope and
 // returns the row plus its one-time raw secret.
 func (tc *testConsole) createSource(t *testing.T, name, topic string) (domain.StreamSource, string) {
@@ -100,8 +105,17 @@ func TestStreamSources_CreateRevealsSecretOnce(t *testing.T) {
 		t.Fatalf("create POST: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
 	}
 	loc := rr.Header().Get("Location")
-	if !strings.Contains(loc, "newSecret=") {
-		t.Fatalf("create redirect missing newSecret: %q", loc)
+	// The redirect must carry a one-shot reveal TOKEN, never the raw secret
+	// (it would otherwise land in browser history and any reverse-proxy/CDN
+	// access log fronting the console).
+	if !strings.Contains(loc, "revealed=") {
+		t.Fatalf("create redirect missing 'revealed=' token param: %q", loc)
+	}
+	if strings.Contains(loc, "newSecret=") {
+		t.Fatalf("create redirect still carries the legacy 'newSecret=' param: %q", loc)
+	}
+	if hexSecretRE.MatchString(loc) {
+		t.Fatalf("create redirect leaks a raw-secret-shaped value: %q", loc)
 	}
 
 	page := tc.get(t, loc, cookie)
@@ -133,6 +147,19 @@ func TestStreamSources_CreateRevealsSecretOnce(t *testing.T) {
 	}
 	if strings.Contains(plain.Body.String(), secret) {
 		t.Errorf("plain page re-revealed the raw secret")
+	}
+	// A reload of the EXACT reveal URL (the token already consumed by the
+	// first GET) must also render no secret — proving the token is truly
+	// one-shot, not just absent from the default page.
+	reload := tc.get(t, loc, cookie)
+	if reload.Code != http.StatusOK {
+		t.Fatalf("reload reveal URL: status = %d, want 200", reload.Code)
+	}
+	if strings.Contains(reload.Body.String(), secret) {
+		t.Errorf("reload of a consumed reveal token re-showed the raw secret")
+	}
+	if secretRE.MatchString(reload.Body.String()) {
+		t.Errorf("reload of a consumed reveal token still rendered a reveal card")
 	}
 
 	// Invalid topic → error flash, no row created.
@@ -166,6 +193,13 @@ func TestStreamSources_Rotate(t *testing.T) {
 		t.Fatalf("rotate POST: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
 	}
 	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "revealed=") {
+		t.Fatalf("rotate redirect missing 'revealed=' token param: %q", loc)
+	}
+	if hexSecretRE.MatchString(loc) {
+		t.Fatalf("rotate redirect leaks a raw-secret-shaped value: %q", loc)
+	}
+
 	page := tc.get(t, loc, cookie)
 	m := secretRE.FindStringSubmatch(page.Body.String())
 	if m == nil {
@@ -174,6 +208,12 @@ func TestStreamSources_Rotate(t *testing.T) {
 	newSecret := m[1]
 	if newSecret == oldRaw {
 		t.Fatalf("rotate returned the same secret")
+	}
+
+	// A reload of the exact reveal URL must not re-reveal (token consumed).
+	reload := tc.get(t, loc, cookie)
+	if strings.Contains(reload.Body.String(), newSecret) {
+		t.Errorf("reload of a consumed rotate reveal token re-showed the raw secret")
 	}
 	// Old secret must stop authenticating; new one must work.
 	if _, err := tc.deps.StreamSources.Authenticate(context.Background(), oldRaw); err == nil {

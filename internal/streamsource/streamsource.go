@@ -61,6 +61,11 @@ var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 // length bound.
 var ErrInvalidName = fmt.Errorf("streamsource: name may only contain lowercase letters, numbers, hyphens, and underscores (max 64)")
 
+// ErrInvalidTopic is returned by Create when the topic fails
+// domain.ValidateFeedTopic. Callers match on this sentinel via errors.Is
+// rather than a string.Contains substring check on the wrapped error text.
+var ErrInvalidTopic = fmt.Errorf("streamsource: invalid topic")
+
 // Service mints and authenticates per-source push secrets and manages source
 // lifecycle over the backing store.
 type Service struct {
@@ -94,7 +99,7 @@ func (svc *Service) Create(ctx context.Context, scope domain.Scope, name, topic 
 		return domain.StreamSource{}, "", ErrInvalidName
 	}
 	if err := domain.ValidateFeedTopic(topic); err != nil {
-		return domain.StreamSource{}, "", fmt.Errorf("streamsource: invalid topic: %w", err)
+		return domain.StreamSource{}, "", fmt.Errorf("%w: %v", ErrInvalidTopic, err)
 	}
 
 	raw, enc, hash, err := svc.mint()

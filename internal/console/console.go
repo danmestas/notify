@@ -263,6 +263,11 @@ type Console struct {
 	// refine requests to protect OpenRouter spend. Shared across both endpoints;
 	// each scope has an independent window. Zero value is safe and ready to use.
 	aiLimiter aiRateLimiter
+	// reveals is the one-shot flash store for freshly minted secrets (see
+	// reveal.go): mint/rotate handlers stash the raw secret and redirect
+	// with an opaque token instead of embedding the secret in the URL. Zero
+	// value is ready to use — no wiring required in New.
+	reveals revealStash
 }
 
 // aiBuildDispatcher is the subset of *aibuilder.AgentLoopBuilder the console

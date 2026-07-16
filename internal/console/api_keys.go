@@ -14,17 +14,19 @@ package console
 //     embedded client-side for a Datastar/JS toggle to flip — the browser
 //     must make a fresh authenticated request to see it, so view-source /
 //     devtools on the masked page never leaks the live secret.
-//   - The raw hex is also shown exactly once immediately after a create or
-//     rotate action, embedded in the one-time reveal card. The handler that
-//     produces it redirects to a page that shows it via a query parameter —
-//     the raw key is only surfaced in the redirect target page view struct
-//     and immediately discarded from the handler stack.
+//   - The raw hex is also shown exactly once immediately after a rotate
+//     action, embedded in the one-time reveal card. The handler that
+//     produces it stashes the raw key server-side (reveal.go) and redirects
+//     with an opaque one-shot TOKEN — never the raw key — in the URL. The
+//     redirect target consumes the token exactly once and discards it, so a
+//     reload of the same URL renders nothing.
 //   - No raw key is ever written to a log line.
 //   - Rotate is a two-step: first click shows the confirm form, second click
 //     POSTs the rotate action.
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 )
@@ -83,9 +85,15 @@ func (c *Console) serveAPIKeysPage(w http.ResponseWriter, r *http.Request) {
 
 	s, _ := sessionFromContext(r.Context())
 
-	// A fresh key (from regenerate) rides in the URL; strip it so
-	// a browser back-button doesn't re-reveal it.
-	newRaw := r.URL.Query().Get("newKey")
+	// A fresh key (from regenerate) rides behind a one-shot reveal TOKEN —
+	// never the raw key itself — so the redirect Location, browser history,
+	// and any reverse-proxy/CDN access log fronting the console never see
+	// the plaintext. The token is consumed on this first GET; a reload
+	// (token already consumed) renders nothing.
+	newRaw := ""
+	if token := r.URL.Query().Get("revealed"); token != "" {
+		newRaw, _ = c.takeReveal(token)
+	}
 	rotated := r.URL.Query().Get("rotated") == "1"
 
 	// Reveal-on-demand, mirroring Environment Variables: the plaintext only
@@ -127,8 +135,9 @@ func (c *Console) serveAPIKeysPage(w http.ResponseWriter, r *http.Request) {
 // ─── mutation handlers ────────────────────────────────────────────────────────
 
 // handleAPIKeyRegenerate handles POST /console/settings/api-keys/regenerate.
-// It rotates the active key and redirects back to the page with the new raw
-// key embedded in the URL (shown once). Raw key NEVER logged.
+// It rotates the active key and redirects back to the page carrying a
+// one-shot reveal token — never the raw key — in the URL. Raw key NEVER
+// logged.
 func (c *Console) handleAPIKeyRegenerate(w http.ResponseWriter, r *http.Request) {
 	if w == nil {
 		panic("handleAPIKeyRegenerate: w is nil")
@@ -152,12 +161,40 @@ func (c *Console) handleAPIKeyRegenerate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Redirect with the new key as a query param (shown-once pattern).
-	// The key is in the URL only transiently; the handler that serves the
-	// redirect reads it and does NOT persist or log it.
+	// Rotating the operator's OWN active key deletes the old key row, so
+	// the current session cookie (which carries the old key) would fail
+	// re-authentication on the very next request. Re-seal a fresh cookie
+	// carrying the new key in this same response — same CSRF token, fresh
+	// expiry — so the redirect target stays authenticated and the reveal
+	// card actually renders instead of bouncing to login.
+	s, ok := sessionFromContext(r.Context())
+	if !ok {
+		panic("handleAPIKeyRegenerate: no session in context")
+	}
+	sealed, err := c.sealSession(session{
+		Key:  newRaw,
+		CSRF: s.CSRF,
+		Exp:  time.Now().Add(sessionTTL).Unix(),
+	})
+	if err != nil {
+		c.deps.Logger.Error("console: reseal session after regenerate", "err", err)
+		http.Error(w, "rotate failed", http.StatusInternalServerError)
+		return
+	}
+	setSessionCookie(w, r, sealed)
+
+	// Stash the raw key server-side and redirect with an opaque one-shot
+	// token — never the key — so the secret never transits the URL,
+	// browser history, or a reverse-proxy/CDN access log.
+	token, err := c.stashReveal(newRaw)
+	if err != nil {
+		c.deps.Logger.Error("console: stash revealed api key", "err", err)
+		http.Error(w, "rotate failed", http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(
 		w, r,
-		"/console/settings/api-keys?newKey="+newRaw+"&rotated=1",
+		"/console/settings/api-keys?revealed="+token+"&rotated=1",
 		http.StatusSeeOther,
 	)
 }

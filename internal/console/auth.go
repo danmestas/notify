@@ -225,6 +225,22 @@ func (c *Console) serveLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		c.serveError(w, r)
 		return
 	}
+	setSessionCookie(w, r, value)
+	http.Redirect(w, r, "/console/", http.StatusSeeOther)
+}
+
+// setSessionCookie sets the sealed session cookie value on the response.
+// Shared by the login flow and by handleAPIKeyRegenerate — rotating the
+// operator's own active key must re-seal the cookie with the new key in the
+// same response, or the very next request would bounce the operator to
+// login (the old key's row is gone) before the reveal card ever renders.
+func setSessionCookie(w http.ResponseWriter, r *http.Request, value string) {
+	if w == nil {
+		panic("setSessionCookie: w is nil")
+	}
+	if r == nil {
+		panic("setSessionCookie: r is nil")
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    value,
@@ -234,7 +250,6 @@ func (c *Console) serveLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		Secure:   requestIsTLS(r),
 		SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, "/console/", http.StatusSeeOther)
 }
 
 // serveLogout clears the session cookie and returns to login. Mounted

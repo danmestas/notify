@@ -14,8 +14,11 @@ package console
 //   - the row's affordances are limits + activity, not provider metadata.
 //
 // Every data access goes through Deps.StreamSources (*streamsource.Service),
-// which scope-checks every call. The raw secret appears only in the transient
-// redirect target after a create/rotate and is never logged, never listed.
+// which scope-checks every call. The raw secret is never embedded in a
+// redirect Location — create/rotate stash it server-side (reveal.go) and
+// redirect with an opaque one-shot token instead; the redirect target
+// consumes the token exactly once. The raw secret is never logged, never
+// listed.
 //
 // Mutation handlers are native POST→303 (chassis idiom): the browser's own
 // submission navigates to the 303 response. They must NOT carry a
@@ -29,7 +32,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -201,6 +203,16 @@ func (c *Console) serveStreamSourcesPage(w http.ResponseWriter, r *http.Request)
 		header = pageHeader{Title: "Stream Sources"}
 	}
 
+	// A fresh secret (from create/rotate) rides behind a one-shot reveal
+	// TOKEN — never the raw secret itself — so the redirect Location,
+	// browser history, and any reverse-proxy/CDN access log fronting the
+	// console never see the plaintext. The token is consumed on this first
+	// GET; a reload (token already consumed) renders nothing.
+	newSecret := ""
+	if token := r.URL.Query().Get("revealed"); token != "" {
+		newSecret, _ = c.takeReveal(token)
+	}
+
 	s, _ := sessionFromContext(r.Context())
 	view := streamSourcesPageView{
 		Header:      header,
@@ -208,7 +220,7 @@ func (c *Console) serveStreamSourcesPage(w http.ResponseWriter, r *http.Request)
 		Signals:     streamSourcesSignalsJSON(false),
 		ReadOnly:    c.deps.ReadOnly,
 		CSRF:        s.CSRF,
-		NewSecret:   r.URL.Query().Get("newSecret"),
+		NewSecret:   newSecret,
 		NewSourceID: r.URL.Query().Get("newId"),
 		Rotated:     r.URL.Query().Get("rotated") == "1",
 		IngestBase:  c.ingestBase(),
@@ -248,8 +260,9 @@ func (c *Console) serveFragmentStreamSourcesList(w http.ResponseWriter, r *http.
 // ─── mutation handlers ────────────────────────────────────────────────────────
 
 // handleStreamSourceCreate handles POST /console/stream-sources. On success it
-// 303-redirects to the page with the freshly minted secret in the URL (shown
-// once); on a validation failure it redirects with ?createError=.
+// 303-redirects to the page with a one-shot reveal token (never the raw
+// secret) in the URL; on a validation failure it redirects with
+// ?createError=.
 func (c *Console) handleStreamSourceCreate(w http.ResponseWriter, r *http.Request) {
 	scope, ok := c.mutationScope(w, r, "handleStreamSourceCreate")
 	if !ok {
@@ -268,7 +281,7 @@ func (c *Console) handleStreamSourceCreate(w http.ResponseWriter, r *http.Reques
 		switch {
 		case errors.Is(err, streamsource.ErrInvalidName):
 			msg = "Name may only contain lowercase letters, numbers, hyphens, and underscores (max 64)."
-		case strings.Contains(err.Error(), "invalid topic"):
+		case errors.Is(err, streamsource.ErrInvalidTopic):
 			msg = "Topic must be dot-separated tokens of letters, numbers, hyphens, and underscores (max 128 bytes)."
 		default:
 			c.deps.Logger.Error("console: create stream source", "err", err)
@@ -276,14 +289,20 @@ func (c *Console) handleStreamSourceCreate(w http.ResponseWriter, r *http.Reques
 		http.Redirect(w, r, "/console/stream-sources?createError="+url.QueryEscape(msg), http.StatusSeeOther)
 		return
 	}
+	token, err := c.stashReveal(raw)
+	if err != nil {
+		c.deps.Logger.Error("console: stash revealed stream source secret", "err", err)
+		http.Error(w, "create failed", http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r,
-		"/console/stream-sources?newSecret="+url.QueryEscape(raw)+"&newId="+url.QueryEscape(src.ID),
+		"/console/stream-sources?revealed="+token+"&newId="+url.QueryEscape(src.ID),
 		http.StatusSeeOther)
 }
 
 // handleStreamSourceRotate handles POST /console/stream-sources/{id}/rotate.
-// It mints a new secret (the old one stops working immediately) and 303s to the
-// page with the new secret revealed once.
+// It mints a new secret (the old one stops working immediately) and 303s to
+// the page with a one-shot reveal token (never the raw secret) in the URL.
 func (c *Console) handleStreamSourceRotate(w http.ResponseWriter, r *http.Request) {
 	scope, ok := c.mutationScope(w, r, "handleStreamSourceRotate")
 	if !ok {
@@ -304,8 +323,14 @@ func (c *Console) handleStreamSourceRotate(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "rotate failed", http.StatusInternalServerError)
 		return
 	}
+	token, err := c.stashReveal(raw)
+	if err != nil {
+		c.deps.Logger.Error("console: stash revealed stream source secret", "id", id, "err", err)
+		http.Error(w, "rotate failed", http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r,
-		"/console/stream-sources?newSecret="+url.QueryEscape(raw)+"&newId="+url.QueryEscape(id)+"&rotated=1",
+		"/console/stream-sources?revealed="+token+"&newId="+url.QueryEscape(id)+"&rotated=1",
 		http.StatusSeeOther)
 }
 

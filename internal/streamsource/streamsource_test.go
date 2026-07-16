@@ -75,8 +75,14 @@ func TestService_Create_RejectsInvalidTopic(t *testing.T) {
 	svc, scope := newTestService(t)
 
 	for _, topic := range []string{"orders.*", "a..b", strings.Repeat("x", 129), ">"} {
-		if _, _, err := svc.Create(ctx, scope, "ok-name", topic); err == nil {
+		_, _, err := svc.Create(ctx, scope, "ok-name", topic)
+		if err == nil {
 			t.Fatalf("expected rejection for topic %q", topic)
+		}
+		// The caller (console) matches on the sentinel, not a string
+		// substring, to classify this as the "invalid topic" case.
+		if !errors.Is(err, ErrInvalidTopic) {
+			t.Fatalf("topic %q: err = %v, want errors.Is(ErrInvalidTopic)", topic, err)
 		}
 	}
 }
