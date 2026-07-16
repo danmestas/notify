@@ -361,6 +361,40 @@ func TestIngest_ShapeCaps(t *testing.T) {
 	}
 }
 
+// TestIngest_BadTS_RejectsBeforeBudgetSpend — a malformed ts must be rejected
+// in the shape-caps stage, BEFORE the rate-limit/byte-budget BudgetAllow gates
+// record a spend. Proven by tightening the rate limit to exactly one event per
+// minute, sending a one-event batch with a bad ts (400), then immediately
+// sending a one-event batch with a valid ts: if the bad-ts request had already
+// consumed the single-event budget, this second request would 429.
+func TestIngest_BadTS_RejectsBeforeBudgetSpend(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	scope := domain.Scope{OrgID: "o1", EnvID: "envA"}
+	src, secret := mustCreate(t, h.svc, scope, "relay", "orders")
+	if err := h.svc.UpdateLimits(ctx, scope, src.ID, 1, 32768, 100, 1<<20); err != nil {
+		t.Fatalf("UpdateLimits: %v", err)
+	}
+
+	// Bad ts → 400, before any BudgetAllow spend.
+	bad := `{"events":[{"ts":"not-a-time","data":{"n":1}}]}`
+	if res := h.post(t, src.ID, secret, bad); res.Status != http.StatusBadRequest {
+		t.Fatalf("bad ts: status = %d (%s), want 400", res.Status, res.Body)
+	}
+
+	// A valid one-event batch right after must still be within the 1/min
+	// budget — proof the bad-ts request did not spend it.
+	good := `{"events":[{"data":{"n":1}}]}`
+	if res := h.post(t, src.ID, secret, good); res.Status != http.StatusAccepted {
+		t.Fatalf("valid batch after bad ts: status = %d (%s), want 202 (budget was spent by the rejected bad-ts request)", res.Status, res.Body)
+	}
+
+	got := collectAll(t, h.bus, src.EnvID, "orders", time.Second)
+	if len(got) != 1 {
+		t.Fatalf("published %d events, want 1 (only the valid batch)", len(got))
+	}
+}
+
 // TestIngest_RateAndBudget429 — event-rate and byte-budget exhaustion return
 // 429 with Retry-After and publish nothing.
 func TestIngest_RateAndBudget429(t *testing.T) {

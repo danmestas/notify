@@ -8,7 +8,7 @@ package feedingest_test
 // surfaces a genuine production bug loops back to the owning slice; this file
 // never patches production.
 //
-// The SSE-client helpers (sseFrame/sseStream/openFeedStreamAt) are a deliberate
+// The SSE-client helpers (e2eFrame/e2eStream/openFeedStreamAt) are a deliberate
 // copy of internal/httpapi/stream_e2e_test.go's unexported harness — a small,
 // cross-package test-helper duplication the plan sanctions rather than
 // extracting a shared testutil for three tiny funcs.

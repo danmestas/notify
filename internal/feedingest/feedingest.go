@@ -158,7 +158,9 @@ func (g *Gateway) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Decode + shape caps.
+	// 3. Decode + shape caps. Includes the per-event ts format check: a
+	// malformed ts must 400 here, BEFORE the rate-limit/byte-budget
+	// BudgetAllow gates below record a spend for this request.
 	var req ingestRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		var maxErr *http.MaxBytesError
@@ -191,6 +193,12 @@ func (g *Gateway) handleIngest(w http.ResponseWriter, r *http.Request) {
 		if ev.ID != "" && !validEventID(ev.ID) {
 			http.Error(w, "event id too long or contains disallowed characters", http.StatusBadRequest)
 			return
+		}
+		if ev.TS != "" {
+			if _, perr := time.Parse(time.RFC3339, ev.TS); perr != nil {
+				http.Error(w, "event ts must be RFC3339", http.StatusBadRequest)
+				return
+			}
 		}
 		totalDataBytes += int64(len(ev.Data))
 	}
@@ -238,8 +246,8 @@ func (g *Gateway) handleIngest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 7. Normalize each event into the §0.4 envelope. A producer id yields a
-	// dedup MsgID (src.ID+"/"+id); a missing id is minted (no dedup). A
-	// producer ts must be RFC3339; a missing ts is stamped now (UTC).
+	// dedup MsgID (src.ID+"/"+id); a missing id is minted (no dedup). ts was
+	// already format-validated in step 3; a missing ts is stamped now (UTC).
 	feedEvents := make([]eventbus.FeedEvent, 0, len(req.Events))
 	for i := range req.Events {
 		ev := req.Events[i]
@@ -250,9 +258,6 @@ func (g *Gateway) handleIngest(w http.ResponseWriter, r *http.Request) {
 		ts := ev.TS
 		if ts == "" {
 			ts = nowRFC3339()
-		} else if _, perr := time.Parse(time.RFC3339, ts); perr != nil {
-			http.Error(w, "event ts must be RFC3339", http.StatusBadRequest)
-			return
 		}
 		data, merr := json.Marshal(envelope{
 			V:        envelopeVersion,
