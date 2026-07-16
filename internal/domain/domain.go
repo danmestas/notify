@@ -83,6 +83,27 @@ type Integration struct {
 	Identifier     string          `db:"identifier"`
 }
 
+// StreamSource is an inbound webhook-push source: an external producer
+// authorized (by a per-source secret) to POST event batches into one
+// environment's durable feed, scoped to a single topic prefix.
+type StreamSource struct {
+	ID              string `db:"id"` // ULID
+	OrgID           string `db:"org_id"`
+	EnvID           string `db:"environment_id"`
+	Name            string `db:"name"`               // human label
+	Topic           string `db:"topic"`              // home topic; ValidateFeedTopic-checked; prefix bound for ingest
+	SecretHash      string `db:"secret_hash"`        // hex SHA-256 of the raw secret (lookup key, unique)
+	EncSecret       []byte `db:"enc_secret"`         // AES-256-GCM of the raw secret (reveal/rotate)
+	RateLimitPerMin int    `db:"rate_limit_per_min"` // events/min; ThrottleAllow limit
+	MaxEventBytes   int    `db:"max_event_bytes"`    // per-event data cap
+	MaxBatchEvents  int    `db:"max_batch_events"`   // events per request cap
+	ByteBudget      int64  `db:"byte_budget"`        // bytes per budget window (see S3)
+	Active          bool   `db:"active"`
+	LastEventAt     string `db:"last_event_at"` // RFC3339, best-effort
+	LastError       string `db:"last_error"`    // last rejected-ingest reason, best-effort
+	CreatedAt       string `db:"created_at"`
+}
+
 type Workflow struct {
 	ID                string          `db:"id"`
 	OrgID             string          `db:"org_id"`

@@ -85,6 +85,15 @@ func (s *Store) Notifications() NotificationRepo { return &notificationRepo{w: s
 func (s *Store) Messages() MessageRepo           { return &messageRepo{w: s.writer, r: s.reader} }
 func (s *Store) Integrations() IntegrationRepo   { return &integrationRepo{w: s.writer, r: s.reader} }
 
+// StreamSources vends the inbound webhook-push source repository: per-source
+// push secrets, topic scoping, and ingest-limit columns. Every method is
+// Scope-first except GetBySecretHash, whose argument (the secret hash) IS the
+// credential and therefore resolves the owning scope rather than being checked
+// against one — mirroring ApiKeys().GetByHash.
+func (s *Store) StreamSources() StreamSourceRepo {
+	return &streamSourceRepo{w: s.writer, r: s.reader}
+}
+
 func (s *Store) Preferences() PreferenceRepo { return &preferenceRepo{w: s.writer, r: s.reader} }
 
 func (s *Store) Analytics() AnalyticsRepo { return &analyticsRepo{w: s.writer, r: s.reader} }
