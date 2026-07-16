@@ -75,6 +75,12 @@ func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbo
 	// Liveness probe, mounted outside the auth group so container/orchestrator
 	// health checks need no API key.
 	r.Get("/healthz", healthz)
+	// Bare root → the console. notify serves no landing page at "/", so a plain
+	// visit to the host (via the Cloudflare tunnel or the Tailscale name) would
+	// otherwise 404; send it to the console, which handles login itself.
+	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		http.Redirect(w, req, "/console/", http.StatusFound)
+	})
 	// Inbound email parse webhook (the email two-way loop). Mounted OUTSIDE the
 	// API-key group: a mail forwarder (Cloudflare Email Worker / Resend inbound)
 	// has no API key, so the handler authenticates the X-Inbound-Secret shared
