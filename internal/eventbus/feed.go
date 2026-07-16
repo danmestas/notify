@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
@@ -31,18 +32,32 @@ const (
 	// are system-generated single-token identifiers (ULIDs); this is a
 	// generous ceiling, not a tight fit.
 	maxFeedEnvIDLen = 128
+
+	// feedStreamDuplicates is the JetStream Nats-Msg-Id dedup horizon on
+	// NOTIFY_FEED. PublishFeedBatch stamps ingested events carrying a producer
+	// id with a Nats-Msg-Id header; within this window the stream absorbs
+	// re-publishes so a producer retrying a whole batch does not double-store
+	// its acked events. 2 minutes covers realistic webhook retry schedules at
+	// negligible memory cost.
+	feedStreamDuplicates = 2 * time.Minute
+
+	// feedBatchAckWait bounds how long PublishFeedBatch waits for the async
+	// publishes it issued to be acked by the server before giving up and
+	// reporting how many leading events were confirmed durable.
+	feedBatchAckWait = 10 * time.Second
 )
 
 // ensureFeedStream idempotently creates (or updates) the NOTIFY_FEED stream.
 // Called from Connect, mirroring the NOTIFY_ANALYTICS/NOTIFY_DELIVERY blocks.
 func ensureFeedStream(ctx context.Context, js jetstream.JetStream) error {
 	_, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name:     feedStream,
-		Subjects: []string{feedSubjectAll},
-		MaxAge:   feedStreamMaxAge,
-		MaxBytes: feedStreamMaxBytes,
-		Discard:  jetstream.DiscardOld,
-		Storage:  jetstream.FileStorage,
+		Name:       feedStream,
+		Subjects:   []string{feedSubjectAll},
+		MaxAge:     feedStreamMaxAge,
+		MaxBytes:   feedStreamMaxBytes,
+		Discard:    jetstream.DiscardOld,
+		Duplicates: feedStreamDuplicates,
+		Storage:    jetstream.FileStorage,
 	})
 	if err != nil {
 		return fmt.Errorf("eventbus: ensure stream %q: %w", feedStream, err)
@@ -98,6 +113,88 @@ func (b *Bus) PublishFeed(environmentID, topic string, data []byte) error {
 		return fmt.Errorf("eventbus: PublishFeed: %w", err)
 	}
 	return nil
+}
+
+// FeedEvent is one pre-serialized ingest event destined for an environment's
+// feed topic. MsgID, when non-empty, is set as the JetStream Nats-Msg-Id
+// header so the stream's dedup window (feedStreamDuplicates) absorbs producer
+// retries; an empty MsgID publishes with no dedup id.
+type FeedEvent struct {
+	MsgID string
+	Data  []byte
+}
+
+// PublishFeedBatch publishes events to the environment's feed topic on
+// NOTIFY_FEED using async publishes with a single bounded completion wait,
+// preserving order within the batch. envID and topic are validated exactly as
+// PublishFeed (both must pass before ANY publish is issued); an empty batch is
+// a no-op returning (0, nil).
+//
+// It returns n = the number of LEADING events confirmed durably acked — the
+// largest k such that every future for events[:k] returned Ok() before the
+// first future that returned Err() (futures collected in batch order, counting
+// stops at the first error) — together with that first error.
+//
+// On a non-nil error the caller MUST retry the WHOLE batch. That retry is
+// idempotent for events carrying a MsgID (the JetStream dedup window absorbs
+// the re-publishes) and merely duplicative for events minted without a
+// producer id (accepted per plan §0.5). Events at or after index n MAY have
+// partially landed: under async fan-out an event after the first failure can
+// still have been durably acked, so callers must NOT assume events[n:] were
+// dropped. On full success it returns (len(events), nil).
+func (b *Bus) PublishFeedBatch(environmentID, topic string, events []FeedEvent) (n int, err error) {
+	if verr := validateEnvID(environmentID); verr != nil {
+		return 0, fmt.Errorf("eventbus: PublishFeedBatch: %w", verr)
+	}
+	if verr := domain.ValidateFeedTopic(topic); verr != nil {
+		return 0, fmt.Errorf("eventbus: PublishFeedBatch: %w", verr)
+	}
+	if len(events) == 0 {
+		return 0, nil
+	}
+
+	subject := feedSubject(environmentID, topic)
+	futures := make([]jetstream.PubAckFuture, 0, len(events))
+	var publishErr error
+	for _, e := range events {
+		msg := &nats.Msg{Subject: subject, Data: e.Data}
+		if e.MsgID != "" {
+			msg.Header = nats.Header{nats.MsgIdHdr: []string{e.MsgID}}
+		}
+		f, perr := b.js.PublishMsgAsync(msg)
+		if perr != nil {
+			// The async buffer rejected this enqueue; stop issuing further
+			// publishes and count only the leading acks among what we sent.
+			publishErr = fmt.Errorf("eventbus: PublishFeedBatch: publish event %d: %w", len(futures), perr)
+			break
+		}
+		futures = append(futures, f)
+	}
+
+	// Wait on THIS batch's own futures, not JetStream's PublishAsyncComplete():
+	// b.js is a single jetstream.JetStream context shared by every caller
+	// (e.g. every concurrent ingest request), and PublishAsyncComplete()'s
+	// channel closes only once that ENTIRE shared context's async-ack pool is
+	// empty — waiting on it would block this batch on unrelated concurrent
+	// batches' acks. A single bounded deadline covers the whole wait loop so
+	// a stalled broker cannot hang the caller.
+	ctx, cancel := context.WithTimeout(context.Background(), feedBatchAckWait)
+	defer cancel()
+	for _, f := range futures {
+		select {
+		case <-f.Ok():
+			n++
+		case ackErr := <-f.Err():
+			return n, fmt.Errorf("eventbus: PublishFeedBatch: ack event %d: %w", n, ackErr)
+		case <-ctx.Done():
+			return n, fmt.Errorf("eventbus: PublishFeedBatch: event %d ack pending after %s: %w", n, feedBatchAckWait, ctx.Err())
+		}
+	}
+
+	if publishErr != nil {
+		return n, publishErr
+	}
+	return n, nil
 }
 
 // FeedMsg is one durable feed event with its stream sequence (the SSE id).
