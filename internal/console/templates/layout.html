@@ -56,12 +56,13 @@
       {{end}}{{end}}
     </nav>
     <div class="console-sidebar-footer">
-      <a href="{{if .DagnatsURL}}{{.DagnatsURL}}{{else}}#{{end}}" class="console-sidebar-extlink"
-         {{if .DagnatsURL}}target="_blank" rel="noopener"{{end}}>
+      {{if .DagnatsURL}}
+      <a href="{{.DagnatsURL}}" class="console-sidebar-extlink" target="_blank" rel="noopener">
         <span class="console-sidebar-extlink-dot" aria-hidden="true"></span>
         <span>dagnats console</span>
         <span class="console-extlink-arrow" aria-hidden="true">{{ uiIcon "arrow-up-right" }}</span>
       </a>
+      {{end}}
       <p class="console-sidebar-version">notify {{.Version}} · :3000</p>
     </div>
   </aside>

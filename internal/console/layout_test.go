@@ -4,6 +4,7 @@
 package console
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -85,5 +86,48 @@ func TestRunURL_EmptyBaseRendersNothing(t *testing.T) {
 	}
 	if got := tc.c.runURL(""); got != "" {
 		t.Errorf("runURL with empty id = %q, want empty", got)
+	}
+}
+
+func TestSidebar_DagnatsLink_RendersWhenConfigured(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.deps.DagnatsConsoleURL = "http://127.0.0.1:8080"
+	tc.c = New(tc.deps)
+	tc.h = tc.c.Routes()
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console: status = %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `href="http://127.0.0.1:8080"`) {
+		t.Errorf("sidebar missing dagnats href; body = %s", body)
+	}
+	if !strings.Contains(body, `target="_blank"`) {
+		t.Errorf("sidebar dagnats link missing target=_blank")
+	}
+	if !strings.Contains(body, "dagnats console") {
+		t.Errorf("sidebar missing dagnats console label")
+	}
+}
+
+func TestSidebar_DagnatsLink_AbsentWhenUnconfigured(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.deps.DagnatsConsoleURL = ""
+	tc.c = New(tc.deps)
+	tc.h = tc.c.Routes()
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console: status = %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "dagnats console") {
+		t.Errorf("sidebar rendered dead dagnats console link with no URL configured; body = %s", body)
+	}
+	if strings.Contains(body, "console-sidebar-extlink") {
+		t.Errorf("sidebar rendered extlink markup with no dagnats URL configured; body = %s", body)
 	}
 }

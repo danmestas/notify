@@ -288,12 +288,19 @@ code, .console-mono { font-family: var(--font-mono); font-size: 0.92em; }
   text-decoration: none;
 }
 .console-sidebar-extlink-dot {
-  width: 16px; height: 16px;
+  /* Filled brand pip in dagnats's own accent blue — mirrors dagnats's
+     `.console-mark` (a solid var(--accent) pill) so the link reads as
+     "dagnats" rather than a generic empty-outline dot. */
+  width: 8px; height: 8px;
   flex: none;
+  margin: 0 4px;
   border-radius: 50%;
-  border: 1.5px solid currentColor;
-  opacity: 0.6;
+  background: #0969DA;
 }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .console-sidebar-extlink-dot { background: #2F81F7; }
+}
+html[data-theme="dark"] .console-sidebar-extlink-dot { background: #2F81F7; }
 .console-extlink-arrow { margin-left: auto; opacity: 0.7; }
 .console-sidebar-version {
   margin: 0;
