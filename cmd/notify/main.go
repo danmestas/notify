@@ -5,8 +5,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -108,80 +106,24 @@ func main() {
 	}
 }
 
-// envOr returns the environment variable value if set, otherwise def.
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-// masterKey resolves the 32-byte AES-256-GCM master key. A non-empty hex flag
-// is decoded and length-checked. An empty flag is only accepted when dev is
-// true: it then derives the exact same fixed dev key as before (byte-for-byte
-// unchanged) so a local operator can keep booting without ceremony and
-// existing local users are not re-keyed. Outside dev, an empty hex key is a
-// fatal misconfiguration — silently deriving a fixed, publicly-computable key
-// would encrypt every credential and cookie under a value anyone can compute.
-func masterKey(hexKey string, dev bool) ([]byte, error) {
-	if hexKey == "" {
-		if !dev {
-			return nil, fmt.Errorf("master-key-hex is required outside -dev/NOTIFY_DEV=1 (an empty key would derive a fixed, publicly-known encryption key)")
-		}
-		k := sha256.Sum256([]byte("notify-dev-master-key"))
-		return k[:], nil
-	}
-	raw, err := hex.DecodeString(hexKey)
-	if err != nil {
-		return nil, fmt.Errorf("decode master-key-hex: %w", err)
-	}
-	if len(raw) != 32 {
-		return nil, fmt.Errorf("master-key-hex must decode to 32 bytes, got %d", len(raw))
-	}
-	return raw, nil
-}
-
-// envBool reports whether the environment variable key is set to "1" or
-// "true" (matches the existing NOTIFY_DISCORD_RESPOND_ALL convention below).
-func envBool(key string) bool {
-	switch os.Getenv(key) {
-	case "1", "true":
-		return true
-	default:
-		return false
-	}
-}
-
 // runServe wires the full stack and serves the HTTP API until interrupted.
 func runServe(args []string) error {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	natsURL := fs.String("nats-url", envOr("NOTIFY_NATS_URL", "nats://127.0.0.1:4222"), "dagnats NATS client URL")
-	bridgeURL := fs.String("bridge-url", envOr("NOTIFY_BRIDGE_URL", "http://127.0.0.1:8080"), "dagnats worker bridge URL")
-	dbPath := fs.String("db", envOr("NOTIFY_DB", "notify.db"), "SQLite database path")
-	addr := fs.String("addr", envOr("NOTIFY_ADDR", "127.0.0.1:3000"), "HTTP listen address")
-	masterKeyHex := fs.String("master-key-hex", os.Getenv("NOTIFY_MASTER_KEY_HEX"), "32-byte AES master key as hex (required unless -dev)")
-	dev := fs.Bool("dev", envBool("NOTIFY_DEV"), "allow booting without -master-key-hex/NOTIFY_MASTER_KEY_HEX by deriving a fixed, insecure dev key (development only)")
-	meshAllow := fs.String("mesh-allow", envOr("NOTIFY_MESH_ALLOW", mesh.DefaultAllowedSubjects), "allowlist pattern for mesh agent dispatch subjects")
-	meshNATSURL := fs.String("mesh-nats-url", envOr("NOTIFY_MESH_NATS_URL", ""), "NATS URL for mesh agent dispatch; empty reuses -nats-url (set when agents live on a different hub than the engine)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	mk, err := masterKey(*masterKeyHex, *dev)
+	cfg, err := loadConfig(args)
 	if err != nil {
 		return err
 	}
+	mk := cfg.masterKey
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	st, err := store.Open(ctx, *dbPath)
+	st, err := store.Open(ctx, cfg.dbPath)
 	if err != nil {
 		return fmt.Errorf("store.Open: %w", err)
 	}
 	defer func() { _ = st.Close() }()
 
-	eng, err := engine.New(*natsURL, *bridgeURL)
+	eng, err := engine.New(cfg.natsURL, cfg.bridgeURL)
 	if err != nil {
 		return fmt.Errorf("engine.New: %w", err)
 	}
@@ -196,11 +138,11 @@ func runServe(args []string) error {
 	// probeBridgeReachable's doc comment for why a reachable-but-not-2xx
 	// bridge is logged and swallowed instead.
 	bridgeClient := &http.Client{Timeout: bridgeProbeTimeout}
-	if err := probeBridgeReachable(ctx, bridgeClient, *bridgeURL); err != nil {
+	if err := probeBridgeReachable(ctx, bridgeClient, cfg.bridgeURL); err != nil {
 		return fmt.Errorf("probeBridgeReachable: %w", err)
 	}
 
-	bus, err := eventbus.Connect(ctx, *natsURL)
+	bus, err := eventbus.Connect(ctx, cfg.natsURL)
 	if err != nil {
 		return fmt.Errorf("eventbus.Connect: %w", err)
 	}
@@ -239,11 +181,11 @@ func runServe(args []string) error {
 	credVerify := credverify.New(eng, conn)
 	eng.Handle(credverify.TaskVerify, credVerify.Handler)
 
-	meshHub := *meshNATSURL
+	meshHub := cfg.meshNATSURL
 	if meshHub == "" {
-		meshHub = *natsURL
+		meshHub = cfg.natsURL
 	}
-	meshClient, err := mesh.Dial(meshHub, mesh.WithAllowedSubjects(*meshAllow))
+	meshClient, err := mesh.Dial(meshHub, mesh.WithAllowedSubjects(cfg.meshAllow))
 	if err != nil {
 		return fmt.Errorf("mesh.Dial: %w", err)
 	}
@@ -266,7 +208,7 @@ func runServe(args []string) error {
 	eml := emailloop.New(
 		st, ags, emailloop.NewMinter(mk), conn,
 		emailloop.NewAgentResponder(emlCompose),
-		os.Getenv("NOTIFY_INBOUND_SECRET"), slog.Default(),
+		cfg.inboundSecret, slog.Default(),
 	)
 
 	// Chat two-way loop: inbound Telegram (getUpdates long-poll) and Discord
@@ -287,22 +229,21 @@ func runServe(args []string) error {
 	chat := chatloop.New(
 		st,
 		chatloop.NewAgentResponder(chatCompose),
-		os.Getenv("TELEGRAM_BOT_TOKEN"),
-		os.Getenv("DISCORD_BOT_TOKEN"),
-		os.Getenv("NOTIFY_CHAT_DEFAULT_AGENT"),
+		cfg.telegramBotToken,
+		cfg.discordBotToken,
+		cfg.chatDefaultAgent,
 		slog.Default(),
 	)
 	// NOTIFY_DISCORD_RESPOND_ALL=1/true makes the Discord gateway reply to every
 	// message in a guild channel (for a dedicated single-purpose channel).
 	// Default (unset) requires the bot to be @-mentioned in guild channels; DMs
 	// always route. See chatloop.Service.discordRespondAll.
-	switch os.Getenv("NOTIFY_DISCORD_RESPOND_ALL") {
-	case "1", "true":
+	if cfg.discordRespondAll {
 		chat.SetDiscordRespondAll(true)
 	}
 	chatScope := domain.Scope{
-		OrgID: os.Getenv("NOTIFY_CHAT_DEFAULT_ORG"),
-		EnvID: os.Getenv("NOTIFY_CHAT_DEFAULT_ENV"),
+		OrgID: cfg.chatDefaultOrg,
+		EnvID: cfg.chatDefaultEnv,
 	}
 
 	// ingress has a single reply-hook slot but both two-way loops need to act on
@@ -405,13 +346,14 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = anStop() }()
 
-	handler := httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Realtime: rt, Feed: feed, Inbound: inb, Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, Store: st, EnvVars: ev, EmailLoop: eml, SourceIngest: srcIngest, Authoring: au})
+	handler := httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Realtime: rt, Feed: feed, Inbound: inb, Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, Store: st, EnvVars: ev, EmailLoop: eml, SourceIngest: srcIngest, Authoring: au, InboundMXHost: cfg.inboundMXHost})
 
 	// Operator console: same listener, mounted at /console ahead of the
 	// public API. All console reads go through the same Scope-carrying
 	// services in-process.
 	consoleDeps := console.Deps{
 		Logger:           slog.Default(),
+		DevMode:          cfg.dev,
 		Identity:         id,
 		Authoring:        au,
 		Analytics:        an,
@@ -430,10 +372,10 @@ func runServe(args []string) error {
 		Translations:   st.Translations(),
 		Environments:   st.Environments(),
 		EnvVars:        ev,
-		InboundDomains: inbounddomains.New(st),
+		InboundDomains: inbounddomains.New(st, cfg.inboundMXHost),
 		// Inbound email console page: read-only thread log + endpoint status.
 		EmailThreads:            st.EmailThreads(),
-		InboundSecretConfigured: os.Getenv("NOTIFY_INBOUND_SECRET") != "",
+		InboundSecretConfigured: cfg.inboundSecret != "",
 		Trigger:                 trg,
 		CredVerifier:            credVerify,
 		Agents:                  ags,
@@ -443,23 +385,19 @@ func runServe(args []string) error {
 		// not the console operator's scope, so pin chatScope here.
 		ChatStatus:        chatStatus{chat: chat, scope: chatScope},
 		MasterKey:         mk,
-		DagnatsConsoleURL: os.Getenv("NOTIFY_DAGNATS_CONSOLE_URL"),
+		DagnatsConsoleURL: cfg.dagnatsConsoleURL,
 		// AI workflow builder key (Guided create tab). The console uses non-empty
 		// to decide display only; actual provider selection is done above via
-		// NewClientFromEnv. Prefer NOTIFY_AI_API_KEY; fall back to ANTHROPIC_API_KEY.
-		AnthropicKey: func() string {
-			if k := os.Getenv("NOTIFY_AI_API_KEY"); k != "" {
-				return k
-			}
-			return os.Getenv("ANTHROPIC_API_KEY")
-		}(),
+		// NewClientFromEnv. Prefer NOTIFY_AI_API_KEY; fall back to ANTHROPIC_API_KEY
+		// (resolved once in loadConfig).
+		AnthropicKey:    cfg.aiConsoleKey,
 		BuilderSessions: st.BuilderSessions(),
-		ReadOnly:        os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",
-		HTTPAddr:        *addr,
+		ReadOnly:        cfg.consoleReadOnly,
+		HTTPAddr:        cfg.addr,
 		// #104: public origin used to render ready-to-register inbound webhook
 		// URLs on the agent channels tab. Empty falls back to a "{base_url}"
 		// placeholder the operator fills in.
-		PublicBaseURL: os.Getenv("NOTIFY_PUBLIC_BASE_URL"),
+		PublicBaseURL: cfg.publicBaseURL,
 		// W4-S1 #40: subscriber preferences tab.
 		Preferences: prefs,
 		// W4-S2 #41: topic activity tab.
@@ -486,10 +424,10 @@ func runServe(args []string) error {
 	// liveness-only check: reports 503 until both the dagnats bridge and the
 	// writer DB pool answer live, 200 once both do.
 	writer, _ := st.Pools()
-	root.HandleFunc("/readyz", readyzHandler(*bridgeURL, bridgeClient, writer))
+	root.HandleFunc("/readyz", readyzHandler(cfg.bridgeURL, bridgeClient, writer))
 	root.Handle("/", handler)
 
-	srv := &http.Server{Addr: *addr, Handler: root}
+	srv := &http.Server{Addr: cfg.addr, Handler: root}
 
 	go func() {
 		<-ctx.Done()
@@ -497,7 +435,7 @@ func runServe(args []string) error {
 	}()
 
 	fmt.Printf("notify %s serving on %s (nats=%s bridge=%s db=%s)\n",
-		version.Version, *addr, *natsURL, *bridgeURL, *dbPath)
+		version.Version, cfg.addr, cfg.natsURL, cfg.bridgeURL, cfg.dbPath)
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("ListenAndServe: %w", err)

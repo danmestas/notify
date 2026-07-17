@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -66,15 +65,11 @@ type CredentialVerifier interface {
 	Start(ctx context.Context, scope domain.Scope, integrationID string) (string, error)
 }
 
-// devMode reflects NOTIFY_DEV=1 at process start. When true the asset
-// handlers send no-cache headers so CSS/JS edits show up on reload without
-// manually busting the browser cache. Read once — the value cannot change
-// at runtime (dagnats handler.go idiom).
-var devMode = os.Getenv("NOTIFY_DEV") == "1"
-
-// assetCacheHeader returns the Cache-Control value every asset handler
-// sets: long+immutable in production, no-store in dev mode.
-func assetCacheHeader() string {
+// assetCacheHeader returns the Cache-Control value every asset handler sets:
+// long+immutable in production, no-store in dev mode. devMode is injected via
+// Deps.DevMode (built once in cmd/notify from -dev/NOTIFY_DEV) rather than read
+// from the ambient process environment here.
+func assetCacheHeader(devMode bool) string {
 	if devMode {
 		return "no-store, must-revalidate"
 	}
@@ -86,6 +81,11 @@ func assetCacheHeader() string {
 type Deps struct {
 	// Logger is required; the console logs via slog only.
 	Logger *slog.Logger
+	// DevMode mirrors -dev/NOTIFY_DEV, resolved once in cmd/notify. When true the
+	// embedded-asset handlers send no-store headers so CSS/JS edits show up on
+	// reload; production serves long+immutable. Replaces the former init-time
+	// os env global so the console no longer reads ambient process state.
+	DevMode bool
 	// Identity authenticates pasted API keys and resolves their Scope.
 	Identity *identity.Service
 	// Authoring lists workflows for the dashboard KPI.
@@ -112,7 +112,7 @@ type Deps struct {
 	// AI workflow builder's Guided create tab (B2). Empty means "AI builder not
 	// configured": New leaves the aiBuilder nil, the Guided tab shows a
 	// not-configured note, and the ai-generate endpoint returns a clear message
-	// instead of panicking. Wired from os.Getenv at cmd/notify/main.go.
+	// instead of panicking. Wired from the process environment at cmd/notify/main.go.
 	AnthropicKey string
 	// BuilderSessions persists AI workflow-builder sessions (prompt + proposed
 	// draft) for the Guided create flow's generate -> preview -> confirm loop.
@@ -406,11 +406,11 @@ func (c *Console) Routes() http.Handler {
 	// CSS/JS on deploy.  The fingerprinted path is computed at init from the
 	// sha256 of the embedded bytes (see assets_manifest.go).
 	r.Get(assetManifest["datastar.js"], serveGzAsset("datastar.js.gz",
-		"application/javascript; charset=utf-8"))
+		"application/javascript; charset=utf-8", c.deps.DevMode))
 	r.Get(assetManifest["app.css"], servePlainAsset("app.css",
-		"text/css; charset=utf-8"))
+		"text/css; charset=utf-8", c.deps.DevMode))
 	r.Get(assetManifest["theme.js"], servePlainAsset("theme.js",
-		"application/javascript; charset=utf-8"))
+		"application/javascript; charset=utf-8", c.deps.DevMode))
 
 	r.Group(func(pr chi.Router) {
 		pr.Use(c.sessionMiddleware)
@@ -662,7 +662,7 @@ func (c *Console) Routes() http.Handler {
 // serveGzAsset streams a gzip-on-disk embedded asset with
 // Content-Encoding: gzip; the browser decompresses transparently
 // (dagnats / Scalar pattern).
-func serveGzAsset(name, contentType string) http.HandlerFunc {
+func serveGzAsset(name, contentType string, devMode bool) http.HandlerFunc {
 	if name == "" {
 		panic("serveGzAsset: name is empty")
 	}
@@ -679,14 +679,14 @@ func serveGzAsset(name, contentType string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Set("Cache-Control", assetCacheHeader())
+		w.Header().Set("Cache-Control", assetCacheHeader(devMode))
 		_, _ = w.Write(body)
 	}
 }
 
 // servePlainAsset is the uncompressed variant for app.css, which is small
 // enough that gzip would only complicate the embed path.
-func servePlainAsset(name, contentType string) http.HandlerFunc {
+func servePlainAsset(name, contentType string, devMode bool) http.HandlerFunc {
 	if name == "" {
 		panic("servePlainAsset: name is empty")
 	}
@@ -702,7 +702,7 @@ func servePlainAsset(name, contentType string) http.HandlerFunc {
 	}
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Cache-Control", assetCacheHeader())
+		w.Header().Set("Cache-Control", assetCacheHeader(devMode))
 		_, _ = w.Write(body)
 	}
 }

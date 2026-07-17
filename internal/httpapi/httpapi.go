@@ -87,6 +87,11 @@ type Deps struct {
 	SourceIngest *feedingest.Gateway
 	// Authoring backs the workflow-authoring routes. Nil disables them.
 	Authoring *authoring.Service
+	// InboundMXHost is the expected MX host stamped on domains created via the
+	// inbound-domain routes (NOTIFY_INBOUND_MX_HOST, resolved once in
+	// cmd/notify). Empty falls back to the package default inside
+	// inbounddomains.New.
+	InboundMXHost string
 }
 
 // New builds the notify HTTP handler from d. All authenticated routes are
@@ -108,7 +113,7 @@ func New(d Deps) http.Handler {
 	// Wire the inbound domains service when a store is present (#53).
 	var inboundDomainSvc *inbounddomains.Service
 	if st != nil {
-		inboundDomainSvc = inbounddomains.New(st)
+		inboundDomainSvc = inbounddomains.New(st, d.InboundMXHost)
 	}
 	r := chi.NewRouter()
 	// Liveness probe, mounted outside the auth group so container/orchestrator

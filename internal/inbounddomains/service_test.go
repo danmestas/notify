@@ -22,6 +22,20 @@ func openTestStore(t *testing.T) *store.Store {
 	return st
 }
 
+// TestNew_MXHostParam pins the constructor contract after lifting the
+// NOTIFY_INBOUND_MX_HOST env read up to cmd/notify: an injected host is used
+// verbatim, and an empty host falls back to defaultMXHost.
+func TestNew_MXHostParam(t *testing.T) {
+	st := openTestStore(t)
+
+	if got := New(st, "mx.injected.test").MXHost(); got != "mx.injected.test" {
+		t.Errorf("MXHost with injected host = %q, want mx.injected.test", got)
+	}
+	if got := New(st, "").MXHost(); got != defaultMXHost {
+		t.Errorf("MXHost with empty host = %q, want %q (default fallback)", got, defaultMXHost)
+	}
+}
+
 func TestService_Create(t *testing.T) {
 	st := openTestStore(t)
 	svc := newWithLookup(st, "mx.notify.test", net.LookupMX)

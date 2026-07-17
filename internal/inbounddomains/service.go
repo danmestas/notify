@@ -4,7 +4,6 @@ package inbounddomains
 import (
 	"context"
 	"net"
-	"os"
 	"strings"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -27,10 +26,10 @@ type Service struct {
 	lookupMX MXLookupFunc
 }
 
-// New creates a Service. The MX host is read from NOTIFY_INBOUND_MX_HOST env var
-// (defaults to "inbound.notify.example.com"). lookupMX may be nil to use net.LookupMX.
-func New(st *store.Store) *Service {
-	mxHost := os.Getenv("NOTIFY_INBOUND_MX_HOST")
+// New creates a Service. The expected MX host is injected by the caller
+// (cmd/notify reads NOTIFY_INBOUND_MX_HOST once); an empty mxHost falls back to
+// defaultMXHost so callers without a configured host keep the prior behavior.
+func New(st *store.Store, mxHost string) *Service {
 	if mxHost == "" {
 		mxHost = defaultMXHost
 	}
