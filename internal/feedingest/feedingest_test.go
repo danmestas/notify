@@ -535,7 +535,7 @@ func TestIngest_RouteMountSplit(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	handler := httpapi.New(id, nil, nil, inbox, nil, feed, nil, nil, nil, nil, nil, nil, nil, nil, srcIngest)
+	handler := httpapi.New(httpapi.Deps{Identity: id, Inbox: inbox, Feed: feed, SourceIngest: srcIngest})
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 

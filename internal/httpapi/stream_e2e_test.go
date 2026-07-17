@@ -266,7 +266,7 @@ func TestStream_TriggerToSSE_EndToEnd(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = unsub() })
 
-	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, feed, nil, nil, nil, nil, nil, nil, nil, nil, nil))
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Feed: feed}))
 	t.Cleanup(srv.Close)
 
 	if status, body := doPost(t, srv.URL+"/v1/subscribers", authHeader, `{"subscriberId":"user_1"}`); status != http.StatusCreated {
@@ -407,7 +407,7 @@ func TestStream_ReplayAfterFullRestart(t *testing.T) {
 		t.Fatalf("authoring.Publish: %v", err)
 	}
 
-	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, feed, nil, nil, nil, nil, nil, nil, nil, nil, nil))
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Feed: feed}))
 
 	if status, body := doPost(t, srv.URL+"/v1/subscribers", authHeader, `{"subscriberId":"user_2"}`); status != http.StatusCreated {
 		t.Fatalf("POST /v1/subscribers: status=%d body=%s", status, body)
@@ -447,7 +447,7 @@ func TestStream_ReplayAfterFullRestart(t *testing.T) {
 	t.Cleanup(func() { _ = bus2.Close() })
 	feed2 := feedapi.New(bus2)
 
-	srv2 := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, feed2, nil, nil, nil, nil, nil, nil, nil, nil, nil))
+	srv2 := httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Feed: feed2}))
 	t.Cleanup(srv2.Close)
 
 	stream := openFeedStream(t, srv2.URL, authHeader, "topic=events&from=0")
@@ -536,7 +536,7 @@ func TestStream_CrossTenantCannotRead(t *testing.T) {
 		t.Fatalf("authoring.Publish: %v", err)
 	}
 
-	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, feed, nil, nil, nil, nil, nil, nil, nil, nil, nil))
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Feed: feed}))
 	t.Cleanup(srv.Close)
 
 	if status, body := doPost(t, srv.URL+"/v1/subscribers", authHeaderA, `{"subscriberId":"user_a"}`); status != http.StatusCreated {
@@ -635,7 +635,7 @@ func TestStream_TopicInjectionViaPayload(t *testing.T) {
 		t.Fatalf("authoring.Publish: %v", err)
 	}
 
-	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, feed, nil, nil, nil, nil, nil, nil, nil, nil, nil))
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Feed: feed}))
 	t.Cleanup(srv.Close)
 
 	if status, body := doPost(t, srv.URL+"/v1/subscribers", authHeader, `{"subscriberId":"user_4"}`); status != http.StatusCreated {

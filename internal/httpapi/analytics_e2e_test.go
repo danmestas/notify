@@ -95,7 +95,7 @@ func TestAnalytics_DeliveriesByChannel(t *testing.T) {
 		t.Fatalf("authoring.Publish: %v", err)
 	}
 
-	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, nil, nil, an, nil, nil, nil, nil, nil, nil, nil))
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Analytics: an}))
 	defer srv.Close()
 
 	authHeader := "ApiKey " + key

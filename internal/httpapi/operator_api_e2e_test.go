@@ -63,7 +63,7 @@ func startOperatorServer(t *testing.T) (*httptest.Server, string, domain.Scope) 
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, nil, nil, nil, nil, nil, conn, nil, nil, nil, nil, au))
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Connectivity: conn, Authoring: au}))
 	t.Cleanup(srv.Close)
 	return srv, "ApiKey " + key, scope
 }

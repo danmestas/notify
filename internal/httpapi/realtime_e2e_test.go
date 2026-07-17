@@ -88,7 +88,7 @@ func TestRealtime_InAppStreamsToSubscriber(t *testing.T) {
 		t.Fatalf("authoring.Publish: %v", err)
 	}
 
-	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, rt, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil))
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Realtime: rt}))
 	defer srv.Close()
 
 	authHeader := "ApiKey " + key

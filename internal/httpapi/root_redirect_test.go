@@ -32,7 +32,7 @@ func TestRoot_RedirectsToConsole(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 	inbox := inboxapi.New(st)
-	handler := httpapi.New(id, nil, nil, inbox, nil, nil, nil, nil, nil, nil, nil, st, nil, nil, nil)
+	handler := httpapi.New(httpapi.Deps{Identity: id, Inbox: inbox, Store: st})
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))

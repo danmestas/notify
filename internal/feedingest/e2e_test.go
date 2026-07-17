@@ -84,11 +84,10 @@ func newFullStack(t *testing.T) *fullStack {
 	srcIngest := feedingest.New(svc, bus)
 	inbox := inboxapi.New(st)
 
-	// httpapi.New(id, aud, trg, inbox, rt, feed, inb, an, ag, ing, conn, st, ev,
-	// eml, src, auth...). Only id + inbox + feed + src are load-bearing here; the
-	// rest are nil (their routes are nil-guarded, except inbox.Routes which is
-	// unconditional — hence the real inboxapi.New).
-	handler := httpapi.New(id, nil, nil, inbox, nil, feed, nil, nil, nil, nil, nil, nil, nil, nil, srcIngest)
+	// Only Identity + Inbox + Feed + SourceIngest are load-bearing here; the
+	// rest are left nil (their routes are nil-guarded, except inbox.Routes which
+	// is unconditional — hence the real inboxapi.New).
+	handler := httpapi.New(httpapi.Deps{Identity: id, Inbox: inbox, Feed: feed, SourceIngest: srcIngest})
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 

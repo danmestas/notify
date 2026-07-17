@@ -37,25 +37,64 @@ import (
 	"github.com/danmestas/notify/internal/webhooksout"
 )
 
-// New builds the notify HTTP handler. All routes are grouped behind
-// id.Middleware, so each handler resolves its Scope via identity.ScopeFrom.
-// st may be nil; when non-nil it enables the console read surface routes
-// (GET /v1/notifications, GET /v1/notifications/{id}).
-// wh may be nil; when non-nil it enables webhook-endpoint management routes
-// (GET/POST /v1/webhooks/endpoints, GET/PUT/DELETE /v1/webhooks/endpoints/{id}).
-// feed may be nil; when non-nil it enables the durable stream-channel feed
-// SSE route (GET /v1/feed/stream).
-// src may be nil; when non-nil it enables the inbound webhook-push ingest route
-// (POST /v1/sources/{sourceID}/events), mounted OUTSIDE the identity.Middleware
-// group with its own per-source SourceKey auth.
-func New(id *identity.Service, aud *audience.Service, trg *trigger.Service, inbox *inboxapi.Service, rt *realtime.Gateway, feed *feedapi.Gateway, inb *inbound.Service, an *analytics.Service, ag *agentsapi.Service, ing *ingress.Service, conn *connectivity.Service, st *store.Store, ev *envvars.Service, eml *emailloop.Service, src *feedingest.Gateway, auth ...*authoring.Service) http.Handler {
-	if len(auth) > 1 {
-		panic("httpapi.New: at most one *authoring.Service")
-	}
-	var au *authoring.Service
-	if len(auth) > 0 {
-		au = auth[0]
-	}
+// Deps carries everything New needs to assemble the notify HTTP handler,
+// mirroring console.Deps: named fields make each dependency's optionality
+// explicit and remove the transposition hazard of a long positional list.
+// All services are called in-process. Identity, Trigger and Inbox are
+// required (their routes are always mounted); the remaining fields are
+// nil-tolerant and gate their routes as documented below.
+type Deps struct {
+	// Identity authenticates API keys and resolves each request's Scope; its
+	// Middleware wraps the whole authenticated route group. Required.
+	Identity *identity.Service
+	// Audience backs subscriber and topic management. Nil leaves those
+	// handlers wired but non-functional in wiring that never exercises them.
+	Audience *audience.Service
+	// Trigger backs POST /v1/events/trigger. Required.
+	Trigger *trigger.Service
+	// Inbox mounts the in-app message feed routes unconditionally. Required.
+	Inbox *inboxapi.Service
+	// Realtime is the SSE gateway. Nil disables its routes.
+	Realtime *realtime.Gateway
+	// Feed is the durable stream-channel feed gateway. Nil disables the feed
+	// SSE route (GET /v1/feed/stream).
+	Feed *feedapi.Gateway
+	// Inbound mounts the inbound message routes. Nil disables them.
+	Inbound *inbound.Service
+	// Analytics mounts the analytics routes. Nil disables them.
+	Analytics *analytics.Service
+	// Agents mounts the agents API routes. Nil disables them.
+	Agents *agentsapi.Service
+	// Ingress mounts the agent ingress routes. Nil disables them.
+	Ingress *ingress.Service
+	// Connectivity backs the integration management routes. Nil disables them.
+	Connectivity *connectivity.Service
+	// Store is the persistence layer. Nil disables the console read surface
+	// (GET /v1/notifications, GET /v1/notifications/{id}), webhook-endpoint
+	// management (GET/POST/PUT/DELETE /v1/webhooks/endpoints), layouts,
+	// translations, contexts, and inbound-domain routes.
+	Store *store.Store
+	// EnvVars backs environment-variable management routes. Nil disables them.
+	EnvVars *envvars.Service
+	// EmailLoop handles the inbound email parse webhook (POST /v1/inbound/email),
+	// mounted OUTSIDE the API-key group with its own X-Inbound-Secret auth. Nil
+	// leaves the route unmounted.
+	EmailLoop *emailloop.Service
+	// SourceIngest enables the inbound webhook-push ingest route
+	// (POST /v1/sources/{sourceID}/events), mounted OUTSIDE the identity
+	// Middleware group with its own per-source SourceKey auth. Nil leaves the
+	// route unmounted.
+	SourceIngest *feedingest.Gateway
+	// Authoring backs the workflow-authoring routes. Nil disables them.
+	Authoring *authoring.Service
+}
+
+// New builds the notify HTTP handler from d. All authenticated routes are
+// grouped behind d.Identity.Middleware, so each handler resolves its Scope via
+// identity.ScopeFrom. Optional dependencies gate their routes as documented on
+// Deps.
+func New(d Deps) http.Handler {
+	id, aud, trg, inbox, rt, feed, inb, an, ag, ing, conn, st, ev, eml, src, au := d.Identity, d.Audience, d.Trigger, d.Inbox, d.Realtime, d.Feed, d.Inbound, d.Analytics, d.Agents, d.Ingress, d.Connectivity, d.Store, d.EnvVars, d.EmailLoop, d.SourceIngest, d.Authoring
 	// Wire a webhook management service when a store is present.
 	var wh *webhooksout.ManagementService
 	if st != nil {

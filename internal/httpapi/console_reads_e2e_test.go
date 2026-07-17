@@ -44,7 +44,7 @@ func startConsoleServer(t *testing.T) (*httptest.Server, string, domain.Scope, *
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	srv := httptest.NewServer(httpapi.New(id, aud, trg, inbox, nil, nil, nil, nil, nil, nil, nil, st, nil, nil, nil, au))
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Store: st, Authoring: au}))
 	t.Cleanup(srv.Close)
 	return srv, "ApiKey " + key, scope, au, st
 }

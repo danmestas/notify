@@ -48,7 +48,7 @@ func TestFeedStream_RequiresApiKey(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	srv := httptest.NewServer(httpapi.New(id, nil, nil, inbox, nil, feed, nil, nil, nil, nil, nil, nil, nil, nil, nil))
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Inbox: inbox, Feed: feed}))
 	t.Cleanup(srv.Close)
 
 	resp, err := http.Get(srv.URL + "/v1/feed/stream?topic=orders")
