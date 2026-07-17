@@ -18,6 +18,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+
+	"github.com/danmestas/notify/internal/eventbus"
 )
 
 // Control-plane subjects exposed by the dagnats NATS API.
@@ -160,9 +162,9 @@ type Engine struct {
 // New dials the sidecar's NATS endpoint and prepares an HTTP client for the
 // worker bridge mounted at bridgeURL.
 func New(natsURL, bridgeURL string) (*Engine, error) {
-	nc, err := nats.Connect(natsURL)
+	nc, err := eventbus.DialNATS(natsURL, "notify-engine")
 	if err != nil {
-		return nil, fmt.Errorf("connect nats %q: %w", natsURL, err)
+		return nil, err
 	}
 	return &Engine{
 		nc:            nc,

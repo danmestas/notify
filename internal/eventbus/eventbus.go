@@ -77,9 +77,9 @@ type Bus struct {
 // (subjects "notify.analytics.>"). The returned Bus owns the connection;
 // the caller must Close it.
 func Connect(ctx context.Context, natsURL string) (*Bus, error) {
-	nc, err := nats.Connect(natsURL)
+	nc, err := DialNATS(natsURL, "notify-eventbus")
 	if err != nil {
-		return nil, fmt.Errorf("eventbus: connect %q: %w", natsURL, err)
+		return nil, err
 	}
 
 	js, err := jetstream.New(nc)

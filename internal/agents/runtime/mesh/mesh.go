@@ -34,6 +34,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/danmestas/notify/internal/agents/domain"
+	"github.com/danmestas/notify/internal/eventbus"
 )
 
 const (
@@ -94,9 +95,9 @@ func WithTimeout(d time.Duration) Option {
 
 // Dial connects to the hub and returns a ready Client.
 func Dial(natsURL string, opts ...Option) (*Client, error) {
-	nc, err := nats.Connect(natsURL)
+	nc, err := eventbus.DialNATS(natsURL, "notify-mesh")
 	if err != nil {
-		return nil, fmt.Errorf("mesh: connect nats %q: %w", natsURL, err)
+		return nil, err
 	}
 	c := &Client{nc: nc, allow: DefaultAllowedSubjects, timeout: DefaultTimeout}
 	for _, opt := range opts {
