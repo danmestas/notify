@@ -269,9 +269,7 @@ func TestPostEmailIntegration_ErrorPathRedacted(t *testing.T) {
 	if strings.Contains(respBody, "smtp.secret-host.example") {
 		t.Errorf("error body leaks the host: %s", respBody)
 	}
-	if want := "failed to create email integration"; !strings.Contains(respBody, want) {
-		t.Errorf("error body = %q, want it to contain %q", respBody, want)
-	}
+	assertInternalErrorEnvelope(t, respBody)
 }
 
 // TestPostCloudflareEmailIntegration_ProviderField proves POST
@@ -329,8 +327,29 @@ func TestPostCloudflareEmailIntegration_ErrorPathRedacted(t *testing.T) {
 	if strings.Contains(respBody, "secret-account-id") {
 		t.Errorf("error body leaks the accountId: %s", respBody)
 	}
-	if want := "failed to create email integration"; !strings.Contains(respBody, want) {
-		t.Errorf("error body = %q, want it to contain %q", respBody, want)
+	assertInternalErrorEnvelope(t, respBody)
+}
+
+// assertInternalErrorEnvelope asserts a 5xx body is the stable generic
+// {"error":{"code":"internal","message":"internal error"}} envelope — the /v1
+// contract genericizes 5xx bodies so no internal detail (or old descriptive
+// message) reaches the client.
+func assertInternalErrorEnvelope(t *testing.T, respBody string) {
+	t.Helper()
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(respBody), &env); err != nil {
+		t.Fatalf("500 body is not a JSON error envelope: %v (body=%s)", err, respBody)
+	}
+	if env.Error.Code != "internal" {
+		t.Errorf("error code = %q, want internal (body=%s)", env.Error.Code, respBody)
+	}
+	if env.Error.Message != "internal error" {
+		t.Errorf("error message = %q, want \"internal error\" (body=%s)", env.Error.Message, respBody)
 	}
 }
 

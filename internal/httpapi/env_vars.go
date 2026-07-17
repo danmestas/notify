@@ -38,7 +38,7 @@ func getEnvVars(ev *envvars.Service) http.HandlerFunc {
 		items, next, prev, err := ev.List(r.Context(), scope,
 			q.Get("search"), q.Get("after"), q.Get("before"), limit)
 		if err != nil {
-			http.Error(w, "failed to list env vars", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 
@@ -49,7 +49,7 @@ func getEnvVars(ev *envvars.Service) http.HandlerFunc {
 				plain, err := ev.GetValue(r.Context(), scope, item.Key)
 				if err != nil {
 					// Fail-closed: any decrypt failure → 500, never leak.
-					http.Error(w, "failed to reveal value", http.StatusInternalServerError)
+					writeInternalError(w, r, err)
 					return
 				}
 				value = plain
@@ -86,21 +86,21 @@ func postEnvVar(ev *envvars.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req postEnvVarRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		if req.Key == "" {
-			http.Error(w, "key is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "key is required")
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		item, err := ev.Set(r.Context(), scope, req.Key, req.IsSecret, req.Value)
 		if err != nil {
 			if errors.Is(err, envvars.ErrInvalidKey) {
-				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
-			http.Error(w, "failed to create env var", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, envVarDTO{
@@ -130,7 +130,7 @@ func putEnvVar(ev *envvars.Service) http.HandlerFunc {
 
 		var req putEnvVarRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 
@@ -138,10 +138,10 @@ func putEnvVar(ev *envvars.Service) http.HandlerFunc {
 		existing, err := ev.Get(r.Context(), scope, key)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "env var not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "env var not found")
 				return
 			}
-			http.Error(w, "failed to get env var", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 
@@ -155,7 +155,7 @@ func putEnvVar(ev *envvars.Service) http.HandlerFunc {
 		if value == "" || value == envvars.ValueMaskSentinel {
 			plain, err := ev.GetValue(r.Context(), scope, key)
 			if err != nil {
-				http.Error(w, "failed to read existing value", http.StatusInternalServerError)
+				writeInternalError(w, r, err)
 				return
 			}
 			value = plain
@@ -163,7 +163,7 @@ func putEnvVar(ev *envvars.Service) http.HandlerFunc {
 
 		item, err := ev.Set(r.Context(), scope, key, isSecret, value)
 		if err != nil {
-			http.Error(w, "failed to update env var", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, envVarDTO{
@@ -184,10 +184,10 @@ func deleteEnvVar(ev *envvars.Service) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		if err := ev.Delete(r.Context(), scope, key); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "env var not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "env var not found")
 				return
 			}
-			http.Error(w, "failed to delete env var", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

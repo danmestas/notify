@@ -29,7 +29,7 @@ func getTranslations(repo store.TranslationRepo) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		stats, err := repo.LocaleStats(r.Context(), scope)
 		if err != nil {
-			http.Error(w, "failed to list translations", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		dtos := make([]localeStatDTO, 0, len(stats))
@@ -51,11 +51,11 @@ func getTranslation(repo store.TranslationRepo) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		m, err := repo.Map(r.Context(), scope, locale)
 		if err != nil {
-			http.Error(w, "failed to get translations", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		if len(m) == 0 {
-			http.Error(w, "locale not found", http.StatusNotFound)
+			writeJSONError(w, http.StatusNotFound, "not_found", "locale not found")
 			return
 		}
 		writeJSON(w, http.StatusOK, m)
@@ -74,20 +74,20 @@ func postTranslation(repo store.TranslationRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req translationCreateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		if req.Locale == "" {
-			http.Error(w, "locale is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "locale is required")
 			return
 		}
 		if req.Key == "" {
-			http.Error(w, "key is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "key is required")
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		if err := repo.Upsert(r.Context(), scope, req.Locale, req.Key, req.Value); err != nil {
-			http.Error(w, "failed to create translation", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]string{
@@ -109,12 +109,12 @@ func putTranslationKey(repo store.TranslationRepo) http.HandlerFunc {
 		key := chi.URLParam(r, "key")
 		var req translationKeyUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		if err := repo.Upsert(r.Context(), scope, locale, key, req.Value); err != nil {
-			http.Error(w, "failed to update translation", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{
@@ -132,12 +132,12 @@ func putTranslationLocale(repo store.TranslationRepo) http.HandlerFunc {
 		locale := chi.URLParam(r, "locale")
 		var pairs map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&pairs); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		if err := repo.BulkReplace(r.Context(), scope, locale, pairs); err != nil {
-			http.Error(w, "failed to replace translations", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -155,10 +155,10 @@ func deleteTranslationKey(repo store.TranslationRepo) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		if err := repo.Delete(r.Context(), scope, locale, key); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "translation not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "translation not found")
 				return
 			}
-			http.Error(w, "failed to delete translation", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

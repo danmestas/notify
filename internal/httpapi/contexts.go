@@ -44,7 +44,7 @@ func getContexts(svc *contexts.Service) http.HandlerFunc {
 		items, next, prev, err := svc.List(r.Context(), scope,
 			q.Get("type"), q.Get("search"), q.Get("after"), q.Get("before"), limit)
 		if err != nil {
-			http.Error(w, "failed to list contexts", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		dtos := make([]contextDTO, 0, len(items))
@@ -72,29 +72,29 @@ func postContext(svc *contexts.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req postContextRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		if req.Type == "" {
-			http.Error(w, "type is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "type is required")
 			return
 		}
 		if req.ExternalID == "" {
-			http.Error(w, "id is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "id is required")
 			return
 		}
 		if len(req.Data) > 0 && !json.Valid(req.Data) {
-			http.Error(w, "data must be valid JSON", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "data must be valid JSON")
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		c, err := svc.Create(r.Context(), scope, req.Type, req.ExternalID, req.Data)
 		if err != nil {
 			if errors.Is(err, store.ErrContextConflict) {
-				http.Error(w, "context with this type and id already exists", http.StatusConflict)
+				writeJSONError(w, http.StatusConflict, "conflict", "context with this type and id already exists")
 				return
 			}
-			http.Error(w, "failed to create context", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, toContextDTO(c))
@@ -110,10 +110,10 @@ func getContext(svc *contexts.Service) http.HandlerFunc {
 		c, err := svc.Get(r.Context(), scope, ctype, externalID)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "context not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "context not found")
 				return
 			}
-			http.Error(w, "failed to get context", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toContextDTO(c))
@@ -132,21 +132,21 @@ func putContext(svc *contexts.Service) http.HandlerFunc {
 		externalID := chi.URLParam(r, "id")
 		var req putContextRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		if len(req.Data) > 0 && !json.Valid(req.Data) {
-			http.Error(w, "data must be valid JSON", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "data must be valid JSON")
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		c, err := svc.Update(r.Context(), scope, ctype, externalID, req.Data)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "context not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "context not found")
 				return
 			}
-			http.Error(w, "failed to update context", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toContextDTO(c))
@@ -161,10 +161,10 @@ func deleteContext(svc *contexts.Service) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		if err := svc.Delete(r.Context(), scope, ctype, externalID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "context not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "context not found")
 				return
 			}
-			http.Error(w, "failed to delete context", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

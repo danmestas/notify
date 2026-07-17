@@ -57,7 +57,7 @@ func getInboundDomains(svc *inbounddomains.Service) http.HandlerFunc {
 		}
 		items, next, total, err := svc.List(r.Context(), scope, search, after, limit)
 		if err != nil {
-			http.Error(w, "failed to list inbound domains", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		dtos := make([]inboundDomainDTO, 0, len(items))
@@ -78,21 +78,21 @@ func postInboundDomain(svc *inbounddomains.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req inboundDomainCreateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		if req.Name == "" {
-			http.Error(w, "name is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "name is required")
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		d, err := svc.Create(r.Context(), scope, req.Name)
 		if err != nil {
 			if errors.Is(err, store.ErrInboundDomainConflict) {
-				http.Error(w, "inbound domain already exists", http.StatusConflict)
+				writeJSONError(w, http.StatusConflict, "conflict", "inbound domain already exists")
 				return
 			}
-			http.Error(w, "failed to create inbound domain", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, toInboundDomainDTO(d))
@@ -107,10 +107,10 @@ func getInboundDomain(svc *inbounddomains.Service) http.HandlerFunc {
 		d, err := svc.Get(r.Context(), scope, name)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "inbound domain not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "inbound domain not found")
 				return
 			}
-			http.Error(w, "failed to get inbound domain", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toInboundDomainDTO(d))
@@ -125,10 +125,10 @@ func postInboundDomainVerify(svc *inbounddomains.Service) http.HandlerFunc {
 		d, err := svc.Verify(r.Context(), scope, name)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "inbound domain not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "inbound domain not found")
 				return
 			}
-			http.Error(w, "failed to verify inbound domain", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toInboundDomainDTO(d))
@@ -142,10 +142,10 @@ func deleteInboundDomain(svc *inbounddomains.Service) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		if err := svc.Delete(r.Context(), scope, name); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "inbound domain not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "inbound domain not found")
 				return
 			}
-			http.Error(w, "failed to delete inbound domain", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

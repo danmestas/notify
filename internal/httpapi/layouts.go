@@ -55,7 +55,7 @@ func getLayouts(repo store.LayoutRepo) http.HandlerFunc {
 		}
 		layouts, nextKey, err := repo.List(r.Context(), scope, after, limit)
 		if err != nil {
-			http.Error(w, "failed to list layouts", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		dtos := make([]layoutDTO, 0, len(layouts))
@@ -82,25 +82,25 @@ func postLayout(repo store.LayoutRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req layoutCreateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		if req.Key == "" {
-			http.Error(w, "key is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "key is required")
 			return
 		}
 		if req.Name == "" {
-			http.Error(w, "name is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "name is required")
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		l, err := repo.Create(r.Context(), scope, req.Key, req.Name, req.Content)
 		if err != nil {
 			if errors.Is(err, store.ErrConflict) {
-				http.Error(w, "layout key already exists", http.StatusConflict)
+				writeJSONError(w, http.StatusConflict, "conflict", "layout key already exists")
 				return
 			}
-			http.Error(w, "failed to create layout", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, toLayoutDTO(l))
@@ -115,10 +115,10 @@ func getLayout(repo store.LayoutRepo) http.HandlerFunc {
 		l, err := repo.Get(r.Context(), scope, key)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "layout not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "layout not found")
 				return
 			}
-			http.Error(w, "failed to get layout", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toLayoutDTO(l))
@@ -138,17 +138,17 @@ func putLayout(repo store.LayoutRepo) http.HandlerFunc {
 		key := chi.URLParam(r, "key")
 		var req layoutUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		if err := repo.Upsert(r.Context(), scope, key, req.Name, req.Content); err != nil {
-			http.Error(w, "failed to update layout", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		l, err := repo.Get(r.Context(), scope, key)
 		if err != nil {
-			http.Error(w, "failed to read updated layout", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toLayoutDTO(l))
@@ -162,10 +162,10 @@ func deleteLayout(repo store.LayoutRepo) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		if err := repo.Delete(r.Context(), scope, key); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "layout not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "layout not found")
 				return
 			}
-			http.Error(w, "failed to delete layout", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

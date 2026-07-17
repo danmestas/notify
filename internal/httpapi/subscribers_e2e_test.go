@@ -340,6 +340,35 @@ func TestSubscriber_Create_RejectsMalformedEmail(t *testing.T) {
 	}
 }
 
+// TestSubscriber_Create_MalformedEmail_JSONEnvelope proves the 400 for a
+// malformed email is returned as the stable {"error":{"code","message"}}
+// JSON envelope, not a plain-text body — the /v1 error contract.
+func TestSubscriber_Create_MalformedEmail_JSONEnvelope(t *testing.T) {
+	srv, authHeader, _, _, _ := startConsoleServer(t)
+
+	status, respBody := doPost(t, srv.URL+"/v1/subscribers", authHeader,
+		`{"subscriberId":"bad-email-envelope","email":"not-an-email"}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("POST /v1/subscribers with malformed email: status=%d, want 400 (body: %s)", status, respBody)
+	}
+
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(respBody), &env); err != nil {
+		t.Fatalf("body is not a JSON error envelope: %v (body=%s)", err, respBody)
+	}
+	if env.Error.Code == "" {
+		t.Errorf("error envelope missing code (body=%s)", respBody)
+	}
+	if env.Error.Message == "" {
+		t.Errorf("error envelope missing message (body=%s)", respBody)
+	}
+}
+
 // TestSubscriber_Create_AllowsValidOrEmptyEmail proves the API still accepts
 // a well-formed email, and an absent one, unchanged from before this fix.
 func TestSubscriber_Create_AllowsValidOrEmptyEmail(t *testing.T) {

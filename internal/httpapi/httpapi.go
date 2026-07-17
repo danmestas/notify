@@ -280,7 +280,7 @@ func postSubscriber(aud *audience.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req subscriberRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
@@ -299,10 +299,10 @@ func postSubscriber(aud *audience.Service) http.HandlerFunc {
 			// too so the API can't be used to bypass it. See W5.
 			var verr *audience.ValidationError
 			if errors.As(err, &verr) {
-				http.Error(w, verr.Msg, http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", verr.Msg)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, sub)
@@ -324,17 +324,17 @@ func putSubscriberCredentials(aud *audience.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req subscriberCredentialsRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		if req.ProviderID == "" {
-			http.Error(w, "providerId is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "providerId is required")
 			return
 		}
 		subscriberID := chi.URLParam(r, "subscriberId")
 		scope := identity.ScopeFrom(r.Context())
 		if _, err := aud.SetCredentials(r.Context(), scope, subscriberID, req.ProviderID, req.Channel, req.Credentials); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -368,7 +368,7 @@ func postPushIntegration(conn *connectivity.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req pushIntegrationRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
@@ -385,7 +385,7 @@ func postPushIntegration(conn *connectivity.Service) http.HandlerFunc {
 		switch provider {
 		case "ntfy":
 			if req.BaseURL == "" {
-				http.Error(w, "baseUrl is required for ntfy", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "baseUrl is required for ntfy")
 				return
 			}
 			in, err = conn.CreateNtfy(r.Context(), scope, req.Identifier, connectivity.NtfyConfig{
@@ -400,11 +400,11 @@ func postPushIntegration(conn *connectivity.Service) http.HandlerFunc {
 			}, req.Primary)
 		case "fcm":
 			if req.ServiceAccount == "" {
-				http.Error(w, "serviceAccount is required for fcm", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "serviceAccount is required for fcm")
 				return
 			}
 			if req.ProjectID == "" {
-				http.Error(w, "projectId is required for fcm", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "projectId is required for fcm")
 				return
 			}
 			in, err = conn.CreateFCM(r.Context(), scope, req.Identifier, connectivity.FCMConfig{
@@ -412,17 +412,17 @@ func postPushIntegration(conn *connectivity.Service) http.HandlerFunc {
 				ProjectID:      req.ProjectID,
 			}, req.Primary)
 		default:
-			http.Error(w, "unknown provider "+req.Provider+"; allowed: ntfy, expo, fcm", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "unknown provider "+req.Provider+"; allowed: ntfy, expo, fcm")
 			return
 		}
 		if err != nil {
 			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
-				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
 			// Never surface the underlying error: wrapped marshal/encrypt/store
 			// detail could carry credential-bearing config fields.
-			http.Error(w, "failed to create push integration", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		// Sensitive fields (token, accessToken, serviceAccount) are never echoed.
@@ -443,13 +443,13 @@ func postTrigger(trg *trigger.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req trigger.TriggerRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		resp, err := trg.Ingest(r.Context(), scope, req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, resp)
@@ -468,17 +468,17 @@ func postTopic(aud *audience.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req topicRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		topic, err := aud.CreateTopic(r.Context(), scope, req.Key, req.Name)
 		if err != nil {
 			if errors.Is(err, audience.ErrInvalidTopicKey) {
-				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, topic)
@@ -499,30 +499,30 @@ func postTopicSubscriber(aud *audience.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req topicSubscriberRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		subID := strings.TrimSpace(req.SubscriberID)
 		if subID == "" {
-			http.Error(w, "subscriberId is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "subscriberId is required")
 			return
 		}
 		key := chi.URLParam(r, "key")
 		scope := identity.ScopeFrom(r.Context())
 		if _, err := aud.Get(r.Context(), scope, subID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "subscriber not found", http.StatusUnprocessableEntity)
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", "subscriber not found")
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		if err := aud.AddTopicSubscriber(r.Context(), scope, key, subID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, err.Error(), http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", err.Error())
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -563,11 +563,11 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req emailIntegrationRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		if req.From == "" {
-			http.Error(w, "from is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "from is required")
 			return
 		}
 
@@ -581,11 +581,11 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 		switch req.Provider {
 		case "cloudflare-email":
 			if req.AccountID == "" {
-				http.Error(w, "accountId is required for cloudflare-email", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "accountId is required for cloudflare-email")
 				return
 			}
 			if req.APIToken == "" {
-				http.Error(w, "apiToken is required for cloudflare-email", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "apiToken is required for cloudflare-email")
 				return
 			}
 			in, err = conn.CreateCloudflareEmail(r.Context(), scope, req.Identifier, connectivity.CloudflareEmailConfig{
@@ -595,7 +595,7 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 			}, req.Primary)
 		case "resend":
 			if req.APIKey == "" {
-				http.Error(w, "apiKey is required for resend", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "apiKey is required for resend")
 				return
 			}
 			in, err = conn.CreateResend(r.Context(), scope, req.Identifier, connectivity.ResendConfig{
@@ -604,15 +604,15 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 			}, req.Primary)
 		case "ses":
 			if req.AccessKeyID == "" {
-				http.Error(w, "accessKeyId is required for ses", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "accessKeyId is required for ses")
 				return
 			}
 			if req.SecretAccessKey == "" {
-				http.Error(w, "secretAccessKey is required for ses", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "secretAccessKey is required for ses")
 				return
 			}
 			if req.Region == "" {
-				http.Error(w, "region is required for ses", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "region is required for ses")
 				return
 			}
 			in, err = conn.CreateSES(r.Context(), scope, req.Identifier, connectivity.SESConfig{
@@ -623,7 +623,7 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 			}, req.Primary)
 		case "smtp", "": // empty provider defaults to smtp for backward compatibility.
 			if req.Host == "" {
-				http.Error(w, "host is required", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "host is required")
 				return
 			}
 			port := req.Port
@@ -641,18 +641,18 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 		default:
 			// Fail closed on unknown providers rather than silently storing
 			// them as SMTP rows with empty credentials.
-			http.Error(w, "unknown provider "+req.Provider+"; allowed: smtp, cloudflare-email, resend, ses", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "unknown provider "+req.Provider+"; allowed: smtp, cloudflare-email, resend, ses")
 			return
 		}
 
 		if err != nil {
 			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
-				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
 			// Never surface the underlying error: wrapped marshal/encrypt/store
 			// detail could carry credential-bearing config fields.
-			http.Error(w, "failed to create email integration", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		// Sensitive fields (password, apiToken) are never echoed; return only
@@ -692,7 +692,7 @@ func postChatIntegration(conn *connectivity.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req chatIntegrationRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
@@ -704,7 +704,7 @@ func postChatIntegration(conn *connectivity.Service) http.HandlerFunc {
 		switch req.Provider {
 		case "discord":
 			if req.WebhookURL == "" {
-				http.Error(w, "webhookUrl is required for discord", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "webhookUrl is required for discord")
 				return
 			}
 			in, err = conn.CreateDiscord(r.Context(), scope, req.Identifier, connectivity.DiscordConfig{
@@ -712,7 +712,7 @@ func postChatIntegration(conn *connectivity.Service) http.HandlerFunc {
 			}, req.Primary)
 		case "telegram":
 			if req.BotToken == "" {
-				http.Error(w, "botToken is required for telegram", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "botToken is required for telegram")
 				return
 			}
 			in, err = conn.CreateTelegram(r.Context(), scope, req.Identifier, connectivity.TelegramConfig{
@@ -720,7 +720,7 @@ func postChatIntegration(conn *connectivity.Service) http.HandlerFunc {
 			}, req.Primary)
 		case "slack":
 			if req.BotToken == "" {
-				http.Error(w, "botToken is required for slack", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "botToken is required for slack")
 				return
 			}
 			in, err = conn.CreateSlack(r.Context(), scope, req.Identifier, connectivity.SlackConfig{
@@ -728,11 +728,11 @@ func postChatIntegration(conn *connectivity.Service) http.HandlerFunc {
 			}, req.Primary)
 		case "whatsapp":
 			if req.AccessToken == "" {
-				http.Error(w, "accessToken is required for whatsapp", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "accessToken is required for whatsapp")
 				return
 			}
 			if req.PhoneNumberID == "" {
-				http.Error(w, "phoneNumberId is required for whatsapp", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "phoneNumberId is required for whatsapp")
 				return
 			}
 			in, err = conn.CreateWhatsApp(r.Context(), scope, req.Identifier, connectivity.WhatsAppConfig{
@@ -740,17 +740,17 @@ func postChatIntegration(conn *connectivity.Service) http.HandlerFunc {
 				PhoneNumberID: req.PhoneNumberID,
 			}, req.Primary)
 		default:
-			http.Error(w, "unknown provider "+req.Provider+"; allowed: discord, telegram, slack, whatsapp", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "unknown provider "+req.Provider+"; allowed: discord, telegram, slack, whatsapp")
 			return
 		}
 		if err != nil {
 			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
-				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
 			// Never surface the underlying error: wrapped marshal/encrypt/store
 			// detail could carry credential-bearing config fields.
-			http.Error(w, "failed to create chat integration", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		// Sensitive fields (webhookUrl, botToken) are never echoed.
@@ -796,13 +796,13 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req smsIntegrationRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		// SNS publishes directly to the recipient number and carries no sender,
 		// so it is exempt from the "from" requirement the LaML providers need.
 		if req.From == "" && req.Provider != "sns" {
-			http.Error(w, "from is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "from is required")
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
@@ -814,11 +814,11 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 		switch req.Provider {
 		case "twilio":
 			if req.AccountSID == "" {
-				http.Error(w, "accountSid is required for twilio", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "accountSid is required for twilio")
 				return
 			}
 			if req.AuthToken == "" {
-				http.Error(w, "authToken is required for twilio", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "authToken is required for twilio")
 				return
 			}
 			in, err = conn.CreateTwilio(r.Context(), scope, req.Identifier, connectivity.TwilioConfig{
@@ -828,15 +828,15 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 			}, req.Primary)
 		case "signalwire":
 			if req.ProjectID == "" {
-				http.Error(w, "projectId is required for signalwire", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "projectId is required for signalwire")
 				return
 			}
 			if req.Token == "" {
-				http.Error(w, "token is required for signalwire", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "token is required for signalwire")
 				return
 			}
 			if req.SpaceURL == "" {
-				http.Error(w, "spaceUrl is required for signalwire", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "spaceUrl is required for signalwire")
 				return
 			}
 			in, err = conn.CreateSignalWire(r.Context(), scope, req.Identifier, connectivity.SignalWireConfig{
@@ -847,15 +847,15 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 			}, req.Primary)
 		case "sns":
 			if req.AccessKeyID == "" {
-				http.Error(w, "accessKeyId is required for sns", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "accessKeyId is required for sns")
 				return
 			}
 			if req.SecretAccessKey == "" {
-				http.Error(w, "secretAccessKey is required for sns", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "secretAccessKey is required for sns")
 				return
 			}
 			if req.Region == "" {
-				http.Error(w, "region is required for sns", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "region is required for sns")
 				return
 			}
 			in, err = conn.CreateSNS(r.Context(), scope, req.Identifier, connectivity.SNSConfig{
@@ -864,17 +864,17 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 				Region:          req.Region,
 			}, req.Primary)
 		default:
-			http.Error(w, "unknown provider "+req.Provider+"; allowed: twilio, signalwire, sns", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "unknown provider "+req.Provider+"; allowed: twilio, signalwire, sns")
 			return
 		}
 		if err != nil {
 			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
-				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
 			// Never surface the underlying error: wrapped marshal/encrypt/store
 			// detail could carry credential-bearing config fields.
-			http.Error(w, "failed to create sms integration", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		// Sensitive fields (authToken, token) are never echoed.
@@ -915,11 +915,11 @@ func postWorkflow(au *authoring.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req workflowRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		if req.TriggerIdentifier == "" {
-			http.Error(w, "triggerIdentifier is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "triggerIdentifier is required")
 			return
 		}
 		// Validate step types before touching the store.
@@ -932,7 +932,7 @@ func postWorkflow(au *authoring.Service) http.HandlerFunc {
 			if !allowed[s.Type] {
 				msg := "step[" + itoa(i) + "].type " + s.Type +
 					" is not valid; allowed: " + strings.Join(allowedStepTypes, ", ")
-				http.Error(w, msg, http.StatusUnprocessableEntity)
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", msg)
 				return
 			}
 			id := s.StepID
@@ -953,26 +953,26 @@ func postWorkflow(au *authoring.Service) http.HandlerFunc {
 		})
 		if err != nil {
 			if errors.Is(err, store.ErrConflict) {
-				http.Error(w, "triggerIdentifier already exists", http.StatusConflict)
+				writeJSONError(w, http.StatusConflict, "conflict", "triggerIdentifier already exists")
 				return
 			}
 			if errors.Is(err, authoring.ErrInvalidTriggerIdentifier) {
-				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
 			var compileErr *authoring.ErrCompileFailure
 			if errors.As(err, &compileErr) {
-				http.Error(w, compileErr.Error(), http.StatusUnprocessableEntity)
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", compileErr.Error())
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		if err := au.Publish(r.Context(), scope, req.TriggerIdentifier); err != nil {
 			// Publish compiles the step DAG; the workflow row was just stored
 			// successfully, so any failure here is a step-config (compile)
 			// error — a client mistake, not infra. Answer 422.
-			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -999,7 +999,7 @@ func getWorkflows(au *authoring.Service) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		wfs, err := au.List(r.Context(), scope)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		dtos := make([]workflowDTO, 0, len(wfs))
@@ -1040,10 +1040,10 @@ func getWorkflow(au *authoring.Service) http.HandlerFunc {
 		wf, err := au.GetBySlug(r.Context(), scope, slug)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "workflow not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "workflow not found")
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, workflowDetailDTO{
@@ -1075,7 +1075,7 @@ func putWorkflow(au *authoring.Service) http.HandlerFunc {
 		slug := chi.URLParam(r, "slug")
 		var req workflowUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		allowed := make(map[string]bool, len(allowedStepTypes))
@@ -1087,7 +1087,7 @@ func putWorkflow(au *authoring.Service) http.HandlerFunc {
 			if !allowed[s.Type] {
 				msg := "step[" + itoa(i) + "].type " + s.Type +
 					" is not valid; allowed: " + strings.Join(allowedStepTypes, ", ")
-				http.Error(w, msg, http.StatusUnprocessableEntity)
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", msg)
 				return
 			}
 			id := s.StepID
@@ -1109,14 +1109,14 @@ func putWorkflow(au *authoring.Service) http.HandlerFunc {
 		if err != nil {
 			var compileErr *authoring.ErrCompileFailure
 			if errors.As(err, &compileErr) {
-				http.Error(w, compileErr.Error(), http.StatusUnprocessableEntity)
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", compileErr.Error())
 				return
 			}
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "workflow not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "workflow not found")
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, workflowDetailDTO{
@@ -1141,10 +1141,10 @@ func deleteWorkflow(au *authoring.Service) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		if err := au.Delete(r.Context(), scope, slug); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "workflow not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "workflow not found")
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -1164,17 +1164,17 @@ func patchWorkflowActivate(au *authoring.Service) http.HandlerFunc {
 		slug := chi.URLParam(r, "slug")
 		var req activateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		wf, err := au.SetActive(r.Context(), scope, slug, req.Active)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "workflow not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "workflow not found")
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, workflowDetailDTO{
@@ -1205,11 +1205,11 @@ func postWorkflowDuplicate(au *authoring.Service) http.HandlerFunc {
 		srcSlug := chi.URLParam(r, "slug")
 		var req duplicateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		if req.TriggerIdentifier == "" {
-			http.Error(w, "triggerIdentifier is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "triggerIdentifier is required")
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
@@ -1219,14 +1219,14 @@ func postWorkflowDuplicate(au *authoring.Service) http.HandlerFunc {
 		})
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "workflow not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "workflow not found")
 				return
 			}
 			if errors.Is(err, authoring.ErrIdentifierConflict) {
-				http.Error(w, "trigger identifier already exists", http.StatusConflict)
+				writeJSONError(w, http.StatusConflict, "conflict", "trigger identifier already exists")
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, workflowDetailDTO{
@@ -1266,7 +1266,7 @@ func getNotifications(st *store.Store) http.HandlerFunc {
 		if s := q.Get("limit"); s != "" {
 			for _, c := range s {
 				if c < '0' || c > '9' {
-					http.Error(w, "limit must be a positive integer", http.StatusBadRequest)
+					writeJSONError(w, http.StatusBadRequest, "bad_request", "limit must be a positive integer")
 					return
 				}
 			}
@@ -1285,7 +1285,7 @@ func getNotifications(st *store.Store) http.HandlerFunc {
 		if sinceStr := q.Get("since"); sinceStr != "" {
 			t, err := time.Parse(time.RFC3339, sinceStr)
 			if err != nil {
-				http.Error(w, "since must be RFC3339 (e.g. 2006-01-02T15:04:05Z)", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "since must be RFC3339 (e.g. 2006-01-02T15:04:05Z)")
 				return
 			}
 			f.Since = t
@@ -1294,10 +1294,10 @@ func getNotifications(st *store.Store) http.HandlerFunc {
 		page, err := st.Notifications().List(r.Context(), scope, f, q.Get("cursor"), limit)
 		if err != nil {
 			if strings.Contains(err.Error(), "invalid cursor") {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 
@@ -1323,10 +1323,10 @@ func getNotification(st *store.Store) http.HandlerFunc {
 		n, err := st.Notifications().Get(r.Context(), scope, id)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "notification not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "notification not found")
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, n)
@@ -1341,7 +1341,7 @@ func getNotificationMessages(st *store.Store) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		msgs, err := st.Messages().ListByNotificationID(r.Context(), scope, id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		if msgs == nil {
@@ -1460,7 +1460,7 @@ func getIntegrations(conn *connectivity.Service) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		list, err := conn.Store().Integrations().List(r.Context(), scope)
 		if err != nil {
-			http.Error(w, "failed to list integrations", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		dtos := make([]integrationDTO, 0, len(list))
@@ -1480,10 +1480,10 @@ func getIntegration(conn *connectivity.Service) http.HandlerFunc {
 		in, err := conn.Store().Integrations().GetByID(r.Context(), scope, id)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "integration not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "integration not found")
 				return
 			}
-			http.Error(w, "failed to get integration", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toIntegrationDTO(conn, in))
@@ -1504,7 +1504,7 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req unifiedCreateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
@@ -1606,16 +1606,16 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 				PhoneNumberID: req.Credentials["phone_number_id"],
 			}, req.Primary)
 		default:
-			http.Error(w, "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, resend, ses, ntfy, expo, fcm, discord, telegram, slack, whatsapp, twilio, signalwire, sns, email-webhook, push-webhook, chat-webhook", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, resend, ses, ntfy, expo, fcm, discord, telegram, slack, whatsapp, twilio, signalwire, sns, email-webhook, push-webhook, chat-webhook")
 			return
 		}
 		if err != nil {
 			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
-				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
 			// Never echo request detail into the error body.
-			http.Error(w, "failed to create integration", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -1644,7 +1644,7 @@ func putIntegration(conn *connectivity.Service) http.HandlerFunc {
 		id := chi.URLParam(r, "id")
 		var req updateIntegrationRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
@@ -1664,11 +1664,11 @@ func putIntegration(conn *connectivity.Service) http.HandlerFunc {
 				return
 			}
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "integration not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "integration not found")
 				return
 			}
 			// Never echo request detail into the error body.
-			http.Error(w, "failed to update integration", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -1689,10 +1689,10 @@ func deleteIntegration(conn *connectivity.Service) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		if err := conn.Store().Integrations().Delete(r.Context(), scope, id); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "integration not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "integration not found")
 				return
 			}
-			http.Error(w, "failed to delete integration", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -1711,16 +1711,16 @@ func patchIntegrationActive(conn *connectivity.Service) http.HandlerFunc {
 		id := chi.URLParam(r, "id")
 		var req patchActiveRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		if err := conn.Store().Integrations().SetActive(r.Context(), scope, id, req.Active); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "integration not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "integration not found")
 				return
 			}
-			http.Error(w, "failed to update integration", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -1800,7 +1800,7 @@ func getSubscribers(aud *audience.Service) http.HandlerFunc {
 		if lStr := q.Get("limit"); lStr != "" {
 			for _, ch := range lStr {
 				if ch < '0' || ch > '9' {
-					http.Error(w, "limit must be a positive integer", http.StatusBadRequest)
+					writeJSONError(w, http.StatusBadRequest, "bad_request", "limit must be a positive integer")
 					return
 				}
 			}
@@ -1812,10 +1812,10 @@ func getSubscribers(aud *audience.Service) http.HandlerFunc {
 		page, err := aud.ListSubscribers(r.Context(), scope, q.Get("after"), limit)
 		if err != nil {
 			if strings.Contains(err.Error(), "invalid cursor") {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 				return
 			}
-			http.Error(w, "failed to list subscribers", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 
@@ -1846,10 +1846,10 @@ func getSubscriber(aud *audience.Service) http.HandlerFunc {
 		sub, err := aud.GetSubscriberByID(r.Context(), scope, id)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "subscriber not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "subscriber not found")
 				return
 			}
-			http.Error(w, "failed to get subscriber", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toSubscriberDTO(sub))
@@ -1874,7 +1874,7 @@ func patchSubscriber(aud *audience.Service) http.HandlerFunc {
 		id := chi.URLParam(r, "id")
 		var req patchSubscriberRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
@@ -1889,7 +1889,7 @@ func patchSubscriber(aud *audience.Service) http.HandlerFunc {
 		})
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "subscriber not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "subscriber not found")
 				return
 			}
 			// A *audience.ValidationError is a caller error (malformed
@@ -1897,10 +1897,10 @@ func patchSubscriber(aud *audience.Service) http.HandlerFunc {
 			// the matching comment in postSubscriber (W5).
 			var verr *audience.ValidationError
 			if errors.As(err, &verr) {
-				http.Error(w, verr.Msg, http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "bad_request", verr.Msg)
 				return
 			}
-			http.Error(w, "failed to update subscriber", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toSubscriberDTO(sub))
@@ -1915,10 +1915,10 @@ func deleteSubscriber(aud *audience.Service) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		if err := aud.DeleteSubscriber(r.Context(), scope, id); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "subscriber not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "subscriber not found")
 				return
 			}
-			http.Error(w, "failed to delete subscriber", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -1944,7 +1944,7 @@ func getTopics(aud *audience.Service) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		list, err := aud.ListTopics(r.Context(), scope)
 		if err != nil {
-			http.Error(w, "failed to list topics", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		dtos := make([]topicDTO, 0, len(list))
@@ -1971,10 +1971,10 @@ func getTopic(aud *audience.Service) http.HandlerFunc {
 		t, err := aud.GetTopic(r.Context(), scope, key)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "topic not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "topic not found")
 				return
 			}
-			http.Error(w, "failed to get topic", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, topicDTO{ID: t.ID, Key: t.Key, Name: t.Name, MemberCount: t.MemberCount})
@@ -1994,17 +1994,17 @@ func putTopic(aud *audience.Service) http.HandlerFunc {
 		key := chi.URLParam(r, "key")
 		var req topicUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		if req.Name == "" {
-			http.Error(w, "name is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "name is required")
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		t, err := aud.CreateTopic(r.Context(), scope, key, req.Name)
 		if err != nil {
-			http.Error(w, "failed to update topic", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, topicDTO{ID: t.ID, Key: t.Key, Name: t.Name})
@@ -2019,10 +2019,10 @@ func deleteTopic(aud *audience.Service) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		if err := aud.DeleteTopic(r.Context(), scope, key); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "topic not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "topic not found")
 				return
 			}
-			http.Error(w, "failed to delete topic", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -2039,10 +2039,10 @@ func deleteTopicSubscriber(aud *audience.Service) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		if err := aud.RemoveTopicSubscriber(r.Context(), scope, key, subscriberID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "topic not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "topic not found")
 				return
 			}
-			http.Error(w, "failed to remove subscriber from topic", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -2071,7 +2071,7 @@ func getWebhookEndpoints(wh *webhooksout.ManagementService) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		list, err := wh.List(r.Context(), scope)
 		if err != nil {
-			http.Error(w, "failed to list webhook endpoints", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		dtos := make([]webhookEndpointDTO, 0, len(list))
@@ -2096,17 +2096,17 @@ func postWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req webhookEndpointCreateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		if req.URL == "" {
-			http.Error(w, "url is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "url is required")
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		ep, err := wh.Create(r.Context(), scope, req.URL, req.Active)
 		if err != nil {
-			http.Error(w, "failed to create webhook endpoint", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, toWebhookEndpointDTO(ep))
@@ -2121,10 +2121,10 @@ func getWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
 		ep, err := wh.GetByID(r.Context(), scope, id)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "webhook endpoint not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "webhook endpoint not found")
 				return
 			}
-			http.Error(w, "failed to get webhook endpoint", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toWebhookEndpointDTO(ep))
@@ -2144,21 +2144,21 @@ func putWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
 		id := chi.URLParam(r, "id")
 		var req webhookEndpointUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
 		if req.URL == "" {
-			http.Error(w, "url is required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "url is required")
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
 		ep, err := wh.Update(r.Context(), scope, id, req.URL, req.Active)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "webhook endpoint not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "webhook endpoint not found")
 				return
 			}
-			http.Error(w, "failed to update webhook endpoint", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toWebhookEndpointDTO(ep))
@@ -2172,10 +2172,10 @@ func deleteWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
 		scope := identity.ScopeFrom(r.Context())
 		if err := wh.Delete(r.Context(), scope, id); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "webhook endpoint not found", http.StatusNotFound)
+				writeJSONError(w, http.StatusNotFound, "not_found", "webhook endpoint not found")
 				return
 			}
-			http.Error(w, "failed to delete webhook endpoint", http.StatusInternalServerError)
+			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
