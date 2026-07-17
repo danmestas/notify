@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+
+	"github.com/danmestas/notify/internal/metrics"
 )
 
 // DialNATS opens a resilient NATS connection to the dagnats sidecar and is the
@@ -31,10 +33,12 @@ func DialNATS(natsURL, name string) (*nats.Conn, error) {
 		nats.ReconnectWait(2*time.Second),
 		nats.ReconnectJitter(500*time.Millisecond, 2*time.Second),
 		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+			metrics.NATSDisconnect()
 			slog.Default().Warn("eventbus: NATS disconnected",
 				"conn", name, "err", err)
 		}),
 		nats.ReconnectHandler(func(c *nats.Conn) {
+			metrics.NATSReconnect()
 			slog.Default().Info("eventbus: NATS reconnected",
 				"conn", name, "url", c.ConnectedUrl())
 		}),
@@ -54,5 +58,10 @@ func DialNATS(natsURL, name string) (*nats.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("eventbus: dial %q (%s): %w", natsURL, name, err)
 	}
+	// Publish a live status gauge for this connection so /metrics reflects the
+	// current link state (the zombie-mode symptom this dialer guards against)
+	// rather than a value cached at dial time. Keyed by name, so a re-dial under
+	// the same owner replaces the entry instead of leaking one.
+	metrics.SetNATSStatus(name, func() string { return nc.Status().String() })
 	return nc, nil
 }

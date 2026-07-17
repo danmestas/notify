@@ -9,6 +9,7 @@ import (
 	"github.com/danmestas/notify/internal/delivery/template"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/metrics"
 	"github.com/danmestas/notify/internal/providers"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
@@ -250,6 +251,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	if err != nil {
 		return h.persistPushError(ctx, env, t, providerID, integrationID, err)
 	}
+	metrics.Delivery("push", metrics.OutcomeDelivered)
 	out, merr := json.Marshal(saved)
 	if merr != nil {
 		return out, merr
@@ -263,6 +265,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 // No push is sent; this mirrors the existing skipped/failed-message pattern.
 // resolve is attempted best-effort to populate providerID and integrationID.
 func (h *PushHandler) persistPushSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	metrics.Delivery("push", metrics.OutcomeSkipped)
 	providerID, integrationID := h.resolvePushIDs(ctx, scope)
 	if providerID == "" {
 		providerID = "ntfy"
@@ -301,6 +304,7 @@ func (h *PushHandler) persistPushSkipped(ctx context.Context, env runenv.InAppEn
 // exceeded the step's per-(env,subscriber,workflow) rate limit) and returns its
 // JSON with a nil error. No push is sent; mirrors the persistPushSkipped pattern.
 func (h *PushHandler) persistPushThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	metrics.Delivery("push", metrics.OutcomeThrottled)
 	providerID, integrationID := h.resolvePushIDs(ctx, scope)
 	if providerID == "" {
 		providerID = "ntfy"
@@ -342,6 +346,7 @@ func (h *PushHandler) persistPushThrottled(ctx context.Context, env runenv.InApp
 // default before resolution. integrationID is empty on pre-resolve paths and
 // carries the actual value on post-resolve paths (BP-13b).
 func (h *PushHandler) persistPushError(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, providerID, integrationID string, cause error) (json.RawMessage, error) {
+	metrics.Delivery("push", metrics.OutcomeError)
 	msg := domain.Message{
 		ID:             store.NewULID(),
 		OrgID:          env.Scope.OrgID,

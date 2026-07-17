@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"expvar"
 	"testing"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -11,6 +12,22 @@ import (
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
 )
+
+// deliveryCounter reads the "<channel>.<outcome>" counter out of the
+// process-global notify_delivery_total expvar map, returning 0 when absent.
+// Counters are cumulative across the test binary, so callers assert on a delta.
+func deliveryCounter(t *testing.T, key string) int64 {
+	t.Helper()
+	m, ok := expvar.Get("notify_delivery_total").(*expvar.Map)
+	if !ok {
+		t.Fatalf("notify_delivery_total not published as *expvar.Map")
+	}
+	iv, ok := m.Get(key).(*expvar.Int)
+	if !ok || iv == nil {
+		return 0
+	}
+	return iv.Value()
+}
 
 // stubChatResolver is a fixed-answer ChatResolver standing in for
 // connectivity.Service in the unit tests.
@@ -112,6 +129,28 @@ func TestHandleChat_Telegram_RendersSendsPersists(t *testing.T) {
 	}
 	if sent[0].Content != "You have 3 items" {
 		t.Errorf("Content = %q, want %q", sent[0].Content, "You have 3 items")
+	}
+}
+
+// TestHandleChat_IncrementsDeliveredCounter guards the metrics wiring: a
+// successfully handled chat send must bump notify_delivery_total{chat.delivered}
+// by exactly one.
+func TestHandleChat_IncrementsDeliveredCounter(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	seedChatAddress(t, s, "telegram", "987654321")
+	h := NewChat(s, stubChatResolver{p: providers.NewCaptureChat(), id: "telegram"})
+
+	input, err := json.Marshal(chatEnvelope())
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	before := deliveryCounter(t, "chat.delivered")
+	if _, err := h.HandleChat(ctx, engine.TaskPayload{RunID: "run_metric", StepID: "C1", Input: input}); err != nil {
+		t.Fatalf("HandleChat: %v", err)
+	}
+	if got := deliveryCounter(t, "chat.delivered") - before; got != 1 {
+		t.Fatalf("chat.delivered delta = %d, want 1", got)
 	}
 }
 

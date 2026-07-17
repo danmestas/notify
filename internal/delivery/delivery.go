@@ -13,6 +13,7 @@ import (
 	"github.com/danmestas/notify/internal/delivery/template"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/metrics"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
 )
@@ -209,6 +210,7 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	if err != nil {
 		return h.persistError(ctx, env, t, err)
 	}
+	metrics.Delivery("in_app", metrics.OutcomeDelivered)
 	out, err := json.Marshal(saved)
 	if err != nil {
 		return out, err
@@ -227,6 +229,7 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 // disabled by subscriber preference) and returns its JSON with a nil error.
 // No send occurs; this mirrors the existing skipped/failed-message pattern.
 func (h *Handler) persistSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, subject, content string) (json.RawMessage, error) {
+	metrics.Delivery("in_app", metrics.OutcomeSkipped)
 	msg := domain.Message{
 		ID:             store.NewULID(),
 		OrgID:          env.Scope.OrgID,
@@ -260,6 +263,7 @@ func (h *Handler) persistSkipped(ctx context.Context, env runenv.InAppEnvelope, 
 // exceeded the step's per-(env,subscriber,workflow) rate limit) and returns its
 // JSON with a nil error. No send occurs; mirrors the persistSkipped pattern.
 func (h *Handler) persistThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, subject, content string) (json.RawMessage, error) {
+	metrics.Delivery("in_app", metrics.OutcomeThrottled)
 	msg := domain.Message{
 		ID:             store.NewULID(),
 		OrgID:          env.Scope.OrgID,
@@ -293,6 +297,7 @@ func (h *Handler) persistThrottled(ctx context.Context, env runenv.InAppEnvelope
 // JSON with a nil error. Best-effort: if persistence itself fails, the in-memory
 // message is still marshalled and returned so the caller observes the failure.
 func (h *Handler) persistError(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, cause error) (json.RawMessage, error) {
+	metrics.Delivery("in_app", metrics.OutcomeError)
 	msg := domain.Message{
 		ID:             store.NewULID(),
 		OrgID:          env.Scope.OrgID,

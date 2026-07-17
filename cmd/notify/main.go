@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"expvar"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -425,6 +426,10 @@ func runServe(args []string) error {
 	// writer DB pool answer live, 200 once both do.
 	writer, _ := st.Pools()
 	root.HandleFunc("/readyz", readyzHandler(cfg.bridgeURL, bridgeClient, writer))
+	// Ops metrics (notify hardening #8): expvar JSON of delivery outcomes and
+	// NATS link status, mounted ahead of the "/" catch-all. Unauthenticated, same
+	// trust posture as /healthz — an operator gates it at the ingress if needed.
+	root.Handle("/metrics", expvar.Handler())
 	root.Handle("/", handler)
 
 	srv := &http.Server{Addr: cfg.addr, Handler: root}

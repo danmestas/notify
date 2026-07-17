@@ -9,6 +9,7 @@ import (
 	"github.com/danmestas/notify/internal/delivery/template"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/metrics"
 	"github.com/danmestas/notify/internal/providers"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
@@ -235,6 +236,7 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 	if err != nil {
 		return h.persistSMSError(ctx, env, t, providerID, integrationID, err)
 	}
+	metrics.Delivery("sms", metrics.OutcomeDelivered)
 	out, merr := json.Marshal(saved)
 	if merr != nil {
 		return out, merr
@@ -247,6 +249,7 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 // disabled by subscriber preference) and returns its JSON with a nil error. No
 // SMS is sent; this mirrors the existing skipped/failed-message pattern.
 func (h *SMSHandler) persistSMSSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	metrics.Delivery("sms", metrics.OutcomeSkipped)
 	providerID, integrationID := h.resolveSMSIDs(ctx, scope)
 	if providerID == "" {
 		providerID = "twilio" // safe default; resolve failure must not block the record
@@ -285,6 +288,7 @@ func (h *SMSHandler) persistSMSSkipped(ctx context.Context, env runenv.InAppEnve
 // exceeded the step's per-(env,subscriber,workflow) rate limit) and returns its
 // JSON with a nil error. No SMS is sent; mirrors the persistSMSSkipped pattern.
 func (h *SMSHandler) persistSMSThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	metrics.Delivery("sms", metrics.OutcomeThrottled)
 	providerID, integrationID := h.resolveSMSIDs(ctx, scope)
 	if providerID == "" {
 		providerID = "twilio"
@@ -325,6 +329,7 @@ func (h *SMSHandler) persistSMSThrottled(ctx context.Context, env runenv.InAppEn
 // integrationID are empty on pre-resolve paths and carry the actual values on
 // post-resolve paths (missing phone, send failure, persist failure).
 func (h *SMSHandler) persistSMSError(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, providerID, integrationID string, cause error) (json.RawMessage, error) {
+	metrics.Delivery("sms", metrics.OutcomeError)
 	if providerID == "" {
 		providerID = "twilio" // safe default for pre-resolve error rows
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/danmestas/notify/internal/delivery/template"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/metrics"
 	"github.com/danmestas/notify/internal/providers"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
@@ -264,6 +265,7 @@ func (h *ChatHandler) HandleChat(ctx context.Context, t engine.TaskPayload) (jso
 	if err != nil {
 		return h.persistChatError(ctx, env, t, providerID, integrationID, err)
 	}
+	metrics.Delivery("chat", metrics.OutcomeDelivered)
 	out, merr := json.Marshal(saved)
 	if merr != nil {
 		return out, merr
@@ -276,6 +278,7 @@ func (h *ChatHandler) HandleChat(ctx context.Context, t engine.TaskPayload) (jso
 // disabled by subscriber preference) and returns its JSON with a nil error. No
 // chat is sent; this mirrors the existing skipped/failed-message pattern.
 func (h *ChatHandler) persistChatSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	metrics.Delivery("chat", metrics.OutcomeSkipped)
 	providerID, integrationID := h.resolveChatIDs(ctx, scope)
 	if providerID == "" {
 		providerID = "discord" // safe default; resolve failure must not block the record
@@ -314,6 +317,7 @@ func (h *ChatHandler) persistChatSkipped(ctx context.Context, env runenv.InAppEn
 // exceeded the step's per-(env,subscriber,workflow) rate limit) and returns its
 // JSON with a nil error. No chat is sent; mirrors the persistChatSkipped pattern.
 func (h *ChatHandler) persistChatThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	metrics.Delivery("chat", metrics.OutcomeThrottled)
 	providerID, integrationID := h.resolveChatIDs(ctx, scope)
 	if providerID == "" {
 		providerID = "discord"
@@ -354,6 +358,7 @@ func (h *ChatHandler) persistChatThrottled(ctx context.Context, env runenv.InApp
 // integrationID are empty on pre-resolve paths and carry the actual values on
 // post-resolve paths (send failure, persist failure).
 func (h *ChatHandler) persistChatError(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, providerID, integrationID string, cause error) (json.RawMessage, error) {
+	metrics.Delivery("chat", metrics.OutcomeError)
 	if providerID == "" {
 		providerID = "discord" // safe default for pre-resolve error rows
 	}

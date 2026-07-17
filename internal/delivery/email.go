@@ -8,6 +8,7 @@ import (
 	"github.com/danmestas/notify/internal/delivery/template"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/metrics"
 	"github.com/danmestas/notify/internal/providers"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
@@ -237,6 +238,7 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 	if err != nil {
 		return h.persistEmailError(ctx, env, t, providerID, integrationID, err)
 	}
+	metrics.Delivery("email", metrics.OutcomeDelivered)
 	out, merr := json.Marshal(saved)
 	if merr != nil {
 		return out, merr
@@ -250,6 +252,7 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 // No email is sent; this mirrors the existing skipped/failed-message pattern.
 // resolve is attempted best-effort to populate providerID and integrationID.
 func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	metrics.Delivery("email", metrics.OutcomeSkipped)
 	providerID, integrationID := h.resolveEmailIDs(ctx, scope)
 	if providerID == "" {
 		providerID = "smtp" // safe default; resolve failure must not block the record
@@ -288,6 +291,7 @@ func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InApp
 // exceeded the step's per-(env,subscriber,workflow) rate limit) and returns its
 // JSON with a nil error. No email is sent; mirrors the persistEmailSkipped pattern.
 func (h *EmailHandler) persistEmailThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+	metrics.Delivery("email", metrics.OutcomeThrottled)
 	providerID, integrationID := h.resolveEmailIDs(ctx, scope)
 	if providerID == "" {
 		providerID = "smtp"
@@ -328,6 +332,7 @@ func (h *EmailHandler) persistEmailThrottled(ctx context.Context, env runenv.InA
 // providerID and integrationID are empty on pre-resolve paths and carry the
 // actual values on post-resolve paths (send failure, persist failure).
 func (h *EmailHandler) persistEmailError(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, providerID, integrationID string, cause error) (json.RawMessage, error) {
+	metrics.Delivery("email", metrics.OutcomeError)
 	if providerID == "" {
 		providerID = "smtp" // safe default for pre-resolve error rows
 	}
