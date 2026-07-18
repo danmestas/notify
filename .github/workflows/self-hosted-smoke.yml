@@ -1,0 +1,28 @@
+name: Self-hosted runner smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, macOS, ARM64, mac-mini]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Mac mini runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner=$RUNNER_NAME os=$RUNNER_OS arch=$RUNNER_ARCH"
+          test "$RUNNER_NAME" = "mac-mini"
+          test "$RUNNER_OS" = "macOS"
+          test "$RUNNER_ARCH" = "ARM64"
+          uname -a
+          sw_vers
+          sysctl -n hw.ncpu
+          sysctl -n hw.memsize
+          df -h "$RUNNER_WORKSPACE"
+          test -w "$RUNNER_TEMP"
