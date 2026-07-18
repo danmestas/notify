@@ -65,11 +65,16 @@ func TestRequestInjectsTraceparent(t *testing.T) {
 
 	select {
 	case h := <-got:
-		// Canonical casing is the wire contract — see observe's
-		// TestInjectNATSHeaderCarriesTraceparent.
-		tpHdr := h.Get("Traceparent")
+		// LOWERCASE is the wire contract, not canonical casing. nats.Header.Get
+		// is a case-sensitive map lookup and dagnats extracts with
+		// hdr.Get("traceparent"), so a canonicalised "Traceparent" is invisible
+		// to it and orphans the trace. This assertion previously read
+		// h.Get("Traceparent") and therefore passed against a seam that could
+		// never stitch in production — see observe's
+		// TestInjectNATSHeader_UsesLowercaseW3CKey.
+		tpHdr := h.Get("traceparent")
 		if tpHdr == "" {
-			t.Fatalf("api.runs.start carried no traceparent; header=%v", h)
+			t.Fatalf("api.runs.start carried no lowercase traceparent; header=%v", h)
 		}
 		if !traceparentRe.MatchString(tpHdr) {
 			t.Fatalf("traceparent %q does not match W3C format", tpHdr)

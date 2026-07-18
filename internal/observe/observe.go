@@ -93,12 +93,46 @@ func Tracer() trace.Tracer { return otel.Tracer(tracerName) }
 
 // InjectNATSHeader writes the W3C traceparent of ctx's span into h.
 //
-// nats.Header and http.Header are both map[string][]string, so the same
-// propagation.HeaderCarrier serialises for both seams — which is what keeps
-// the header key casing identical to the carrier dagnats extracts with.
+// The carrier is NATS-specific on purpose. nats.Header and http.Header are both
+// map[string][]string, but their Get/Set differ in a way that silently breaks
+// this seam: http.Header canonicalises keys ("traceparent" -> "Traceparent"),
+// while nats.Header.Get is a plain case-SENSITIVE map lookup. dagnats extracts
+// with hdr.Get("traceparent") — the lowercase W3C name — so injecting through
+// propagation.HeaderCarrier writes a key dagnats can never find, and every run
+// it starts becomes an orphan trace. Both sides still look healthy in isolation,
+// which is why this went unnoticed until an end-to-end trace query in prod.
+//
 // Injecting an invalid (noop) span context writes nothing.
 func InjectNATSHeader(ctx context.Context, h nats.Header) {
-	wire.Inject(ctx, propagation.HeaderCarrier(h))
+	wire.Inject(ctx, natsHeaderCarrier(h))
+}
+
+// natsHeaderCarrier adapts nats.Header to propagation.TextMapCarrier without the
+// MIME canonicalisation http.Header applies, preserving the exact lowercase keys
+// the W3C propagator emits.
+type natsHeaderCarrier nats.Header
+
+// Get returns the first value for key, matching case-sensitively — the same
+// lookup semantics the receiving side uses.
+func (c natsHeaderCarrier) Get(key string) string {
+	if v := c[key]; len(v) > 0 {
+		return v[0]
+	}
+	return ""
+}
+
+// Set stores value under the literal key, with no canonicalisation.
+func (c natsHeaderCarrier) Set(key, value string) {
+	c[key] = []string{value}
+}
+
+// Keys lists the carrier's keys as stored.
+func (c natsHeaderCarrier) Keys() []string {
+	out := make([]string, 0, len(c))
+	for k := range c {
+		out = append(out, k)
+	}
+	return out
 }
 
 // InjectHTTPHeader writes the W3C traceparent of ctx's span into h.

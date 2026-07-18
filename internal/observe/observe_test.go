@@ -11,9 +11,64 @@ import (
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/danmestas/notify/internal/observe"
 )
+
+// TestInjectNATSHeader_UsesLowercaseW3CKey pins the header-key casing on the NATS
+// seam, which is not a style question but a correctness one.
+//
+// nats.Header.Get is a plain, case-SENSITIVE map lookup (h[key]) — unlike
+// http.Header.Get, which canonicalises. dagnats extracts with
+// hdr.Get("traceparent"), the lowercase W3C name. Injecting through
+// propagation.HeaderCarrier routes to http.Header.Set, which canonicalises the
+// key to "Traceparent" — so dagnats silently finds nothing and every run it
+// starts becomes an orphan trace, disconnected from the notify trigger that
+// caused it.
+//
+// That failure is invisible to both services: notify reports a healthy injected
+// span, dagnats reports a healthy root span, and only an end-to-end trace query
+// shows the two are unrelated. This was observed in production before it was
+// caught in a test, so the assertion below deliberately checks BOTH that the
+// lowercase key is present and that the canonical form is absent.
+func TestInjectNATSHeader_UsesLowercaseW3CKey(t *testing.T) {
+	traceID, err := oteltrace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
+	if err != nil {
+		t.Fatalf("TraceIDFromHex: %v", err)
+	}
+	spanID, err := oteltrace.SpanIDFromHex("00f067aa0ba902b7")
+	if err != nil {
+		t.Fatalf("SpanIDFromHex: %v", err)
+	}
+	ctx := oteltrace.ContextWithSpanContext(context.Background(), oteltrace.NewSpanContext(
+		oteltrace.SpanContextConfig{
+			TraceID:    traceID,
+			SpanID:     spanID,
+			TraceFlags: oteltrace.FlagsSampled,
+			Remote:     true,
+		},
+	))
+
+	h := nats.Header{}
+	observe.InjectNATSHeader(ctx, h)
+
+	// The lowercase W3C key must be the one on the wire — this is the exact
+	// lookup dagnats performs.
+	if got := h.Get("traceparent"); got == "" {
+		t.Fatalf("no lowercase \"traceparent\" on the NATS header; dagnats cannot stitch. header=%v", h)
+	} else if !traceparentRe.MatchString(got) {
+		t.Fatalf("traceparent = %q, want W3C form", got)
+	}
+	// The canonicalised form must NOT be what we rely on: if injection ever
+	// routes back through http.Header.Set, this catches it.
+	if _, canonical := h["Traceparent"]; canonical {
+		t.Fatalf("header carries canonicalised \"Traceparent\"; nats.Header.Get is case-sensitive so dagnats would miss it. header=%v", h)
+	}
+	if len(h["traceparent"]) != 1 {
+		t.Fatalf("expected exactly one lowercase traceparent value, got %v", h["traceparent"])
+	}
+}
 
 // traceparentRe is the W3C traceparent format dagnats's extractor accepts.
 var traceparentRe = regexp.MustCompile(`^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$`)
@@ -92,8 +147,8 @@ func TestSetupEnabledInstallsSDKProvider(t *testing.T) {
 
 	h := nats.Header{}
 	observe.InjectNATSHeader(ctx, h)
-	if got := h.Get("Traceparent"); !traceparentRe.MatchString(got) {
-		t.Fatalf("traceparent %q does not match W3C format", got)
+	if got := h.Get("traceparent"); !traceparentRe.MatchString(got) {
+		t.Fatalf("traceparent %q does not match W3C format (header=%v)", got, h)
 	}
 
 	if err := shutdown(context.Background()); err != nil {
@@ -115,13 +170,16 @@ func TestInjectNATSHeaderCarriesTraceparent(t *testing.T) {
 	h := nats.Header{}
 	observe.InjectNATSHeader(ctx, h)
 
-	// Casing contract with dagnats (#527): HeaderCarrier canonicalises on both
-	// write and read, so the key on the wire is "Traceparent" and dagnats's
-	// carrier-based extract finds it. nats.Header.Get is a case-SENSITIVE map
-	// lookup, so this test asserts the exact key, not a canonicalised one.
-	got := h.Get("Traceparent")
+	// Casing contract with dagnats (#527): dagnats does NOT extract through a
+	// canonicalising carrier — it gates on hdr.Get("traceparent"), and
+	// nats.Header.Get is a case-SENSITIVE map lookup. So the key on the wire
+	// must be the lowercase W3C name; a canonicalised "Traceparent" is silently
+	// invisible to it. (This assertion previously read "Traceparent" on the
+	// mistaken belief that HeaderCarrier canonicalised on both ends, which let a
+	// permanently-orphaned trace seam ship green.)
+	got := h.Get("traceparent")
 	if got == "" {
-		t.Fatalf("no traceparent injected under key %q; header=%v", "Traceparent", h)
+		t.Fatalf("no traceparent injected under key %q; header=%v", "traceparent", h)
 	}
 	if !traceparentRe.MatchString(got) {
 		t.Fatalf("traceparent %q does not match W3C format", got)
