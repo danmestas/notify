@@ -5,9 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/danmestas/notify/internal/observe"
 )
 
 // This file extends the engine with dagnats AGENT-LOOP support over the
@@ -150,6 +155,28 @@ func (lc *AgentLoopContext) Stream(data []byte) error {
 // dispatch routes a polled task to its agent-loop handler when one is
 // registered, else to the simple Handle path. The simple path is unchanged.
 func (e *Engine) dispatch(ctx context.Context, taskType string, t TaskPayload) {
+	// One span per dispatched task, named for what the task is: deliveries get
+	// their own name and channel attribute so they aggregate separately from
+	// ordinary workflow steps. These are roots for now — the bridge poll
+	// payload carries no traceparent to parent them to (see the plan's
+	// Deferred section).
+	name := "notify.task.run"
+	attrs := []attribute.KeyValue{
+		attribute.String("task.type", taskType),
+		attribute.String("task.id", t.TaskID),
+		attribute.String("run.id", t.RunID),
+	}
+	if channel, ok := strings.CutPrefix(taskType, "send."); ok {
+		name = "notify.delivery.send"
+		attrs = append(attrs, attribute.String("channel", channel))
+	}
+	ctx, span := observe.Tracer().Start(
+		ctx, name,
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(attrs...),
+	)
+	defer span.End()
+
 	if fn, ok := e.agentHandlers[taskType]; ok {
 		e.runAgentLoopTask(ctx, fn, t)
 		return

@@ -18,8 +18,12 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/danmestas/notify/internal/eventbus"
+	"github.com/danmestas/notify/internal/observe"
 )
 
 // Control-plane subjects exposed by the dagnats NATS API.
@@ -279,8 +283,22 @@ func (e *Engine) Stop() error {
 // request issues a NATS request/reply with the control timeout, honoring ctx
 // cancellation.
 func (e *Engine) request(ctx context.Context, subject string, body []byte) ([]byte, error) {
-	msg, err := e.nc.RequestWithContext(ctx, subject, body)
+	ctx, span := observe.Tracer().Start(
+		ctx, "notify.engine.request",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(attribute.String("nats.subject", subject)),
+	)
+	defer span.End()
+
+	// RequestMsgWithContext (not RequestWithContext) so the request carries a
+	// W3C traceparent: dagnats stitches the run it starts onto notify's trace.
+	req := &nats.Msg{Subject: subject, Data: body, Header: nats.Header{}}
+	observe.InjectNATSHeader(ctx, req.Header)
+
+	msg, err := e.nc.RequestMsgWithContext(ctx, req)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("nats request %q: %w", subject, err)
 	}
 	return msg.Data, nil
@@ -408,10 +426,24 @@ func (e *Engine) runTask(ctx context.Context, fn HandlerFunc, t TaskPayload) {
 		return
 	}
 	// Resolution must not be skipped just because the loop ctx was cancelled
-	// mid-flight; use a short independent timeout.
-	rctx, cancel := context.WithTimeout(context.Background(), controlTimeout)
+	// mid-flight; use a short independent timeout. WithoutCancel rather than
+	// Background so the span (and any other ctx values) survive the loop's
+	// cancellation while controlTimeout still bounds the call.
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), controlTimeout)
 	defer cancel()
-	_, _ = e.post(rctx, e.bridgeURL+"/v1/tasks/"+t.TaskID+"/resolve", body)
+	rctx, span := observe.Tracer().Start(
+		rctx, "notify.bridge.resolve",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("task.id", t.TaskID),
+			attribute.String("resolve.action", req.Action),
+		),
+	)
+	defer span.End()
+	if _, perr := e.post(rctx, e.bridgeURL+"/v1/tasks/"+t.TaskID+"/resolve", body); perr != nil {
+		span.RecordError(perr)
+		span.SetStatus(codes.Error, perr.Error())
+	}
 }
 
 // post performs a JSON POST and returns the response body, erroring on non-2xx.
@@ -421,6 +453,9 @@ func (e *Engine) post(ctx context.Context, url string, body []byte) ([]byte, err
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// Every bridge POST carries traceparent — dagnats's bridge already
+	// extracts it, so the resolve leg stitches with no dagnats change.
+	observe.InjectHTTPHeader(ctx, req.Header)
 	resp, err := e.http.Do(req)
 	if err != nil {
 		return nil, err

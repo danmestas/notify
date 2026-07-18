@@ -15,9 +15,14 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/observe"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
 )
@@ -183,7 +188,27 @@ func buildDigestKey(base, value string) string {
 // An inactive workflow is silently skipped: Acknowledged=false, Status="error",
 // no engine run, no notification row. This matches the activate-toggle contract
 // (spec-02 B4): deactivating a workflow causes triggers to no-op cleanly.
-func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerRequest) (TriggerResponse, error) {
+func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerRequest) (resp TriggerResponse, err error) {
+	// Root span for the whole trigger -> StartRun -> delivery path.
+	ctx, span := observe.Tracer().Start(
+		ctx, "notify.trigger.ingest",
+		trace.WithAttributes(
+			attribute.String("workflow.name", req.Name),
+			attribute.String("env.id", scope.EnvID),
+		),
+	)
+	// Named-return defer rather than per-return calls: Ingest has many error
+	// exits (store lookups, fan-out, per-subscriber ingest) and this marks all
+	// of them — including ones added later — so failed triggers are findable by
+	// span status, matching engine.request and bridge.resolve.
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
 	wf, err := svc.s.Workflows().GetByTriggerIdentifier(ctx, scope, req.Name)
 	if errors.Is(err, store.ErrNotFound) {
 		return TriggerResponse{

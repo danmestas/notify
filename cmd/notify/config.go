@@ -43,6 +43,10 @@ type config struct {
 	aiConsoleKey      string
 	consoleReadOnly   bool
 	publicBaseURL     string
+
+	// OpenTelemetry tracing. An empty otelEndpoint disables tracing entirely.
+	otelEndpoint    string
+	otelServiceName string
 }
 
 // envOr returns the environment variable value if set, otherwise def.
@@ -137,6 +141,11 @@ func loadConfig(args []string) (config, error) {
 		aiConsoleKey:      firstNonEmpty(os.Getenv("NOTIFY_AI_API_KEY"), os.Getenv("ANTHROPIC_API_KEY")),
 		consoleReadOnly:   os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",
 		publicBaseURL:     os.Getenv("NOTIFY_PUBLIC_BASE_URL"),
+
+		// Standard OTel names, env-only: tracing is an optional integration
+		// like the ones above, and an unset endpoint disables it completely.
+		otelEndpoint:    os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		otelServiceName: envOr("OTEL_SERVICE_NAME", "notify"),
 	}, nil
 }
 
