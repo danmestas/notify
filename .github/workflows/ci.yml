@@ -19,11 +19,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: ${{ github.event_name != 'push' }}
       - uses: jdx/mise-action@v2
         with:
           install: true
-          cache: true
+          cache: ${{ github.event_name != 'push' }}
       - name: gofumpt (format check)
         run: |
           out=$(gofumpt -l .)
