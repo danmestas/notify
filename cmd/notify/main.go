@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"expvar"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -42,6 +41,7 @@ import (
 	"github.com/danmestas/notify/internal/inbound"
 	"github.com/danmestas/notify/internal/inbounddomains"
 	"github.com/danmestas/notify/internal/inboxapi"
+	"github.com/danmestas/notify/internal/metrics"
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/replyhook"
@@ -426,10 +426,13 @@ func runServe(args []string) error {
 	// writer DB pool answer live, 200 once both do.
 	writer, _ := st.Pools()
 	root.HandleFunc("/readyz", readyzHandler(cfg.bridgeURL, bridgeClient, writer))
-	// Ops metrics (notify hardening #8): expvar JSON of delivery outcomes and
-	// NATS link status, mounted ahead of the "/" catch-all. Unauthenticated, same
-	// trust posture as /healthz — an operator gates it at the ingress if needed.
-	root.Handle("/metrics", expvar.Handler())
+	// Ops metrics (notify hardening #8): JSON of delivery outcomes and NATS link
+	// status, mounted ahead of the "/" catch-all. Unauthenticated, same trust
+	// posture as /healthz — an operator gates it at the ingress if needed.
+	// metrics.Handler() (not expvar.Handler()) exposes only notify_ vars, never
+	// expvar's default cmdline (os.Args) / memstats — /metrics is public via the
+	// tunnel, so argv must never surface there.
+	root.Handle("/metrics", metrics.Handler())
 	root.Handle("/", handler)
 
 	srv := &http.Server{Addr: cfg.addr, Handler: root}

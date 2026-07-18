@@ -21,7 +21,10 @@
 package metrics
 
 import (
+	"encoding/json"
 	"expvar"
+	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -64,6 +67,29 @@ func init() {
 		}
 		return out
 	}))
+}
+
+// Handler serves notify's own metrics as a JSON object, exposing ONLY the
+// notify_ prefixed vars. It is deliberately a filtered stand-in for
+// expvar.Handler(): /metrics is unauthenticated and publicly reachable through
+// the tunnel (same trust posture as /healthz), and expvar's default handler also
+// dumps "cmdline" (os.Args — would leak a secret passed on argv, e.g.
+// -master-key-hex) and "memstats". This handler omits both. Output format
+// matches expvar.Handler()'s (a flat JSON object of name -> raw expvar value).
+func Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// expvar.Var.String() is contractually valid JSON, so each value embeds
+		// verbatim as a RawMessage — same shape expvar.Handler() emits, minus the
+		// non-notify_ defaults.
+		out := make(map[string]json.RawMessage)
+		expvar.Do(func(kv expvar.KeyValue) {
+			if strings.HasPrefix(kv.Key, "notify_") {
+				out[kv.Key] = json.RawMessage(kv.Value.String())
+			}
+		})
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(out)
+	})
 }
 
 // Delivery increments the counter for one (channel, outcome) pair. It is the

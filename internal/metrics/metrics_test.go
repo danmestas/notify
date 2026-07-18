@@ -1,7 +1,12 @@
 package metrics
 
 import (
+	"encoding/json"
 	"expvar"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -44,6 +49,49 @@ func TestNATSCounters(t *testing.T) {
 	if got := natsReconnects.Value() - r0; got != 2 {
 		t.Fatalf("nats reconnect delta = %d, want 2", got)
 	}
+}
+
+// TestHandler_OnlyNotifyVars guards the security-relevant property that the
+// /metrics handler exposes only notify_ prefixed vars and never expvar's default
+// "cmdline" (os.Args — would leak a -master-key-hex flag through the public
+// tunnel) or "memstats". Body must be valid JSON carrying the notify_ keys.
+func TestHandler_OnlyNotifyVars(t *testing.T) {
+	// Ensure at least one notify_ var carries a value so the key is present.
+	Delivery("email", OutcomeDelivered)
+
+	rr := httptest.NewRecorder()
+	Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+	body, _ := io.ReadAll(rr.Body)
+
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(body, &top); err != nil {
+		t.Fatalf("body is not valid JSON: %v (body=%s)", err, body)
+	}
+	if _, ok := top[deliveryMapName]; !ok {
+		t.Fatalf("body missing %q; got keys %v", deliveryMapName, keysOf(top))
+	}
+	for _, banned := range []string{"cmdline", "memstats"} {
+		if _, ok := top[banned]; ok {
+			t.Fatalf("body exposes default expvar var %q; want only notify_ keys", banned)
+		}
+	}
+	for k := range top {
+		if !strings.HasPrefix(k, "notify_") {
+			t.Fatalf("body exposes non-notify_ key %q", k)
+		}
+	}
+}
+
+func keysOf(m map[string]json.RawMessage) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func TestNATSStatusFunc(t *testing.T) {

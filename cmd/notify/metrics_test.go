@@ -1,15 +1,13 @@
 package main
 
 import (
-	"expvar"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	// Registers notify's expvar vars (notify_delivery_total, notify_nats_*).
-	_ "github.com/danmestas/notify/internal/metrics"
+	"github.com/danmestas/notify/internal/metrics"
 )
 
 // TestMetricsMuxOrdering pins the ServeMux contract that run()'s root mux relies
@@ -22,7 +20,7 @@ import (
 func TestMetricsMuxOrdering(t *testing.T) {
 	const catchAllBody = "CATCH_ALL"
 	root := http.NewServeMux()
-	root.Handle("/metrics", expvar.Handler())
+	root.Handle("/metrics", metrics.Handler())
 	root.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, catchAllBody)
 	})
