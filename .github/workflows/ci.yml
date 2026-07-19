@@ -35,11 +35,12 @@ jobs:
       - name: build dagnats sidecar
         run: |
           # pinned to danmestas/dagnats@main as of 2026-07-19 (NATS server v2.14.3 / client v1.52.0); bump periodically.
-          # 16168a9 carries dagnats#531: bridge span volume is proportional to work
-          # (bridge.poll removed, bridge.dispatch added), on top of #527's inbound
-          # W3C trace-context extraction. Keeping this in step with what prod runs
-          # means CI exercises the same trace seam we deploy.
-          GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@16168a9714290c8432abcc72adc71961e873a570
+          # f35e3c0 completes the cross-service trace seam this repo depends on:
+          # #527 (NATS extract), #531 (span volume), #534 (poll-response trace
+          # context, which internal/engine parses), #530 (trigger entrypoints) and
+          # #529 (handler coverage). Pinning behind #534 would let a trace-stitch
+          # assertion pass against a sidecar that cannot carry the context at all.
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@f35e3c0cd47c19e949d3fa027bced29b8cc522b2
           echo "DAGNATS_BIN=$RUNNER_TEMP/bin/dagnats" >> "$GITHUB_ENV"
       - name: test (race + coverage)
         run: go test -race -coverprofile=coverage.out ./...
