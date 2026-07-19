@@ -34,12 +34,12 @@ jobs:
         run: go build ./...
       - name: build dagnats sidecar
         run: |
-          # pinned to danmestas/dagnats@main as of 2026-07-18 (NATS server v2.14.3 / client v1.52.0); bump periodically.
-          # e8cba5d carries dagnats#527: the NATS micro handlers extract inbound W3C
-          # trace context, so notify's traceparent injection actually stitches. Older
-          # pins silently drop it and any cross-service trace assertion would pass
-          # against a sidecar that cannot join the trace.
-          GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@e8cba5db90f6d1c808aaa6abbd5135075ef89f89
+          # pinned to danmestas/dagnats@main as of 2026-07-19 (NATS server v2.14.3 / client v1.52.0); bump periodically.
+          # 16168a9 carries dagnats#531: bridge span volume is proportional to work
+          # (bridge.poll removed, bridge.dispatch added), on top of #527's inbound
+          # W3C trace-context extraction. Keeping this in step with what prod runs
+          # means CI exercises the same trace seam we deploy.
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@16168a9714290c8432abcc72adc71961e873a570
           echo "DAGNATS_BIN=$RUNNER_TEMP/bin/dagnats" >> "$GITHUB_ENV"
       - name: test (race + coverage)
         run: go test -race -coverprofile=coverage.out ./...
