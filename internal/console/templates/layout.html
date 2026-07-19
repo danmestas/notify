@@ -31,10 +31,15 @@
 </head>
 <body class="console-shell">
   <aside class="console-sidebar">
+    {{/* Protocol wordmark in dagnats's current brand idiom: mono face, an
+         accented segment, and a muted "://" scheme tail. The retired piece is
+         the solid dot (.console-mark) -- dagnats deleted it and pins that
+         deletion with a test, so notify carrying one made the two consoles
+         disagree about their own family look. The bare "://" glyph stands in
+         when the rail collapses and the name is hidden. */}}
     <a href="/console/" class="console-brand">
-      <span class="console-mark" aria-hidden="true"></span>
-      <span class="console-name">notify</span>
-      <span class="console-brand-suffix">console</span>
+      <span class="console-name">noti<span class="console-name-accent">.fy</span><span class="console-name-scheme">://</span></span>
+      <span class="console-glyph" aria-hidden="true">://</span>
     </a>
     <nav class="console-nav" aria-label="primary">
       {{range .Nav}}{{if .Entries}}
@@ -58,7 +63,6 @@
     <div class="console-sidebar-footer">
       {{if .DagnatsURL}}
       <a href="{{.DagnatsURL}}" class="console-sidebar-extlink" target="_blank" rel="noopener">
-        <span class="console-sidebar-extlink-dot" aria-hidden="true"></span>
         <span>dagnats console</span>
         <span class="console-extlink-arrow" aria-hidden="true">{{ uiIcon "arrow-up-right" }}</span>
       </a>

@@ -33,9 +33,17 @@ import "embed"
 // version and refresh procedure), served with Content-Encoding: gzip.
 // app.css is small enough to ship uncompressed.
 //
+// The brand wordmark face (IoskeleyMono, vendored from dagnats so notify's mark
+// sits in the same family look) is NOT listed here: it is bundled as a base64
+// data URI inside app.css, so the browser fetches no font over the wire and the
+// stylesheet carries its own face. assets/fonts/ holds the source woff2 for
+// regeneration plus its SIL OFL 1.1 licence, which is embedded below because
+// the OFL requires the licence to travel with the software.
+//
 //go:embed assets/datastar.js.gz
 //go:embed assets/app.css
 //go:embed assets/theme.js
+//go:embed assets/fonts/OFL-IoskeleyMono.txt
 var assetsFS embed.FS
 
 // iconFS holds the vendored, single-path brand SVGs for the provider catalog

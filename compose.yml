@@ -30,6 +30,14 @@ services:
       # cannot bring this stack up at all. Container side stays 3000, which is
       # what NOTIFY_ADDR and the healthcheck bind.
       - "${NOTIFY_HOST_PORT:-3000}:3000"
+      # dagnats' own console, so NOTIFY_DAGNATS_CONSOLE_URL below points at
+      # something that actually answers. Without this the shipped default
+      # (localhost:8081) resolves to nothing: dagnats serves 8080 *inside* the
+      # container and only notify's API was ever published.
+      #
+      # Bound to 127.0.0.1 deliberately. The dagnats console is
+      # UNAUTHENTICATED, so a shipped default must never put it on 0.0.0.0.
+      - "127.0.0.1:${DAGNATS_CONSOLE_HOST_PORT:-8081}:8080"
     volumes:
       - dagnats-data:/data
     healthcheck:
@@ -53,8 +61,11 @@ services:
       NOTIFY_BRIDGE_URL: http://127.0.0.1:8080
       NOTIFY_ADDR: 0.0.0.0:3000
       NOTIFY_DB: /data/notify.db
-      # Browser-facing dagnats console base for activity run deep-links.
-      NOTIFY_DAGNATS_CONSOLE_URL: "http://localhost:8081"
+      # Browser-facing dagnats console base for activity run deep-links. This
+      # is a BROWSER-vantage URL, not a container-vantage one: it is rendered
+      # into links the operator's browser follows, so it must match the host
+      # port published on the dagnats service above.
+      NOTIFY_DAGNATS_CONSOLE_URL: "http://localhost:${DAGNATS_CONSOLE_HOST_PORT:-8081}"
       # Set a real 32-byte hex secret in production; empty derives a fixed dev
       # key (local only). bootstrap and serve MUST share this value.
       NOTIFY_MASTER_KEY_HEX: ${NOTIFY_MASTER_KEY_HEX:-}

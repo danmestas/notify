@@ -49,6 +49,17 @@ fi
 echo "==> GET /healthz (unauthenticated)"
 curl -fsS "${base}/healthz" | grep -q '"status":"ok"'
 
+echo "==> dagnats console is published where NOTIFY_DAGNATS_CONSOLE_URL points"
+# The console URL is rendered into browser-facing deep links. It shipped as
+# localhost:8081 while nothing listened there, so the link was dead in the
+# default install. Assert the published port actually answers -- any 2xx/3xx
+# is fine, we only care that something is serving.
+console_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://localhost:${DAGNATS_CONSOLE_HOST_PORT:-8081}/" || echo 000)"
+case "$console_code" in
+  2??|3??) ;;
+  *) echo "!! dagnats console not reachable on ${DAGNATS_CONSOLE_HOST_PORT:-8081} (HTTP ${console_code}); NOTIFY_DAGNATS_CONSOLE_URL would be a dead link"; exit 1 ;;
+esac
+
 echo "==> bootstrap a tenant (exec inside the running notify container)"
 out="$(docker compose exec -T notify /usr/local/bin/notify bootstrap --org Acme --env dev)"
 key="$(printf '%s' "$out" | grep -oE '"apiKey": *"[^"]+"' | sed -E 's/.*"apiKey": *"([^"]+)".*/\1/')"

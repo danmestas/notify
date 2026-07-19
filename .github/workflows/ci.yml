@@ -75,6 +75,10 @@ jobs:
       # 3000 is taken on the mini (agent.py). compose.yml and smoke.sh both
       # read this; the container side stays 3000.
       NOTIFY_HOST_PORT: "13000"
+      # Likewise for dagnats' console port: 8081 is free on the mini today, but
+      # this box hosts four runners and assorted services, so pin CI to a port
+      # nothing else claims rather than depending on that staying true.
+      DAGNATS_CONSOLE_HOST_PORT: "18081"
     steps:
       - uses: actions/checkout@v4
       - name: docker preflight + clear stale stack

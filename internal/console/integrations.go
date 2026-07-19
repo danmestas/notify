@@ -805,9 +805,12 @@ func (c *Console) serveFragmentIntegrationActivity(w http.ResponseWriter, r *htt
 					CreatedAt:    m.CreatedAt,
 					RunID:        m.RunID,
 				}
-				if c.deps.DagnatsConsoleURL != "" && m.RunID != "" {
-					row.RunURL = c.deps.DagnatsConsoleURL + "/runs/" + m.RunID
-				}
+				// Build through runURL, never by hand: it owns the /console
+				// path prefix and PathEscapes the id. This site previously
+				// concatenated "/runs/" + m.RunID directly, which produced a
+				// path dagnats does not serve AND skipped the escaping that
+				// runURL's own comment exists to guarantee.
+				row.RunURL = c.runURL(m.RunID)
 				rows = append(rows, row)
 			}
 		}

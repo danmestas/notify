@@ -8,9 +8,11 @@
 </head>
 <body class="console-login-body">
   <main class="console-login-card">
+    {{/* Same wordmark as the sidebar (layout.html) -- the login page is the
+         first thing an operator sees, so it must not carry the retired dot
+         after the mark changed. */}}
     <div class="console-brand console-login-brand">
-      <span class="console-mark" aria-hidden="true"></span>
-      <span class="console-name">notify console</span>
+      <span class="console-name">noti<span class="console-name-accent">.fy</span><span class="console-name-scheme">://</span></span>
     </div>
     <h1>Sign in</h1>
     <p class="console-lede">
