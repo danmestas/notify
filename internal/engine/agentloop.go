@@ -157,9 +157,13 @@ func (lc *AgentLoopContext) Stream(data []byte) error {
 func (e *Engine) dispatch(ctx context.Context, taskType string, t TaskPayload) {
 	// One span per dispatched task, named for what the task is: deliveries get
 	// their own name and channel attribute so they aggregate separately from
-	// ordinary workflow steps. These are roots for now — the bridge poll
-	// payload carries no traceparent to parent them to (see the plan's
-	// Deferred section).
+	// ordinary workflow steps.
+	//
+	// The task carries the trace context dagnats stamped on it at dispatch
+	// (dagnats#534), so this span continues the trigger's trace rather than
+	// rooting a new one. Tasks without it (older dagnats, or a run started
+	// outside a trace) simply root here, as before.
+	ctx = observe.ContextWithRemoteTrace(ctx, t.TraceParent, t.TraceState)
 	name := "notify.task.run"
 	attrs := []attribute.KeyValue{
 		attribute.String("task.type", taskType),

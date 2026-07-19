@@ -91,6 +91,16 @@ type TaskPayload struct {
 	Iteration int             `json:"iteration,omitempty"`
 	Attempt   int             `json:"attempt"`
 	Input     json.RawMessage `json:"input,omitempty"`
+	// TraceParent/TraceState carry the W3C trace context dagnats stamps on each
+	// dispatched task (danmestas/dagnats#534), letting this task's spans continue
+	// the trace that started the run instead of rooting a new one.
+	//
+	// The JSON keys are the un-underscored W3C wire names and must match
+	// dagnats's tags byte-for-byte — JSON field matching is case-insensitive but
+	// name-exact, and a silent mismatch here reproduces the orphaned-trace bug
+	// that a canonicalised header key caused on the NATS seam (#250).
+	TraceParent string `json:"traceparent,omitempty"`
+	TraceState  string `json:"tracestate,omitempty"`
 }
 
 // RunSnapshot mirrors the run fields of dagnats's api.runs.get reply
