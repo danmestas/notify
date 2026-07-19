@@ -1,6 +1,8 @@
 package console
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -8,6 +10,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -407,7 +410,10 @@ func (c *Console) Routes() http.Handler {
 	// sha256 of the embedded bytes (see assets_manifest.go).
 	r.Get(assetManifest["datastar.js"], serveGzAsset("datastar.js.gz",
 		"application/javascript; charset=utf-8", c.deps.DevMode))
-	r.Get(assetManifest["app.css"], servePlainAsset("app.css",
+	// app.css now carries the bundled wordmark face as a data URI, so it is no
+	// longer "small enough to ship uncompressed" — base64 inflates the woff2
+	// ~33%, and gzip recovers most of that on the wire.
+	r.Get(assetManifest["app.css"], serveCompressedAsset("app.css",
 		"text/css; charset=utf-8", c.deps.DevMode))
 	r.Get(assetManifest["theme.js"], servePlainAsset("theme.js",
 		"application/javascript; charset=utf-8", c.deps.DevMode))
@@ -684,8 +690,61 @@ func serveGzAsset(name, contentType string, devMode bool) http.HandlerFunc {
 	}
 }
 
-// servePlainAsset is the uncompressed variant for app.css, which is small
-// enough that gzip would only complicate the embed path.
+// serveCompressedAsset serves an embedded plain-text asset gzipped, compressing
+// once at construction.
+//
+// It compresses at startup rather than shipping a checked-in .gz beside the
+// source (the serveGzAsset pattern) because that second file drifts: nothing
+// forces it to be regenerated when the source is edited, so the console would
+// happily serve stale CSS. Vendored third-party bundles like datastar are
+// different — they arrive pre-compressed and are never hand-edited.
+//
+// Unlike serveGzAsset this honours Accept-Encoding. Both representations are
+// already in memory, so the fallback is free, and it keeps a bare curl (or any
+// client that does not advertise gzip) from receiving a binary blob it cannot
+// read. Vary tells caches the body depends on the request encoding.
+func serveCompressedAsset(name, contentType string, devMode bool) http.HandlerFunc {
+	if name == "" {
+		panic("serveCompressedAsset: name is empty")
+	}
+	if contentType == "" {
+		panic("serveCompressedAsset: contentType is empty")
+	}
+	plain, err := fs.ReadFile(assetsFS, "assets/"+name)
+	if err != nil {
+		panic(fmt.Sprintf("serveCompressedAsset: read %s: %v", name, err))
+	}
+	if len(plain) == 0 {
+		panic(fmt.Sprintf("serveCompressedAsset: %s is empty", name))
+	}
+	var buf bytes.Buffer
+	zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err != nil {
+		panic(fmt.Sprintf("serveCompressedAsset: gzip writer: %v", err))
+	}
+	if _, err := zw.Write(plain); err != nil {
+		panic(fmt.Sprintf("serveCompressedAsset: gzip %s: %v", name, err))
+	}
+	if err := zw.Close(); err != nil {
+		panic(fmt.Sprintf("serveCompressedAsset: gzip close %s: %v", name, err))
+	}
+	gzipped := buf.Bytes()
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", assetCacheHeader(devMode))
+		w.Header().Set("Vary", "Accept-Encoding")
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.Header().Set("Content-Encoding", "gzip")
+			_, _ = w.Write(gzipped)
+			return
+		}
+		_, _ = w.Write(plain)
+	}
+}
+
+// servePlainAsset is the uncompressed variant, used for assets small enough
+// that gzip would only complicate the embed path.
 func servePlainAsset(name, contentType string, devMode bool) http.HandlerFunc {
 	if name == "" {
 		panic("servePlainAsset: name is empty")

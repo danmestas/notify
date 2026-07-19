@@ -91,3 +91,50 @@ func TestBrand_FontIsBundledNotFetched(t *testing.T) {
 		t.Error("app.css references a font by URL; the face must be bundled")
 	}
 }
+
+// TestAppCSS_ServedGzippedWithPlainFallback pins the compression contract for
+// app.css, which grew past 160KB once the wordmark face was bundled into it.
+//
+// Both halves matter. Gzip must actually apply for browsers (the whole point,
+// since base64 inflates the woff2 ~33%), and a client that does not advertise
+// gzip must still get readable CSS rather than a binary blob — the existing
+// serveGzAsset path returns gzip unconditionally, and this asset is reachable
+// by bare curl in smoke tests.
+func TestAppCSS_ServedGzippedWithPlainFallback(t *testing.T) {
+	tc := newTestConsole(t)
+	url := assetURL("app.css")
+
+	gzReq := httptest.NewRequest(http.MethodGet, url, nil)
+	gzReq.Header.Set("Accept-Encoding", "gzip")
+	gzRR := httptest.NewRecorder()
+	tc.h.ServeHTTP(gzRR, gzReq)
+	if gzRR.Code != http.StatusOK {
+		t.Fatalf("gzip request: status = %d, want 200", gzRR.Code)
+	}
+	if enc := gzRR.Header().Get("Content-Encoding"); enc != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", enc)
+	}
+	if v := gzRR.Header().Get("Vary"); !strings.Contains(v, "Accept-Encoding") {
+		t.Errorf("Vary = %q, want it to include Accept-Encoding", v)
+	}
+
+	plainRR := httptest.NewRecorder()
+	tc.h.ServeHTTP(plainRR, httptest.NewRequest(http.MethodGet, url, nil))
+	if plainRR.Code != http.StatusOK {
+		t.Fatalf("plain request: status = %d, want 200", plainRR.Code)
+	}
+	if enc := plainRR.Header().Get("Content-Encoding"); enc != "" {
+		t.Fatalf("no-gzip client got Content-Encoding %q; body would be unreadable", enc)
+	}
+	if !strings.Contains(plainRR.Body.String(), "IoskeleyMono") {
+		t.Error("plain fallback body is not readable CSS")
+	}
+
+	// The compression has to be worth doing.
+	gzLen, plainLen := gzRR.Body.Len(), plainRR.Body.Len()
+	if gzLen >= plainLen {
+		t.Fatalf("gzip did not shrink app.css: %d >= %d", gzLen, plainLen)
+	}
+	t.Logf("app.css: %d bytes plain -> %d gzipped (%.0f%% saved)",
+		plainLen, gzLen, 100*(1-float64(gzLen)/float64(plainLen)))
+}
