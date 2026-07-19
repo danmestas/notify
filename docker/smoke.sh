@@ -17,6 +17,14 @@ cd "$(dirname "$0")/.."
 # Bootstrap and serve must share one master key so the minted API key decrypts.
 export NOTIFY_MASTER_KEY_HEX="${NOTIFY_MASTER_KEY_HEX:-$(openssl rand -hex 32)}"
 
+# Host port for notify's published API. Overridable because 3000 is a popular
+# port: on a machine already using it (a dev laptop, or a CI host running other
+# services) compose cannot bind and the whole smoke fails for reasons unrelated
+# to the code under test. compose.yml reads the same variable.
+NOTIFY_HOST_PORT="${NOTIFY_HOST_PORT:-3000}"
+export NOTIFY_HOST_PORT
+base="http://localhost:${NOTIFY_HOST_PORT}"
+
 cleanup() { docker compose down -v --remove-orphans >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
@@ -39,7 +47,7 @@ if [ "$status" != "healthy" ]; then
 fi
 
 echo "==> GET /healthz (unauthenticated)"
-curl -fsS http://localhost:3000/healthz | grep -q '"status":"ok"'
+curl -fsS "${base}/healthz" | grep -q '"status":"ok"'
 
 echo "==> bootstrap a tenant (exec inside the running notify container)"
 out="$(docker compose exec -T notify /usr/local/bin/notify bootstrap --org Acme --env dev)"
@@ -52,7 +60,7 @@ echo "==> authenticated subscriber upsert through the container"
 code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
   -H "Authorization: ApiKey ${key}" -H 'Content-Type: application/json' \
   -d '{"subscriberId":"smoke_user","firstName":"Ada"}' \
-  http://localhost:3000/v1/subscribers)"
+  "${base}/v1/subscribers")"
 if [ "$code" != "201" ]; then
   echo "!! subscriber upsert returned HTTP ${code}, want 201"; exit 1
 fi

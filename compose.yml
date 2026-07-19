@@ -24,7 +24,12 @@ services:
       DAGNATS_HTTP_ADDR: 0.0.0.0:8080
       DAGNATS_DATA_DIR: /data
     ports:
-      - "3000:3000" # notify's API (notify shares this network namespace)
+      # notify's API (notify shares this network namespace). The host side is
+      # overridable because 3000 is a popular port: any machine already running
+      # something there -- a dev laptop, or a CI host with other services --
+      # cannot bring this stack up at all. Container side stays 3000, which is
+      # what NOTIFY_ADDR and the healthcheck bind.
+      - "${NOTIFY_HOST_PORT:-3000}:3000"
     volumes:
       - dagnats-data:/data
     healthcheck:

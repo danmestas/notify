@@ -52,8 +52,40 @@ jobs:
           go test -tags duckdb -race -run TestAnalytics_DeliveriesByChannel_DuckDB ./internal/httpapi/
 
   docker:
-    runs-on: ubuntu-latest
+    # Mirrors the ci job: push runs on the mac-mini, pull_request stays on a
+    # GitHub-hosted runner. Deliberately NOT unconditionally self-hosted --
+    # the mini runs production (notify, dagnats, the cloudflared tunnel) and
+    # four runners' credentials, so executing fork-PR code there as dmestas
+    # would be a full production compromise.
+    runs-on: >-
+      ${{ github.event_name == 'push'
+          && fromJSON('["self-hosted","macOS","ARM64","mac-mini"]')
+          || 'ubuntu-latest' }}
+    # Four self-hosted runners share ONE colima docker daemon on that box, and
+    # this job publishes a fixed host port and does a project-scoped `down -v`.
+    # A global (not per-ref) group serializes smokes so they cannot bind the
+    # same port or tear down each other's volumes. cancel-in-progress stays
+    # false: killing a run mid-compose leaves containers behind.
+    concurrency:
+      group: docker-smoke-shared-daemon
+      cancel-in-progress: false
+    env:
+      # Isolate from any hand-run `notify` stack on the shared daemon.
+      COMPOSE_PROJECT_NAME: notify-ci
+      # 3000 is taken on the mini (agent.py). compose.yml and smoke.sh both
+      # read this; the container side stays 3000.
+      NOTIFY_HOST_PORT: "13000"
     steps:
       - uses: actions/checkout@v4
+      - name: docker preflight + clear stale stack
+        if: runner.environment == 'self-hosted'
+        run: |
+          # macOS has no timeout(1); a wedged daemon makes `docker info` hang forever.
+          perl -e 'alarm 25; exec @ARGV' docker info >/dev/null 2>&1 \
+            || { echo "::error::docker daemon unreachable on the runner. Check: brew services info colima"; exit 1; }
+          docker compose down -v --remove-orphans || true
       - name: container stack smoke (compose up + health + bootstrap + auth API)
         run: bash docker/smoke.sh
+      - name: cleanup (runs even if the job is cancelled)
+        if: always() && runner.environment == 'self-hosted'
+        run: docker compose down -v --remove-orphans || true
