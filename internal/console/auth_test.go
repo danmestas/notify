@@ -63,8 +63,12 @@ func TestAuth_LoginBadKeyRerendersWithError(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "not recognised") {
 		t.Errorf("bad key: error line missing from re-rendered form")
 	}
-	if len(rr.Result().Cookies()) != 0 {
-		t.Errorf("bad key: cookie was set: %v", rr.Result().Cookies())
+	// The error re-render legitimately sets a fresh pre-session CSRF cookie so
+	// the retry can succeed; what must not appear is a session.
+	for _, ck := range rr.Result().Cookies() {
+		if ck.Name == sessionCookieName {
+			t.Errorf("bad key: session cookie was set: %v", ck)
+		}
 	}
 }
 
@@ -183,10 +187,21 @@ func TestAuth_SecureFlagFollowsTLS(t *testing.T) {
 
 	// Same login behind a TLS-terminating proxy: Secure must be set on
 	// both the session cookie and the logout clear.
-	form := strings.NewReader("api_key=" + tc.key)
+	// Render the form first to obtain the pre-session CSRF token, same as a
+	// browser would; the login POST is rejected without it.
+	pageReq := httptest.NewRequest(http.MethodGet, "/console/login", nil)
+	pageReq.Header.Set("X-Forwarded-Proto", "https")
+	pageRR := httptest.NewRecorder()
+	tc.h.ServeHTTP(pageRR, pageReq)
+	token := loginCSRFTokenFrom(t, pageRR.Body.String())
+
+	form := strings.NewReader("api_key=" + tc.key + "&csrf_token=" + token)
 	req := httptest.NewRequest(http.MethodPost, "/console/login", form)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("X-Forwarded-Proto", "https")
+	for _, ck := range pageRR.Result().Cookies() {
+		req.AddCookie(ck)
+	}
 	rr := httptest.NewRecorder()
 	tc.h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusSeeOther {

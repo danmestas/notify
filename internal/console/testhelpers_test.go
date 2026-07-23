@@ -273,10 +273,22 @@ func (tc *testConsole) revokeAllKeys(t *testing.T) {
 // rendered pages).
 func (tc *testConsole) login(t *testing.T) (*http.Cookie, string) {
 	t.Helper()
-	form := url.Values{"api_key": {tc.key}}
+
+	// Model a real browser: GET the form to obtain the pre-session CSRF token
+	// and its cookie, then POST both. Posting api_key alone is exactly the
+	// cross-site shape the login-CSRF guard exists to reject.
+	pageReq := httptest.NewRequest(http.MethodGet, "/console/login", nil)
+	pageRR := httptest.NewRecorder()
+	tc.h.ServeHTTP(pageRR, pageReq)
+	token := loginCSRFTokenFrom(t, pageRR.Body.String())
+
+	form := url.Values{"api_key": {tc.key}, "csrf_token": {token}}
 	req := httptest.NewRequest(http.MethodPost, "/console/login",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, ck := range pageRR.Result().Cookies() {
+		req.AddCookie(ck)
+	}
 	rr := httptest.NewRecorder()
 	tc.h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusSeeOther {
@@ -468,4 +480,31 @@ func (tc *testConsole) postForm(t *testing.T, path string, values url.Values, co
 	rr := httptest.NewRecorder()
 	tc.h.ServeHTTP(rr, req)
 	return rr
+}
+
+// loginCSRFTokenFrom extracts the hidden pre-session CSRF token from a rendered
+// login page. Shared by the login helper and the login-CSRF tests.
+func loginCSRFTokenFrom(t *testing.T, body string) string {
+	t.Helper()
+	const marker = `name="csrf_token"`
+	i := strings.Index(body, marker)
+	if i < 0 {
+		t.Fatalf("login page has no csrf_token field")
+	}
+	start := strings.LastIndex(body[:i], "<input")
+	end := strings.Index(body[start:], ">")
+	if start < 0 || end < 0 {
+		t.Fatalf("login page csrf_token field is malformed")
+	}
+	tag := body[start : start+end]
+	j := strings.Index(tag, `value="`)
+	if j < 0 {
+		t.Fatalf("login page csrf_token field has no value")
+	}
+	rest := tag[j+len(`value="`):]
+	k := strings.Index(rest, `"`)
+	if k < 0 {
+		t.Fatalf("login page csrf_token value is unterminated")
+	}
+	return rest[:k]
 }

@@ -22,6 +22,10 @@
     <p class="console-form-error" role="alert">{{.Error}}</p>
     {{end}}
     <form method="post" action="/console/login">
+      {{/* Pre-session double-submit token: must equal the login cookie. No
+           session exists yet, so this is what stops a cross-site page from
+           silently signing the operator into the attacker's tenant. */}}
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <label for="api_key">API key</label>
       <div class="console-secret-field">
         <input type="password" id="api_key" name="api_key"
