@@ -3,75 +3,69 @@
          data-signals="{{$page.Signals}}">
   {{template "page-header" $page.Header}}
 
+  {{/* .console-card supplies its own padding and .console-card-title its own
+       bottom margin, so a card needs no header/body wrapper elements. */}}
   <div class="console-card">
-    <div class="console-card-header">
-      <h2 class="console-card-title">DNS Records</h2>
-    </div>
-    <div class="console-card-body">
-      <p>Add the following MX record to your DNS provider to enable inbound email for <strong>{{$page.Dom.Name}}</strong>:</p>
-      <table class="console-table">
-        <thead>
-          <tr><th>Type</th><th>Name</th><th>Value</th><th>Priority</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>MX</td>
-            <td>{{$page.Dom.Name}}</td>
-            <td><code>{{$page.Dom.ExpectedMXHost}}</code></td>
-            <td>{{$page.Dom.ExpectedMXPriority}}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <h2 class="console-card-title">DNS Records</h2>
+    <p>Add the following MX record to your DNS provider to enable inbound email for <strong>{{$page.Dom.Name}}</strong>:</p>
+    <table class="console-table">
+      <thead>
+        <tr><th>Type</th><th>Name</th><th>Value</th><th>Priority</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>MX</td>
+          <td>{{$page.Dom.Name}}</td>
+          <td><code>{{$page.Dom.ExpectedMXHost}}</code></td>
+          <td>{{$page.Dom.ExpectedMXPriority}}</td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 
   <div class="console-card">
-    <div class="console-card-header">
-      <h2 class="console-card-title">Verification Status</h2>
-    </div>
-    <div class="console-card-body">
-      <dl class="console-dl">
+    <h2 class="console-card-title">Verification Status</h2>
+    <dl class="wf-meta-list">
+      <div class="wf-meta-row">
         <dt>Status</dt>
         <dd>
           {{if eq $page.Dom.Status "verified"}}
-          <span class="badge badge-success">Verified</span>
+          <span class="chip chip-success">Verified</span>
           {{else if eq $page.Dom.Status "failed"}}
-          <span class="badge badge-danger">Failed</span>
+          <span class="chip chip-danger">Failed</span>
           {{else}}
-          <span class="badge badge-neutral">Pending</span>
+          <span class="chip chip-default">Pending</span>
           {{end}}
         </dd>
+      </div>
+      <div class="wf-meta-row">
         <dt>MX Configured</dt>
         <dd>{{if $page.Dom.MXConfigured}}Yes{{else}}No{{end}}</dd>
-      </dl>
+      </div>
+    </dl>
 
-      {{if not $page.ReadOnly}}
-      <form method="POST" action="/console/api/domains/{{$page.Dom.Name}}/verify">
-        <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
-        <button type="submit" class="btn btn-primary">Run MX Verification</button>
-      </form>
-      {{end}}
-    </div>
+    {{if not $page.ReadOnly}}
+    <form method="POST" action="/console/api/domains/{{$page.Dom.Name}}/verify" class="console-card-actions">
+      <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+      <button type="submit" class="btn btn-primary">Run MX Verification</button>
+    </form>
+    {{end}}
   </div>
 
   <div class="console-card">
-    <div class="console-card-header">
-      <h2 class="console-card-title">Danger Zone</h2>
+    <h2 class="console-card-title">Danger Zone</h2>
+    {{if not $page.ConfirmDelete}}
+    <a href="/console/domains/{{$page.Dom.Name}}?confirmDelete=true" class="btn btn-outline btn-danger">Delete domain</a>
+    {{else}}
+    <p>Are you sure you want to delete <strong>{{$page.Dom.Name}}</strong>? This cannot be undone.</p>
+    <div class="console-card-actions">
+      <a href="/console/domains/{{$page.Dom.Name}}" class="btn btn-outline">Cancel</a>
+      <form method="POST" action="/console/api/domains/{{$page.Dom.Name}}/delete" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+        <button type="submit" class="btn btn-danger">Confirm delete</button>
+      </form>
     </div>
-    <div class="console-card-body">
-      {{if not $page.ConfirmDelete}}
-      <a href="/console/domains/{{$page.Dom.Name}}?confirmDelete=true" class="btn btn-outline btn-danger">Delete domain</a>
-      {{else}}
-      <p>Are you sure you want to delete <strong>{{$page.Dom.Name}}</strong>? This cannot be undone.</p>
-      <div class="console-button-row">
-        <a href="/console/domains/{{$page.Dom.Name}}" class="btn btn-outline">Cancel</a>
-        <form method="POST" action="/console/api/domains/{{$page.Dom.Name}}/delete" style="display:inline">
-          <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
-          <button type="submit" class="btn btn-danger">Confirm delete</button>
-        </form>
-      </div>
-      {{end}}
-    </div>
+    {{end}}
   </div>
 </section>
 {{end}}
