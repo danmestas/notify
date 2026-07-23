@@ -11,7 +11,8 @@ concurrency:
 jobs:
   ci:
     runs-on: >-
-      ${{ github.event_name == 'push'
+      ${{ (github.event_name == 'push'
+           || github.event.pull_request.head.repo.full_name == github.repository)
           && fromJSON('["self-hosted","macOS","ARM64","mac-mini"]')
           || 'ubuntu-latest' }}
     steps:
@@ -52,13 +53,18 @@ jobs:
           go test -tags duckdb -race -run TestAnalytics_DeliveriesByChannel_DuckDB ./internal/httpapi/
 
   docker:
-    # Mirrors the ci job: push runs on the mac-mini, pull_request stays on a
-    # GitHub-hosted runner. Deliberately NOT unconditionally self-hosted --
-    # the mini runs production (notify, dagnats, the cloudflared tunnel) and
-    # four runners' credentials, so executing fork-PR code there as dmestas
-    # would be a full production compromise.
+    # Mirrors the ci job: pushes and same-repo PRs run on the mac-mini, PRs
+    # from forks stay on a GitHub-hosted runner. Deliberately NOT
+    # unconditionally self-hosted -- the mini runs production (notify, dagnats,
+    # the cloudflared tunnel) and four runners' credentials, so executing
+    # fork-PR code there as dmestas would be a full production compromise.
+    # The head-repo check is the precise expression of that: a same-repo branch
+    # could only be pushed by someone who already has write access, so it is
+    # exactly as trusted as a push to main, whereas a fork PR is arbitrary code
+    # from anyone.
     runs-on: >-
-      ${{ github.event_name == 'push'
+      ${{ (github.event_name == 'push'
+           || github.event.pull_request.head.repo.full_name == github.repository)
           && fromJSON('["self-hosted","macOS","ARM64","mac-mini"]')
           || 'ubuntu-latest' }}
     # Four self-hosted runners share ONE colima docker daemon on that box, and
