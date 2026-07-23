@@ -44,7 +44,11 @@ jobs:
           GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@f35e3c0cd47c19e949d3fa027bced29b8cc522b2
           echo "DAGNATS_BIN=$RUNNER_TEMP/bin/dagnats" >> "$GITHUB_ENV"
       - name: test (race + coverage)
-        run: go test -race -coverprofile=coverage.out ./...
+        # Explicit -timeout for the same reason as lefthook.yml: Go's 10m
+        # default is per package, and console is close to it under -race. CI
+        # runs on the mac-mini today and is well inside the limit, but a loaded
+        # or slower runner should fail on a real hang, not on scheduling.
+        run: go test -race -timeout 20m -coverprofile=coverage.out ./...
       - name: duckdb backend (opt-in -tags duckdb; reuses sidecar above)
         run: |
           go build -tags duckdb ./...

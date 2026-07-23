@@ -21,4 +21,10 @@ pre-push:
       run: go vet ./...
     test:
       glob: "*.go"
-      run: go test -race ./...
+      # -timeout is explicit because Go's default is 10m PER PACKAGE, and the
+      # console package's suite lands close to that under -race on developer
+      # hardware. Without this the gate rejects pushes based on how fast your
+      # machine is rather than whether the code is correct, and the only ways
+      # out are --no-verify or not pushing. The timeout is a hang backstop, so
+      # it should be comfortably above the slowest legitimate package.
+      run: go test -race -timeout 20m ./...
