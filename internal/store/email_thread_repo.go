@@ -3,9 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
-	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // EmailThread is one email-origin conversation binding: it maps a conversation
@@ -55,7 +55,7 @@ type emailThreadRepo struct {
 // UPDATE arm is scope-guarded so a key collision against another tenant never
 // mutates their row.
 func (repo *emailThreadRepo) Upsert(ctx context.Context, scope domain.Scope, t EmailThread) (EmailThread, error) {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timestamp.Now()
 	id := newULID()
 	_, err := repo.w.ExecContext(
 		ctx,

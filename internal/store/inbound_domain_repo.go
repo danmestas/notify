@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // ErrInboundDomainConflict is returned by Create when (org,env,name) already exists.
@@ -28,7 +28,7 @@ type inboundDomainRepo struct {
 
 func (repo *inboundDomainRepo) Create(ctx context.Context, scope domain.Scope, name, expectedMXHost string, expectedMXPriority int) (domain.InboundDomain, error) {
 	id := newULID()
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timestamp.Now()
 	_, err := repo.w.ExecContext(
 		ctx,
 		`INSERT INTO inbound_domains (id, org_id, environment_id, name, status, mx_configured, expected_mx_host, expected_mx_priority, created_at, updated_at)
@@ -130,7 +130,7 @@ func (repo *inboundDomainRepo) List(ctx context.Context, scope domain.Scope, sea
 }
 
 func (repo *inboundDomainRepo) SetStatus(ctx context.Context, scope domain.Scope, name, status string, mxConfigured bool) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timestamp.Now()
 	mx := 0
 	if mxConfigured {
 		mx = 1

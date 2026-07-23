@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 func TestDashboard_RendersSeededKPIsAndNav(t *testing.T) {
@@ -244,7 +245,7 @@ func TestBuildSparkline_ZeroFillsAndScales(t *testing.T) {
 func TestDashboard_SentTodayScopedToToday(t *testing.T) {
 	tc := newTestConsole(t)
 	now := time.Now().UTC()
-	yesterday := now.AddDate(0, 0, -1).Format(time.RFC3339Nano)
+	yesterday := timestamp.Format(now.AddDate(0, 0, -1))
 	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
 		{Channel: "in_app", Status: "sent", CreatedAt: yesterday},
 		{Channel: "in_app", Status: "sent"}, // defaults to now => today
@@ -298,7 +299,7 @@ func TestDashboard_SentDeltaAbsentWithoutPriorData(t *testing.T) {
 func TestDashboard_SentDeltaComputedFromPriorDay(t *testing.T) {
 	tc := newTestConsole(t)
 	now := time.Now().UTC()
-	yesterday := now.AddDate(0, 0, -1).Format(time.RFC3339Nano)
+	yesterday := timestamp.Format(now.AddDate(0, 0, -1))
 	tc.seedDeliveries(t, []domain.AnalyticsDelivery{
 		{Channel: "in_app", Status: "sent", CreatedAt: yesterday},
 		{Channel: "in_app", Status: "sent", CreatedAt: yesterday},

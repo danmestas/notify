@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // ─── page render ─────────────────────────────────────────────────────────────
@@ -188,7 +189,7 @@ func TestFragment_ActivityList_CursorWalk(t *testing.T) {
 			WorkflowID:   "wf",
 			SubscriberID: fmt.Sprintf("sub-%d", i),
 			RunID:        fmt.Sprintf("run-%d", i),
-			CreatedAt:    base.Add(time.Duration(i) * time.Second).UTC().Format(time.RFC3339Nano),
+			CreatedAt:    timestamp.Format(base.Add(time.Duration(i) * time.Second)),
 		})
 	}
 	cookie, _ := tc.login(t)
@@ -744,7 +745,7 @@ func TestFragment_ActivityList_LoadMoreAppends(t *testing.T) {
 			WorkflowID:   "wf",
 			SubscriberID: fmt.Sprintf("append-sub-%d", i),
 			RunID:        fmt.Sprintf("append-run-%d", i),
-			CreatedAt:    base.Add(time.Duration(i) * time.Second).UTC().Format(time.RFC3339Nano),
+			CreatedAt:    timestamp.Format(base.Add(time.Duration(i) * time.Second)),
 		})
 	}
 	cookie, _ := tc.login(t)

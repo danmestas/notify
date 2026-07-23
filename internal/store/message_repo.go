@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // MessageRepo persists per-channel messages and serves the inbox list keyed by
@@ -57,7 +57,7 @@ func (repo *messageRepo) Create(ctx context.Context, scope domain.Scope, m domai
 		m.ID = newULID()
 	}
 	if m.CreatedAt == "" {
-		m.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		m.CreatedAt = timestamp.Now()
 	}
 	// Nil-safety contract: extras is a NOT NULL column (migration 0022). Callers
 	// that build a domain.Message without rich fields — including the

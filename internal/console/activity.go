@@ -23,6 +23,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/timestamp"
 	"github.com/danmestas/notify/internal/trigger"
 )
 
@@ -119,7 +120,7 @@ type activityRow struct {
 	Channel            string // derived from first message (best-effort)
 	Status             string // derived from messages (best-effort)
 	StatusTone         tileTone
-	CreatedAt          string // RFC3339Nano raw
+	CreatedAt          string // raw stored timestamp (timestamp.Layout)
 	RelativeTime       string // "3 minutes ago" etc.
 	RunID              string
 	RunURL             string // empty when DagnatsConsoleURL is unset
@@ -253,9 +254,11 @@ func shortTxID(id string) string {
 	return id[:26]
 }
 
-// relativeTime formats a RFC3339Nano timestamp as a human-friendly string.
+// relativeTime formats a stored timestamp as a human-friendly string. It goes
+// through timestamp.Parse so it reads both the fixed-width format and the legacy
+// variable-width rows still in the database.
 func relativeTime(raw string) string {
-	t, err := time.Parse(time.RFC3339Nano, raw)
+	t, err := timestamp.Parse(raw)
 	if err != nil {
 		return raw
 	}

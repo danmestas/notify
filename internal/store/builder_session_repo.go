@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // Builder session lifecycle statuses. A session starts in Draft; a turn's
@@ -148,7 +148,7 @@ func (repo *builderSessionRepo) CreateRefine(ctx context.Context, scope domain.S
 }
 
 func (repo *builderSessionRepo) insert(ctx context.Context, scope domain.Scope, prompt, mode, targetSlug string, draft json.RawMessage) (BuilderSession, error) {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timestamp.Now()
 	s := BuilderSession{
 		ID:            newULID(),
 		OrgID:         scope.OrgID,
@@ -205,7 +205,7 @@ func (repo *builderSessionRepo) UpdateDraft(ctx context.Context, scope domain.Sc
 		`UPDATE builder_sessions
 		    SET draft_workflow = ?, status = ?, updated_at = ?
 		  WHERE id = ? AND org_id = ? AND environment_id = ?`,
-		string(draft), status, time.Now().UTC().Format(time.RFC3339Nano),
+		string(draft), status, timestamp.Now(),
 		id, scope.OrgID, scope.EnvID,
 	)
 	if err != nil {
@@ -223,7 +223,7 @@ func (repo *builderSessionRepo) SetStatus(ctx context.Context, scope domain.Scop
 		`UPDATE builder_sessions
 		    SET status = ?, updated_at = ?
 		  WHERE id = ? AND org_id = ? AND environment_id = ?`,
-		status, time.Now().UTC().Format(time.RFC3339Nano),
+		status, timestamp.Now(),
 		id, scope.OrgID, scope.EnvID,
 	)
 	if err != nil {
@@ -248,7 +248,7 @@ func (repo *builderSessionRepo) AppendMessage(ctx context.Context, scope domain.
 		   (id, session_id, role, content, tool_calls, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		id, sessionID, role, content, toolCalls,
-		time.Now().UTC().Format(time.RFC3339Nano),
+		timestamp.Now(),
 	)
 	if err != nil {
 		return "", err
@@ -270,7 +270,7 @@ func (repo *builderSessionRepo) PushCheckpoint(ctx context.Context, scope domain
 		SessionID: sessionID,
 		MessageID: messageID,
 		DraftJSON: draft,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		CreatedAt: timestamp.Now(),
 	}
 	// Allocate seq and insert in ONE statement: the MAX(seq)+1 is computed inside
 	// the INSERT...SELECT, so two concurrent pushes on the same session cannot both

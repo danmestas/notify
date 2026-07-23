@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // AnalyticsFilter holds optional filter parameters for analytics aggregation
@@ -61,7 +62,7 @@ func (repo *analyticsRepo) Insert(ctx context.Context, scope domain.Scope, d dom
 		d.ID = newULID()
 	}
 	if d.CreatedAt == "" {
-		d.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		d.CreatedAt = timestamp.Now()
 	}
 	_, err := repo.w.ExecContext(
 		ctx,
@@ -267,7 +268,7 @@ func buildSubscriberQuery(scope domain.Scope, since time.Time, f AnalyticsFilter
 	args := []any{scope.OrgID, scope.EnvID}
 	if !since.IsZero() {
 		sb.WriteString(` AND created_at >= ?`)
-		args = append(args, since.UTC().Format(time.RFC3339Nano))
+		args = append(args, timestamp.Format(since))
 	}
 	if f.WorkflowID != "" {
 		sb.WriteString(` AND workflow_id = ?`)

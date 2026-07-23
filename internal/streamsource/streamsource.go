@@ -17,10 +17,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
-	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // secretLen is the number of random bytes in a freshly minted source secret,
@@ -117,7 +117,7 @@ func (svc *Service) Create(ctx context.Context, scope domain.Scope, name, topic 
 		MaxBatchEvents:  defaultMaxBatchEvents,
 		ByteBudget:      defaultByteBudget,
 		Active:          true,
-		CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+		CreatedAt:       timestamp.Now(),
 	}
 	created, err := svc.store.StreamSources().Create(ctx, scope, src)
 	if err != nil {

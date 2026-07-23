@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	"github.com/danmestas/notify/internal/domain"
 	corestore "github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // AgentLinkRepo persists agent <-> channel-integration links keyed by
@@ -37,7 +37,7 @@ func (repo *agentLinkRepo) Link(ctx context.Context, scope domain.Scope, l agent
 		 ON CONFLICT (agent_id, integration_id) DO UPDATE SET config=excluded.config
 		 WHERE org_id = excluded.org_id AND environment_id = excluded.environment_id`,
 		corestore.NewULID(), scope.OrgID, scope.EnvID, l.AgentID, l.IntegrationID,
-		time.Now().UTC().Format(time.RFC3339Nano), string(l.Config),
+		timestamp.Now(), string(l.Config),
 	)
 	if err != nil {
 		return agentdomain.AgentLink{}, err

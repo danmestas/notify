@@ -3,9 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
-	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // OrganizationRepo is a tenancy root: Create mints an org id rather than
@@ -23,7 +23,7 @@ func (repo *orgRepo) Create(ctx context.Context, name string) (domain.Organizati
 	org := domain.Organization{
 		ID:        newULID(),
 		Name:      name,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		CreatedAt: timestamp.Now(),
 	}
 	_, err := repo.w.ExecContext(
 		ctx,

@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // EnvVarRepo persists AES-GCM-encrypted environment variables keyed by
@@ -35,7 +35,7 @@ type envVarRepo struct {
 }
 
 func (repo *envVarRepo) Upsert(ctx context.Context, scope domain.Scope, key string, isSecret bool, valueEnc []byte) (domain.EnvVar, error) {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timestamp.Now()
 	isSecretInt := 0
 	if isSecret {
 		isSecretInt = 1

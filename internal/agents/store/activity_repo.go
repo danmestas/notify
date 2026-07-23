@@ -3,11 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
-	"time"
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	"github.com/danmestas/notify/internal/domain"
 	corestore "github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // activityPageDefaultLimit and activityPageMaxLimit cap Page results.
@@ -67,7 +67,7 @@ func (repo *activityRepo) Append(ctx context.Context, scope domain.Scope, a agen
 	a.ID = corestore.NewULID()
 	a.OrgID = scope.OrgID
 	a.EnvID = scope.EnvID
-	a.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	a.CreatedAt = timestamp.Now()
 	_, err := repo.w.ExecContext(
 		ctx,
 		`INSERT INTO conversation_activities (id, org_id, environment_id, conversation_id, role, content, run_id, created_at)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // compile-time proof that the DuckDB backend is a drop-in store.AnalyticsRepo.
@@ -185,9 +186,9 @@ func TestRepo_CountActiveSubscribers(t *testing.T) {
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
 	base := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
 	rows := []domain.AnalyticsDelivery{
-		{Channel: "email", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Format(time.RFC3339Nano)},
-		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Add(time.Hour).Format(time.RFC3339Nano)},
-		{Channel: "email", Status: "sent", SubscriberID: "sub-2", CreatedAt: base.Add(2 * time.Hour).Format(time.RFC3339Nano)},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-1", CreatedAt: timestamp.Format(base)},
+		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1", CreatedAt: timestamp.Format(base.Add(time.Hour))},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-2", CreatedAt: timestamp.Format(base.Add(2 * time.Hour))},
 	}
 	for i, r := range rows {
 		if err := repo.Insert(ctx, scope, r); err != nil {
@@ -217,9 +218,9 @@ func TestRepo_AverageMessagesPerSubscriber(t *testing.T) {
 	base := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
 	// sub-1 gets 2 rows, sub-2 gets 1 → avg = 1.5.
 	rows := []domain.AnalyticsDelivery{
-		{Channel: "email", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Format(time.RFC3339Nano)},
-		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Add(time.Hour).Format(time.RFC3339Nano)},
-		{Channel: "email", Status: "sent", SubscriberID: "sub-2", CreatedAt: base.Add(2 * time.Hour).Format(time.RFC3339Nano)},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-1", CreatedAt: timestamp.Format(base)},
+		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1", CreatedAt: timestamp.Format(base.Add(time.Hour))},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-2", CreatedAt: timestamp.Format(base.Add(2 * time.Hour))},
 	}
 	for i, r := range rows {
 		if err := repo.Insert(ctx, scope, r); err != nil {

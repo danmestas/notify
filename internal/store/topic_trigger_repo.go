@@ -3,9 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
-	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // TopicTriggerRepo persists the (transaction_id, topic_key) association
@@ -59,7 +59,7 @@ func (repo *topicTriggerRepo) Record(ctx context.Context, scope domain.Scope, tr
 		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (environment_id, transaction_id) DO NOTHING`,
 		newULID(), scope.OrgID, scope.EnvID, topicKey, transactionID,
-		time.Now().UTC().Format(time.RFC3339Nano),
+		timestamp.Now(),
 	)
 	return err
 }

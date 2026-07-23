@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // seedNotification is a test helper that creates a notification in scope and
@@ -16,7 +17,8 @@ import (
 func seedNotification(t *testing.T, repo NotificationRepo, scope domain.Scope, i int, extra domain.Notification) domain.Notification {
 	t.Helper()
 	// Use a deterministic created_at so ordering is stable in tests.
-	// Base time + i seconds; lexicographic ordering of RFC3339Nano matches temporal order.
+	// Base time + i seconds. Ordering is only reliable because timestamp.Format is
+	// fixed-width; RFC3339Nano would sort a whole-second row after its sub-second peers.
 	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	n := domain.Notification{
 		WorkflowID:    extra.WorkflowID,
@@ -24,7 +26,7 @@ func seedNotification(t *testing.T, repo NotificationRepo, scope domain.Scope, i
 		TransactionID: extra.TransactionID,
 		RunID:         fmt.Sprintf("run-%d", i),
 		Payload:       []byte(`{"seq":` + fmt.Sprintf("%d", i) + `}`),
-		CreatedAt:     base.Add(time.Duration(i) * time.Second).UTC().Format(time.RFC3339Nano),
+		CreatedAt:     timestamp.Format(base.Add(time.Duration(i) * time.Second)),
 	}
 	created, err := repo.Create(context.Background(), scope, n)
 	if err != nil {

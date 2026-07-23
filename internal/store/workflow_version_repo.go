@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // WorkflowVersion is one append-only snapshot of a workflow's compiled DAG,
@@ -110,7 +110,7 @@ func (repo *workflowVersionRepo) Create(ctx context.Context, scope domain.Scope,
 		Name:              name,
 		TriggerIdentifier: triggerIdentifier,
 		CompiledDef:       compiledDef,
-		CreatedAt:         time.Now().UTC().Format(time.RFC3339Nano),
+		CreatedAt:         timestamp.Now(),
 		Steps:             steps,
 		PayloadSchema:     payloadSchema,
 		Critical:          critical,

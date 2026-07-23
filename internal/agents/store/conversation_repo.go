@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	"github.com/danmestas/notify/internal/domain"
 	corestore "github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // conversationListDefaultLimit and conversationListMaxLimit cap ListByAgent pages.
@@ -45,7 +45,7 @@ type conversationRepo struct {
 // The DO UPDATE arm is scope-guarded so a conflict against another tenant's
 // row never mutates it; the scoped read-back then surfaces ErrNotFound.
 func (repo *conversationRepo) Upsert(ctx context.Context, scope domain.Scope, c agentdomain.Conversation) (agentdomain.Conversation, error) {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timestamp.Now()
 	if c.Status == "" {
 		c.Status = "open"
 	}

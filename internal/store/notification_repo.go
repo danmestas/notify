@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // NotificationFilter narrows a NotificationRepo.List query. Zero values and
@@ -92,7 +93,7 @@ func (repo *notificationRepo) Create(ctx context.Context, scope domain.Scope, n 
 		n.ID = newULID()
 	}
 	if n.CreatedAt == "" {
-		n.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		n.CreatedAt = timestamp.Now()
 	}
 	_, err := repo.w.ExecContext(
 		ctx,
@@ -194,7 +195,7 @@ func (repo *notificationRepo) List(ctx context.Context, scope domain.Scope, f No
 	}
 	if !f.Since.IsZero() {
 		conds = append(conds, "created_at >= ?")
-		args = append(args, f.Since.UTC().Format(time.RFC3339Nano))
+		args = append(args, timestamp.Format(f.Since))
 	}
 
 	baseWhere := strings.Join(conds, " AND ")

@@ -8,7 +8,8 @@ import (
 	"io/fs"
 	"sort"
 	"strings"
-	"time"
+
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 //go:embed migrations/*.sql
@@ -87,7 +88,7 @@ func applyMigration(ctx context.Context, writer *sql.DB, name string) error {
 	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`,
-		name, time.Now().UTC().Format(time.RFC3339Nano),
+		name, timestamp.Now(),
 	); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("store: record %s: %w", name, err)

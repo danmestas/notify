@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // ErrContextConflict is returned by Create when the (org, env, type, external_id)
@@ -45,7 +45,7 @@ func (repo *contextRepo) Create(ctx context.Context, scope domain.Scope, ctype, 
 		data = json.RawMessage("{}")
 	}
 	id := newULID()
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timestamp.Now()
 	_, err := repo.w.ExecContext(
 		ctx,
 		`INSERT INTO contexts (id, org_id, environment_id, type, external_id, data, created_at, updated_at)
@@ -184,7 +184,7 @@ func (repo *contextRepo) Update(ctx context.Context, scope domain.Scope, ctype, 
 	if len(data) == 0 {
 		data = json.RawMessage("{}")
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timestamp.Now()
 	res, err := repo.w.ExecContext(
 		ctx,
 		`UPDATE contexts SET data = ?, updated_at = ?

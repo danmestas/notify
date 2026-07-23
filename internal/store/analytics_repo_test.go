@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 func TestMigrate_0006_AppliesAnalytics(t *testing.T) {
@@ -273,11 +274,11 @@ func TestAnalyticsRepo_CountActiveSubscribers(t *testing.T) {
 
 	base := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
 	rows := []domain.AnalyticsDelivery{
-		{Channel: "email", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Format(time.RFC3339Nano)},
-		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Add(time.Hour).Format(time.RFC3339Nano)},
-		{Channel: "email", Status: "sent", SubscriberID: "sub-2", CreatedAt: base.Add(2 * time.Hour).Format(time.RFC3339Nano)},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-1", CreatedAt: timestamp.Format(base)},
+		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1", CreatedAt: timestamp.Format(base.Add(time.Hour))},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-2", CreatedAt: timestamp.Format(base.Add(2 * time.Hour))},
 		// Old row that falls outside the since window.
-		{Channel: "email", Status: "sent", SubscriberID: "sub-3", CreatedAt: base.Add(-48 * time.Hour).Format(time.RFC3339Nano)},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-3", CreatedAt: timestamp.Format(base.Add(-48 * time.Hour))},
 	}
 	for i, r := range rows {
 		if err := repo.Insert(ctx, scope, r); err != nil {
@@ -288,7 +289,7 @@ func TestAnalyticsRepo_CountActiveSubscribers(t *testing.T) {
 	other := domain.Scope{OrgID: "o1", EnvID: "e2"}
 	if err := repo.Insert(ctx, other, domain.AnalyticsDelivery{
 		Channel: "email", Status: "sent", SubscriberID: "sub-4",
-		CreatedAt: base.Format(time.RFC3339Nano),
+		CreatedAt: timestamp.Format(base),
 	}); err != nil {
 		t.Fatalf("insert other-scope row: %v", err)
 	}
@@ -363,9 +364,9 @@ func TestAnalyticsRepo_AverageMessagesPerSubscriber(t *testing.T) {
 
 	// sub-1 gets 2 rows, sub-2 gets 1 row → average = 1.5.
 	rows := []domain.AnalyticsDelivery{
-		{Channel: "email", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Format(time.RFC3339Nano)},
-		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1", CreatedAt: base.Add(time.Hour).Format(time.RFC3339Nano)},
-		{Channel: "email", Status: "sent", SubscriberID: "sub-2", CreatedAt: base.Add(2 * time.Hour).Format(time.RFC3339Nano)},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-1", CreatedAt: timestamp.Format(base)},
+		{Channel: "in_app", Status: "sent", SubscriberID: "sub-1", CreatedAt: timestamp.Format(base.Add(time.Hour))},
+		{Channel: "email", Status: "sent", SubscriberID: "sub-2", CreatedAt: timestamp.Format(base.Add(2 * time.Hour))},
 	}
 	for i, r := range rows {
 		if err := repo.Insert(ctx, scope, r); err != nil {
@@ -445,8 +446,8 @@ func TestAnalyticsRepo_CountActiveSubscribers_ScopeIsolation(t *testing.T) {
 	scopeB := domain.Scope{OrgID: "o1", EnvID: "e2"}
 	base := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
 
-	_ = repo.Insert(ctx, scopeA, domain.AnalyticsDelivery{SubscriberID: "sub-a", Channel: "email", Status: "sent", CreatedAt: base.Format(time.RFC3339Nano)})
-	_ = repo.Insert(ctx, scopeB, domain.AnalyticsDelivery{SubscriberID: "sub-b", Channel: "email", Status: "sent", CreatedAt: base.Format(time.RFC3339Nano)})
+	_ = repo.Insert(ctx, scopeA, domain.AnalyticsDelivery{SubscriberID: "sub-a", Channel: "email", Status: "sent", CreatedAt: timestamp.Format(base)})
+	_ = repo.Insert(ctx, scopeB, domain.AnalyticsDelivery{SubscriberID: "sub-b", Channel: "email", Status: "sent", CreatedAt: timestamp.Format(base)})
 
 	n, err := repo.CountActiveSubscribers(ctx, scopeA, time.Time{}, AnalyticsFilter{})
 	if err != nil {

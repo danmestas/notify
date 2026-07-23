@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -25,6 +24,7 @@ import (
 	"github.com/danmestas/notify/internal/observe"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // Service orchestrates a trigger: audience upsert -> workflow lookup ->
@@ -444,7 +444,7 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 		RunID:         runID,
 		Payload:       req.Payload,
 		DigestKey:     digestKey,
-		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+		CreatedAt:     timestamp.Now(),
 	}); err != nil {
 		return "", err
 	}

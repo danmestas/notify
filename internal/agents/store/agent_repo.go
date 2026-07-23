@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	"github.com/danmestas/notify/internal/domain"
 	corestore "github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // AgentRepo persists agents keyed by (EnvID, Identifier). Every method is
@@ -36,7 +36,7 @@ func (repo *agentRepo) Create(ctx context.Context, scope domain.Scope, a agentdo
 	a.ID = corestore.NewULID()
 	a.OrgID = scope.OrgID
 	a.EnvID = scope.EnvID
-	a.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	a.CreatedAt = timestamp.Now()
 	a.UpdatedAt = a.CreatedAt
 	_, err := repo.w.ExecContext(
 		ctx,
@@ -101,7 +101,7 @@ func (repo *agentRepo) Update(ctx context.Context, scope domain.Scope, a agentdo
 		 WHERE org_id = ? AND environment_id = ? AND identifier = ?`,
 		a.Name, a.Description, a.Runtime, a.Active,
 		a.MeshSubject, a.BridgeURL, string(a.Managed), a.WelcomeMessage,
-		time.Now().UTC().Format(time.RFC3339Nano),
+		timestamp.Now(),
 		scope.OrgID, scope.EnvID, a.Identifier,
 	)
 	if err != nil {

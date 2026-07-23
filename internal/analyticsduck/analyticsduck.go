@@ -17,6 +17,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // Repo is a DuckDB-backed store.AnalyticsRepo. DuckDB is an embedded columnar
@@ -70,7 +71,7 @@ func (r *Repo) Insert(ctx context.Context, scope domain.Scope, d domain.Analytic
 		d.ID = store.NewULID()
 	}
 	if d.CreatedAt == "" {
-		d.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		d.CreatedAt = timestamp.Now()
 	}
 	_, err := r.db.ExecContext(
 		ctx,

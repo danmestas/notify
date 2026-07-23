@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // StepOutputRepo persists per-step action outputs (currently http_request
@@ -41,7 +41,7 @@ func (repo *stepOutputRepo) Save(ctx context.Context, scope domain.Scope, runID,
 		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(run_id, step_id) DO UPDATE SET output = excluded.output`,
 		scope.OrgID, scope.EnvID, runID, stepID, string(output),
-		time.Now().UTC().Format(time.RFC3339Nano),
+		timestamp.Now(),
 	)
 	return err
 }
