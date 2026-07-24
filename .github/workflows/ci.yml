@@ -20,11 +20,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: ${{ github.event_name != 'push' }}
+          # Hosted jobs use GitHub's cache service; self-hosted jobs retain their runner-local cache.
+          cache: ${{ runner.environment != 'self-hosted' }}
       - uses: jdx/mise-action@v2
         with:
           install: true
-          cache: ${{ github.event_name != 'push' }}
+          # Hosted jobs use GitHub's cache service; self-hosted jobs retain their runner-local cache.
+          cache: ${{ runner.environment != 'self-hosted' }}
       - name: gofumpt (format check)
         run: |
           out=$(gofumpt -l .)
