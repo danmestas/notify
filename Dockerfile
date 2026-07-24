@@ -22,8 +22,10 @@ RUN CGO_ENABLED=0 go build -trimpath \
 
 # ---- dagnats builder -----------------------------------------------------
 FROM golang:1.26.3 AS dagnats-builder
-ARG DAGNATS_VERSION=main
-# Same source CI installs from; pure-Go, statically linked.
+# Matches the CI sidecar pin. Do not build against a moving branch ref: it makes
+# Docker smoke non-reproducible and can fail transiently at module verification.
+ARG DAGNATS_VERSION=f35e3c0cd47c19e949d3fa027bced29b8cc522b2
+WORKDIR /src
 RUN CGO_ENABLED=0 go install github.com/danmestas/dagnats/cmd/dagnats@${DAGNATS_VERSION}
 
 # ---- notify runtime ------------------------------------------------------
