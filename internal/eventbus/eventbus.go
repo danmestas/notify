@@ -20,9 +20,16 @@ import (
 // Names of notify's private JetStream resources. These belong to notify;
 // dagnats owns its own separate buckets and streams which we never touch.
 const (
-	inboxCountsBucket  = "notify_inbox_counts"
-	throttleBucket     = "notify_throttle"
-	digestBucket       = "notify_digest"
+	inboxCountsBucket = "notify_inbox_counts"
+	throttleBucket    = "notify_throttle"
+	digestBucket      = "notify_digest"
+
+	// digestClaimBucket holds digest-window claims, separate from digestBucket
+	// so a bucket-wide TTL can expire orphaned claims WITHOUT putting any lifetime
+	// on the accumulating event lists (which stay in digestBucket and must never
+	// expire mid-window). NATS KV TTL is bucket-wide, not per-key, so the two
+	// concerns cannot share a bucket -- see maxDigestClaimTTL.
+	digestClaimBucket  = "notify_digest_claims"
 	analyticsStream    = "NOTIFY_ANALYTICS"
 	analyticsSubject   = "notify.analytics.>"
 	deliveryStream     = "NOTIFY_DELIVERY"
@@ -41,6 +48,26 @@ const (
 	// practical throttle window; the extra day of grace ensures a counter is
 	// never evicted mid-window even for a full 30-day window configuration.
 	maxThrottleBucketTTL = 31 * 24 * time.Hour
+
+	// maxDigestClaimTTL bounds how long a digest-window claim survives before it
+	// self-expires. A claim is created when a window's first event arrives and
+	// released only when the window drains; nothing refreshes it in between, so
+	// this must exceed the longest window a claim legitimately spans.
+	//
+	// Sizing is a deliberate tradeoff, not a hang backstop. Digest windows are in
+	// practice daily/weekly/monthly; 45 days covers a monthly window with two
+	// weeks of grace. The two failure directions are asymmetric and both
+	// self-correct, so erring is not catastrophic either way:
+	//   - a window LONGER than this TTL lets the claim expire mid-window, so the
+	//     next event re-claims and a second windowed run fires -> a DUPLICATE
+	//     digest for that window (annoying, transient, gone next window). Never
+	//     event loss -- the event lists carry no TTL.
+	//   - an ORPHANED claim (crash between claim and drain) self-heals within this
+	//     TTL instead of locking the subscriber's digests forever, which is the
+	//     bug this constant exists to fix.
+	// A pathological config (e.g. an annual cron digest) would want a longer value
+	// or a claim heartbeat; neither is worth the complexity at current usage.
+	maxDigestClaimTTL = 45 * 24 * time.Hour
 
 	// budgetBucket holds the cost-weighted fixed-window ingest counters that
 	// BudgetAllow reads and writes (see budget.go).
@@ -63,12 +90,28 @@ const (
 // Bus is notify's handle on the event bus. It holds the client connection
 // to the dagnats sidecar plus notify's own JetStream resources.
 type Bus struct {
-	nc       *nats.Conn
-	js       jetstream.JetStream
-	kv       jetstream.KeyValue
-	throttle jetstream.KeyValue
-	digest   jetstream.KeyValue
-	budget   jetstream.KeyValue
+	nc          *nats.Conn
+	js          jetstream.JetStream
+	kv          jetstream.KeyValue
+	throttle    jetstream.KeyValue
+	digest      jetstream.KeyValue
+	digestClaim jetstream.KeyValue
+	budget      jetstream.KeyValue
+}
+
+// Option configures a Bus at Connect time.
+type Option func(*busConfig)
+
+// busConfig holds Connect-time tunables resolved from Options.
+type busConfig struct {
+	digestClaimTTL time.Duration
+}
+
+// WithDigestClaimTTL overrides the digest-claim bucket TTL. Tests use a short
+// value to exercise orphan-expiry without waiting a production window; leave it
+// unset in production to get maxDigestClaimTTL.
+func WithDigestClaimTTL(d time.Duration) Option {
+	return func(c *busConfig) { c.digestClaimTTL = d }
 }
 
 // Connect dials natsURL, waits for the connection to be established, and
@@ -76,7 +119,12 @@ type Bus struct {
 // "notify_inbox_counts" KV bucket and the "NOTIFY_ANALYTICS" stream
 // (subjects "notify.analytics.>"). The returned Bus owns the connection;
 // the caller must Close it.
-func Connect(ctx context.Context, natsURL string) (*Bus, error) {
+func Connect(ctx context.Context, natsURL string, opts ...Option) (*Bus, error) {
+	cfg := busConfig{digestClaimTTL: maxDigestClaimTTL}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	nc, err := DialNATS(natsURL, "notify-eventbus")
 	if err != nil {
 		return nil, err
@@ -115,6 +163,18 @@ func Connect(ctx context.Context, natsURL string) (*Bus, error) {
 		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", digestBucket, err)
 	}
 
+	// Claims live in their own bucket so their bucket-wide TTL expires orphaned
+	// claims without ever touching the accumulating event lists above.
+	digestClaim, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:  digestClaimBucket,
+		History: 1,
+		TTL:     cfg.digestClaimTTL,
+	})
+	if err != nil {
+		nc.Close()
+		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", digestClaimBucket, err)
+	}
+
 	budget, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
 		Bucket:  budgetBucket,
 		History: 1,
@@ -148,7 +208,7 @@ func Connect(ctx context.Context, natsURL string) (*Bus, error) {
 		return nil, err
 	}
 
-	return &Bus{nc: nc, js: js, kv: kv, throttle: throttle, digest: digest, budget: budget}, nil
+	return &Bus{nc: nc, js: js, kv: kv, throttle: throttle, digest: digest, digestClaim: digestClaim, budget: budget}, nil
 }
 
 // Close drains and closes the underlying NATS connection.
@@ -412,7 +472,10 @@ func (b *Bus) DigestClaim(key string) (isOwner bool, err error) {
 	ctx := context.Background()
 	claimKey := digestClaimKey(key)
 
-	if _, err := b.digest.Create(ctx, claimKey, []byte("1")); err != nil {
+	// Claims live in their own TTL'd bucket, so an orphaned claim (a crash
+	// between here and DigestDrain) expires on its own rather than blocking this
+	// key's digests forever. See maxDigestClaimTTL.
+	if _, err := b.digestClaim.Create(ctx, claimKey, []byte("1")); err != nil {
 		if errors.Is(err, jetstream.ErrKeyExists) {
 			return false, nil
 		}
@@ -443,7 +506,7 @@ func (b *Bus) DigestDrain(key string) ([]json.RawMessage, error) {
 	if err := b.digest.Delete(ctx, listKey); err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
 		return nil, fmt.Errorf("eventbus: digest delete %q: %w", listKey, err)
 	}
-	if err := b.digest.Delete(ctx, claimKey); err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
+	if err := b.digestClaim.Delete(ctx, claimKey); err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
 		return nil, fmt.Errorf("eventbus: digest delete %q: %w", claimKey, err)
 	}
 	return events, nil
