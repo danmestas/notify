@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -304,6 +305,31 @@ func TestTriggerSkipsInactiveWorkflow(t *testing.T) {
 	}
 	if resp.Status != "error" {
 		t.Errorf("expected status=error for inactive workflow, got %q", resp.Status)
+	}
+
+	// Assert the SKIP actually skipped, rather than trusting the response shape.
+	// The implementation is correct today, but a refactor that started writing a
+	// notification row or starting a run while still answering acknowledged=false
+	// would leave every assertion above green -- which is exactly the regression
+	// this test exists to catch.
+	if resp.TransactionID != "" {
+		t.Errorf("inactive workflow produced a transaction id %q: work was started", resp.TransactionID)
+	}
+
+	msgStatus, msgBody := doGet(t, srv.URL+"/v1/messages", authHeader)
+	if msgStatus != http.StatusOK {
+		t.Fatalf("GET messages: status=%d body=%s", msgStatus, msgBody)
+	}
+	if strings.Contains(msgBody, "inactive-wf") {
+		t.Errorf("inactive workflow left a message row behind: %s", msgBody)
+	}
+	// /v1/messages answers with a bare JSON array, not an envelope.
+	var msgs []json.RawMessage
+	if err := json.Unmarshal([]byte(msgBody), &msgs); err != nil {
+		t.Fatalf("decode messages: %v (body=%s)", err, msgBody)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("inactive workflow produced %d message row(s), want 0", len(msgs))
 	}
 }
 

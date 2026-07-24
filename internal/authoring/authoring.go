@@ -480,6 +480,19 @@ func (s *Service) Update(ctx context.Context, scope domain.Scope, slug string, i
 	// Compile was already validated above; cannot fail here. A nil engine
 	// (store-only wiring, e.g. the console in tests) skips registration —
 	// the row is already persisted, consistent with Create.
+	//
+	// Divergence window (deliberate, not an oversight): the store write above
+	// has already committed, so if RegisterWorkflow fails here the row and the
+	// engine's compiled DAG disagree until the next successful Update. The
+	// store describes the new definition; the engine still runs the old one.
+	//
+	// This is left uncompensated on purpose. A rollback write would have to
+	// succeed at exactly the moment the process is already failing to reach a
+	// dependency, and if IT failed the state would be worse and harder to
+	// reason about than the single-writer divergence it was meant to undo.
+	// RegisterWorkflow is idempotent, so any later Update — or a RepublishAll —
+	// reconciles the two, and the error is returned to the caller rather than
+	// swallowed, so the failure is visible at the point it happens.
 	if s.eng != nil {
 		def, _ := Compile(candidate)
 		if err := s.eng.RegisterWorkflow(ctx, def); err != nil {

@@ -197,10 +197,19 @@ func (repo *workflowRepo) Update(ctx context.Context, scope domain.Scope, wf dom
 }
 
 // Delete removes the workflow row identified by triggerID within scope.
-// Hard-delete is intentional: the engine DAG is also deregistered by the
-// authoring layer before this runs, so no orphaned engine state remains.
-// Notification history references the workflow_id string (not a FK), so those
-// rows survive and remain queryable for audit purposes.
+//
+// Hard-delete is intentional, but NOT because the engine is cleaned up first --
+// it is not. The engine exposes no deregister API (there is no KV delete on the
+// NATS subject, and registering an empty-step DAG would corrupt the registry),
+// so the compiled DAG deliberately outlives this row. That is safe: reaching a
+// DAG requires resolving the workflow row first, so an orphaned registration is
+// unreachable, and in-flight runs hold their own snapshot inside the engine and
+// complete normally.
+//
+// Notification history references workflow_id as a plain string (no FK), so
+// those rows survive and remain queryable for audit purposes.
+//
+// See authoring.Service.Delete for the full rationale.
 // Returns ErrNotFound when no matching row exists.
 func (repo *workflowRepo) Delete(ctx context.Context, scope domain.Scope, triggerID string) error {
 	res, err := repo.w.ExecContext(
