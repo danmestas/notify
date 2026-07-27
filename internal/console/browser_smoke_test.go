@@ -36,6 +36,20 @@ func skipIfBrowserUnavailable(t *testing.T) {
 	if _, err := exec.LookPath("agent-browser"); err != nil {
 		t.Skipf("agent-browser not installed: %v", err)
 	}
+	// LookPath proves a FILE exists on PATH, not that it runs. Under shim-based
+	// toolchains (mise/asdf) the shim is always present, so a runner whose
+	// toolchain lost its language version resolves the shim happily and then
+	// fails on first invocation -- turning an optional browser smoke into a red
+	// suite. Probe an actual invocation so "unavailable" means what it says.
+	//
+	// The skip message is deliberately loud: this test has caught real bugs that
+	// unit tests missed (see the login CSRF token-rotation regression), so a
+	// silent skip would quietly remove coverage nobody notices is gone.
+	probe := exec.Command("agent-browser", "--help")
+	if out, err := probe.CombinedOutput(); err != nil {
+		t.Skipf("agent-browser present on PATH but not runnable (%v); browser smoke coverage is OFF on this machine. Output: %s",
+			err, strings.TrimSpace(string(out)))
+	}
 }
 
 // browserSession derives an agent-browser session name unique to the
