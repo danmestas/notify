@@ -19,7 +19,7 @@
         <h2 id="layout-create-heading" class="console-card-title">Create layout</h2>
         <a class="btn-icon console-slideover-close" href="/console/layouts" aria-label="Close">{{ uiIcon "x" }}</a>
       </div>
-      <form method="POST" action="/console/api/layouts" class="layout-edit-form">
+      <form method="POST" action="/console/api/layouts">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="new-layout-name">Name *</label>

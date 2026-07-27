@@ -49,7 +49,7 @@
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
                 data-on:click="$streamSourceNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
-      <form method="POST" action="/console/stream-sources" class="stream-source-edit-form">
+      <form method="POST" action="/console/stream-sources">
         <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="new-stream-source-name">Name *</label>

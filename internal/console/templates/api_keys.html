@@ -17,41 +17,33 @@
 
   {{/* Application Identifier card */}}
   <div class="console-card">
-    <div class="console-card-header">
-      <h2 class="console-card-title">Application Identifier</h2>
-      <p class="console-card-subtitle">Use this as the <code>applicationIdentifier</code> in your Inbox SDK config. This value is public.</p>
-    </div>
-    <div class="console-card-body">
-      <div class="console-secret-reveal">
-        <code class="console-secret-value">{{$page.Env.Identifier}}</code>
-        <button type="button" class="btn btn-outline btn-sm"
-                data-on:click="navigator.clipboard.writeText('{{$page.Env.Identifier | jsEscape}}')">Copy</button>
-      </div>
+    <h2 class="console-card-title">Application Identifier</h2>
+    <p class="console-card-subtitle">Use this as the <code>applicationIdentifier</code> in your Inbox SDK config. This value is public.</p>
+    <div class="console-secret-reveal">
+      <code class="console-secret-value">{{$page.Env.Identifier}}</code>
+      <button type="button" class="btn btn-outline btn-sm"
+              data-on:click="navigator.clipboard.writeText('{{$page.Env.Identifier | jsEscape}}')">Copy</button>
     </div>
   </div>
 
   {{/* Secret Key card */}}
   <div class="console-card">
-    <div class="console-card-header">
-      <h2 class="console-card-title">Secret Key</h2>
-      <p class="console-card-subtitle">Authenticate server-side requests. Keep this secret — never expose it in client-side code.</p>
-    </div>
-    <div class="console-card-body">
-      <div class="console-secret-reveal">
-        {{/* Masked by default. The plaintext is only ever rendered when the
-             server has already decided to reveal it (Revealed==true, driven
-             by an explicit ?reveal=1 request) — never shipped in the HTML of
-             a masked page for a client-side toggle to flip. */}}
-        {{if $page.Revealed}}
-        <code id="secret-key-value" class="console-secret-value">{{$page.RawKey}}</code>
-        <button type="button" class="btn btn-outline btn-sm"
-                data-on:click="navigator.clipboard.writeText(document.getElementById('secret-key-value').textContent)">Copy</button>
-        <a class="btn btn-outline btn-sm" href="/console/settings/api-keys" aria-label="Hide key">Hide</a>
-        {{else}}
-        <code class="console-secret-value">{{$page.MaskedKey}}</code>
-        <a class="btn btn-outline btn-sm" href="/console/settings/api-keys?reveal=1" aria-label="Reveal key">Reveal</a>
-        {{end}}
-      </div>
+    <h2 class="console-card-title">Secret Key</h2>
+    <p class="console-card-subtitle">Authenticate server-side requests. Keep this secret — never expose it in client-side code.</p>
+    <div class="console-secret-reveal">
+      {{/* Masked by default. The plaintext is only ever rendered when the
+           server has already decided to reveal it (Revealed==true, driven
+           by an explicit ?reveal=1 request) — never shipped in the HTML of
+           a masked page for a client-side toggle to flip. */}}
+      {{if $page.Revealed}}
+      <code id="secret-key-value" class="console-secret-value">{{$page.RawKey}}</code>
+      <button type="button" class="btn btn-outline btn-sm"
+              data-on:click="navigator.clipboard.writeText(document.getElementById('secret-key-value').textContent)">Copy</button>
+      <a class="btn btn-outline btn-sm" href="/console/settings/api-keys" aria-label="Hide key">Hide</a>
+      {{else}}
+      <code class="console-secret-value">{{$page.MaskedKey}}</code>
+      <a class="btn btn-outline btn-sm" href="/console/settings/api-keys?reveal=1" aria-label="Reveal key">Reveal</a>
+      {{end}}
       {{if not $page.ReadOnly}}
       <div class="console-card-actions">
         {{if $page.ConfirmRotate}}
@@ -71,16 +63,12 @@
 
   {{/* API URL card */}}
   <div class="console-card">
-    <div class="console-card-header">
-      <h2 class="console-card-title">API URL</h2>
-      <p class="console-card-subtitle">The base URL for all server-side API calls to this notify instance.</p>
-    </div>
-    <div class="console-card-body">
-      <div class="console-secret-reveal">
-        <code class="console-secret-value">{{if $page.APIURL}}{{$page.APIURL}}{{else}}http://localhost:3000{{end}}</code>
-        <button type="button" class="btn btn-outline btn-sm"
-                data-on:click="navigator.clipboard.writeText('{{if $page.APIURL}}{{$page.APIURL | jsEscape}}{{else}}http://localhost:3000{{end}}')">Copy</button>
-      </div>
+    <h2 class="console-card-title">API URL</h2>
+    <p class="console-card-subtitle">The base URL for all server-side API calls to this notify instance.</p>
+    <div class="console-secret-reveal">
+      <code class="console-secret-value">{{if $page.APIURL}}{{$page.APIURL}}{{else}}http://localhost:3000{{end}}</code>
+      <button type="button" class="btn btn-outline btn-sm"
+              data-on:click="navigator.clipboard.writeText('{{if $page.APIURL}}{{$page.APIURL | jsEscape}}{{else}}http://localhost:3000{{end}}')">Copy</button>
     </div>
   </div>
 </section>

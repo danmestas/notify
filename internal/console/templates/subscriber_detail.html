@@ -195,7 +195,7 @@
         <div class="console-prefs-channels">
           {{range $page.Preferences.Global.Channels}}
           <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}/preferences"
-                class="console-pref-toggle-form" style="display:inline">
+                class="console-pref-toggle-form">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
             <input type="hidden" name="channel" value="{{.Channel}}">
             {{/* Toggle to the opposite state on submit */}}
@@ -218,7 +218,7 @@
 
       {{/* Per-workflow preference rows */}}
       {{if $page.Preferences.Workflows}}
-      <div class="console-prefs-group" style="margin-top:var(--space-4)">
+      <div class="console-prefs-group">
         <h3 class="console-card-subtitle">Per-workflow overrides</h3>
         {{range $wfRow := $page.Preferences.Workflows}}
         <div class="console-prefs-workflow-row">
@@ -226,7 +226,7 @@
           <div class="console-prefs-channels">
             {{range $wfRow.Channels}}
             <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}/preferences"
-                  class="console-pref-toggle-form" style="display:inline">
+                  class="console-pref-toggle-form">
               <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
               <input type="hidden" name="channel" value="{{.Channel}}">
               <input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}">
@@ -260,7 +260,7 @@
           {{$csrf := $.CSRF}}
           {{range $ch := mkDefaultChannels}}
           <form method="POST" action="/console/subscribers/{{$subID}}/preferences"
-                class="console-pref-toggle-form" style="display:inline">
+                class="console-pref-toggle-form">
             <input type="hidden" name="csrf_token" value="{{$csrf}}">
             <input type="hidden" name="channel" value="{{$ch}}">
             <input type="hidden" name="enabled" value="false">

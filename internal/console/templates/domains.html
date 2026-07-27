@@ -36,7 +36,7 @@
       {{if $page.FormError}}
       <p class="console-form-error" role="alert">{{$page.FormError}}</p>
       {{end}}
-      <form method="POST" action="/console/domains" class="domain-create-form">
+      <form method="POST" action="/console/domains">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="domain-name">Domain name *</label>

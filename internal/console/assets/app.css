@@ -2474,6 +2474,52 @@ a.activity-item-run { color: var(--accent); }
   font-weight: 500;
   color: var(--text-secondary);
 }
+
+/* Shared form vocabulary (#259). These class names were already used across the
+   console templates but had no rules, so the elements rendered unstyled. Values
+   reuse the existing tokens rather than introducing new ones, so the pages fall
+   into line with the rest of the chassis instead of acquiring a second look. */
+
+/* Helper text under a field. Pairs with .form-label above it and .console-input
+   between them, so it only carries the de-emphasis. */
+.form-hint {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+/* Button row closing a form. Deliberately identical to
+   .console-slideover-actions: the same affordance in a different container
+   should not look different. */
+.console-form-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+/* Form container. Constrains line length so inputs do not stretch the full
+   width of a wide viewport, matching .subscriber-edit-form/.topic-edit-form. */
+.console-form {
+  display: grid;
+  gap: var(--space-2);
+  max-width: 480px;
+}
+
+/* Multi-line input. Composes WITH .console-input (templates write
+   class="console-input console-textarea"), so this adds only what a textarea
+   needs and inherits border/padding/background from the input rule. */
+.console-textarea {
+  min-height: 120px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* Secondary line under a .console-card-title. */
+.console-card-subtitle {
+  margin: calc(var(--space-1) * -1) 0 var(--space-4);
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
 .subscriber-edit-form,
 .topic-edit-form { max-width: 480px; }
 
@@ -2563,6 +2609,146 @@ a.activity-item-run { color: var(--accent); }
 
 /* Muted text helper */
 .console-muted { color: var(--text-secondary); }
+
+/* ── Subscriber preference toggles (#259) ─────────────────────────────────
+   These rendered as raw browser buttons -- white boxes with black text on the
+   dark console, which is how they looked to every operator who opened the
+   Preferences tab. They are toggles, so they read as pills whose fill states
+   the current value: enabled uses the success tint (matching .chip-success),
+   disabled is muted so an off channel is obvious at a glance rather than
+   requiring the label to be read. */
+.console-prefs-group + .console-prefs-group { margin-top: var(--space-5); }
+
+.console-prefs-channels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* The form only exists to carry the POST; it must not affect layout. */
+.console-pref-toggle-form { display: inline-flex; margin: 0; }
+
+.console-pref-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.console-pref-toggle:hover:not(:disabled) { border-color: var(--accent); }
+.console-pref-toggle:disabled { cursor: not-allowed; opacity: 0.6; }
+
+.console-pref-toggle.is-enabled {
+  background: rgba(26, 127, 55, 0.10);
+  border-color: rgba(26, 127, 55, 0.25);
+  color: var(--status-success);
+}
+.console-pref-toggle.is-disabled { color: var(--text-secondary); }
+
+.console-pref-channel { font-weight: 500; }
+
+/* The state word carries the meaning, so it is not de-emphasised into
+   invisibility -- just separated from the channel name. */
+.console-pref-state {
+  font-size: 0.75rem;
+  opacity: 0.85;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.console-prefs-workflow-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.console-prefs-workflow-label {
+  min-width: 160px;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+/* ── Agent conversation transcript (#259) ─────────────────────────────────
+   Turns previously ran together as one undifferentiated wall of text: the role
+   chip and timestamp were styled, but nothing separated one message from the
+   next, so a conversation did not read as a conversation. Each turn becomes a
+   bounded block, and the user/agent modifiers get opposing accent edges so the
+   speaker is legible from shape alone rather than by reading every chip. */
+.agent-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.agent-turn {
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--surface-2);
+}
+.agent-turn--user { border-left-color: var(--status-info); }
+.agent-turn--agent { border-left-color: var(--status-success); }
+
+.agent-turn-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.agent-turn-time { font-size: 0.75rem; }
+.agent-turn-run-link {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 0.75rem;
+}
+
+/* Message text: preserve author line breaks, and break long unbroken strings
+   (URLs, ids, pasted payloads) instead of letting them widen the page. */
+.agent-turn-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+.agent-compose-box {
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-tile);
+  background: var(--surface-2);
+}
+.agent-compose-form { display: grid; gap: var(--space-1); }
+.agent-compose-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+.agent-compose-textarea {
+  flex: 1;
+  min-height: 60px;
+  resize: vertical;
+}
+
+/* Pager row shared by the transcript and other cursor-paginated lists. */
+.console-pagination {
+  display: flex;
+  justify-content: center;
+  margin: var(--space-2) 0;
+}
+
 
 /* ===== create slide-over (subscribers/new, topics/new) ============= */
 

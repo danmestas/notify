@@ -32,7 +32,7 @@
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
                 data-on:click="$variableNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
-      <form method="POST" action="/console/api/variables" class="variable-create-form">
+      <form method="POST" action="/console/api/variables">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="var-key">Key *</label>

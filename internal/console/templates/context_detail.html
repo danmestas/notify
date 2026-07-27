@@ -4,22 +4,18 @@
   {{template "page-header" $page.Header}}
 
   <div class="console-card">
-    <div class="console-card-header">
-      <span class="console-card-title">Context data</span>
-    </div>
-    <div class="console-card-body">
-      {{if $page.FormError}}
-      <p class="console-form-error" role="alert">{{$page.FormError}}</p>
-      {{end}}
-      {{if not $page.ReadOnly}}
-      <form method="POST" action="/console/api/contexts/{{$page.Ctx.Type}}/{{$page.Ctx.ExternalID}}">
-        <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
-        <div class="form-row">
-          <label class="form-label" for="ctx-data-editor">JSON data</label>
-          <textarea class="console-input console-textarea" id="ctx-data-editor" name="data"
-                    rows="12" lang="json">{{$page.DataPretty}}</textarea>
-        </div>
-        <div class="form-actions">
+    <span class="console-card-title">Context data</span>
+    {{if $page.FormError}}
+    <p class="console-form-error" role="alert">{{$page.FormError}}</p>
+    {{end}}
+    {{if not $page.ReadOnly}}
+    <form method="POST" action="/console/api/contexts/{{$page.Ctx.Type}}/{{$page.Ctx.ExternalID}}">
+      <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+      <div class="form-row">
+        <label class="form-label" for="ctx-data-editor">JSON data</label>
+        <textarea class="console-input console-textarea" id="ctx-data-editor" name="data"
+                  rows="12" lang="json">{{$page.DataPretty}}</textarea>
+        <div class="console-form-actions">
           <button type="submit" class="btn btn-primary">Save changes</button>
           <a class="btn btn-outline" href="/console/contexts">Back to list</a>
         </div>
@@ -32,21 +28,17 @@
 
   {{if not $page.ReadOnly}}
   <div class="console-card console-card-danger">
-    <div class="console-card-header">
-      <span class="console-card-title">Delete context</span>
-    </div>
-    <div class="console-card-body">
-      {{if $page.ConfirmDelete}}
-      <p class="console-muted">Are you sure? This cannot be undone.</p>
-      <form method="POST" action="/console/api/contexts/{{$page.Ctx.Type}}/{{$page.Ctx.ExternalID}}/delete" style="display:inline">
-        <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
-        <button type="submit" class="btn btn-danger">Confirm delete</button>
-      </form>
-      <a class="btn btn-outline" href="/console/contexts/{{$page.Ctx.Type}}/{{$page.Ctx.ExternalID}}">Cancel</a>
-      {{else}}
-      <a class="btn btn-outline btn-danger" href="/console/contexts/{{$page.Ctx.Type}}/{{$page.Ctx.ExternalID}}?confirmDelete=true">Delete this context</a>
-      {{end}}
-    </div>
+    <span class="console-card-title">Delete context</span>
+    {{if $page.ConfirmDelete}}
+    <p class="console-muted">Are you sure? This cannot be undone.</p>
+    <form method="POST" action="/console/api/contexts/{{$page.Ctx.Type}}/{{$page.Ctx.ExternalID}}/delete" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+      <button type="submit" class="btn btn-danger">Confirm delete</button>
+    </form>
+    <a class="btn btn-outline" href="/console/contexts/{{$page.Ctx.Type}}/{{$page.Ctx.ExternalID}}">Cancel</a>
+    {{else}}
+    <a class="btn btn-outline btn-danger" href="/console/contexts/{{$page.Ctx.Type}}/{{$page.Ctx.ExternalID}}?confirmDelete=true">Delete this context</a>
+    {{end}}
   </div>
   {{end}}
 </section>

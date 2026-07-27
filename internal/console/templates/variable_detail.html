@@ -4,18 +4,14 @@
   {{template "page-header" $page.Header}}
 
   <div class="console-card">
-    <div class="console-card-header">
-      <span class="console-card-title">Variable</span>
-    </div>
-    <div class="console-card-body">
-      {{if $page.FormError}}
-      <div class="form-error console-alert">{{$page.FormError}}</div>
-      {{end}}
+    <span class="console-card-title">Variable</span>
+    {{if $page.FormError}}
+    <div class="form-error console-alert">{{$page.FormError}}</div>
+    {{end}}
 
-      <div class="form-row">
-        <label class="form-label">Key</label>
-        <code class="chip chip-default">{{$page.EV.Key}}</code>
-      </div>
+    <div class="form-row">
+      <label class="form-label">Key</label>
+      <code class="chip chip-default">{{$page.EV.Key}}</code>
 
       <div class="form-row">
         <label class="form-label">Value</label>
@@ -47,7 +43,7 @@
             Secret
           </label>
         </div>
-        <div class="form-actions">
+        <div class="console-form-actions">
           <button type="submit" class="btn btn-primary">Save changes</button>
           <a class="btn btn-outline" href="/console/variables">Back to list</a>
         </div>
@@ -60,21 +56,17 @@
 
   {{if not $page.ReadOnly}}
   <div class="console-card console-card-danger">
-    <div class="console-card-header">
-      <span class="console-card-title">Delete variable</span>
-    </div>
-    <div class="console-card-body">
-      {{if $page.ConfirmDelete}}
-      <p class="console-muted">Are you sure? This cannot be undone.</p>
-      <form method="POST" action="/console/api/variables/{{$page.EV.Key}}/delete" style="display:inline">
-        <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
-        <button type="submit" class="btn btn-danger">Confirm delete</button>
-      </form>
-      <a class="btn btn-outline" href="/console/variables/{{$page.EV.Key}}">Cancel</a>
-      {{else}}
-      <a class="btn btn-outline btn-danger" href="/console/variables/{{$page.EV.Key}}?confirmDelete=true">Delete this variable</a>
-      {{end}}
-    </div>
+    <span class="console-card-title">Delete variable</span>
+    {{if $page.ConfirmDelete}}
+    <p class="console-muted">Are you sure? This cannot be undone.</p>
+    <form method="POST" action="/console/api/variables/{{$page.EV.Key}}/delete" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+      <button type="submit" class="btn btn-danger">Confirm delete</button>
+    </form>
+    <a class="btn btn-outline" href="/console/variables/{{$page.EV.Key}}">Cancel</a>
+    {{else}}
+    <a class="btn btn-outline btn-danger" href="/console/variables/{{$page.EV.Key}}?confirmDelete=true">Delete this variable</a>
+    {{end}}
   </div>
   {{end}}
 </section>

@@ -66,7 +66,7 @@
     {{range $page.Turns}}
     <div class="agent-turn agent-turn--{{.Role}}">
       <div class="agent-turn-header">
-        <span class="agent-turn-role chip {{if eq .Role "user"}}chip-info{{else if eq .Role "agent"}}chip-success{{else}}chip-default{{end}}">{{.Role}}</span>
+        <span class="chip {{if eq .Role "user"}}chip-info{{else if eq .Role "agent"}}chip-success{{else}}chip-default{{end}}">{{.Role}}</span>
         <span class="agent-turn-time console-muted">{{.CreatedAt}}</span>
         {{if .RunURL}}
         <a class="agent-turn-run-link" href="{{.RunURL}}" target="_blank" rel="noopener">View run {{ uiIcon "arrow-up-right" }}</a>

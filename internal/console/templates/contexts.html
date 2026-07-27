@@ -31,7 +31,7 @@
       {{if $page.FormError}}
       <p class="console-form-error" role="alert">{{$page.FormError}}</p>
       {{end}}
-      <form method="POST" action="/console/contexts" class="context-create-form">
+      <form method="POST" action="/console/contexts">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="ctx-type">Context type *</label>
