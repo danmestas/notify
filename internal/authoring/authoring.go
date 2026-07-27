@@ -13,6 +13,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/secretbox"
 	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
 )
@@ -51,13 +52,49 @@ type registerer interface {
 type Service struct {
 	store *store.Store
 	eng   registerer
+	// box encrypts declared secret control fields (e.g. http_request headers)
+	// before a step is persisted. nil disables encryption -- store-only or
+	// legacy wiring keeps working, storing plaintext exactly as before.
+	box *secretbox.Box
 }
 
 // New constructs a Service over the given store and engine. eng may be nil
 // for store-only wiring (e.g. the operator console in tests); passing a
 // non-nil *engine.Engine (or any other registerer) enables DAG registration.
-func New(s *store.Store, eng registerer) *Service {
-	return &Service{store: s, eng: eng}
+func New(s *store.Store, eng registerer, opts ...Option) *Service {
+	svc := &Service{store: s, eng: eng}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
+}
+
+// Option configures a Service at construction.
+type Option func(*Service)
+
+// WithSecretBox enables at-rest encryption of declared secret control fields.
+// Omitting it preserves the previous plaintext behaviour, so every existing
+// New(store, eng) caller is unchanged.
+func WithSecretBox(box *secretbox.Box) Option {
+	return func(s *Service) { s.box = box }
+}
+
+// sealSteps encrypts each step's declared secret fields before persistence.
+// prior maps step id -> the step as currently stored, so an unchanged (masked)
+// secret is preserved rather than re-sealed; pass nil on create.
+func (s *Service) sealSteps(steps []domain.Step, prior map[string]domain.Step) ([]domain.Step, error) {
+	if s.box == nil {
+		return steps, nil
+	}
+	out := make([]domain.Step, len(steps))
+	for i, step := range steps {
+		sealed, err := stepTypes.EncryptSecrets(s.box, step, prior[step.StepID])
+		if err != nil {
+			return nil, fmt.Errorf("authoring: seal step %q: %w", step.StepID, err)
+		}
+		out[i] = sealed
+	}
+	return out, nil
 }
 
 // DAGName is the canonical engine workflow name: envID-scoped trigger
@@ -101,7 +138,11 @@ func (s *Service) Create(ctx context.Context, scope domain.Scope, in WorkflowInp
 	if !triggerIdentifierPattern.MatchString(in.TriggerIdentifier) {
 		return domain.Workflow{}, ErrInvalidTriggerIdentifier
 	}
-	steps, err := json.Marshal(in.Steps)
+	sealedSteps, err := s.sealSteps(in.Steps, nil)
+	if err != nil {
+		return domain.Workflow{}, err
+	}
+	steps, err := json.Marshal(sealedSteps)
 	if err != nil {
 		return domain.Workflow{}, fmt.Errorf("authoring: marshal steps: %w", err)
 	}
@@ -441,7 +482,18 @@ func (s *Service) Update(ctx context.Context, scope domain.Scope, slug string, i
 		return domain.Workflow{}, err
 	}
 
-	steps, err := json.Marshal(in.Steps)
+	// Seal secret fields, passing the currently-stored steps as prior so a
+	// secret the operator left masked is preserved rather than re-sealed as the
+	// mask (see EncryptSecrets).
+	prior, err := priorStepsByID(existing.Steps)
+	if err != nil {
+		return domain.Workflow{}, err
+	}
+	sealedSteps, err := s.sealSteps(in.Steps, prior)
+	if err != nil {
+		return domain.Workflow{}, err
+	}
+	steps, err := json.Marshal(sealedSteps)
 	if err != nil {
 		return domain.Workflow{}, fmt.Errorf("authoring: marshal steps: %w", err)
 	}
@@ -590,4 +642,22 @@ func (s *Service) Duplicate(ctx context.Context, scope domain.Scope, srcSlug str
 // isNotFound reports whether err is a store.ErrNotFound sentinel.
 func isNotFound(err error) bool {
 	return errors.Is(err, store.ErrNotFound)
+}
+
+// priorStepsByID unmarshals a persisted workflow's steps JSON into a
+// stepID->step map, used to preserve unchanged (masked) secrets on Update. An
+// empty or absent steps blob yields an empty map, not an error.
+func priorStepsByID(raw json.RawMessage) (map[string]domain.Step, error) {
+	if len(raw) == 0 {
+		return map[string]domain.Step{}, nil
+	}
+	var steps []domain.Step
+	if err := json.Unmarshal(raw, &steps); err != nil {
+		return nil, fmt.Errorf("authoring: unmarshal prior steps: %w", err)
+	}
+	m := make(map[string]domain.Step, len(steps))
+	for _, st := range steps {
+		m[st.StepID] = st
+	}
+	return m, nil
 }

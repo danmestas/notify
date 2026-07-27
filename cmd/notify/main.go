@@ -48,6 +48,7 @@ import (
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/replyhook"
+	"github.com/danmestas/notify/internal/secretbox"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/streamsource"
 	"github.com/danmestas/notify/internal/trigger"
@@ -150,6 +151,14 @@ func runServe(args []string) error {
 	}
 	mk := cfg.masterKey
 
+	// One secret box for at-rest encryption of declared secret control fields
+	// (http_request headers). Shared by authoring (seal on write) and the
+	// http_request handler (open at run time).
+	secrets, err := secretbox.New(mk)
+	if err != nil {
+		return fmt.Errorf("secretbox.New: %w", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -226,7 +235,7 @@ func runServe(args []string) error {
 	// http_request: outbound HTTP action step. Makes the interpolated call, then
 	// captures statusCode/body/headers into step_outputs for downstream steps;
 	// must be registered whenever steptype.Default() includes "http_request".
-	eng.Handle("http_request", httpaction.New(st).Handle)
+	eng.Handle("http_request", httpaction.New(st, httpaction.WithSecretBox(secrets)).Handle)
 
 	// W4 ADR-013 (#55): durable credential-verify action. The verify task runs
 	// in this worker pool (registered before StartWorkers); the workflow is
@@ -357,7 +366,7 @@ func runServe(args []string) error {
 
 	id := identity.New(st, mk)
 	aud := audience.New(st)
-	au := authoring.New(st, eng)
+	au := authoring.New(st, eng, authoring.WithSecretBox(secrets))
 
 	// Re-register every persisted workflow with the freshly-started engine.
 	// dagnats holds its workflow registry in memory and loses it on restart;

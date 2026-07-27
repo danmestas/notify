@@ -26,6 +26,8 @@ import (
 	"github.com/danmestas/notify/internal/delivery/template"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/secretbox"
+	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -39,6 +41,9 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 // row with arbitrarily large header fields.
 const maxHeaderBytes = 128 << 10 // 128 KiB
 
+// stepTypes resolves a step's declared secret fields for run-time decryption.
+var stepTypes = steptype.Default()
+
 // Handler executes http_request action steps. It holds the store (for the run
 // context and output persistence) and an HTTP client whose per-request deadline
 // is governed by the step's timeoutSec (no global client timeout, so each step
@@ -46,22 +51,43 @@ const maxHeaderBytes = 128 << 10 // 128 KiB
 type Handler struct {
 	store  *store.Store
 	client *http.Client
+	// box decrypts declared secret control fields (http_request headers) loaded
+	// from the store at run time. nil leaves values untouched, so a legacy
+	// deployment without encryption still reads plaintext steps.
+	box *secretbox.Box
 }
 
 // New constructs a Handler backed by s using the SSRF-safe HTTP client.
 // The client's dial-time control hook blocks loopback, link-local, RFC1918
 // private, unique-local IPv6, unspecified, and multicast addresses at
 // post-DNS-resolution time, defeating DNS-rebinding attacks.
-func New(s *store.Store) *Handler {
-	return &Handler{store: s, client: NewSSRFSafeClient()}
+func New(s *store.Store, opts ...Option) *Handler {
+	h := &Handler{store: s, client: NewSSRFSafeClient()}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
+}
+
+// Option configures a Handler at construction.
+type Option func(*Handler)
+
+// WithSecretBox enables decryption of declared secret control fields at run
+// time. Omit it and header values are read verbatim (legacy behaviour).
+func WithSecretBox(box *secretbox.Box) Option {
+	return func(h *Handler) { h.box = box }
 }
 
 // NewWithClient constructs a Handler backed by s using the provided HTTP client.
 // Callers are responsible for applying any security policy on client; this
 // constructor is primarily for tests that need a bypass (e.g. to reach an
 // httptest server on loopback) or for advanced transport customisation.
-func NewWithClient(s *store.Store, client *http.Client) *Handler {
-	return &Handler{store: s, client: client}
+func NewWithClient(s *store.Store, client *http.Client, opts ...Option) *Handler {
+	h := &Handler{store: s, client: client}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // stepConfig is the http_request step's run-time control values, loaded from the
@@ -109,7 +135,7 @@ func (h *Handler) Handle(ctx context.Context, t engine.TaskPayload) (json.RawMes
 	}
 	scope := domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
 
-	cfg, err := loadConfig(ctx, h.store, t.RunID, t.StepID)
+	cfg, err := loadConfig(ctx, h.store, h.box, t.RunID, t.StepID)
 	if err != nil {
 		return nil, engine.NewNonRetryableError(fmt.Errorf("http_request: load step config: %w", err))
 	}
@@ -179,7 +205,7 @@ func (h *Handler) onFailure(ctx context.Context, scope domain.Scope, t engine.Ta
 // loadConfig resolves the http_request step's control values by run id + step
 // id (notification -> workflow -> step), applying the same defaults the registry
 // validates: method GET, timeoutSec 30, failurePolicy fail_closed.
-func loadConfig(ctx context.Context, s *store.Store, runID, stepID string) (stepConfig, error) {
+func loadConfig(ctx context.Context, s *store.Store, box *secretbox.Box, runID, stepID string) (stepConfig, error) {
 	notif, err := s.Notifications().GetByRunID(ctx, runID)
 	if err != nil {
 		return stepConfig{}, fmt.Errorf("notification by run %q: %w", runID, err)
@@ -199,9 +225,19 @@ func loadConfig(ctx context.Context, s *store.Store, runID, stepID string) (step
 		if steps[i].StepID != stepID {
 			continue
 		}
+		step := steps[i]
+		if box != nil {
+			// Open declared secret fields (headers) before the config is read;
+			// a legacy plaintext value passes through unchanged.
+			decrypted, derr := stepTypes.DecryptSecrets(box, step)
+			if derr != nil {
+				return stepConfig{}, fmt.Errorf("decrypt step secrets: %w", derr)
+			}
+			step = decrypted
+		}
 		var cfg stepConfig
-		if len(steps[i].ControlValues) > 0 {
-			if err := json.Unmarshal(steps[i].ControlValues, &cfg); err != nil {
+		if len(step.ControlValues) > 0 {
+			if err := json.Unmarshal(step.ControlValues, &cfg); err != nil {
 				return stepConfig{}, fmt.Errorf("unmarshal controlValues: %w", err)
 			}
 		}

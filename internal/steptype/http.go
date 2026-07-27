@@ -31,8 +31,15 @@ func (httpRequest) DefaultControlValues() json.RawMessage {
 }
 
 func (httpRequest) ControlMap(cv json.RawMessage) map[string]string {
-	return flattenControlValues(cv)
+	// headers routinely carries credentials and is stored sealed; render it
+	// masked so the editor never receives the real value.
+	return maskControlValues(cv, httpRequest{}.SecretFields())
 }
+
+// SecretFields declares the control-value keys encrypted at rest. headers is a
+// JSON-encoded string of a name->value map whose values are typically bearer
+// tokens or API keys.
+func (httpRequest) SecretFields() []string { return []string{"headers"} }
 
 func (httpRequest) EditorPartial() string { return "wf-step-fields-http_request" }
 
