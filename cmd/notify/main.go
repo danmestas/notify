@@ -29,8 +29,6 @@ import (
 	"github.com/danmestas/notify/internal/console"
 	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/credverify"
-	"github.com/danmestas/notify/internal/delivery"
-	"github.com/danmestas/notify/internal/delivery/httpaction"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/emailloop"
 	"github.com/danmestas/notify/internal/engine"
@@ -217,30 +215,15 @@ func runServe(args []string) error {
 
 	prefs := preferences.New(st)
 	conn := connectivity.New(st, mk)
-	registerDeliveryHandlers(eng, st, conn, prefs, bus)
-	// Scheduled (cron) digest window: a digest.wait task sleeps until the next
-	// cron tick, then the downstream channel step self-sources and drains the
-	// accumulated events. Regular (amount+unit) digests use the engine's native
-	// sleep and need no handler. Registration is explicit (the step-type registry
-	// is import-light and carries no runtime delivery wiring).
-	eng.Handle("digest.wait", delivery.NewDigestWait(st).HandleDigestWait)
-	// Scheduled (calendar) and dynamic (payload-sourced) delays: like digest.wait
-	// the wait duration depends on wall-clock time or the trigger payload, so it
-	// cannot be baked into a static sleep StepDef. The handler computes the wait
-	// at dispatch and blocks context-aware; on shutdown it returns a
-	// RetryableError so dagnats requeues (per the StepDef's RetryPolicy) and the
-	// wait resumes after restart. Regular delays (amount+unit, incl. weeks/months)
-	// use the engine's native sleep and need no handler.
-	dw := delivery.NewDelayWait(st)
-	eng.Handle("delay.scheduled", dw.HandleScheduled)
-	eng.Handle("delay.dynamic", dw.HandleDynamic)
-	// check.throttle: gate a run by a fixed-window counter; must be registered
-	// whenever steptype.Default() includes "throttle" (see delivery.TaskThrottle).
-	eng.Handle(delivery.TaskThrottle, delivery.NewThrottleHandler(st, bus).Handle)
-	// http_request: outbound HTTP action step. Makes the interpolated call, then
-	// captures statusCode/body/headers into step_outputs for downstream steps;
-	// must be registered whenever steptype.Default() includes "http_request".
-	eng.Handle("http_request", httpaction.New(st, httpaction.WithSecretBox(secrets)).Handle)
+	// step_outputs grows without bound otherwise: every http_request action
+	// writes a row holding the captured response body and nothing removed them.
+	startStepOutputPurge(ctx, st)
+
+	// All step-task handlers register in one place so the set can be compared
+	// mechanically against steptype.Registry.TaskTypes() -- see the coverage test.
+	registerStepTaskHandlers(eng, stepTaskDeps{
+		store: st, conn: conn, prefs: prefs, bus: bus, secrets: secrets,
+	})
 
 	// W4 ADR-013 (#55): durable credential-verify action. The verify task runs
 	// in this worker pool (registered before StartWorkers); the workflow is

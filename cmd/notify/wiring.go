@@ -3,9 +3,11 @@ package main
 import (
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/delivery"
+	"github.com/danmestas/notify/internal/delivery/httpaction"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/eventbus"
 	"github.com/danmestas/notify/internal/preferences"
+	"github.com/danmestas/notify/internal/secretbox"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -49,7 +51,7 @@ func wireCommon[T common[T]](h T, d deliveryDeps) T {
 // entirely off those events via bus.SubscribeAllDelivery, so email sends
 // were silently invisible to /v1/analytics/deliveries and
 // /v1/analytics/timeseries).
-func registerDeliveryHandlers(eng *engine.Engine, st *store.Store, conn *connectivity.Service, prefs *preferences.Service, bus *eventbus.Bus) {
+func registerDeliveryHandlers(eng taskRegistrar, st *store.Store, conn *connectivity.Service, prefs *preferences.Service, bus *eventbus.Bus) {
 	d := deliveryDeps{prefs: prefs, bus: bus}
 	eng.Handle("send.in_app", wireCommon(delivery.New(st), d).HandleInApp)
 	eng.Handle("send.email", wireCommon(delivery.NewEmail(st, conn), d).HandleEmail)
@@ -61,4 +63,54 @@ func registerDeliveryHandlers(eng *engine.Engine, st *store.Store, conn *connect
 	// shared ones and then .WithFeed(bus) on top — *eventbus.Bus satisfies
 	// delivery.FeedPublisher alongside EventPublisher/Throttler/Digester.
 	eng.Handle("send.stream", wireCommon(delivery.NewStream(st), d).WithFeed(bus).HandleStream)
+}
+
+// taskRegistrar is the slice of *engine.Engine the task wiring needs. Narrowing
+// it to Handle lets the coverage test observe the REAL registration code path
+// with a recorder, instead of asserting against a second hand-maintained list
+// that could drift from the first -- which is the very failure this guards.
+type taskRegistrar interface {
+	Handle(taskType string, fn engine.HandlerFunc)
+}
+
+// stepTaskDeps carries what the step-task handlers need to be constructed.
+type stepTaskDeps struct {
+	store   *store.Store
+	conn    *connectivity.Service
+	prefs   *preferences.Service
+	bus     *eventbus.Bus
+	secrets *secretbox.Box
+}
+
+// registerStepTaskHandlers registers a handler for every engine task type a
+// step type can compile to.
+//
+// It is the single place that wiring happens, so steptype.Registry.TaskTypes()
+// and this function can be compared mechanically (see the coverage test).
+// Previously the send.* handlers lived here and the rest were registered inline
+// during boot, each with a comment asking the reader to remember the invariant.
+func registerStepTaskHandlers(eng taskRegistrar, d stepTaskDeps) {
+	registerDeliveryHandlers(eng, d.store, d.conn, d.prefs, d.bus)
+
+	// Scheduled (cron) digest window: sleeps until the next tick, then the
+	// downstream channel step self-sources and drains the accumulated events.
+	// Regular (amount+unit) digests use the engine's native sleep -- no handler.
+	eng.Handle("digest.wait", delivery.NewDigestWait(d.store).HandleDigestWait)
+
+	// Scheduled (calendar) and dynamic (payload-sourced) delays: the wait
+	// depends on wall-clock time or the trigger payload, so it cannot be baked
+	// into a static sleep StepDef. The handler computes it at dispatch and
+	// blocks context-aware; on shutdown it returns a RetryableError so dagnats
+	// requeues and the wait resumes after restart. Regular delays use the
+	// engine's native sleep.
+	dw := delivery.NewDelayWait(d.store)
+	eng.Handle("delay.scheduled", dw.HandleScheduled)
+	eng.Handle("delay.dynamic", dw.HandleDynamic)
+
+	// check.throttle: gate a run by a fixed-window counter.
+	eng.Handle(delivery.TaskThrottle, delivery.NewThrottleHandler(d.store, d.bus).Handle)
+
+	// http_request: outbound HTTP action step. Makes the interpolated call, then
+	// captures statusCode/body/headers into step_outputs for downstream steps.
+	eng.Handle("http_request", httpaction.New(d.store, httpaction.WithSecretBox(d.secrets)).Handle)
 }

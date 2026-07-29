@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/timestamp"
@@ -18,6 +20,11 @@ type StepOutputRepo interface {
 	// dispatch of the same step (engine retry) overwrites the prior row rather
 	// than failing the primary-key constraint.
 	Save(ctx context.Context, scope domain.Scope, runID, stepID string, output json.RawMessage) error
+	// PurgeOlderThan deletes rows created before cutoff and reports how many
+	// were removed. Unscoped by design: retention is a system-wide property,
+	// not a per-tenant one, and a purge that skipped a tenant would leave the
+	// unbounded growth it exists to bound.
+	PurgeOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	// ListByRun returns every step output for a run, keyed by step id with each
 	// output JSON-parsed into a flat map. Unscoped by design: a worker handling
 	// a downstream task has only the opaque run id (no tenancy ctx), mirroring
@@ -75,4 +82,31 @@ func (repo *stepOutputRepo) ListByRun(ctx context.Context, runID string) (map[st
 		return nil, err
 	}
 	return out, nil
+}
+
+// PurgeOlderThan deletes step outputs created before cutoff.
+//
+// This table grows without bound otherwise: every http_request action step
+// writes a row holding the captured response body, and nothing ever removed
+// them. Those bodies are third-party data notify did not author, so retaining
+// less of it for less time is the better default.
+//
+// The comparison is a plain string range, which is only correct because
+// created_at is written through the fixed-width timestamp layout -- a
+// variable-width encoding would sort a whole-second row out of order and purge
+// the wrong rows. See internal/timestamp.
+func (repo *stepOutputRepo) PurgeOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	res, err := repo.w.ExecContext(
+		ctx,
+		`DELETE FROM step_outputs WHERE created_at < ?`,
+		timestamp.Format(cutoff),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("store: purge step_outputs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: purge step_outputs rows affected: %w", err)
+	}
+	return n, nil
 }

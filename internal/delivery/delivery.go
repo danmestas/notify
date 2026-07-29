@@ -8,6 +8,7 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/danmestas/notify/internal/delivery/template"
@@ -353,6 +354,20 @@ func inAppExtras(step runenv.Step) json.RawMessage {
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
+		// Reachable only via a hand-poked InAppData blob (every other field is a
+		// typed struct that always marshals), but the consequence is invisible:
+		// the message still sends, just stripped of its avatar, actions and
+		// redirect. Without this the recipient sees a plain notification and
+		// nothing anywhere records that the rich fields were dropped.
+		slog.Default().Warn(
+			"delivery: in_app extras dropped, sending without rich fields",
+			"err", err,
+			"hasAvatar", step.Avatar != "",
+			"hasPrimaryAction", step.PrimaryAction != nil,
+			"hasSecondaryAction", step.SecondaryAction != nil,
+			"hasRedirect", step.Redirect != nil,
+			"dataBytes", len(step.InAppData),
+		)
 		return json.RawMessage("{}")
 	}
 	return b
