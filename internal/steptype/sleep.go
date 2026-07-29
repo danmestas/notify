@@ -15,18 +15,35 @@ import (
 )
 
 // cronParser parses digest cron expressions. SecondOptional accepts BOTH the
-// 5-field standard form ("0 * * * *", minute granularity) and the 6-field
-// with-seconds form ("* * * * * *", second granularity); Descriptor enables
-// "@hourly" and friends. The same parser validates at compile/save time and
-// schedules at run time so the two can never drift.
+// exactly the 5-field standard form ("0 * * * *", minute granularity).
+//
+// Deliberately NOT a superset of that. The parser previously also accepted a
+// 6-field with-seconds form and "@hourly"-style descriptors, which meant notify
+// would happily save a digest schedule the dagnats engine cannot parse -- and
+// that gap is precisely what stops a scheduled digest compiling to the engine's
+// native cron sleep instead of a goroutine-blocking handler (#258). Narrowing to
+// the intersection makes every saved digest expressible by the engine.
+//
+// The same parser validates at compile/save time and schedules at run time, so
+// the two can never drift; narrowing it narrows both together, by design.
 var cronParser = cron.NewParser(
-	cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
+	cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow,
 )
 
 // ParseCron parses a digest cron expression into a schedule. It is the single
 // source of cron semantics shared by the digest step type (compile/save-time
 // validation) and the delivery digest.wait handler (run-time scheduling).
-func ParseCron(spec string) (cron.Schedule, error) { return cronParser.Parse(spec) }
+func ParseCron(spec string) (cron.Schedule, error) {
+	sch, err := cronParser.Parse(spec)
+	if err != nil {
+		// The underlying parser's errors ("parser does not accept descriptors")
+		// describe its own configuration, not the operator's problem. Name the
+		// field and the accepted grammar so the message is actionable from the
+		// editor without reading this source.
+		return nil, fmt.Errorf("invalid digest cron %q: %w (use a 5-field expression such as \"0 9 * * MON\"; seconds and @descriptors are not supported)", spec, err)
+	}
+	return sch, nil
+}
 
 // digestControlValues is the persisted shape of a digest step's controlValues.
 // Regular windows carry amount+unit (compiled to a sleep); scheduled windows
@@ -155,6 +172,29 @@ type delayControlValues struct {
 	WeekDays   []string `json:"weekDays"`
 	MonthDays  []int    `json:"monthDays"`
 	DynamicKey string   `json:"dynamicKey"`
+	// DynamicKind declares how the value at DynamicKey is interpreted. It is
+	// required for dynamic delays and exists so the interpretation is a property
+	// of the AUTHORED STEP rather than of whatever a given trigger happened to
+	// send. The dispatcher previously sniffed the value's shape per payload,
+	// which meant one step could behave two ways -- and made these steps
+	// impossible to compile to the engine's native sleep, because compile time
+	// cannot know which shape will arrive (see #258).
+	DynamicKind string `json:"dynamicKind"`
+}
+
+// The two interpretations a dynamic delay's payload value can carry.
+const (
+	// DynamicKindInstant: the value is an RFC3339 timestamp; wait until it.
+	DynamicKindInstant = "instant"
+	// DynamicKindRelative: the value is {amount,unit}; wait that long. Uses
+	// notify's own unit vocabulary (including "months"), which is why this form
+	// stays consumer-side rather than compiling to a native sleep.
+	DynamicKindRelative = "relative"
+)
+
+// validDynamicKind reports whether k is a declared interpretation.
+func validDynamicKind(k string) bool {
+	return k == DynamicKindInstant || k == DynamicKindRelative
 }
 
 // delayType decodes a delay step's sub-type discriminator, defaulting an
@@ -275,7 +315,16 @@ func (delay) ParseForm(form url.Values) (json.RawMessage, error) {
 		if key == "" {
 			return nil, fmt.Errorf("dynamic delay requires a dynamicKey")
 		}
-		return marshalControlValues(map[string]any{"type": "dynamic", "dynamicKey": key})
+		kind := formField(form, "dynamicKind")
+		if kind == "" {
+			return nil, fmt.Errorf("dynamic delay requires a dynamicKind (%q or %q)", DynamicKindInstant, DynamicKindRelative)
+		}
+		if !validDynamicKind(kind) {
+			return nil, fmt.Errorf("unknown dynamicKind %q (use %q or %q)", kind, DynamicKindInstant, DynamicKindRelative)
+		}
+		return marshalControlValues(map[string]any{
+			"type": "dynamic", "dynamicKey": key, "dynamicKind": kind,
+		})
 	default:
 		return nil, fmt.Errorf("unknown delay type %q", typ)
 	}
@@ -295,6 +344,15 @@ func (delay) Validate(cv json.RawMessage) error {
 	case "dynamic":
 		if dcv.DynamicKey == "" {
 			return fmt.Errorf("dynamic delay requires a dynamicKey")
+		}
+		// Required, with no inferred default: an absent kind is precisely the
+		// ambiguous state this contract removes, so it fails here rather than
+		// being resolved by guesswork at dispatch.
+		if dcv.DynamicKind == "" {
+			return fmt.Errorf("dynamic delay requires a dynamicKind (%q or %q)", DynamicKindInstant, DynamicKindRelative)
+		}
+		if !validDynamicKind(dcv.DynamicKind) {
+			return fmt.Errorf("unknown dynamicKind %q (use %q or %q)", dcv.DynamicKind, DynamicKindInstant, DynamicKindRelative)
 		}
 		return nil
 	default:

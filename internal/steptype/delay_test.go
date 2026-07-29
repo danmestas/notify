@@ -272,11 +272,14 @@ func TestDelay_ParseForm_Scheduled(t *testing.T) {
 func TestDelay_ParseForm_Dynamic(t *testing.T) {
 	got, err := steptype.Default().Get("delay").ParseForm(url.Values{
 		"type": {"dynamic"}, "dynamicKey": {"payload.sendAt"},
+		// dynamicKind is required as of #258: the step declares how the payload
+		// value is interpreted rather than the dispatcher sniffing its shape.
+		"dynamicKind": {"instant"},
 	})
 	if err != nil {
 		t.Fatalf("ParseForm: %v", err)
 	}
-	if string(got) != `{"dynamicKey":"payload.sendAt","type":"dynamic"}` {
+	if string(got) != `{"dynamicKey":"payload.sendAt","dynamicKind":"instant","type":"dynamic"}` {
 		t.Fatalf("ParseForm dynamic = %s", got)
 	}
 	if _, err := steptype.Default().Get("delay").ParseForm(url.Values{

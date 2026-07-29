@@ -104,7 +104,9 @@ func (h *digestHarness) createSubscriber(t *testing.T, id string) {
 func (h *digestHarness) pollSent(t *testing.T, subscriberID string) []domain.Message {
 	t.Helper()
 	feedURL := h.srv.URL + "/v1/messages?subscriberId=" + subscriberID + "&channel=in_app"
-	deadline := time.Now().Add(25 * time.Second)
+	// 75s: the scheduled-digest case waits for a 5-field cron tick, whose finest
+	// granularity is one minute, so the worst case is ~60s plus delivery.
+	deadline := time.Now().Add(75 * time.Second)
 	var lastBody string
 	for time.Now().Before(deadline) {
 		status, body := doGet(t, feedURL, h.authHeader)
@@ -169,16 +171,23 @@ func TestDigest_InjectsEventsAndCount_InApp(t *testing.T) {
 }
 
 // TestDigest_Scheduled_WakesAtCronTick proves a scheduled (cron) digest window:
-// the digest.wait handler sleeps until the next every-second tick, then the
-// downstream in_app self-sources and drains the accumulated events. Three rapid
-// triggers merge into ONE send with {{digest.count}} = 3.
+// the digest.wait handler sleeps until the next cron tick, then the downstream
+// in_app self-sources and drains the accumulated events. Three rapid triggers
+// merge into ONE send with {{digest.count}} = 3.
+//
+// This waits up to a MINUTE by design. It previously used a 6-field
+// every-second cron, which #258 removed: notify's grammar narrowed to the
+// 5-field intersection it shares with the dagnats engine, whose finest
+// granularity is one minute. Keeping the fast form would have meant continuing
+// to test a capability the engine cannot express -- false confidence about a
+// path that could not survive the migration to native engine sleep.
 func TestDigest_Scheduled_WakesAtCronTick(t *testing.T) {
 	h := newDigestHarness(t)
 	if _, err := h.auth.Create(h.ctx, h.scope, authoring.WorkflowInput{
 		Name:              "Scheduled digest",
 		TriggerIdentifier: "scheduled-digest",
 		Steps: []domain.Step{
-			{StepID: "dg", Type: "digest", ControlValues: json.RawMessage(`{"type":"scheduled","cron":"* * * * * *"}`)},
+			{StepID: "dg", Type: "digest", ControlValues: json.RawMessage(`{"type":"scheduled","cron":"* * * * *"}`)},
 			{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"subject":"Digest","body":"You have {{digest.count}} new items"}`)},
 		},
 	}); err != nil {

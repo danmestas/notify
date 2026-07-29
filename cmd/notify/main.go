@@ -108,6 +108,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "notify rotate-key: %v\n", err)
 			os.Exit(1)
 		}
+	case "validate-steps":
+		if err := runValidateSteps(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "notify validate-steps: %v\n", err)
+			os.Exit(1)
+		}
 	case "version", "-v", "--version":
 		fmt.Printf("notify %s\n", version.Version)
 	default:

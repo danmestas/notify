@@ -139,11 +139,12 @@ func TestDigest_ParseForm_Scheduled(t *testing.T) {
 	}
 }
 
-// TestParseCron_OptionalSeconds proves the shared parser accepts both the
-// 5-field standard form and the 6-field with-seconds form (the latter powers
-// the fast every-second e2e window).
-func TestParseCron_OptionalSeconds(t *testing.T) {
-	for _, spec := range []string{"0 * * * *", "* * * * * *", "@hourly"} {
+// TestParseCron_FiveFieldOnly proves the shared parser accepts the 5-field
+// standard form. The 6-field with-seconds form and @descriptors were removed in
+// #258 so the grammar matches what the dagnats engine can express; see
+// digestcron_test.go for the rejection cases.
+func TestParseCron_FiveFieldOnly(t *testing.T) {
+	for _, spec := range []string{"0 * * * *", "* * * * *"} {
 		if _, err := steptype.ParseCron(spec); err != nil {
 			t.Errorf("ParseCron(%q): %v", spec, err)
 		}

@@ -59,14 +59,15 @@ func (d *DelayWait) HandleDynamic(ctx context.Context, t engine.TaskPayload) (js
 		return nil, err
 	}
 	var sc struct {
-		DynamicKey string `json:"dynamicKey"`
+		DynamicKey  string `json:"dynamicKey"`
+		DynamicKind string `json:"dynamicKind"`
 	}
 	if len(cv) > 0 {
 		if uErr := json.Unmarshal(cv, &sc); uErr != nil {
 			return nil, fmt.Errorf("delay.dynamic: unmarshal controlValues: %w", uErr)
 		}
 	}
-	dur, err := resolveDynamicDuration(payload, sc.DynamicKey, time.Now())
+	dur, err := resolveDynamicDuration(payload, sc.DynamicKey, sc.DynamicKind, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("delay.dynamic: %w", err)
 	}
@@ -95,48 +96,73 @@ func waitUntil(ctx context.Context, d time.Duration) (json.RawMessage, error) {
 }
 
 // resolveDynamicDuration navigates dynamicKey into the trigger payload and
-// interprets the value: an ISO-8601 (RFC3339) string yields the duration until
-// that instant (clamped to zero if already past); an {amount,unit} object
-// yields amount*unit (units shared with regular delays, including weeks/months).
-func resolveDynamicDuration(payload json.RawMessage, dynamicKey string, now time.Time) (time.Duration, error) {
+// interprets the value ACCORDING TO THE STEP'S DECLARED KIND, not according to
+// the value's shape.
+//
+// The step declares kind at authoring time (steptype.DynamicKindInstant or
+// DynamicKindRelative). Previously this function sniffed: a string was treated
+// as an instant, an object as a relative duration. That made a step's behaviour
+// a property of each payload rather than of the workflow, so the same authored
+// delay could wait until Tuesday for one trigger and for three hours on the
+// next -- and it is the reason these steps could not compile to the engine's
+// native sleep, since compile time cannot know which shape will arrive (#258).
+//
+// A mismatch between the declared kind and the actual value is now an error
+// rather than a silent reinterpretation: the workflow said what it meant, so a
+// payload that disagrees is bad data and should say so.
+func resolveDynamicDuration(payload json.RawMessage, dynamicKey, dynamicKind string, now time.Time) (time.Duration, error) {
 	if dynamicKey == "" {
 		return 0, fmt.Errorf("empty dynamicKey")
+	}
+	if dynamicKind == "" {
+		return 0, fmt.Errorf("step declares no dynamicKind; republish the workflow to record whether %q is an instant or a relative duration", dynamicKey)
 	}
 	node, err := navigatePayload(payload, dynamicKey)
 	if err != nil {
 		return 0, err
 	}
-	var s string
-	if json.Unmarshal(node, &s) == nil && s != "" {
-		ts, perr := time.Parse(time.RFC3339, s)
+
+	switch dynamicKind {
+	case steptype.DynamicKindInstant:
+		var str string
+		if uErr := json.Unmarshal(node, &str); uErr != nil || str == "" {
+			return 0, fmt.Errorf("value at %q must be an RFC3339 string (step declares dynamicKind=%q)", dynamicKey, steptype.DynamicKindInstant)
+		}
+		ts, perr := time.Parse(time.RFC3339, str)
 		if perr != nil {
-			return 0, fmt.Errorf("value at %q (%q) is not an RFC3339 timestamp: %w", dynamicKey, s, perr)
+			return 0, fmt.Errorf("value at %q (%q) is not an RFC3339 timestamp: %w", dynamicKey, str, perr)
 		}
-		rem := ts.Sub(now)
-		if rem < 0 {
-			rem = 0
+		// An instant already past means "send now", not "error": the workflow
+		// asked to wait until a moment that has arrived.
+		if rem := ts.Sub(now); rem > 0 {
+			return rem, nil
 		}
-		return rem, nil
-	}
-	var obj struct {
-		Amount int64  `json:"amount"`
-		Unit   string `json:"unit"`
-	}
-	if json.Unmarshal(node, &obj) == nil && obj.Amount > 0 {
+		return 0, nil
+
+	case steptype.DynamicKindRelative:
+		var obj struct {
+			Amount int64  `json:"amount"`
+			Unit   string `json:"unit"`
+		}
+		if uErr := json.Unmarshal(node, &obj); uErr != nil {
+			return 0, fmt.Errorf("value at %q must be an {amount,unit} object (step declares dynamicKind=%q)", dynamicKey, steptype.DynamicKindRelative)
+		}
+		if obj.Amount <= 0 {
+			return 0, fmt.Errorf("value at %q has non-positive amount %d", dynamicKey, obj.Amount)
+		}
 		unit, uErr := steptype.UnitDuration(obj.Unit)
 		if uErr != nil {
 			return 0, uErr
 		}
-		// Note: a relative {amount,unit} dynamic delay is resolved from time.Now()
-		// on every dispatch. If the task is requeued after a restart, the full
-		// duration restarts from the moment of re-dispatch — the recipient waits
-		// longer than authored. ISO-8601 (RFC3339) strings and scheduled delays
-		// are absolute and resume correctly; only the relative form has this
-		// behavior. Changing it would require persisting the original fire-at
-		// timestamp, which is a separate follow-up.
+		// Known limitation (#164): a relative delay is resolved from time.Now()
+		// on every dispatch, so a requeue after restart restarts the full
+		// duration. Absolute forms resume correctly. Fixing it needs the
+		// original fire-at persisted, which is a separate change.
 		return time.Duration(obj.Amount) * unit, nil
+
+	default:
+		return 0, fmt.Errorf("unknown dynamicKind %q", dynamicKind)
 	}
-	return 0, fmt.Errorf("value at %q is neither an RFC3339 string nor a positive {amount,unit} object", dynamicKey)
 }
 
 // navigatePayload walks a "payload.a.b" dot-path against the trigger payload and

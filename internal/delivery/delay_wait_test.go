@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/steptype"
 )
 
 // TestResolveDynamicDuration_ISO8601_Future proves a future RFC3339 timestamp
@@ -15,7 +16,7 @@ import (
 func TestResolveDynamicDuration_ISO8601_Future(t *testing.T) {
 	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
 	payload := json.RawMessage(`{"sendAt":"2026-06-29T13:00:00Z"}`)
-	got, err := resolveDynamicDuration(payload, "payload.sendAt", now)
+	got, err := resolveDynamicDuration(payload, "payload.sendAt", steptype.DynamicKindInstant, now)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -29,7 +30,7 @@ func TestResolveDynamicDuration_ISO8601_Future(t *testing.T) {
 func TestResolveDynamicDuration_ISO8601_Past(t *testing.T) {
 	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
 	payload := json.RawMessage(`{"sendAt":"2026-06-29T11:00:00Z"}`)
-	got, err := resolveDynamicDuration(payload, "payload.sendAt", now)
+	got, err := resolveDynamicDuration(payload, "payload.sendAt", steptype.DynamicKindInstant, now)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -43,7 +44,7 @@ func TestResolveDynamicDuration_ISO8601_Past(t *testing.T) {
 func TestResolveDynamicDuration_AmountUnit(t *testing.T) {
 	now := time.Now()
 	payload := json.RawMessage(`{"wait":{"amount":2,"unit":"hours"}}`)
-	got, err := resolveDynamicDuration(payload, "payload.wait", now)
+	got, err := resolveDynamicDuration(payload, "payload.wait", steptype.DynamicKindRelative, now)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -60,16 +61,23 @@ func TestResolveDynamicDuration_Errors(t *testing.T) {
 		name    string
 		payload string
 		key     string
+		kind    string
 	}{
-		{"missing key", `{"other":"x"}`, "payload.sendAt"},
-		{"bad root", `{"sendAt":"2026-06-29T13:00:00Z"}`, "sendAt"},
-		{"not a timestamp", `{"sendAt":"tomorrow"}`, "payload.sendAt"},
-		{"zero amount", `{"wait":{"amount":0,"unit":"hours"}}`, "payload.wait"},
-		{"empty key", `{}`, ""},
+		{"missing key", `{"other":"x"}`, "payload.sendAt", steptype.DynamicKindInstant},
+		{"bad root", `{"sendAt":"2026-06-29T13:00:00Z"}`, "sendAt", steptype.DynamicKindInstant},
+		{"not a timestamp", `{"sendAt":"tomorrow"}`, "payload.sendAt", steptype.DynamicKindInstant},
+		{"zero amount", `{"wait":{"amount":0,"unit":"hours"}}`, "payload.wait", steptype.DynamicKindRelative},
+		{"empty key", `{}`, "", steptype.DynamicKindInstant},
+		// New under #258: the declared kind and the actual value must agree.
+		// A mismatch is bad data, not a cue to reinterpret.
+		{"declared instant, got object", `{"sendAt":{"amount":2,"unit":"hours"}}`, "payload.sendAt", steptype.DynamicKindInstant},
+		{"declared relative, got string", `{"wait":"2026-06-29T13:00:00Z"}`, "payload.wait", steptype.DynamicKindRelative},
+		{"no declared kind", `{"sendAt":"2026-06-29T13:00:00Z"}`, "payload.sendAt", ""},
+		{"unknown kind", `{"sendAt":"2026-06-29T13:00:00Z"}`, "payload.sendAt", "sometime"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := resolveDynamicDuration(json.RawMessage(tc.payload), tc.key, now); err == nil {
+			if _, err := resolveDynamicDuration(json.RawMessage(tc.payload), tc.key, tc.kind, now); err == nil {
 				t.Fatalf("want error, got nil")
 			}
 		})
