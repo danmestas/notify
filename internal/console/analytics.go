@@ -2,6 +2,7 @@ package console
 
 import (
 	"fmt"
+	"html/template"
 	"net/http"
 	"sort"
 	"strings"
@@ -123,6 +124,12 @@ type analyticsKPIView struct {
 	FailedDeliveries         int
 	ActiveSubscribers        int64
 	AvgMessagesPerSubscriber float64
+	// Signals is the Datastar signals object for both the KPI card wrapper
+	// and the analytics-page toolbar (analytics.html reads it off
+	// analyticsView.KPIs.Signals). Built server-side via analyticsSignalsJSON
+	// so a workflow_id containing a quote cannot break out of the
+	// data-signals attribute — see the package doc's canonical idiom.
+	Signals template.JS
 }
 
 // analyticsChartsView is the #analytics-charts fragment binding.
@@ -145,6 +152,10 @@ type analyticsChartsView struct {
 	// RunsTrendChart is the Workflow Runs Trend chart — distinct workflow
 	// runs per day (COUNT(DISTINCT run_id), M2), not a delivery/message count.
 	RunsTrendChart analyticsLineChart
+	// Signals is the data-signals__ifmissing object the charts wrapper
+	// seeds (Range/Channels/WorkflowID), built via analyticsSignalsJSON —
+	// see analyticsKPIView.Signals.
+	Signals template.JS
 }
 
 // analyticsLineChart is an inline-SVG area/line series rendered from
@@ -198,6 +209,27 @@ func channelTone(ch string) tileTone {
 	return toneInfo
 }
 
+// analyticsSignalsJSON builds the Datastar signals object shared by the
+// analytics page toolbar and its two fragments (KPI cards, charts). It
+// reuses the chassis's shared jsonLiteral primitive (layout.go) rather than
+// the raw '{analyticsRange:'{{.Range}}',...}' interpolation the page used to
+// hand-roll per template — that form only got HTML-attribute escaping from
+// html/template (data-signals is not a recognized JS-attr context), so a
+// workflow_id containing a quote survived the browser's attribute decode and
+// broke out of the JS/JSON literal. withChannels adds the empty
+// analyticsChannels seed the charts wrapper's data-signals__ifmissing needs;
+// the KPI/toolbar object never had that key.
+func analyticsSignalsJSON(rang analyticsRange, workflowID string, withChannels bool) template.JS {
+	sig := map[string]string{
+		"analyticsRange":    string(rang),
+		"analyticsWorkflow": workflowID,
+	}
+	if withChannels {
+		sig["analyticsChannels"] = ""
+	}
+	return jsonLiteral(sig)
+}
+
 // buildAnalyticsKPIView constructs the KPI fragment from DeliveriesByChannel
 // plus the CountActiveSubscribers / AverageMessagesPerSubscriber aggregations.
 // All four tiles share the same AnalyticsFilter, so a workflow filter scopes
@@ -244,6 +276,7 @@ func (c *Console) buildAnalyticsKPIView(
 		FailedDeliveries:         failed,
 		ActiveSubscribers:        activeSubs,
 		AvgMessagesPerSubscriber: avgMsg,
+		Signals:                  analyticsSignalsJSON(rang, workflowID, false),
 	}, nil
 }
 
@@ -267,6 +300,7 @@ func (c *Console) buildAnalyticsChartsView(
 	}
 	v := buildAnalyticsCharts(series, runsSeries, rang, activeChannels, time.Now().UTC())
 	v.WorkflowID = workflowID
+	v.Signals = analyticsSignalsJSON(rang, workflowID, true)
 	return v, nil
 }
 

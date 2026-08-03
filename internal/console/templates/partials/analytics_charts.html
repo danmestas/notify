@@ -21,7 +21,9 @@
 
   WorkflowID is echoed back in data-signals so the fragment retains its
   filter state across refreshes (GAP-AF-06). data-signals lives on the
-  wrapper div, not a form element (chassis convention).
+  wrapper div, not a form element (chassis convention). Signals is the
+  server-marshaled Datastar signals object (analyticsSignalsJSON, analytics.go)
+  — never raw-interpolate Range/WorkflowID here (see the package doc).
 
   min-height on analytics-chart-svg prevents height-0 SVG collapse when the
   chart has data but the viewBox is narrow (past bug: chart rendered invisible).
@@ -29,7 +31,7 @@
 {{define "analytics-charts"}}
 <div id="analytics-charts" class="analytics-charts"
      data-range="{{.Range}}"
-     data-signals__ifmissing='{"analyticsRange":"{{.Range}}","analyticsChannels":"","analyticsWorkflow":"{{.WorkflowID}}"}'>
+     data-signals__ifmissing="{{.Signals}}">
 
   {{/* Channel legend / toggle controls */}}
   {{if .Channels}}

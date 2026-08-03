@@ -24,6 +24,28 @@
 //     Deps.ReadOnly server-side before touching state.
 //   - Assets are vendored and embedded; the browser makes zero outbound
 //     requests at runtime.
+//   - Passing a server value into a JS handler: html/template only applies
+//     HTML-attribute escaping to a plain {{.Field}} interpolation — it does
+//     NOT recognize data-on:*/data-signals as a JS or JSON context, so a
+//     quote in the value survives the browser's attribute-decode step and
+//     breaks out of the literal (issue #61). Raw interpolation of a
+//     non-constant value into data-on:*/data-signals is never acceptable.
+//     Two safe primitives cover every case (both in layout.go):
+//   - A single JS string value inside an expression (a data-on:click
+//     handler argument, a signal assignment): pipe it through the
+//     "jsEscape" template func, e.g.
+//     data-on:click="doThing({{.ID | jsEscape}})". The web-standard
+//     "data-" attribute + $el.dataset route looks simpler but is NOT
+//     reliable here — a past bug (see
+//     TestFragment_AnalyticsCharts_ChannelToggleQuoteSafe) found
+//     $el.dataset unresolved at the time Datastar evaluates the
+//     handler, which is why jsEscape is the pattern every page uses.
+//   - A whole signals/store object built from a typed Go value (the
+//     data-signals attribute itself): marshal it server-side with the
+//     "json" template func (or call jsonLiteral directly from Go, as
+//     activityFilters.signalsJSON and analyticsSignalsJSON do) and bind
+//     the result — a template.JS field — with {{.Signals}}. Never
+//     hand-roll "{key:'{{.Field}}'}" in the template.
 package console
 
 import "embed"

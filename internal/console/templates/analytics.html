@@ -9,9 +9,11 @@
     appended to the current range; no SSE round-trip needed since both fragments must update.
 
     data-signals on the wrapper (not on the form) per chassis convention (GAP-AF-06).
+    Signals is the server-marshaled Datastar signals object (analyticsSignalsJSON,
+    analytics.go) — never raw-interpolate Range/WorkflowID here (see the package doc).
   */}}
   <div class="analytics-toolbar"
-       data-signals="{analyticsRange:'{{$page.KPIs.Range}}',analyticsWorkflow:'{{$page.KPIs.WorkflowID}}'}">
+       data-signals="{{$page.KPIs.Signals}}">
 
     <nav class="analytics-range-tabs" aria-label="Time range">
       <a href="/console/analytics?range=24h{{if $page.KPIs.WorkflowID}}&workflow_id={{$page.KPIs.WorkflowID}}{{end}}"

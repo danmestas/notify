@@ -32,7 +32,9 @@ package console
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"strings"
@@ -594,6 +596,99 @@ func TestFragment_AnalyticsKPIs_RangeSignal(t *testing.T) {
 	}
 }
 
+// dataAttrValue extracts the decoded value of the first HTML attribute named
+// attr appearing at or after searchFrom in body (the exact literal
+// html/template rendered, entity-decoded as a browser would decode it before
+// Datastar ever sees the string). searchFrom anchors past unrelated
+// same-named attributes earlier in the page (e.g. the layout's own
+// data-signals on the env menu). Accepts either a double- or single-quoted
+// HTML attribute delimiter. Fails the test if the attribute is not present.
+func dataAttrValue(t *testing.T, body, searchFrom, attr string) string {
+	t.Helper()
+	from := strings.Index(body, searchFrom)
+	if from < 0 {
+		t.Fatalf("body missing anchor %q:\n%.800s", searchFrom, body)
+	}
+	rest := body[from:]
+	for _, delim := range []byte{'"', '\''} {
+		needle := attr + "=" + string(delim)
+		start := strings.Index(rest, needle)
+		if start < 0 {
+			continue
+		}
+		start += len(needle)
+		end := strings.IndexByte(rest[start:], delim)
+		if end < 0 {
+			t.Fatalf("unterminated %s attribute:\n%.800s", attr, rest)
+		}
+		return html.UnescapeString(rest[start : start+end])
+	}
+	t.Fatalf("body missing %s attribute after anchor %q:\n%.800s", attr, searchFrom, rest)
+	return ""
+}
+
+// TestFragment_AnalyticsKPIs_WorkflowIDQuoteSafe proves a ?workflow_id=
+// containing a quote cannot break out of the KPI fragment's data-signals
+// object. The KPI toolbar/fragment used to hand-interpolate Range/WorkflowID
+// into a single-quoted JS-object-literal string ("{analyticsRange:'{{.Range}}',
+// analyticsWorkflow:'{{.WorkflowID}}'}"); html/template only HTML-attribute-
+// escapes that (it does not recognize data-signals as a JS context), so a
+// quote in WorkflowID survived the browser's attribute decode and terminated
+// the JS string early — the exact bug class issue #61 fixes at the chassis
+// level. The fragment now emits the signals object through the shared
+// jsonLiteral primitive, so the value round-trips as valid JSON instead.
+func TestFragment_AnalyticsKPIs_WorkflowIDQuoteSafe(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	const evil = `x" onmouseover='alert(1)'`
+	v := url.Values{}
+	v.Set("workflow_id", evil)
+	rr := tc.get(t, "/console/api/fragments/analytics-kpis?"+v.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("analytics-kpis with workflow_id: %d", rr.Code)
+	}
+	decoded := dataAttrValue(t, rr.Body.String(), `id="analytics-kpis"`, "data-signals")
+	if !json.Valid([]byte(decoded)) {
+		t.Fatalf("data-signals is not valid JSON after HTML-decode (breakout): %s", decoded)
+	}
+	var sig map[string]string
+	if err := json.Unmarshal([]byte(decoded), &sig); err != nil {
+		t.Fatalf("data-signals did not unmarshal: %v\n%s", err, decoded)
+	}
+	if sig["analyticsWorkflow"] != evil {
+		t.Fatalf("workflow id mangled: got %q want %q", sig["analyticsWorkflow"], evil)
+	}
+}
+
+// TestAnalytics_Page_KPISignalsQuoteSafe is the full-page counterpart of
+// TestFragment_AnalyticsKPIs_WorkflowIDQuoteSafe: the analytics.html toolbar
+// echoes the same Range/WorkflowID pair into its own data-signals attribute
+// (independently of the KPI fragment) and must be equally safe.
+func TestAnalytics_Page_KPISignalsQuoteSafe(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	const evil = `x" onmouseover='alert(1)'`
+	v := url.Values{}
+	v.Set("workflow_id", evil)
+	rr := tc.get(t, "/console/analytics?"+v.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/console/analytics with workflow_id: %d", rr.Code)
+	}
+	decoded := dataAttrValue(t, rr.Body.String(), `class="analytics-toolbar"`, "data-signals")
+	if !json.Valid([]byte(decoded)) {
+		t.Fatalf("toolbar data-signals is not valid JSON after HTML-decode (breakout): %s", decoded)
+	}
+	var sig map[string]string
+	if err := json.Unmarshal([]byte(decoded), &sig); err != nil {
+		t.Fatalf("toolbar data-signals did not unmarshal: %v\n%s", err, decoded)
+	}
+	if sig["analyticsWorkflow"] != evil {
+		t.Fatalf("workflow id mangled: got %q want %q", sig["analyticsWorkflow"], evil)
+	}
+}
+
 func TestFragment_AnalyticsCharts_SSEFraming(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, _ := tc.login(t)
@@ -639,6 +734,34 @@ func TestFragment_AnalyticsCharts_ChannelToggle(t *testing.T) {
 	// presence of an is-active toggle button for email.
 	if !strings.Contains(body, `is-active`) {
 		t.Errorf("analytics-charts filtered fragment missing is-active channel toggle")
+	}
+}
+
+// TestFragment_AnalyticsCharts_WorkflowIDQuoteSafe is the charts-fragment
+// counterpart of TestFragment_AnalyticsKPIs_WorkflowIDQuoteSafe: the charts
+// wrapper independently echoed Range/WorkflowID into its own
+// data-signals__ifmissing attribute and had the identical breakout bug.
+func TestFragment_AnalyticsCharts_WorkflowIDQuoteSafe(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	const evil = `x" onmouseover='alert(1)'`
+	v := url.Values{}
+	v.Set("workflow_id", evil)
+	rr := tc.get(t, "/console/api/fragments/analytics-charts?"+v.Encode(), cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("analytics-charts with workflow_id: %d", rr.Code)
+	}
+	decoded := dataAttrValue(t, rr.Body.String(), `id="analytics-charts"`, "data-signals__ifmissing")
+	if !json.Valid([]byte(decoded)) {
+		t.Fatalf("data-signals__ifmissing is not valid JSON after HTML-decode (breakout): %s", decoded)
+	}
+	var sig map[string]string
+	if err := json.Unmarshal([]byte(decoded), &sig); err != nil {
+		t.Fatalf("data-signals__ifmissing did not unmarshal: %v\n%s", err, decoded)
+	}
+	if sig["analyticsWorkflow"] != evil {
+		t.Fatalf("workflow id mangled: got %q want %q", sig["analyticsWorkflow"], evil)
 	}
 }
 

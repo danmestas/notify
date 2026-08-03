@@ -7,11 +7,13 @@
   CountActiveSubscribers / AverageMessagesPerSubscriber aggregations (GAP-AF-05).
   WorkflowID is echoed into data-signals so subsequent range changes retain the
   active workflow filter (GAP-AF-06). data-signals lives on the wrapper div, not
-  on a form element (chassis convention).
+  on a form element (chassis convention). Signals is the server-marshaled
+  Datastar signals object (analyticsSignalsJSON, analytics.go) — never
+  raw-interpolate Range/WorkflowID here (see the package doc).
 */}}
 {{define "analytics-kpis"}}
 <div id="analytics-kpis" class="analytics-kpis"
-     data-signals="{analyticsRange:'{{.Range}}',analyticsWorkflow:'{{.WorkflowID}}'}"
+     data-signals="{{.Signals}}"
      data-range="{{.Range}}">
   <ul class="analytics-kpi-cards" role="list">
     <li class="analytics-kpi-card tile-tone-success">

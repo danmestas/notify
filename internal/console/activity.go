@@ -43,11 +43,12 @@ type activityView struct {
 }
 
 // signalsJSON marshals the filter values into the Datastar signals object
-// Go-side. Building the JSON with encoding/json (rather than interpolating
-// each value into a single-quoted data-signals attribute) means a filter
-// value containing a double-quote cannot break out of the JSON and inject
-// arbitrary signal keys. Returned as template.JS so html/template emits it
-// verbatim into the attribute without HTML-entity-mangling the JSON.
+// Go-side, through the chassis's shared jsonLiteral primitive (layout.go) —
+// building the JSON server-side (rather than interpolating each value into a
+// single-quoted data-signals attribute) means a filter value containing a
+// double-quote cannot break out of the JSON and inject arbitrary signal
+// keys. Returned as template.JS so html/template emits it verbatim into the
+// attribute without HTML-entity-mangling the JSON.
 func (f activityFilters) signalsJSON() template.JS {
 	// selectedNotificationId is intentionally absent here. Seeding it to ""
 	// in data-signals causes Datastar to reset it to "" any time the
@@ -64,11 +65,7 @@ func (f activityFilters) signalsJSON() template.JS {
 		"activityTransaction": f.TransactionID,
 		"activityStatus":      f.Status,
 	}
-	b, err := json.Marshal(sig)
-	if err != nil { // map[string]string never fails to marshal
-		return template.JS("{}")
-	}
-	return template.JS(b)
+	return jsonLiteral(sig)
 }
 
 // activityFilters holds the current filter-bar values for echoing back into

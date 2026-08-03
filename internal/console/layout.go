@@ -286,6 +286,14 @@ func jsEscapeStringLiteral(s string) template.JS {
 // jsonLiteral marshals v to a JSON literal as template.JS. On marshal
 // failure it returns a JS null literal rather than erroring the render —
 // a cosmetic attribute must never 500 the page.
+//
+// This is the chassis's shared "typed Go value -> Datastar signals object"
+// primitive (registered as the "json" template func): build a plain Go value
+// — usually a map[string]string with exactly the signal keys to seed, per
+// activityFilters.signalsJSON's rationale for what NOT to seed — and marshal
+// it here rather than hand-rolling json.Marshal + a fallback in page code.
+// Callable directly from Go (as activityFilters.signalsJSON does) or from a
+// template via the "json"/"| json" pipe.
 func jsonLiteral(v any) template.JS {
 	b, err := json.Marshal(v)
 	if err != nil {
