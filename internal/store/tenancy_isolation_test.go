@@ -76,6 +76,13 @@ func tenantCases() []tenantCase {
 				"worker holds an opaque run id and no tenancy context (see store.go StepOutputs()); " +
 				"Save is write-only, so there is no scoped list/get to cross-tenant-probe.",
 		},
+		{
+			name: "DelayDeadlines",
+			exempt: "same shape as StepOutputs: Get/Clear are intentionally unscoped, keyed by the " +
+				"already-globally-unique (run_id, step_id) the delay worker holds (see store.go " +
+				"DelayDeadlines()); Save carries scope only for the org/env compliance columns, so " +
+				"there is no scoped list/get to cross-tenant-probe.",
+		},
 	}
 }
 

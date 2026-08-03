@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -32,7 +33,7 @@ func NewDelayWait(s *store.Store) *DelayWait { return &DelayWait{store: s} }
 // the next firing instant after now (UTC), and waits until it. A nil output
 // lets the downstream channel step fire.
 func (d *DelayWait) HandleScheduled(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
-	cv, _, err := d.stepInputs(ctx, t.RunID, t.StepID)
+	cv, _, _, err := d.stepInputs(ctx, t.RunID, t.StepID)
 	if err != nil {
 		return nil, err
 	}
@@ -50,11 +51,12 @@ func (d *DelayWait) HandleScheduled(ctx context.Context, t engine.TaskPayload) (
 }
 
 // HandleDynamic is registered via engine.Handle("delay.dynamic", ...). It loads
-// the step's dynamicKey and the trigger payload, resolves the wait duration
-// (ISO-8601 timestamp -> wait-until, or an {amount,unit} object -> duration),
-// and waits.
+// the step's dynamicKey and the trigger payload, resolves the fire-at instant
+// (ISO-8601 timestamp, or a persisted/newly-resolved {amount,unit} deadline —
+// see resolveDynamicFireAt), waits, and on normal completion clears any
+// deadline row so the common path does not accumulate one.
 func (d *DelayWait) HandleDynamic(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
-	cv, payload, err := d.stepInputs(ctx, t.RunID, t.StepID)
+	cv, payload, scope, err := d.stepInputs(ctx, t.RunID, t.StepID)
 	if err != nil {
 		return nil, err
 	}
@@ -67,11 +69,59 @@ func (d *DelayWait) HandleDynamic(ctx context.Context, t engine.TaskPayload) (js
 			return nil, fmt.Errorf("delay.dynamic: unmarshal controlValues: %w", uErr)
 		}
 	}
-	dur, err := resolveDynamicDuration(payload, sc.DynamicKey, sc.DynamicKind, time.Now())
+	fire, err := d.resolveDynamicFireAt(ctx, scope, t.RunID, t.StepID, payload, sc.DynamicKey, sc.DynamicKind, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("delay.dynamic: %w", err)
 	}
-	return waitUntil(ctx, dur)
+	out, waitErr := waitUntil(ctx, time.Until(fire))
+	if waitErr != nil {
+		// Context cancelled mid-wait (shutdown): leave any persisted deadline
+		// in place so the requeued dispatch resumes toward it instead of
+		// re-resolving "now + duration".
+		return out, waitErr
+	}
+	if clearErr := d.store.DelayDeadlines().Clear(ctx, t.RunID, t.StepID); clearErr != nil {
+		return nil, fmt.Errorf("delay.dynamic: clear deadline: %w", clearErr)
+	}
+	return out, nil
+}
+
+// resolveDynamicFireAt resolves the absolute instant HandleDynamic should
+// wait until, honouring a previously persisted deadline for relative delays.
+//
+// The instant form (dynamicKind=instant) always recomputes the same
+// wall-clock target from the payload's RFC3339 value, so it needs no
+// persistence and writes no deadline row.
+//
+// The relative form (dynamicKind=relative) carries a payload DURATION, not a
+// wall-clock instant, so it must be pinned to a fixed instant on first
+// dispatch: read any previously persisted deadline for (runID, stepID) first,
+// and only resolve+persist a new one when none exists yet. Reusing the
+// persisted deadline on every subsequent requeue is what stops a restart from
+// restarting the full wait (#273).
+func (d *DelayWait) resolveDynamicFireAt(ctx context.Context, scope domain.Scope, runID, stepID string, payload json.RawMessage, dynamicKey, dynamicKind string, now time.Time) (time.Time, error) {
+	if dynamicKind == steptype.DynamicKindRelative {
+		deadline, err := d.store.DelayDeadlines().Get(ctx, runID, stepID)
+		if err == nil {
+			return deadline, nil
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			return time.Time{}, fmt.Errorf("delay deadline: %w", err)
+		}
+	}
+
+	dur, err := resolveDynamicDuration(payload, dynamicKey, dynamicKind, now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	fire := now.Add(dur)
+
+	if dynamicKind == steptype.DynamicKindRelative {
+		if saveErr := d.store.DelayDeadlines().Save(ctx, scope, runID, stepID, fire); saveErr != nil {
+			return time.Time{}, fmt.Errorf("delay deadline: save: %w", saveErr)
+		}
+	}
+	return fire, nil
 }
 
 // waitUntil blocks for d, honouring context cancellation. On cancellation (the
@@ -154,10 +204,11 @@ func resolveDynamicDuration(payload json.RawMessage, dynamicKey, dynamicKind str
 		if uErr != nil {
 			return 0, uErr
 		}
-		// Known limitation (#164): a relative delay is resolved from time.Now()
-		// on every dispatch, so a requeue after restart restarts the full
-		// duration. Absolute forms resume correctly. Fixing it needs the
-		// original fire-at persisted, which is a separate change.
+		// This is a DURATION relative to now, not a wall-clock instant: it is
+		// only safe to call once, at first dispatch. resolveDynamicFireAt is
+		// the caller that enforces that by persisting the resulting instant
+		// and reusing it on every requeue (#273) — this function has no store
+		// access and cannot enforce it itself.
 		return time.Duration(obj.Amount) * unit, nil
 
 	default:
@@ -188,31 +239,33 @@ func navigatePayload(payload json.RawMessage, dynamicKey string) (json.RawMessag
 	return cur, nil
 }
 
-// stepInputs loads a delay step's controlValues and the run's trigger payload by
-// run id + step id, mirroring the digest.wait stepCron lookup
-// (notification -> workflow -> step). RebuildEnvelope returns the channel
-// handler's envelope, which carries neither the calendar config nor the raw
-// payload these handlers need, so this narrow lookup resolves them directly.
-func (d *DelayWait) stepInputs(ctx context.Context, runID, stepID string) (json.RawMessage, json.RawMessage, error) {
+// stepInputs loads a delay step's controlValues, the run's trigger payload,
+// and its tenancy scope by run id + step id, mirroring the digest.wait
+// stepCron lookup (notification -> workflow -> step). RebuildEnvelope returns
+// the channel handler's envelope, which carries neither the calendar config
+// nor the raw payload these handlers need, so this narrow lookup resolves
+// them directly. Scope is returned alongside so HandleDynamic can pass it to
+// DelayDeadlines().Save without a second notification lookup.
+func (d *DelayWait) stepInputs(ctx context.Context, runID, stepID string) (json.RawMessage, json.RawMessage, domain.Scope, error) {
 	notif, err := d.store.Notifications().GetByRunID(ctx, runID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("delay: notification by run %q: %w", runID, err)
+		return nil, nil, domain.Scope{}, fmt.Errorf("delay: notification by run %q: %w", runID, err)
 	}
 	scope := domain.Scope{OrgID: notif.OrgID, EnvID: notif.EnvID}
 	wf, err := d.store.Workflows().GetByID(ctx, scope, notif.WorkflowID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("delay: workflow %q: %w", notif.WorkflowID, err)
+		return nil, nil, domain.Scope{}, fmt.Errorf("delay: workflow %q: %w", notif.WorkflowID, err)
 	}
 	var steps []domain.Step
 	if len(wf.Steps) > 0 {
 		if err := json.Unmarshal(wf.Steps, &steps); err != nil {
-			return nil, nil, fmt.Errorf("delay: unmarshal steps: %w", err)
+			return nil, nil, domain.Scope{}, fmt.Errorf("delay: unmarshal steps: %w", err)
 		}
 	}
 	for i := range steps {
 		if steps[i].StepID == stepID {
-			return steps[i].ControlValues, notif.Payload, nil
+			return steps[i].ControlValues, notif.Payload, scope, nil
 		}
 	}
-	return nil, nil, fmt.Errorf("delay: step %q not found in workflow %q", stepID, notif.WorkflowID)
+	return nil, nil, domain.Scope{}, fmt.Errorf("delay: step %q not found in workflow %q", stepID, notif.WorkflowID)
 }

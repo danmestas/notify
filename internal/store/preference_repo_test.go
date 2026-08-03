@@ -12,8 +12,8 @@ import (
 func TestMigrate_0003_AppliesPreferences(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 30 {
-		t.Fatalf("expected 30 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 31 {
+		t.Fatalf("expected 31 recorded migrations, got %d", n)
 	}
 
 	var name string

@@ -7,8 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/steptype"
+	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // TestResolveDynamicDuration_ISO8601_Future proves a future RFC3339 timestamp
@@ -135,5 +138,215 @@ func TestNavigatePayload_Nested(t *testing.T) {
 	}
 	if string(node) != `"deep"` {
 		t.Fatalf("node = %s, want \"deep\"", node)
+	}
+}
+
+// seedDelayRun creates a workflow with a single delay step (controlValues cv)
+// and a notification/run over payload, returning the run id and scope so the
+// caller can dispatch HandleScheduled/HandleDynamic against it.
+func seedDelayRun(t *testing.T, s *store.Store, runID, stepID string, cv json.RawMessage, payload json.RawMessage) domain.Scope {
+	t.Helper()
+	ctx := context.Background()
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	steps, err := json.Marshal([]map[string]any{
+		{"stepId": stepID, "type": "delay", "controlValues": cv},
+	})
+	if err != nil {
+		t.Fatalf("marshal steps: %v", err)
+	}
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "delay-" + runID,
+		TriggerIdentifier: "delay-" + runID,
+		Active:            true,
+		Steps:             steps,
+	})
+	if err != nil {
+		t.Fatalf("Workflows.Create: %v", err)
+	}
+	if _, err := s.Notifications().Create(ctx, scope, domain.Notification{
+		ID:            "ntf_" + runID,
+		WorkflowID:    wf.ID,
+		SubscriberID:  "user_1",
+		TransactionID: "txn_" + runID,
+		RunID:         runID,
+		Payload:       payload,
+	}); err != nil {
+		t.Fatalf("Notifications.Create: %v", err)
+	}
+	return scope
+}
+
+// dispatchCancelled calls HandleDynamic/HandleScheduled with a
+// short-timeout context, mirroring a real requeue: the handler's DB lookups
+// and deadline resolution/persistence run and complete against a still-live
+// context, then the timeout fires while it is blocked in waitUntil's
+// ctx-aware select, returning a *engine.RetryableError instead of actually
+// sleeping out the (possibly month-long) wait. An already-cancelled context
+// would fail the DB lookups themselves before resolution ever runs, which is
+// not what a requeue looks like.
+func dispatchCancelled(t *testing.T, fn func(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error), payload engine.TaskPayload) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, err := fn(ctx, payload)
+	var re *engine.RetryableError
+	if !errors.As(err, &re) {
+		t.Fatalf("dispatch (timeout mid-wait): err = %v (%T), want *engine.RetryableError", err, err)
+	}
+}
+
+// TestHandleDynamic_Relative_RequeueResumesOriginalDeadline is the core
+// #273 regression: a relative dynamic delay's first dispatch persists a
+// fire-at deadline; a requeue (simulated here by re-dispatching against a
+// cancelled context, mirroring a restart) must resume toward that SAME
+// deadline rather than resolving a new one an hour later.
+func TestHandleDynamic_Relative_RequeueResumesOriginalDeadline(t *testing.T) {
+	s := newStore(t)
+	d := NewDelayWait(s)
+
+	cv := json.RawMessage(`{"type":"dynamic","dynamicKey":"payload.wait","dynamicKind":"relative"}`)
+	payload := json.RawMessage(`{"wait":{"amount":1,"unit":"hours"}}`)
+	seedDelayRun(t, s, "run_requeue", "S1", cv, payload)
+
+	dispatchCancelled(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_requeue", StepID: "S1"})
+	first, err := s.DelayDeadlines().Get(context.Background(), "run_requeue", "S1")
+	if err != nil {
+		t.Fatalf("Get after first dispatch: %v", err)
+	}
+
+	// Requeue: dispatch again. If the bug were present, this would resolve a
+	// brand new "now + 1h" deadline roughly an hour after the first.
+	dispatchCancelled(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_requeue", StepID: "S1"})
+	second, err := s.DelayDeadlines().Get(context.Background(), "run_requeue", "S1")
+	if err != nil {
+		t.Fatalf("Get after requeue: %v", err)
+	}
+
+	if !second.Equal(first) {
+		t.Fatalf("requeue changed the deadline: first=%v second=%v", first, second)
+	}
+}
+
+// TestHandleDynamic_Relative_RepeatedRequeuesDoNotExtendWait proves the
+// acceptance criterion literally: many requeues in a row never push the
+// persisted deadline later than the first resolution.
+func TestHandleDynamic_Relative_RepeatedRequeuesDoNotExtendWait(t *testing.T) {
+	s := newStore(t)
+	d := NewDelayWait(s)
+
+	cv := json.RawMessage(`{"type":"dynamic","dynamicKey":"payload.wait","dynamicKind":"relative"}`)
+	payload := json.RawMessage(`{"wait":{"amount":2,"unit":"hours"}}`)
+	seedDelayRun(t, s, "run_repeat", "S1", cv, payload)
+
+	var deadlines []time.Time
+	for i := 0; i < 5; i++ {
+		dispatchCancelled(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_repeat", StepID: "S1"})
+		got, err := s.DelayDeadlines().Get(context.Background(), "run_repeat", "S1")
+		if err != nil {
+			t.Fatalf("Get after dispatch %d: %v", i, err)
+		}
+		deadlines = append(deadlines, got)
+	}
+	for i := 1; i < len(deadlines); i++ {
+		if !deadlines[i].Equal(deadlines[0]) {
+			t.Fatalf("deadline drifted across requeues: dispatch 0 = %v, dispatch %d = %v", deadlines[0], i, deadlines[i])
+		}
+	}
+}
+
+// TestHandleDynamic_Relative_SurvivesPastStepOutputsRetentionWindow covers a
+// delay longer than step_outputs' 7-day retention window, proving the
+// deadline is not subject to that purge: the deadline row is backdated past 7
+// days and a subsequent requeue still resumes toward the original deadline.
+func TestHandleDynamic_Relative_SurvivesPastStepOutputsRetentionWindow(t *testing.T) {
+	s := newStore(t)
+	d := NewDelayWait(s)
+
+	cv := json.RawMessage(`{"type":"dynamic","dynamicKey":"payload.wait","dynamicKind":"relative"}`)
+	payload := json.RawMessage(`{"wait":{"amount":30,"unit":"days"}}`)
+	seedDelayRun(t, s, "run_long", "S1", cv, payload)
+
+	dispatchCancelled(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_long", StepID: "S1"})
+	before, err := s.DelayDeadlines().Get(context.Background(), "run_long", "S1")
+	if err != nil {
+		t.Fatalf("Get after first dispatch: %v", err)
+	}
+
+	// Backdate the row's created_at to 8 days ago -- past step_outputs' 7-day
+	// retention window -- directly against the writer pool.
+	writer, _ := s.Pools()
+	backdated := timestamp.Format(time.Now().Add(-8 * 24 * time.Hour))
+	if _, err := writer.ExecContext(
+		context.Background(),
+		`UPDATE delay_deadlines SET created_at = ? WHERE run_id = ? AND step_id = ?`,
+		backdated, "run_long", "S1",
+	); err != nil {
+		t.Fatalf("backdate created_at: %v", err)
+	}
+
+	dispatchCancelled(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_long", StepID: "S1"})
+	after, err := s.DelayDeadlines().Get(context.Background(), "run_long", "S1")
+	if err != nil {
+		t.Fatalf("Get after requeue past 7 days: %v", err)
+	}
+	if !after.Equal(before) {
+		t.Fatalf("deadline changed after surviving past the 7-day step_outputs window: before=%v after=%v", before, after)
+	}
+}
+
+// TestHandleDynamic_Instant_WritesNoDeadlineRow proves the absolute
+// dynamic-delay form is unaffected: it never reads or writes a deadline row,
+// resolving straight from the payload's RFC3339 timestamp on every dispatch.
+func TestHandleDynamic_Instant_WritesNoDeadlineRow(t *testing.T) {
+	s := newStore(t)
+	d := NewDelayWait(s)
+
+	cv := json.RawMessage(`{"type":"dynamic","dynamicKey":"payload.sendAt","dynamicKind":"instant"}`)
+	payload := json.RawMessage(`{"sendAt":"2099-01-01T00:00:00Z"}`)
+	seedDelayRun(t, s, "run_instant", "S1", cv, payload)
+
+	dispatchCancelled(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_instant", StepID: "S1"})
+
+	if _, err := s.DelayDeadlines().Get(context.Background(), "run_instant", "S1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("instant dynamic delay wrote a deadline row: err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestHandleScheduled_WritesNoDeadlineRow proves the scheduled (calendar)
+// delay form is unaffected: it recomputes its next occurrence from the
+// calendar on every dispatch and never touches delay_deadlines.
+func TestHandleScheduled_WritesNoDeadlineRow(t *testing.T) {
+	s := newStore(t)
+	d := NewDelayWait(s)
+
+	cv := json.RawMessage(`{"type":"scheduled","atTime":"09:00"}`)
+	seedDelayRun(t, s, "run_scheduled", "S1", cv, json.RawMessage(`{}`))
+
+	dispatchCancelled(t, d.HandleScheduled, engine.TaskPayload{RunID: "run_scheduled", StepID: "S1"})
+
+	if _, err := s.DelayDeadlines().Get(context.Background(), "run_scheduled", "S1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("scheduled delay wrote a deadline row: err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestHandleDynamic_Relative_ClearsDeadlineOnCompletion proves the row is
+// cleared on normal completion so the common path does not accumulate rows.
+// Uses a sub-second wait so the test actually completes the delay for real.
+func TestHandleDynamic_Relative_ClearsDeadlineOnCompletion(t *testing.T) {
+	s := newStore(t)
+	d := NewDelayWait(s)
+
+	cv := json.RawMessage(`{"type":"dynamic","dynamicKey":"payload.wait","dynamicKind":"relative"}`)
+	payload := json.RawMessage(`{"wait":{"amount":1,"unit":"seconds"}}`)
+	seedDelayRun(t, s, "run_complete", "S1", cv, payload)
+
+	ctx := context.Background()
+	if _, err := d.HandleDynamic(ctx, engine.TaskPayload{RunID: "run_complete", StepID: "S1"}); err != nil {
+		t.Fatalf("HandleDynamic: %v", err)
+	}
+
+	if _, err := s.DelayDeadlines().Get(ctx, "run_complete", "S1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deadline row not cleared on completion: err = %v, want ErrNotFound", err)
 	}
 }

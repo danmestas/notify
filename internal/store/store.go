@@ -152,6 +152,15 @@ func (s *Store) BuilderSessions() BuilderSessionRepo {
 	return &builderSessionRepo{w: s.writer, r: s.reader}
 }
 
+// DelayDeadlines vends the relative-dynamic-delay deadline repository: the
+// delivery delay worker resolves a relative {amount,unit} wait into a fixed
+// fire-at instant on first dispatch, persists it here, and reuses it on every
+// requeue so a restart mid-wait resumes toward the original deadline instead
+// of restarting the full duration.
+func (s *Store) DelayDeadlines() DelayDeadlineRepo {
+	return &delayDeadlineRepo{w: s.writer, r: s.reader}
+}
+
 // Pools exposes the writer/reader pairs so sibling bounded-context stores
 // (internal/agents/store) run their Scope-enforced queries over the same
 // SQLite database and migration set instead of opening parallel pools.
