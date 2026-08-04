@@ -16,9 +16,9 @@ import (
 // static cross-reference of every class a template names against the stylesheet
 // that is supposed to define it.
 //
-// This test is that cross-reference. New templates must only use classes that
-// app.css actually defines; the allowlist below pins the drift that already
-// existed when the guard landed so it can be burned down without blocking work.
+// This test is that cross-reference. Every class a template names must be
+// defined in app.css -- no exceptions. (The allowlist that once pinned
+// pre-existing drift is gone; danmestas/notify#259 burned it down to empty.)
 
 // templateActions strips {{ ... }} before any class="" parsing happens.
 //
@@ -39,32 +39,48 @@ var (
 // statically, so it is skipped rather than reported as a false positive.
 const dynamicMarker = "\x00"
 
-// knownCSSDrift is pre-existing, deliberately frozen debt: classes referenced by
-// a template but absent from app.css as of the guard landing. It exists so the
-// guard can be enforced immediately instead of waiting on a 28-template
-// restyling. Entries may only be REMOVED -- adding one means new drift shipped,
-// which is exactly what this test exists to prevent.
+// knownCSSDrift pins undefined-class references that PRE-DATE the guard covering
+// the directory they live in.
 //
-// Tracked for burn-down in danmestas/notify#259.
+// The guard originally globbed "templates/*.html" only, so templates/partials/
+// was never checked -- 124 references across 29 partials accumulated unseen
+// while the top-level templates were burned down to zero. Making the walk
+// recursive surfaced them all at once; pinning them here keeps the guard
+// enforcing on every file from now on, rather than leaving half the markup
+// unguarded to avoid an uncomfortable list.
+//
+// Entries may only be REMOVED. Adding one means new drift shipped, which is
+// exactly what this test exists to prevent. Burn-down tracked in #259.
 var knownCSSDrift = map[string][]string{
-	"agent_conversation.html":   {"agent-conversation"},
-	"analytics.html":            {"analytics-toolbar", "analytics-workflow-filter", "analytics-workflow-filter-label"},
-	"api_keys.html":             {"console-secret-reveal", "console-secret-value"},
-	"context_detail.html":       {"console-card-danger", "console-pre"},
-	"contexts.html":             {"form-error"},
-	"dashboard.html":            {"dashboard-chart"},
-	"integrations.html":         {"integration-connect-drawer", "integration-detail-drawer", "integration-detail-empty", "integration-detail-inner", "integration-layout", "integration-signpost-link"},
-	"layout.html":               {"console-env-name", "console-sidebar-extlink", "console-sidebar-footer", "theme-toggle-icon"},
-	"layout_editor.html":        {"console-confirm-banner", "console-help", "console-text", "console-textarea-mono", "layout-editor-form"},
-	"stream_sources.html":       {"console-secret-reveal", "console-secret-value", "form-help"},
-	"topic_detail.html":         {"subscriber-row-actions", "topic-add-member"},
-	"translation_editor.html":   {"console-card-value", "console-editor-layout", "console-editor-main", "console-editor-sidebar", "console-textarea-mono", "translation-editor-form"},
-	"translation_settings.html": {"console-help"},
-	"variable_detail.html":      {"console-card-danger", "form-error"},
-	"workflow_activity.html":    {"activity-col-run", "wf-activity-table"},
-	"workflow_detail.html":      {"wf-code-block", "wf-copy-btn", "wf-payload-schema", "wf-payload-schema-title", "wf-status-current", "wf-step-controls", "wf-step-controls-summary", "wf-step-header", "wf-step-id", "wf-step-item", "wf-step-list", "wf-step-name", "wf-step-type-chip"},
-	"workflow_test.html":        {"console-banner--info", "console-banner--warning", "console-form-hint", "wf-test-payload-textarea", "wf-test-run-id"},
-	"workflows.html":            {"wf-create-ai-link"},
+	"partials/activity_detail_panel.html":      {"activity-detail-actions", "activity-resend-btn"},
+	"partials/activity_row.html":               {"activity-row--live"},
+	"partials/activity_tbody.html":             {"activity-pagination-row"},
+	"partials/agents_tbody.html":               {"agent-row-actions"},
+	"partials/ai_builder_canvas.html":          {"ai-canvas"},
+	"partials/ai_copilot_panel.html":           {"ai-copilot-note", "ai-copilot-note-error"},
+	"partials/ai_message.html":                 {"ai-action-discard", "ai-action-keep", "ai-action-retry"},
+	"partials/analytics_charts.html":           {"analytics-chart-svg--failed", "analytics-chart-svg--runs"},
+	"partials/contexts_tbody.html":             {"confirm-row"},
+	"partials/domains_tbody.html":              {"badge", "badge-danger", "badge-neutral", "badge-success"},
+	"partials/empty_state.html":                {"console-action"},
+	"partials/environments_tbody.html":         {"confirm-row", "console-label"},
+	"partials/global_conversations_tbody.html": {"console-truncate"},
+	"partials/integration_detail.html":         {"console-form-field", "console-form-label", "integration-activity-section", "integration-confirm-delete-actions", "integration-cred-hint", "integration-cred-label", "integration-cred-list", "integration-cred-value", "integration-danger-label", "integration-danger-zone", "integration-delete-btn", "integration-delete-confirm-btn", "integration-delete-form", "integration-detail-active", "integration-detail-header", "integration-detail-label", "integration-detail-readonly", "integration-detail-tabs", "integration-detail-title", "integration-edit-form", "integration-identifier", "integration-provider-label", "integration-section-title", "integration-testsend-btn", "integration-testsend-form", "integration-testsend-zone", "integration-toggle-form", "integration-verify-btn", "integration-verify-confirm-btn", "integration-verify-form", "integration-verify-zone"},
+	"partials/integration_provider_form.html":  {"console-form-field", "console-form-label", "integration-create-form"},
+	"partials/integrations_grid.html":          {"integration-col-actions", "integration-col-channel", "integration-col-identifier", "integration-col-primary", "integration-col-provider", "integration-col-status", "integration-configure-btn", "integration-identifier", "integration-provider-label", "integration-table-row"},
+	"partials/layouts_tbody.html":              {"confirm-row"},
+	"partials/page_header.html":                {"page-header-tile-link"},
+	"partials/stream_sources_tbody.html":       {"confirm-row", "console-input-sm", "edit-row", "form-inline-label", "stream-source-limits-form"},
+	"partials/subscriber_custom_fields.html":   {"btn-ghost", "subscriber-custom-fields", "wf-condition-add-btn", "wf-condition-field", "wf-condition-remove-btn", "wf-condition-row", "wf-condition-value", "wf-conditions", "wf-conditions-actions", "wf-conditions-hint", "wf-conditions-legend"},
+	"partials/subscribers_tbody.html":          {"console-action", "subscriber-col-actions", "subscriber-col-email", "subscriber-col-name", "subscriber-col-phone", "subscriber-table-row", "subscribers-pagination-row"},
+	"partials/topics_tbody.html":               {"console-action", "topic-col-actions", "topic-col-key", "topic-col-members", "topic-col-name", "topic-key-code", "topic-table-row"},
+	"partials/translations_tbody.html":         {"confirm-row"},
+	"partials/variables_tbody.html":            {"confirm-row"},
+	"partials/webhooks_tbody.html":             {"confirm-row"},
+	"partials/workflow_activity_row.html":      {"activity-run-link", "wf-activity-row", "wf-activity-row--live"},
+	"partials/workflow_activity_tbody.html":    {"activity-pagination-row", "activity-run-link", "wf-activity-row"},
+	"partials/workflow_step_editor.html":       {"btn-ghost", "checkbox-pill", "checkbox-row", "form-hint-inline", "wf-condition-add-btn", "wf-condition-field", "wf-condition-on", "wf-condition-operator", "wf-condition-remove-btn", "wf-condition-row", "wf-condition-value", "wf-conditions", "wf-conditions-actions", "wf-conditions-hint", "wf-conditions-legend"},
+	"partials/workflows_list.html":             {"wf-copy-btn", "wf-kebab-btn"},
 }
 
 // TestCSS_NoUndefinedClassesInTemplates fails when a console template names a
@@ -74,16 +90,36 @@ var knownCSSDrift = map[string][]string{
 func TestCSS_NoUndefinedClassesInTemplates(t *testing.T) {
 	defined := definedClasses(t)
 
-	templates, err := filepath.Glob(filepath.Join("templates", "*.html"))
-	if err != nil {
-		t.Fatalf("glob templates: %v", err)
+	// Walks templates/ RECURSIVELY. The original guard globbed "templates/*.html"
+	// only, which silently excluded templates/partials/ -- where a large share of
+	// the console's markup lives, including the step editor. That blind spot let
+	// the guard report a clean tree while 124 undefined references sat unchecked
+	// one directory down, which is worse than no guard: it converts an unknown
+	// into a false assurance.
+	var templates []string
+	if err := filepath.WalkDir("templates", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(path, ".html") {
+			templates = append(templates, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk templates: %v", err)
 	}
 	if len(templates) == 0 {
 		t.Fatal("no templates found -- the guard would vacuously pass")
 	}
 
 	for _, path := range templates {
-		name := filepath.Base(path)
+		// Keyed by path relative to templates/ so a partial and a top-level file
+		// of the same base name cannot collide in the allowlist.
+		name, err := filepath.Rel("templates", path)
+		if err != nil {
+			t.Fatalf("relativise %s: %v", path, err)
+		}
+
 		allowed := make(map[string]bool, len(knownCSSDrift[name]))
 		for _, c := range knownCSSDrift[name] {
 			allowed[c] = true
@@ -103,35 +139,6 @@ func TestCSS_NoUndefinedClassesInTemplates(t *testing.T) {
 				"Undefined classes render unstyled without any error. Either use an "+
 				"existing class family (chip*, console-card*, wf-meta-*) or add the "+
 				"rule to app.css.", name, strings.Join(undefined, " "))
-		}
-	}
-}
-
-// TestCSS_DriftAllowlistIsCurrent keeps the allowlist honest: once a class is
-// defined in app.css (or the template stops using it), its entry must go. Without
-// this, the allowlist would silently re-permit drift that was already fixed.
-func TestCSS_DriftAllowlistIsCurrent(t *testing.T) {
-	defined := definedClasses(t)
-
-	for name, classes := range knownCSSDrift {
-		path := filepath.Join("templates", name)
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			t.Errorf("allowlist names %s, which no longer exists -- drop the entry", name)
-			continue
-		}
-
-		used := make(map[string]bool)
-		for _, c := range classesUsedIn(t, path) {
-			used[c] = true
-		}
-
-		for _, class := range classes {
-			switch {
-			case defined[class]:
-				t.Errorf("allowlist keeps %s/%s, but app.css now defines it -- drop it from knownCSSDrift", name, class)
-			case !used[class]:
-				t.Errorf("allowlist keeps %s/%s, but the template no longer uses it -- drop it from knownCSSDrift", name, class)
-			}
 		}
 	}
 }

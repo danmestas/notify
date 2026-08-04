@@ -92,7 +92,7 @@
 
       {{if not $page.ReadOnly}}
       {{/* Add subscriber form */}}
-      <div class="topic-add-member" style="margin-bottom:var(--space-4)">
+      <div class="topic-add-member">
         <form method="POST" action="/console/topics/{{$page.Topic.Key}}/subscribers"
               class="console-filter-bar">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">

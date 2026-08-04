@@ -55,13 +55,13 @@
           <label class="form-label" for="new-stream-source-name">Name *</label>
           <input class="console-input" type="text" id="new-stream-source-name" name="name"
                  placeholder="token-relay" required aria-required="true" autofocus>
-          <p class="form-help">Lowercase letters, numbers, hyphens, and underscores.</p>
+          <p class="form-hint">Lowercase letters, numbers, hyphens, and underscores.</p>
         </div>
         <div class="form-row">
           <label class="form-label" for="new-stream-source-topic">Topic *</label>
           <input class="console-input" type="text" id="new-stream-source-topic" name="topic"
                  placeholder="agent.tokens" required aria-required="true">
-          <p class="form-help">Dot-separated tokens (letters, numbers, <code>_</code>, <code>-</code>). This is the topic your producers publish under and your consumers subscribe to; batches may extend it with a dot suffix.</p>
+          <p class="form-hint">Dot-separated tokens (letters, numbers, <code>_</code>, <code>-</code>). This is the topic your producers publish under and your consumers subscribe to; batches may extend it with a dot suffix.</p>
         </div>
         <div class="console-slideover-actions">
           <button type="button" class="btn btn-outline" data-on:click="$streamSourceNewOpen = false">Cancel</button>

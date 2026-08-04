@@ -289,6 +289,30 @@ code, .console-mono { font-family: var(--font-mono); font-size: 0.92em; }
 }
 
 .console-extlink-arrow { margin-left: auto; opacity: 0.7; }
+
+/* Footer block below the nav list: the dagnats cross-link, then the version
+   line. Pinned to the bottom of the flex-column sidebar because .console-nav
+   above it already claims the remaining space (flex: 1). */
+.console-sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+.console-sidebar-extlink {
+  display: flex;
+  align-items: center;
+  padding: var(--space-2);
+  border-radius: var(--radius-tile);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+.console-sidebar-extlink:hover {
+  color: var(--text-primary);
+  background: var(--accent-soft);
+  text-decoration: none;
+}
 .console-sidebar-version {
   margin: 0;
   padding: 0 var(--space-2);
@@ -398,6 +422,13 @@ code, .console-mono { font-family: var(--font-mono); font-size: 0.92em; }
   flex: none;
   border-radius: 50%;
   background: var(--status-success);
+}
+.console-env-name {
+  font-weight: 500;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .console-env-chevron { display: inline-flex; color: var(--text-secondary); }
 .console-env-menu {
@@ -789,6 +820,10 @@ input[type="checkbox"]:disabled { opacity: 0.5; cursor: not-allowed; }
 .card-title { margin: 0; font-size: 0.95rem; font-weight: 600; }
 .card-subtitle { margin: 2px 0 0; color: var(--text-secondary); font-size: 0.82rem; }
 
+/* Matches its .dashboard-lower row-mate .dashboard-activity's tighter, uniform
+   padding override. */
+.dashboard-chart { padding: var(--space-4); }
+
 .dashboard-chart-head {
   display: flex;
   align-items: flex-start;
@@ -1058,6 +1093,16 @@ a.activity-item-run { color: var(--accent); }
   background: rgba(26, 127, 55, 0.10);
 }
 .console-banner--success strong { color: var(--status-success); }
+.console-banner--warning {
+  border-color: var(--status-warning);
+  background: rgba(154, 103, 0, 0.10);
+}
+.console-banner--warning strong { color: var(--status-warning); }
+.console-banner--info {
+  border-color: var(--status-info);
+  background: rgba(9, 105, 218, 0.10);
+}
+.console-banner--info strong { color: var(--status-info); }
 
 /* Form/result alert callouts (FormError, API-key reveal, …). Were undefined →
    rendered as bare prose. Both modifier spellings (-danger and --error) are in
@@ -1080,6 +1125,27 @@ a.activity-item-run { color: var(--accent); }
   border-color: var(--status-success);
   background: rgba(26, 127, 55, 0.10);
   color: var(--status-success);
+}
+
+/* One-time secret reveal row (API keys, stream source create) — a monospace
+   value with its copy/reveal control alongside, either standalone in a
+   .console-card or nested inside a .console-alert-success reveal-once card. */
+.console-secret-reveal {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.console-secret-value {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-tile);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
 }
 
 .console-login-hint {
@@ -1497,6 +1563,25 @@ a.activity-item-run { color: var(--accent); }
   font-weight: 600;
 }
 
+/* Wayfinding link to the stream-sources catalog. Composes with .integration-tab
+   for size/padding but sits outside the segmented .integration-channel-tabs
+   group, so it needs its own (non-toggle) look: a real border instead of the
+   group's transparent one, and an accent hover like other "go elsewhere"
+   links instead of the tab's is-active treatment. */
+.integration-signpost-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  color: var(--text-secondary);
+}
+.integration-signpost-link:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  text-decoration: none;
+}
+
 /* ===== connect-integration drawer (content) ============= */
 /* The drawer chrome (panel/header/close) reuses the shared .console-slideover
    pattern; only the connect-specific inner content is styled here. The body
@@ -1512,6 +1597,24 @@ a.activity-item-run { color: var(--accent); }
 .integration-provider-form-inner {
   display: grid;
   gap: var(--space-4);
+}
+
+/* Detail + connect drawers both widen a step past the shared
+   .console-slideover's 420px default -- one holds the full credential
+   fieldset, the other the provider grid -- so the constrained default reads
+   cramped. */
+.integration-detail-drawer,
+.integration-connect-drawer {
+  width: min(480px, 100vw);
+}
+/* Result banners stacked above the swapped #integration-detail fragment. */
+.integration-detail-inner {
+  display: grid;
+  gap: var(--space-3);
+}
+.integration-detail-empty {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
 }
 
 /* Step-1 channel tabs — underline-active tab row. */
@@ -1860,6 +1963,12 @@ a.activity-item-run { color: var(--accent); }
 .activity-col-transaction { width: 18%; max-width: 130px; }
 .activity-col-channel     { width: 80px; }
 .activity-col-created     { width: 90px; white-space: nowrap; color: var(--text-secondary); font-size: 0.82rem; }
+.activity-col-run         { width: 90px; }
+
+/* Per-workflow activity tab: the live-tail SSE stream prepends rows in real
+   time (see workflow_activity.html's data-init), so a fixed layout keeps the
+   explicit column widths above from shifting as new rows land. */
+.wf-activity-table { table-layout: fixed; }
 
 .activity-workflow-name {
   font-weight: 500;
@@ -2128,6 +2237,24 @@ a.activity-item-run { color: var(--accent); }
 }
 
 /* ===== analytics page ============================================== */
+
+/* Toolbar row: range tabs on the left, workflow filter on the right. */
+.analytics-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.analytics-workflow-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.analytics-workflow-filter-label {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
 
 /* Range selector tabs */
 .analytics-range-tabs {
@@ -2434,6 +2561,10 @@ a.activity-item-run { color: var(--accent); }
 }
 .console-card-actions { margin-top: var(--space-5); }
 
+/* Danger-zone card (context/variable delete confirm). */
+.console-card-danger { border-color: var(--status-danger); }
+.console-card-danger .console-card-title { color: var(--status-danger); }
+
 /* Meta list (key-value pairs) */
 .wf-meta-list {
   display: grid;
@@ -2505,6 +2636,18 @@ a.activity-item-run { color: var(--accent); }
   max-width: 480px;
 }
 
+/* Read-only text value, styled at the same size as .console-input so a page
+   looks the same switching between edit and read-only mode. */
+.console-text {
+  margin: 0;
+  padding: var(--space-2) 0;
+  font-size: 0.9rem;
+}
+
+/* Layout editor form: wider than .console-form's 480px cap because it holds
+   a full HTML template textarea, not short fields. */
+.layout-editor-form { max-width: 900px; }
+
 /* Multi-line input. Composes WITH .console-input (templates write
    class="console-input console-textarea"), so this adds only what a textarea
    needs and inherits border/padding/background from the input rule. */
@@ -2512,6 +2655,29 @@ a.activity-item-run { color: var(--accent); }
   min-height: 120px;
   line-height: 1.5;
   resize: vertical;
+}
+
+/* Monospace template/code editing (layout content, translation values).
+   Composes WITH .console-input in edit mode (class="console-input
+   console-textarea-mono") for the mono font only; the read-only view renders
+   a bare <pre>, which needs the full input-like box on its own. */
+.console-textarea-mono {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+pre.console-textarea-mono {
+  display: block;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--bg);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 480px;
+  overflow-y: auto;
 }
 
 /* Secondary line under a .console-card-title. */
@@ -2522,6 +2688,35 @@ a.activity-item-run { color: var(--accent); }
 }
 .subscriber-edit-form,
 .topic-edit-form { max-width: 480px; }
+
+/* Translation editor: JSON content on the left, locale/delete cards on the
+   right. Same split-column shape as .wf-preview-split, kept as its own named
+   family since it holds unrelated sidebar cards rather than a live preview. */
+.console-editor-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: var(--space-4);
+  align-items: start;
+}
+@media (max-width: 800px) {
+  .console-editor-layout { grid-template-columns: 1fr; }
+}
+.console-editor-main { min-width: 0; }
+.console-editor-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+/* Readability cap on the JSON textarea -- unconstrained it would stretch
+   edge-to-edge on a wide viewport. */
+.translation-editor-form { max-width: 720px; }
+.console-card-value {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
 
 /* Subscriber custom-fields editor (L10) — lays the key/value/remove row out
    horizontally instead of the wf-condition-row default vertical stack (the
@@ -2607,6 +2802,14 @@ a.activity-item-run { color: var(--accent); }
 }
 .subscriber-run-link:hover { text-decoration: underline; }
 
+/* Topic detail: add-member form and the inline two-step remove confirm. */
+.topic-add-member { margin-bottom: var(--space-4); }
+.subscriber-row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 /* Muted text helper */
 .console-muted { color: var(--text-secondary); }
 
@@ -2682,6 +2885,11 @@ a.activity-item-run { color: var(--accent); }
    next, so a conversation did not read as a conversation. Each turn becomes a
    bounded block, and the user/agent modifiers get opposing accent edges so the
    speaker is legible from shape alone rather than by reading every chip. */
+
+/* Page-root gap tightened to space-4 (dashboard's precedent) -- the transcript
+   and compose box each carry their own space-4 top margin, so the section's
+   default space-5 gap on top of that reads as a double gap above them. */
+.agent-conversation { gap: var(--space-4); }
 .agent-transcript {
   display: flex;
   flex-direction: column;
@@ -2772,6 +2980,8 @@ a.activity-item-run { color: var(--accent); }
   margin-bottom: var(--space-4);
 }
 .console-slideover-header .console-card-title { margin: 0; }
+/* AI entry point atop the workflow-create slideover form. */
+.wf-create-ai-link { margin-bottom: var(--space-4); }
 /* The drawer close button must always be visible — .btn-icon defaults to
    opacity:0 (it only reveals on table-row hover), which would hide the × on
    every slide-over. Force it visible with a real affordance. */
@@ -2801,6 +3011,20 @@ a.activity-item-run { color: var(--accent); }
   color: var(--text-secondary);
   font-size: 0.875rem;
 }
+
+/* Standalone delete-confirm banner (layout editor: the confirm sits at the
+   top of the page rather than inline in a .console-action-row). */
+.console-confirm-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--status-danger);
+  border-radius: var(--radius-tile);
+  background: var(--danger-soft);
+}
+.console-confirm-banner .console-confirm-label { color: var(--status-danger); }
 
 /* ===== create-mode tabs (workflow create: Manual | Guided) ================ */
 /* Wrapper for the reactive create-mode tabs. Mirrors .console-tab-bar so the
@@ -3535,6 +3759,66 @@ a.activity-item-run { color: var(--accent); }
   margin-top: var(--space-2);
 }
 
+/* Step list (workflow detail page + its version-history panel). */
+.wf-step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+.wf-step-item {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-tile);
+  padding: var(--space-3);
+}
+.wf-step-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.wf-step-id {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+.wf-step-name {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+.wf-step-controls {
+  margin-top: var(--space-2);
+}
+.wf-step-controls-summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+.wf-code-block {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-tile);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  overflow-x: auto;
+}
+.wf-payload-schema {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+.wf-payload-schema-title {
+  margin: 0 0 var(--space-2);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.wf-status-current {
+  margin: 0 0 var(--space-3);
+}
+
 .btn-icon-danger {
   color: var(--danger);
 }
@@ -3580,6 +3864,17 @@ a.activity-item-run { color: var(--accent); }
 #workflow-step-editor {
   padding: var(--space-4);
 }
+
+/* ===== workflow test tab =================================================== */
+
+.wf-test-payload-textarea {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  resize: vertical;
+}
+/* Defense-in-depth against a pathologically long run id blowing out the
+   flex-wrap banner it sits in -- see .wf-meta-row dd for the same guard. */
+.wf-test-run-id { overflow-wrap: anywhere; }
 
 /* ===== W4-W3: Handlebars live-preview pane ================================ */
 
