@@ -52,10 +52,23 @@
               <button type="submit" class="btn-icon" title="Move down" aria-label="Move step down">{{ uiIcon "arrow-down" }}</button>
             </form>
             {{end}}
-            <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/steps/{{$step.StepID}}/delete" style="display:inline">
-              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-              <button type="submit" class="btn-icon btn-icon-danger" title="Remove step" aria-label="Remove step">{{ uiIcon "x" }}</button>
-            </form>
+            {{/* Two-step confirm, matching every other destructive action in the
+                 console. Scoped to this step id, not a page-level flag: a
+                 workflow has several steps and a shared flag would let a confirm
+                 raised for one delete another. */}}
+            {{if eq $page.ConfirmDeleteStep $step.StepID}}
+            <span class="wf-step-confirm-delete">
+              Remove <strong>{{$step.StepID}}</strong>?
+              <a href="/console/workflows/{{$page.TriggerIdentifier}}" class="btn btn-sm btn-outline">Cancel</a>
+              <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/steps/{{$step.StepID}}/delete" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <button type="submit" class="btn btn-sm btn-danger">Remove</button>
+              </form>
+            </span>
+            {{else}}
+            <a href="/console/workflows/{{$page.TriggerIdentifier}}?confirmDeleteStep={{$step.StepID}}"
+               class="btn-icon btn-icon-danger" title="Remove step" aria-label="Remove step {{$step.StepID}}">{{ uiIcon "x" }}</a>
+            {{end}}
           </div>
           {{end}}
           {{if $step.ControlValuesJSON}}

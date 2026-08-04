@@ -93,6 +93,11 @@ type workflowEditorView struct {
 	// ConfirmRollback names the version id awaiting inline rollback confirm
 	// (?confirmRollback=<id>), mirroring ConfirmDelete's two-step pattern.
 	ConfirmRollback string
+	// ConfirmDeleteStep names the step id awaiting inline delete confirm
+	// (?confirmDeleteStep=<id>). Per-step rather than a page-level flag: a
+	// workflow has several steps, and a shared flag would let a confirm raised
+	// for one step delete another.
+	ConfirmDeleteStep string
 	// VersionsError reports that Deps.WorkflowVersions.ListByWorkflow failed
 	// (logged, non-fatal). Distinguishes a backend error from a genuinely
 	// empty version history so the panel doesn't show "No versions published
@@ -227,6 +232,7 @@ func (c *Console) serveWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 		Versions:             versionRows,
 		VersionsAvailable:    versionsAvailable,
 		ConfirmRollback:      r.URL.Query().Get("confirmRollback"),
+		ConfirmDeleteStep:    r.URL.Query().Get("confirmDeleteStep"),
 		VersionsError:        versionsError,
 	}
 	c.renderPage(w, r, http.StatusOK, "workflow-detail", wf.Name, view)
