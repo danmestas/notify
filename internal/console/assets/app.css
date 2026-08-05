@@ -2813,6 +2813,16 @@ pre.console-textarea-mono {
 /* Muted text helper */
 .console-muted { color: var(--text-secondary); }
 
+/* Why a message was skipped. Deliberately NOT styled as an error: a honoured
+   subscriber preference is the system working correctly, and colouring it like
+   a failure would prompt an operator to "fix" something that is not broken. */
+.activity-detail-message-skip {
+  margin: var(--space-1) 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+
 /* Inline confirm shown in place of a step's remove button. Sits in the step
    row's action cluster, so it stays on one line rather than reflowing the row. */
 .wf-step-confirm-delete {

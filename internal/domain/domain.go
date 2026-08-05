@@ -172,7 +172,13 @@ type Message struct {
 	Archived      bool   `db:"archived"`
 	TransactionID string `db:"transaction_id"`
 	ErrorText     string `db:"error_text"`
-	CreatedAt     string `db:"created_at"`
+	// SkipReason names the gate that skipped this message when Status is
+	// "skipped". Empty for every other status. Kept separate from ErrorText
+	// because a skip is not an error -- a honoured subscriber preference is the
+	// system working correctly, and filing it under error_text would read as a
+	// fault to anyone inspecting the row.
+	SkipReason string `db:"skip_reason"`
+	CreatedAt  string `db:"created_at"`
 	// Extras is the in_app rich-field snapshot (avatar, primaryAction,
 	// secondaryAction, redirect, data) captured at send time, mirroring the reference
 	// inbox notification shape. Non-in_app messages and rows written before

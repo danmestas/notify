@@ -1,0 +1,12 @@
+-- 0032: record WHY a message was skipped.
+--
+-- persistSkipped is reached from two different gates -- a step's filter
+-- condition evaluating false, and a subscriber's channel preference -- and both
+-- wrote the same undifferentiated status 'skipped'. An operator could not tell
+-- whether their workflow was misconfigured (fix the condition) or the system had
+-- correctly honoured a subscriber's explicit choice (nothing to fix). Those
+-- imply opposite actions.
+--
+-- Additive and defaulted, so existing rows and the 'skipped' status value are
+-- unchanged; only the reason is new.
+ALTER TABLE messages ADD COLUMN skip_reason TEXT NOT NULL DEFAULT '';

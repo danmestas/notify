@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/domain"
 )
 
@@ -167,8 +168,11 @@ func staticFuncMap() template.FuncMap {
 		"actionArgs": func(label, href string, readOnly bool) actionButton {
 			return actionButton{Label: label, Href: href, ReadOnly: readOnly}
 		},
-		"jsEscape": jsEscapeStringLiteral,
-		"json":     jsonLiteral,
+		// skipReasonLabel turns a stored skip reason into operator-facing text.
+		// The stored values are stable identifiers; the wording is presentation.
+		"skipReasonLabel": skipReasonLabel,
+		"jsEscape":        jsEscapeStringLiteral,
+		"json":            jsonLiteral,
 		// not negates a boolean; used in templates that cannot use "if not x"
 		// (which is valid Go template syntax but can look ambiguous for readers).
 		"not": func(v bool) bool { return !v },
@@ -633,4 +637,22 @@ type actionButton struct {
 	Label    string
 	Href     string
 	ReadOnly bool
+}
+
+// skipReasonLabel renders a message's skip reason for an operator. Each says
+// what happened AND whether anything needs doing, because the whole point of
+// recording the reason is that "skipped" alone prompts the wrong action.
+func skipReasonLabel(reason string) string {
+	switch reason {
+	case delivery.SkipReasonCondition:
+		return "Skipped: this step's condition did not match."
+	case delivery.SkipReasonConditionInvalid:
+		return "Skipped: this step's condition could not be evaluated, so the send was blocked. Check the filter."
+	case delivery.SkipReasonPreference:
+		return "Skipped: the subscriber has this channel turned off."
+	case "":
+		return ""
+	default:
+		return "Skipped: " + reason
+	}
 }

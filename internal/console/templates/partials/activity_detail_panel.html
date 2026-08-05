@@ -106,6 +106,12 @@
           {{if .Content}}
           <p class="activity-detail-message-content">{{.Content}}</p>
           {{end}}
+          {{/* A bare "skipped" cannot distinguish a misconfigured workflow from
+               a correctly-honoured subscriber preference -- opposite conclusions
+               for an operator -- so the gate that skipped it is named. */}}
+          {{if .SkipReason}}
+          <p class="activity-detail-message-skip">{{skipReasonLabel .SkipReason}}</p>
+          {{end}}
           {{if .ErrorText}}
           <p class="activity-detail-message-error">{{.ErrorText}}</p>
           {{end}}

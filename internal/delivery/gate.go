@@ -24,18 +24,30 @@ import (
 // can test On='<httpRequestStepId>' Field='statusCode'. A nil/empty map simply
 // contributes no extra sources (the 99% no-action-step path is unchanged).
 func conditionMet(filters json.RawMessage, subMap, payloadMap map[string]any, stepOutputs map[string]map[string]any) bool {
+	met, _ := conditionOutcome(filters, subMap, payloadMap, stepOutputs)
+	return met
+}
+
+// conditionOutcome is conditionMet plus WHY it said no: invalid reports that the
+// filter could not be evaluated, as distinct from evaluating honestly to false.
+//
+// Both skip the send -- the gate fails closed on purpose, so a broken condition
+// can never blast a send to every subscriber -- but they mean opposite things to
+// an operator. A false condition is the workflow working; an unevaluable one is
+// a bug that has been silently suppressing sends.
+func conditionOutcome(filters json.RawMessage, subMap, payloadMap map[string]any, stepOutputs map[string]map[string]any) (met, invalid bool) {
 	if len(bytes.TrimSpace(filters)) == 0 {
 		// Absent, empty, or whitespace-only => no condition => always send.
-		return true
+		return true, false
 	}
 	var groups []filter.Group
 	if err := json.Unmarshal(filters, &groups); err != nil {
 		// Malformed condition: fail closed (skip), do not send.
-		return false
+		return false, true
 	}
 	if len(groups) == 0 {
 		// Explicit empty array is equivalent to no condition.
-		return true
+		return true, false
 	}
 	sources := map[string]map[string]any{
 		"subscriber": subMap,
@@ -48,8 +60,10 @@ func conditionMet(filters json.RawMessage, subMap, payloadMap map[string]any, st
 	}
 	ok, err := filter.Match(groups, filter.EvalContext{Sources: sources})
 	if err != nil {
-		// Evaluation error: fail closed (skip), do not send.
-		return false
+		// Evaluation error: fail closed (skip), do not send. This is the same
+		// "could not evaluate" class as a malformed condition, not an honest
+		// false, so it reports invalid.
+		return false, true
 	}
-	return ok
+	return ok, false
 }

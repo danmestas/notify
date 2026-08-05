@@ -5,7 +5,7 @@ import "testing"
 func TestMigrate_0010_AppliesAgents(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 31 {
+	if n := migrationCount(t, s); n != 32 {
 		t.Fatalf("expected 31 recorded migrations, got %d", n)
 	}
 

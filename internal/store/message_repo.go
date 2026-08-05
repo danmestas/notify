@@ -35,7 +35,7 @@ type messageRepo struct {
 // constant and the corresponding Scan call.
 const messageColumns = `id, org_id, environment_id, workflow_id, notification_id, run_id, step_id,
 	subscriber_id, channel, provider_id, integration_id, content, subject, status, seen, read,
-	archived, transaction_id, error_text, created_at, extras`
+	archived, transaction_id, error_text, skip_reason, created_at, extras`
 
 func scanMessage(rows *sql.Rows) (domain.Message, error) {
 	var m domain.Message
@@ -43,7 +43,7 @@ func scanMessage(rows *sql.Rows) (domain.Message, error) {
 	err := rows.Scan(
 		&m.ID, &m.OrgID, &m.EnvID, &m.WorkflowID, &m.NotificationID, &m.RunID, &m.StepID,
 		&m.SubscriberID, &m.Channel, &m.ProviderID, &m.IntegrationID, &m.Content, &m.Subject,
-		&m.Status, &m.Seen, &m.Read, &m.Archived, &m.TransactionID, &m.ErrorText, &m.CreatedAt,
+		&m.Status, &m.Seen, &m.Read, &m.Archived, &m.TransactionID, &m.ErrorText, &m.SkipReason, &m.CreatedAt,
 		&extras,
 	)
 	m.Extras = json.RawMessage(extras)
@@ -72,11 +72,11 @@ func (repo *messageRepo) Create(ctx context.Context, scope domain.Scope, m domai
 		`INSERT INTO messages
 		   (id, org_id, environment_id, workflow_id, notification_id, run_id, step_id, subscriber_id,
 		    channel, provider_id, integration_id, content, subject, status, seen, read, archived,
-		    transaction_id, error_text, created_at, extras)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    transaction_id, error_text, skip_reason, created_at, extras)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.OrgID, m.EnvID, m.WorkflowID, m.NotificationID, m.RunID, m.StepID, m.SubscriberID,
 		m.Channel, m.ProviderID, m.IntegrationID, m.Content, m.Subject, m.Status, m.Seen, m.Read,
-		m.Archived, m.TransactionID, m.ErrorText, m.CreatedAt, []byte(m.Extras),
+		m.Archived, m.TransactionID, m.ErrorText, m.SkipReason, m.CreatedAt, []byte(m.Extras),
 	)
 	if err != nil {
 		return domain.Message{}, err

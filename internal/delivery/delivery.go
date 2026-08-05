@@ -160,8 +160,12 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	// unevaluable) condition SKIPS the send. Absent/empty filters always run. A
 	// malformed condition fails closed (skip) so a broken condition never blasts
 	// a send to every subscriber.
-	if !conditionMet(env.Step.Filters, subMap, payloadMap, stepOutputs) {
-		return h.persistSkipped(ctx, env, t, subject, content)
+	if met, invalid := conditionOutcome(env.Step.Filters, subMap, payloadMap, stepOutputs); !met {
+		reason := SkipReasonCondition
+		if invalid {
+			reason = SkipReasonConditionInvalid
+		}
+		return h.persistSkipped(ctx, env, t, subject, content, reason)
 	}
 
 	// Optional throttle gate. When the step configures a limit and a throttler
@@ -181,7 +185,7 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	if h.prefs != nil {
 		enabled, perr := h.prefs.ChannelEnabled(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical)
 		if perr == nil && !enabled {
-			return h.persistSkipped(ctx, env, t, subject, content)
+			return h.persistSkipped(ctx, env, t, subject, content, SkipReasonPreference)
 		}
 	}
 
@@ -226,10 +230,26 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	return out, nil
 }
 
+// Why a send was skipped. Recorded on the message so an operator can tell a
+// misconfigured workflow from a correctly-honoured subscriber choice -- the two
+// look identical as a bare "skipped" and call for opposite responses.
+const (
+	// SkipReasonCondition: the step's filter condition evaluated false.
+	SkipReasonCondition = "condition"
+	// SkipReasonConditionInvalid: the filter could not be evaluated at all. The
+	// gate fails CLOSED, so a broken condition skips rather than sending to
+	// everyone -- which makes it indistinguishable from an honest false without
+	// this distinction, and it is the case most likely to be a real bug.
+	SkipReasonConditionInvalid = "condition_invalid"
+	// SkipReasonPreference: the subscriber has this channel disabled. Not a
+	// fault; the system did exactly what was asked.
+	SkipReasonPreference = "preference"
+)
+
 // persistSkipped records a status:"skipped" in-app message (the channel is
 // disabled by subscriber preference) and returns its JSON with a nil error.
 // No send occurs; this mirrors the existing skipped/failed-message pattern.
-func (h *Handler) persistSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, subject, content string) (json.RawMessage, error) {
+func (h *Handler) persistSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, subject, content, reason string) (json.RawMessage, error) {
 	metrics.Delivery("in_app", metrics.OutcomeSkipped)
 	msg := domain.Message{
 		ID:             store.NewULID(),
@@ -245,6 +265,7 @@ func (h *Handler) persistSkipped(ctx context.Context, env runenv.InAppEnvelope, 
 		Content:        content,
 		Subject:        subject,
 		Status:         "skipped",
+		SkipReason:     reason,
 		Seen:           false,
 		Read:           false,
 		Archived:       false,
