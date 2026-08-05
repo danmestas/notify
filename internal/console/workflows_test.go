@@ -20,6 +20,7 @@ import (
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/delivery/filter"
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -248,9 +249,19 @@ func TestWorkflowDetail_RendersDefinition(t *testing.T) {
 
 // TestWorkflowDetail_AddStepMenuContainsAllRegisteredTypes asserts that the
 // add-step button list is driven by the steptype registry and includes every
-// registered type — specifically the three that were missing from the previous
-// hardcoded list: chat, throttle, and http_request.
-func TestWorkflowDetail_AddStepMenuContainsAllRegisteredTypes(t *testing.T) {
+// registered type, chat among them.
+//
+// The list was already registry-driven when this test was written; #164
+// described a hardcoded list that no longer existed. The test exists so that
+// stays true -- the registry and the menu can only be kept in step by something
+// that fails when they diverge.
+// TestWorkflowDetail_AddStepMenuMatchesRegistryCatalog derives the expected
+// add-step buttons from steptype.Default().Catalog() itself rather than a
+// hand-maintained literal — a hardcoded expectation list can drift from the
+// registry exactly like the template it was meant to guard. Registering a
+// new step type (or renaming a DisplayName) must fail this test until the
+// template picks it up, since both sides read the same Catalog().
+func TestWorkflowDetail_AddStepMenuMatchesRegistryCatalog(t *testing.T) {
 	tc := newTestConsole(t)
 	tc.seedWorkflow(t, "MyFlow", "my-flow")
 	cookie, _ := tc.login(t)
@@ -261,17 +272,57 @@ func TestWorkflowDetail_AddStepMenuContainsAllRegisteredTypes(t *testing.T) {
 	}
 	body := rr.Body.String()
 
-	// All ten registered types must appear as hidden type inputs in the add-step
-	// form buttons. Three were missing from the old hardcoded list; stream is the
-	// newest addition and must be Catalog-driven, not hardcoded.
-	wantTypes := []string{
-		"in_app", "email", "push", "chat", "sms",
-		"delay", "digest", "throttle", "http_request", "stream",
+	catalog := steptype.Default().Catalog()
+	if len(catalog) == 0 {
+		t.Fatal("registry catalog is empty")
 	}
-	for _, typ := range wantTypes {
-		needle := `name="type" value="` + typ + `"`
-		if !strings.Contains(body, needle) {
-			t.Errorf("add-step menu missing type %q (needle %q not found)", typ, needle)
+	for _, entry := range catalog {
+		typeNeedle := `name="type" value="` + entry.Name + `"`
+		if !strings.Contains(body, typeNeedle) {
+			t.Errorf("add-step menu missing type %q (needle %q not found)", entry.Name, typeNeedle)
+		}
+		labelNeedle := ">+ " + entry.Label + "</button>"
+		if !strings.Contains(body, labelNeedle) {
+			t.Errorf("add-step menu missing label %q for type %q (needle %q not found)", entry.Label, entry.Name, labelNeedle)
+		}
+	}
+
+	// chat must be reachable. It is the type most likely to be dropped from a
+	// hand-maintained list, which is what this guards against.
+	if !strings.Contains(body, `name="type" value="chat"`) {
+		t.Error("add-step menu missing chat, which must be offered now that the list is registry-driven")
+	}
+
+	// The number of add-step buttons must equal the catalog size — no extra,
+	// stale, or duplicated entries.
+	gotButtons := strings.Count(body, `class="btn btn-outline btn-sm">+ `)
+	if gotButtons != len(catalog) {
+		t.Errorf("add-step menu has %d buttons, want %d (one per registered type)", gotButtons, len(catalog))
+	}
+}
+
+// TestWorkflowDetail_ReadOnlyHidesAddStepMenu asserts the add-step controls
+// stay gated on Deps.ReadOnly now that they are registry-driven: a read-only
+// console must not offer any add-step buttons or expose the step-type
+// catalog to unauthenticated mutation.
+func TestWorkflowDetail_ReadOnlyHidesAddStepMenu(t *testing.T) {
+	tc := newTestConsoleReadOnly(t)
+	tc.seedWorkflow(t, "MyFlow", "my-flow")
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/workflows/my-flow", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /console/workflows/my-flow: status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+
+	if strings.Contains(body, "wf-add-step") {
+		t.Error("ReadOnly detail page has the add-step section, want it hidden")
+	}
+	for _, entry := range steptype.Default().Catalog() {
+		needle := `name="type" value="` + entry.Name + `"`
+		if strings.Contains(body, needle) {
+			t.Errorf("ReadOnly detail page has an add-step button for %q, want none", entry.Name)
 		}
 	}
 }
