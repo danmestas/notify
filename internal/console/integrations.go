@@ -718,13 +718,15 @@ func (c *Console) handleIntegrationTestSend(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	destination := strings.TrimSpace(r.PostForm.Get("destination"))
-	if destination == "" {
-		http.Error(w, "destination is required", http.StatusBadRequest)
-		return
-	}
 	message := r.PostForm.Get("message")
 
 	backURL := "/console/integrations/" + url.PathEscape(id)
+
+	if destination == "" {
+		http.Redirect(w, r, backURL+"?testSendError="+
+			url.QueryEscape("Destination is required."), http.StatusSeeOther)
+		return
+	}
 
 	if c.deps.Connectivity == nil {
 		http.Redirect(w, r, backURL+"?testSendError="+

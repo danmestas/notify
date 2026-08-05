@@ -28,8 +28,11 @@ func TestTestSend_ReadOnlyBlocked(t *testing.T) {
 	}
 }
 
-// TestTestSend_EmptyDestination400: a blank destination is a client error.
-func TestTestSend_EmptyDestination400(t *testing.T) {
+// TestTestSend_WhitespaceDestinationRedirectsWithBanner: a whitespace-only
+// destination slips past the browser's HTML5 required check, so the server
+// must trim-and-reject the same way every other test-send failure does —
+// a 303 back to the drawer with ?testSendError=, not a raw 400 page.
+func TestTestSend_WhitespaceDestinationRedirectsWithBanner(t *testing.T) {
 	tc := newTestConsole(t)
 	in := tc.seedIntegration(t, domain.Integration{
 		ProviderID: "smtp", Channel: "email", Identifier: "smtp-1",
@@ -39,8 +42,15 @@ func TestTestSend_EmptyDestination400(t *testing.T) {
 
 	rr := tc.postForm(t, "/console/integrations/"+in.ID+"/test-send",
 		url.Values{"csrf_token": {csrf}, "destination": {"   "}}, cookie)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("empty destination test-send status = %d, want 400", rr.Code)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("whitespace destination test-send status = %d, want 303", rr.Code)
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/console/integrations/"+in.ID) {
+		t.Fatalf("whitespace destination test-send Location = %q, want prefix /console/integrations/%s", loc, in.ID)
+	}
+	if !strings.Contains(loc, "testSendError=") {
+		t.Errorf("whitespace destination test-send Location = %q, want testSendError query param", loc)
 	}
 }
 
