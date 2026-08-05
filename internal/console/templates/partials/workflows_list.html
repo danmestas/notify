@@ -72,6 +72,8 @@
     <div class="wf-kebab">
       <button type="button" class="btn-icon wf-kebab-btn" aria-label="Actions" onclick="this.nextElementSibling.classList.toggle('is-open')">{{ uiIcon "more-horizontal" }}</button>
       <div class="wf-kebab-menu">
+        <a class="wf-kebab-item" href="/console/workflows/{{.TriggerIdentifier}}/activity">Activity</a>
+        <a class="wf-kebab-item" href="/console/workflows/{{.TriggerIdentifier}}/test">Test</a>
         <a class="wf-kebab-item" href="/console/workflows/{{.TriggerIdentifier}}/duplicate">Duplicate</a>
         {{/* Set wfConfirmDelete signal then @get — Datastar drops literal
              query params from @get URLs so the value must travel as a signal.

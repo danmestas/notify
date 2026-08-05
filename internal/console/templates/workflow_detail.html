@@ -4,7 +4,11 @@
 
   <div class="console-action-row">
     <a class="btn btn-outline" href="/console/workflows">{{ uiIcon "arrow-left" }} Back</a>
+    {{/* Activity is read-only, so it stays available in read-only mode. Test
+         fires a real trigger, so it is gated with the other mutations below. */}}
+    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}/activity">Activity</a>
     {{if not $page.ReadOnly}}
+    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}/test">Test</a>
     <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}/duplicate">Duplicate</a>
     {{if $page.ConfirmDelete}}
     <span class="console-confirm-label">Delete "{{$page.Name}}"? All history is retained.</span>
