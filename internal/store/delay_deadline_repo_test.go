@@ -151,10 +151,12 @@ func TestDelayDeadlineRepo_SurvivesPastStepOutputsRetentionWindow(t *testing.T) 
 	}
 }
 
-// TestDelayDeadlineRepo_SaveSweepsRowsPastMaxAge proves the opportunistic
-// backstop: Save deletes rows older than maxDelayDeadlineAge (abandoned by a
-// run that never reached Clear) but leaves rows within it untouched.
-func TestDelayDeadlineRepo_SaveSweepsRowsPastMaxAge(t *testing.T) {
+// TestDelayDeadlineRepo_PurgeOlderThanSweepsExpiredRows proves the
+// background-purge mechanism: PurgeOlderThan deletes rows older than the
+// given cutoff (abandoned by a run that never reached Clear) but leaves
+// rows within it untouched. This is the retention path startDelayDeadlinePurge
+// drives from cmd/notify/retention.go -- Save itself no longer sweeps.
+func TestDelayDeadlineRepo_PurgeOlderThanSweepsExpiredRows(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t)
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
@@ -166,7 +168,7 @@ func TestDelayDeadlineRepo_SaveSweepsRowsPastMaxAge(t *testing.T) {
 		t.Fatalf("seed recent: %v", err)
 	}
 
-	expired := timestamp.Format(time.Now().Add(-(maxDelayDeadlineAge + 24*time.Hour)))
+	expired := timestamp.Format(time.Now().Add(-(MaxDelayDeadlineAge + 24*time.Hour)))
 	if _, err := s.writer.ExecContext(
 		ctx,
 		`UPDATE delay_deadlines SET created_at = ? WHERE run_id = ?`, expired, "run_old",
@@ -174,15 +176,49 @@ func TestDelayDeadlineRepo_SaveSweepsRowsPastMaxAge(t *testing.T) {
 		t.Fatalf("backdate: %v", err)
 	}
 
-	// Any Save triggers the opportunistic sweep.
-	if err := s.DelayDeadlines().Save(ctx, scope, "run_trigger", "step_1", time.Now()); err != nil {
-		t.Fatalf("trigger sweep: %v", err)
+	cutoff := time.Now().Add(-MaxDelayDeadlineAge)
+	n, err := s.DelayDeadlines().PurgeOlderThan(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("PurgeOlderThan: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("PurgeOlderThan rows = %d, want 1", n)
 	}
 
 	if _, err := s.DelayDeadlines().Get(ctx, "run_old", "step_1"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("run_old survived the sweep: err = %v, want ErrNotFound", err)
+		t.Fatalf("run_old survived the purge: err = %v, want ErrNotFound", err)
 	}
 	if _, err := s.DelayDeadlines().Get(ctx, "run_recent", "step_1"); err != nil {
-		t.Fatalf("run_recent wrongly swept: %v", err)
+		t.Fatalf("run_recent wrongly purged: %v", err)
+	}
+}
+
+// TestDelayDeadlineRepo_SaveDoesNotPurgeExpiredRows proves Save is a pure
+// write path now: an expired row left over from before this change is not
+// touched by a subsequent Save. Only PurgeOlderThan (driven by the
+// boot-plus-ticker retention loop) removes expired rows.
+func TestDelayDeadlineRepo_SaveDoesNotPurgeExpiredRows(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	if err := s.DelayDeadlines().Save(ctx, scope, "run_old", "step_1", time.Now()); err != nil {
+		t.Fatalf("seed old: %v", err)
+	}
+
+	expired := timestamp.Format(time.Now().Add(-(MaxDelayDeadlineAge + 24*time.Hour)))
+	if _, err := s.writer.ExecContext(
+		ctx,
+		`UPDATE delay_deadlines SET created_at = ? WHERE run_id = ?`, expired, "run_old",
+	); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+
+	if err := s.DelayDeadlines().Save(ctx, scope, "run_trigger", "step_1", time.Now()); err != nil {
+		t.Fatalf("unrelated Save: %v", err)
+	}
+
+	if _, err := s.DelayDeadlines().Get(ctx, "run_old", "step_1"); err != nil {
+		t.Fatalf("run_old wrongly swept by Save: %v, want nil (Save must not delete)", err)
 	}
 }

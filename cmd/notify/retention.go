@@ -28,6 +28,12 @@ const (
 	// ceiling, not a deadline, so an interval well under the window keeps the
 	// table bounded without the purge itself being load.
 	stepOutputPurgeInterval = 6 * time.Hour
+
+	// delayDeadlinePurgeInterval is how often the delay_deadlines purge runs.
+	// store.MaxDelayDeadlineAge is measured in months, so this can be far
+	// coarser than stepOutputPurgeInterval without letting the table grow
+	// unboundedly between runs.
+	delayDeadlinePurgeInterval = 24 * time.Hour
 )
 
 // startStepOutputPurge runs the retention purge once immediately, then on an
@@ -57,6 +63,51 @@ func startStepOutputPurge(ctx context.Context, st *store.Store) {
 	go func() {
 		purge()
 		t := time.NewTicker(stepOutputPurgeInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				purge()
+			}
+		}
+	}()
+}
+
+// startDelayDeadlinePurge runs the delay_deadlines retention purge once
+// immediately, then on an interval until ctx is cancelled.
+//
+// Rows here used to be swept only as a side effect of DelayDeadlines().Save,
+// which meant a deployment that stopped creating new relative dynamic delays
+// stopped sweeping too -- exactly the unbounded growth retention exists to
+// prevent. Moving to the same boot-plus-ticker shape as startStepOutputPurge
+// closes that gap: the purge now runs regardless of traffic.
+//
+// The immediate pass matters for the same reason as startStepOutputPurge's:
+// a process that restarts more often than the interval would otherwise never
+// purge at all.
+//
+// Failures are logged and the loop continues. A purge that cannot run is a
+// table that grows, not a request that fails, so it must never take the
+// process down with it.
+func startDelayDeadlinePurge(ctx context.Context, st *store.Store) {
+	purge := func() {
+		cutoff := time.Now().Add(-store.MaxDelayDeadlineAge)
+		n, err := st.DelayDeadlines().PurgeOlderThan(ctx, cutoff)
+		switch {
+		case err != nil:
+			slog.Default().Error("retention: delay_deadlines purge failed",
+				"err", err, "cutoff", cutoff)
+		case n > 0:
+			slog.Default().Info("retention: purged delay_deadlines",
+				"rows", n, "olderThan", store.MaxDelayDeadlineAge.String())
+		}
+	}
+
+	go func() {
+		purge()
+		t := time.NewTicker(delayDeadlinePurgeInterval)
 		defer t.Stop()
 		for {
 			select {

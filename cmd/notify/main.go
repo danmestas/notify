@@ -218,6 +218,10 @@ func runServe(args []string) error {
 	// step_outputs grows without bound otherwise: every http_request action
 	// writes a row holding the captured response body and nothing removed them.
 	startStepOutputPurge(ctx, st)
+	// delay_deadlines grows without bound otherwise once a deployment stops
+	// creating new relative dynamic delays: Save no longer sweeps, so nothing
+	// else would ever reclaim an abandoned deadline row.
+	startDelayDeadlinePurge(ctx, st)
 
 	// All step-task handlers register in one place so the set can be compared
 	// mechanically against steptype.Registry.TaskTypes() -- see the coverage test.
