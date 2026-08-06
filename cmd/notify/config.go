@@ -26,6 +26,10 @@ type config struct {
 	meshAllow   string
 	meshNATSURL string
 
+	// Comma-separated exact hosts exempted from the outbound SSRF guard.
+	// Empty -- the default -- blocks every internal range, as before.
+	ssrfAllowedHosts string
+
 	// Inbound email loop.
 	inboundSecret string
 	inboundMXHost string
@@ -108,6 +112,7 @@ func loadConfig(args []string) (config, error) {
 	dev := fs.Bool("dev", envBool("NOTIFY_DEV"), "allow booting without -master-key-hex/NOTIFY_MASTER_KEY_HEX by deriving a fixed, insecure dev key (development only)")
 	meshAllow := fs.String("mesh-allow", envOr("NOTIFY_MESH_ALLOW", mesh.DefaultAllowedSubjects), "allowlist pattern for mesh agent dispatch subjects")
 	meshNATSURL := fs.String("mesh-nats-url", envOr("NOTIFY_MESH_NATS_URL", ""), "NATS URL for mesh agent dispatch; empty reuses -nats-url (set when agents live on a different hub than the engine)")
+	ssrfAllow := fs.String("ssrf-allow", envOr("NOTIFY_SSRF_ALLOWED_HOSTS", ""), "comma-separated exact hosts (no wildcards) that outbound HTTP steps may reach despite resolving to an internal address; empty blocks all internal ranges")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -126,6 +131,8 @@ func loadConfig(args []string) (config, error) {
 		masterKey:   mk,
 		meshAllow:   *meshAllow,
 		meshNATSURL: *meshNATSURL,
+
+		ssrfAllowedHosts: *ssrfAllow,
 
 		inboundSecret: os.Getenv("NOTIFY_INBOUND_SECRET"),
 		inboundMXHost: os.Getenv("NOTIFY_INBOUND_MX_HOST"),

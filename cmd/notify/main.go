@@ -29,6 +29,7 @@ import (
 	"github.com/danmestas/notify/internal/console"
 	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/credverify"
+	"github.com/danmestas/notify/internal/delivery/httpaction"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/emailloop"
 	"github.com/danmestas/notify/internal/engine"
@@ -153,6 +154,13 @@ func runServe(args []string) error {
 		return err
 	}
 	mk := cfg.masterKey
+
+	// Installs the outbound SSRF allowlist process-wide, like observe.Setup
+	// below. It must happen before anything dials: an unset value leaves the
+	// guard blocking every internal range, which is the default posture.
+	if err := httpaction.ConfigureAllowlist(cfg.ssrfAllowedHosts); err != nil {
+		return err
+	}
 
 	// One secret box for at-rest encryption of declared secret control fields
 	// (http_request headers). Shared by authoring (seal on write) and the

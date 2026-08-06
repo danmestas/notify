@@ -1,6 +1,7 @@
 package httpaction
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -43,9 +44,9 @@ var blockedNets = func() []*net.IPNet {
 // net.IP classifier methods via To4() so they are caught correctly without
 // special handling here.
 //
-// TODO(future): extend with an allowlist hook when operator-specific internal
-// host access is required. For v1, all of the above ranges are unconditionally
-// blocked.
+// These ranges are blocked unconditionally. The only exemption is an operator
+// naming a specific host in the allowlist (see allowlist.go), which is applied
+// by hostname before dialling rather than by relaxing this classifier.
 func IsBlockedIP(ip net.IP) bool {
 	if ip.IsLoopback() ||
 		ip.IsLinkLocalUnicast() ||
@@ -107,15 +108,32 @@ func NewSSRFSafeClientWithTimeout(d time.Duration) *http.Client {
 // existing failure policy (fail_closed → NonRetryableError; continue → zero-value
 // output) without any special casing here.
 //
-// TODO(future): accept an allowlist option for operator-specific internal hosts.
+// Hosts named in the operator allowlist (see allowlist.go) are exempt from both
+// layers. The allowlist is read at dial time, not captured here, so a client
+// built in a package-level var still honours configuration loaded later.
 func NewSSRFSafeClient() *http.Client {
-	dialer := &net.Dialer{
+	guarded := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 		Control:   ssrfDialControl,
 	}
+	// Same dialer minus the guard, used only for explicitly allowlisted hosts.
+	allowed := &net.Dialer{
+		Timeout:   guarded.Timeout,
+		KeepAlive: guarded.KeepAlive,
+	}
+	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		// addr here is the host:port from the request URL, before DNS
+		// resolution -- so this compares the name the operator listed, which is
+		// what they can actually vouch for. The resolved-IP check still runs for
+		// every host that is not listed.
+		if host, _, err := net.SplitHostPort(addr); err == nil && hostAllowed(host) {
+			return allowed.DialContext(ctx, network, addr)
+		}
+		return guarded.DialContext(ctx, network, addr)
+	}
 	transport := &http.Transport{
-		DialContext:           dialer.DialContext,
+		DialContext:           dialContext,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
@@ -131,6 +149,9 @@ func NewSSRFSafeClient() *http.Client {
 			// Hostname-based redirects to private ranges are caught by the
 			// dial-time Control hook, which remains the definitive enforcement point.
 			host := req.URL.Hostname()
+			if hostAllowed(host) {
+				return nil
+			}
 			if ip := net.ParseIP(host); ip != nil && IsBlockedIP(ip) {
 				return fmt.Errorf("ssrf guard: redirect to blocked address %s", ip)
 			}
