@@ -4067,3 +4067,78 @@ input[type="checkbox"]::before {
   color: var(--accent);
   background: var(--accent-soft);
 }
+
+/* ==========================================================================
+   #259 burn-down: rules for classes the markup already named.
+   Every rule here is the minimum that makes the element read correctly, built
+   only from existing design tokens -- no new visual vocabulary.
+   ========================================================================== */
+
+/* Row states. A row mid-destructive-confirm or mid-inline-edit has to look
+   different from a normal row; both reuse the existing state tints rather than
+   introducing a colour. */
+.console-table tbody tr.confirm-row { background: var(--danger-soft); }
+.console-table tbody tr.edit-row { background: var(--accent-soft); }
+
+/* Conditions builder -- shared by the workflow step editor and subscriber
+   custom fields. The row is horizontal: the operand selects stay at a fixed
+   width and the free-text field/value absorb the remaining space. */
+.wf-conditions { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-3); }
+.wf-conditions-legend { padding: 0 var(--space-2); }
+.wf-conditions-hint { margin: 0 0 var(--space-3); }
+.wf-condition-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-2); margin-bottom: var(--space-2); }
+.wf-condition-on, .wf-condition-operator { flex: 0 0 auto; min-width: 8rem; }
+.wf-condition-field, .wf-condition-value { flex: 1 1 10rem; min-width: 0; }
+.wf-conditions-actions { display: flex; gap: var(--space-2); }
+.subscriber-custom-fields { margin-top: var(--space-4); }
+
+/* Checkbox pill group. */
+.checkbox-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.checkbox-pill { display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-pill); font-size: 0.8125rem; }
+
+/* Stream-source inline limits form: four label+input pairs and two buttons that
+   must fit one table row without overflowing it. */
+.stream-source-limits-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); }
+.form-inline-label { display: inline-flex; flex-direction: column; gap: var(--space-1); font-size: 0.8125rem; color: var(--text-secondary); }
+.console-input-sm { padding: var(--space-1) var(--space-2); font-size: 0.8125rem; max-width: 9ch; }
+
+/* Single-use elements. */
+.console-label { font-weight: 600; }
+.console-truncate { display: inline-block; max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.page-header-tile-link { display: inline-flex; align-items: center; gap: var(--space-2); color: inherit; text-decoration: none; }
+.activity-detail-actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); }
+.ai-copilot-note { margin-top: var(--space-2); font-size: 0.8125rem; color: var(--text-secondary); }
+.ai-copilot-note-error { color: var(--danger); }
+
+/* Integration detail. */
+.integration-detail-title { display: flex; align-items: center; gap: var(--space-2); }
+.integration-detail-active { color: var(--status-success); }
+.integration-detail-readonly { color: var(--text-secondary); }
+.integration-provider-label { font-weight: 600; }
+.integration-activity-section { display: grid; gap: var(--space-3); margin-top: var(--space-4); }
+.integration-cred-label { font-size: 0.8125rem; color: var(--text-secondary); }
+.integration-cred-value { margin: 0 0 var(--space-2); font-family: var(--font-mono); word-break: break-all; }
+.integration-cred-hint { font-size: 0.8125rem; color: var(--text-secondary); }
+.integration-verify-zone, .integration-testsend-zone { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
+
+/* Integrations grid columns. */
+.integration-col-provider,
+.integration-col-channel,
+.integration-col-identifier,
+.integration-col-status,
+.integration-col-primary { vertical-align: middle; }
+.integration-col-actions { text-align: right; white-space: nowrap; }
+
+/* These six are load-bearing DOM hooks -- console tests assert on them to
+   identify the resend/verify confirm buttons and the AI action row -- so they
+   stay in the markup and need a definition. Each sits inside a flex container
+   defined above; pinning them to their intrinsic width is the minimum that
+   makes the declaration real rather than decorative. */
+.activity-resend-btn,
+.integration-verify-btn,
+.ai-action-discard,
+.ai-action-keep,
+.ai-action-retry { flex: 0 0 auto; }
+
+/* A run link in a table cell should not wrap mid-identifier. */
+.activity-run-link { white-space: nowrap; }

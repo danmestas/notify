@@ -17,8 +17,8 @@ import (
 // that is supposed to define it.
 //
 // This test is that cross-reference. Every class a template names must be
-// defined in app.css, except for the pre-existing drift pinned in
-// knownCSSDrift, which danmestas/notify#259 is burning down to empty.
+// defined in app.css -- no exceptions. The allowlist that once pinned
+// pre-existing drift is gone; danmestas/notify#259 burned it down to empty.
 
 // templateActions strips {{ ... }} before any class="" parsing happens.
 //
@@ -38,39 +38,6 @@ var (
 // was assembled at render time (class="chip-{{.Status}}") and cannot be verified
 // statically, so it is skipped rather than reported as a false positive.
 const dynamicMarker = "\x00"
-
-// knownCSSDrift pins undefined-class references that PRE-DATE the guard covering
-// the directory they live in.
-//
-// The guard originally globbed "templates/*.html" only, so templates/partials/
-// was never checked -- 124 references across 29 partials accumulated unseen
-// while the top-level templates were burned down to zero. Making the walk
-// recursive surfaced them all at once; pinning them here keeps the guard
-// enforcing on every file from now on, rather than leaving half the markup
-// unguarded to avoid an uncomfortable list.
-//
-// Entries may only be REMOVED. Adding one means new drift shipped, which is
-// exactly what this test exists to prevent. Burn-down tracked in #259.
-var knownCSSDrift = map[string][]string{
-	"partials/activity_detail_panel.html":      {"activity-detail-actions", "activity-resend-btn"},
-	"partials/ai_copilot_panel.html":           {"ai-copilot-note", "ai-copilot-note-error"},
-	"partials/ai_message.html":                 {"ai-action-discard", "ai-action-keep", "ai-action-retry"},
-	"partials/contexts_tbody.html":             {"confirm-row"},
-	"partials/environments_tbody.html":         {"confirm-row", "console-label"},
-	"partials/global_conversations_tbody.html": {"console-truncate"},
-	"partials/integration_detail.html":         {"integration-activity-section", "integration-cred-hint", "integration-cred-label", "integration-cred-value", "integration-detail-active", "integration-detail-readonly", "integration-detail-title", "integration-provider-label", "integration-testsend-zone", "integration-verify-btn", "integration-verify-zone"},
-	"partials/integrations_grid.html":          {"integration-col-actions", "integration-col-channel", "integration-col-identifier", "integration-col-primary", "integration-col-provider", "integration-col-status", "integration-provider-label"},
-	"partials/layouts_tbody.html":              {"confirm-row"},
-	"partials/page_header.html":                {"page-header-tile-link"},
-	"partials/stream_sources_tbody.html":       {"confirm-row", "console-input-sm", "edit-row", "form-inline-label", "stream-source-limits-form"},
-	"partials/subscriber_custom_fields.html":   {"subscriber-custom-fields", "wf-condition-field", "wf-condition-row", "wf-condition-value", "wf-conditions", "wf-conditions-actions", "wf-conditions-hint", "wf-conditions-legend"},
-	"partials/translations_tbody.html":         {"confirm-row"},
-	"partials/variables_tbody.html":            {"confirm-row"},
-	"partials/webhooks_tbody.html":             {"confirm-row"},
-	"partials/workflow_activity_row.html":      {"activity-run-link"},
-	"partials/workflow_activity_tbody.html":    {"activity-run-link"},
-	"partials/workflow_step_editor.html":       {"checkbox-pill", "checkbox-row", "wf-condition-field", "wf-condition-on", "wf-condition-operator", "wf-condition-row", "wf-condition-value", "wf-conditions", "wf-conditions-actions", "wf-conditions-hint", "wf-conditions-legend"},
-}
 
 // TestCSS_NoUndefinedClassesInTemplates fails when a console template names a
 // class app.css does not define -- the defect from #117, where the domain detail
@@ -102,21 +69,16 @@ func TestCSS_NoUndefinedClassesInTemplates(t *testing.T) {
 	}
 
 	for _, path := range templates {
-		// Keyed by path relative to templates/ so a partial and a top-level file
-		// of the same base name cannot collide in the allowlist.
+		// Reported relative to templates/ so a partial and a top-level file of
+		// the same base name stay distinguishable in the failure message.
 		name, err := filepath.Rel("templates", path)
 		if err != nil {
 			t.Fatalf("relativise %s: %v", path, err)
 		}
 
-		allowed := make(map[string]bool, len(knownCSSDrift[name]))
-		for _, c := range knownCSSDrift[name] {
-			allowed[c] = true
-		}
-
 		var undefined []string
 		for _, class := range classesUsedIn(t, path) {
-			if defined[class] || allowed[class] {
+			if defined[class] {
 				continue
 			}
 			undefined = append(undefined, class)
@@ -174,39 +136,4 @@ func classesUsedIn(t *testing.T, path string) []string {
 		}
 	}
 	return out
-}
-
-// TestCSS_DriftAllowlistIsCurrent fails when an allowlist entry stops describing
-// reality: the template is gone, app.css has since defined the class, or the
-// template no longer references it.
-//
-// #259 measures progress by knownCSSDrift shrinking, which only means anything
-// if every remaining entry is still real drift. A stale entry overstates the
-// work left and, worse, silently re-permits its class -- someone could
-// reintroduce it into that template later and the guard would wave it through.
-// Entries may only be removed, so the map cannot rot in the other direction.
-func TestCSS_DriftAllowlistIsCurrent(t *testing.T) {
-	defined := definedClasses(t)
-
-	for name, classes := range knownCSSDrift {
-		path := filepath.Join("templates", name)
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("allowlist pins %q, which no longer exists -- delete the entry", name)
-			continue
-		}
-
-		used := make(map[string]bool)
-		for _, c := range classesUsedIn(t, path) {
-			used[c] = true
-		}
-
-		for _, c := range classes {
-			switch {
-			case defined[c]:
-				t.Errorf("allowlist pins %s -> %q, but app.css now defines that class -- delete the entry", name, c)
-			case !used[c]:
-				t.Errorf("allowlist pins %s -> %q, but the template no longer references it -- delete the entry", name, c)
-			}
-		}
-	}
 }
