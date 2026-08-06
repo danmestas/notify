@@ -17,8 +17,8 @@ import (
 // that is supposed to define it.
 //
 // This test is that cross-reference. Every class a template names must be
-// defined in app.css -- no exceptions. (The allowlist that once pinned
-// pre-existing drift is gone; danmestas/notify#259 burned it down to empty.)
+// defined in app.css, except for the pre-existing drift pinned in
+// knownCSSDrift, which danmestas/notify#259 is burning down to empty.
 
 // templateActions strips {{ ... }} before any class="" parsing happens.
 //
@@ -53,27 +53,23 @@ const dynamicMarker = "\x00"
 // exactly what this test exists to prevent. Burn-down tracked in #259.
 var knownCSSDrift = map[string][]string{
 	"partials/activity_detail_panel.html":      {"activity-detail-actions", "activity-resend-btn"},
-	"partials/agents_tbody.html":               {"agent-row-actions"},
 	"partials/ai_copilot_panel.html":           {"ai-copilot-note", "ai-copilot-note-error"},
 	"partials/ai_message.html":                 {"ai-action-discard", "ai-action-keep", "ai-action-retry"},
 	"partials/contexts_tbody.html":             {"confirm-row"},
-	"partials/domains_tbody.html":              {"badge", "badge-danger", "badge-neutral", "badge-success"},
 	"partials/environments_tbody.html":         {"confirm-row", "console-label"},
 	"partials/global_conversations_tbody.html": {"console-truncate"},
-	"partials/integration_detail.html":         {"console-form-field", "console-form-label", "integration-activity-section", "integration-confirm-delete-actions", "integration-cred-hint", "integration-cred-label", "integration-cred-list", "integration-cred-value", "integration-danger-label", "integration-danger-zone", "integration-detail-active", "integration-detail-header", "integration-detail-label", "integration-detail-readonly", "integration-detail-tabs", "integration-detail-title", "integration-edit-form", "integration-identifier", "integration-provider-label", "integration-section-title", "integration-testsend-form", "integration-testsend-zone", "integration-verify-btn", "integration-verify-zone"},
-	"partials/integration_provider_form.html":  {"console-form-field", "console-form-label", "integration-create-form"},
-	"partials/integrations_grid.html":          {"integration-col-actions", "integration-col-channel", "integration-col-identifier", "integration-col-primary", "integration-col-provider", "integration-col-status", "integration-configure-btn", "integration-identifier", "integration-provider-label"},
+	"partials/integration_detail.html":         {"integration-activity-section", "integration-cred-hint", "integration-cred-label", "integration-cred-value", "integration-detail-active", "integration-detail-readonly", "integration-detail-title", "integration-provider-label", "integration-testsend-zone", "integration-verify-btn", "integration-verify-zone"},
+	"partials/integrations_grid.html":          {"integration-col-actions", "integration-col-channel", "integration-col-identifier", "integration-col-primary", "integration-col-provider", "integration-col-status", "integration-provider-label"},
 	"partials/layouts_tbody.html":              {"confirm-row"},
 	"partials/page_header.html":                {"page-header-tile-link"},
 	"partials/stream_sources_tbody.html":       {"confirm-row", "console-input-sm", "edit-row", "form-inline-label", "stream-source-limits-form"},
-	"partials/subscriber_custom_fields.html":   {"subscriber-custom-fields", "wf-condition-field", "wf-condition-remove-btn", "wf-condition-row", "wf-condition-value", "wf-conditions", "wf-conditions-actions", "wf-conditions-hint", "wf-conditions-legend"},
-	"partials/topics_tbody.html":               {"topic-key-code"},
+	"partials/subscriber_custom_fields.html":   {"subscriber-custom-fields", "wf-condition-field", "wf-condition-row", "wf-condition-value", "wf-conditions", "wf-conditions-actions", "wf-conditions-hint", "wf-conditions-legend"},
 	"partials/translations_tbody.html":         {"confirm-row"},
 	"partials/variables_tbody.html":            {"confirm-row"},
 	"partials/webhooks_tbody.html":             {"confirm-row"},
 	"partials/workflow_activity_row.html":      {"activity-run-link"},
 	"partials/workflow_activity_tbody.html":    {"activity-run-link"},
-	"partials/workflow_step_editor.html":       {"checkbox-pill", "checkbox-row", "form-hint-inline", "wf-condition-field", "wf-condition-on", "wf-condition-operator", "wf-condition-remove-btn", "wf-condition-row", "wf-condition-value", "wf-conditions", "wf-conditions-actions", "wf-conditions-hint", "wf-conditions-legend"},
+	"partials/workflow_step_editor.html":       {"checkbox-pill", "checkbox-row", "wf-condition-field", "wf-condition-on", "wf-condition-operator", "wf-condition-row", "wf-condition-value", "wf-conditions", "wf-conditions-actions", "wf-conditions-hint", "wf-conditions-legend"},
 }
 
 // TestCSS_NoUndefinedClassesInTemplates fails when a console template names a
@@ -178,4 +174,39 @@ func classesUsedIn(t *testing.T, path string) []string {
 		}
 	}
 	return out
+}
+
+// TestCSS_DriftAllowlistIsCurrent fails when an allowlist entry stops describing
+// reality: the template is gone, app.css has since defined the class, or the
+// template no longer references it.
+//
+// #259 measures progress by knownCSSDrift shrinking, which only means anything
+// if every remaining entry is still real drift. A stale entry overstates the
+// work left and, worse, silently re-permits its class -- someone could
+// reintroduce it into that template later and the guard would wave it through.
+// Entries may only be removed, so the map cannot rot in the other direction.
+func TestCSS_DriftAllowlistIsCurrent(t *testing.T) {
+	defined := definedClasses(t)
+
+	for name, classes := range knownCSSDrift {
+		path := filepath.Join("templates", name)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("allowlist pins %q, which no longer exists -- delete the entry", name)
+			continue
+		}
+
+		used := make(map[string]bool)
+		for _, c := range classesUsedIn(t, path) {
+			used[c] = true
+		}
+
+		for _, c := range classes {
+			switch {
+			case defined[c]:
+				t.Errorf("allowlist pins %s -> %q, but app.css now defines that class -- delete the entry", name, c)
+			case !used[c]:
+				t.Errorf("allowlist pins %s -> %q, but the template no longer references it -- delete the entry", name, c)
+			}
+		}
+	}
 }

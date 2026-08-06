@@ -22,18 +22,18 @@
         <td><a href="/console/domains/{{.Name}}">{{.Name}}</a></td>
         <td>
           {{if eq .Status "verified"}}
-          <span class="badge badge-success">Verified</span>
+          <span class="chip chip-success">Verified</span>
           {{else if eq .Status "failed"}}
-          <span class="badge badge-danger">Failed</span>
+          <span class="chip chip-danger">Failed</span>
           {{else}}
-          <span class="badge badge-neutral">Pending</span>
+          <span class="chip chip-default">Pending</span>
           {{end}}
         </td>
         <td>
           {{if .MXConfigured}}
-          <span class="badge badge-success">Yes</span>
+          <span class="chip chip-success">Yes</span>
           {{else}}
-          <span class="badge badge-neutral">No</span>
+          <span class="chip chip-default">No</span>
           {{end}}
         </td>
         <td>

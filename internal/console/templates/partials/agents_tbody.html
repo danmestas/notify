@@ -40,7 +40,7 @@
           <td>{{.Channels}}</td>
           <td class="console-muted">{{.UpdatedAt}}</td>
           <td>
-            <div class="agent-row-actions">
+            <div class="subscriber-row-actions">
               <a class="btn-icon" href="/console/agents/{{.Identifier}}" title="View agent">{{ uiIcon "arrow-up-right" }}</a>
               {{if not $frag.ReadOnly}}
               {{if eq $frag.ConfirmDelete .Identifier}}

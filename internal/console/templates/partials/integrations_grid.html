@@ -50,7 +50,7 @@
     <span class="activity-channel-badge activity-channel-badge--{{.Channel}}">{{.ChannelLabel}}</span>
   </td>
   <td class="integration-col-identifier">
-    <code class="integration-identifier">{{.Identifier}}</code>
+    <code class="subscriber-id-code">{{.Identifier}}</code>
   </td>
   <td class="integration-col-status">
     {{if .Active}}
@@ -68,7 +68,7 @@
   </td>
   <td class="integration-col-actions">
     <button type="button"
-            class="btn btn-outline integration-configure-btn"
+            class="btn btn-outline btn-sm"
             aria-label="Configure {{.ProviderLabel}}"
             data-on:click.stop="$integrationDetailId={{.ID | jsEscape}};$integrationDetailOpen=true;@get('/console/api/fragments/integration-detail?id='+$integrationDetailId)">
       Configure

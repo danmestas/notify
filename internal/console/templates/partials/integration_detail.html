@@ -18,7 +18,7 @@
   </div>
   {{else}}
   {{$in := .Integration}}
-  <div class="integration-detail-header">
+  <div class="console-slideover-header">
     <div class="integration-detail-title">
       <span class="integration-provider-icon integration-provider-icon--sm">{{providerIcon $in.ProviderID}}</span>
       <span class="integration-provider-label">{{$in.ProviderLabel}}</span>
@@ -35,10 +35,10 @@
     </button>
   </div>
 
-  <code class="integration-identifier">{{$in.Identifier}}</code>
+  <code class="subscriber-id-code">{{$in.Identifier}}</code>
 
   {{/* Tab bar */}}
-  <nav class="integration-detail-tabs" aria-label="Integration detail tabs">
+  <nav class="console-tabs" aria-label="Integration detail tabs">
     <button type="button"
             class="integration-detail-tab{{if or (eq $.ActiveTab "settings") (eq $.ActiveTab "")}} is-active{{end}}"
             data-on:click="@get('/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}})">
@@ -56,7 +56,7 @@
 
   {{/* Active toggle */}}
   <div class="integration-detail-active">
-    <span class="integration-detail-label">Status</span>
+    <span class="form-label">Status</span>
     {{if $in.Active}}
     <span class="chip chip-success" title="Enabled — not a live health check">active</span>
     {{else}}
@@ -138,10 +138,10 @@
     {{end}}
 
     {{if $.CanTestSend}}
-    <form method="post" action="/console/integrations/{{$in.ID}}/test-send" class="integration-testsend-form">
+    <form method="post" action="/console/integrations/{{$in.ID}}/test-send" class="console-form">
       <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-      <div class="console-form-field">
-        <label class="console-form-label" for="testsend-destination-{{$in.ID}}">
+      <div class="form-row">
+        <label class="form-label" for="testsend-destination-{{$in.ID}}">
           {{if eq $in.Channel "email"}}Test email address
           {{else if eq $in.Channel "sms"}}Test phone (E.164)
           {{else if eq $in.Channel "push"}}Topic / device token
@@ -155,8 +155,8 @@
                autocomplete="off"
                required>
       </div>
-      <div class="console-form-field">
-        <label class="console-form-label" for="testsend-message-{{$in.ID}}">Message (optional)</label>
+      <div class="form-row">
+        <label class="form-label" for="testsend-message-{{$in.ID}}">Message (optional)</label>
         <input type="text"
                id="testsend-message-{{$in.ID}}"
                name="message"
@@ -173,7 +173,7 @@
   <div class="integration-detail-readonly">
     <p class="console-lede">Console is read-only; mutations are disabled.</p>
     {{if .CredFields}}
-    <dl class="integration-cred-list">
+    <dl class="wf-meta-list">
       {{range .CredFields}}
       <dt class="integration-cred-label">{{.Label}}</dt>
       <dd class="integration-cred-value"><code>{{.Value}}</code></dd>
@@ -184,13 +184,13 @@
   {{else}}
   <form method="post"
         action="/console/integrations/{{$in.ID}}"
-        class="integration-edit-form"
+        class="console-form"
         autocomplete="off">
     <input type="hidden" name="_method" value="PUT">
     <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
 
-    <div class="console-form-field">
-      <label class="console-form-label" for="edit-identifier-{{$in.ID}}">Identifier</label>
+    <div class="form-row">
+      <label class="form-label" for="edit-identifier-{{$in.ID}}">Identifier</label>
       <input type="text"
              id="edit-identifier-{{$in.ID}}"
              name="identifier"
@@ -199,8 +199,8 @@
              required>
     </div>
 
-    <div class="console-form-field">
-      <label class="console-form-label" for="edit-primary-{{$in.ID}}">
+    <div class="form-row">
+      <label class="form-label" for="edit-primary-{{$in.ID}}">
         <input type="checkbox"
                id="edit-primary-{{$in.ID}}"
                name="primary"
@@ -218,8 +218,8 @@
         Replace only the fields you want to update.
       </p>
       {{range .CredFields}}
-      <div class="console-form-field">
-        <label class="console-form-label" for="edit-{{.Key}}-{{$in.ID}}">
+      <div class="form-row">
+        <label class="form-label" for="edit-{{.Key}}-{{$in.ID}}">
           {{.Label}}{{if .Required}} <span aria-hidden="true">*</span>{{end}}
         </label>
         <input type="{{if or (eq .Key "password") (eq .Key "token") (eq .Key "api_token")}}password{{else}}text{{end}}"
@@ -241,10 +241,10 @@
   </form>
 
   {{/* Delete zone */}}
-  <div class="integration-danger-zone">
+  <div class="console-card-danger">
     {{if .ConfirmDelete}}
-    <p class="integration-danger-label">Delete {{$in.ProviderLabel}} ({{$in.Identifier}})?</p>
-    <div class="integration-confirm-delete-actions">
+    <p class="console-confirm-label">Delete {{$in.ProviderLabel}} ({{$in.Identifier}})?</p>
+    <div class="console-form-actions">
       <button type="button"
               class="btn btn-outline"
               data-on:click="@get('/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}})">
@@ -268,7 +268,7 @@
   {{/* Activity tab content (W4-I2) */}}
   {{else}}
   <section class="integration-activity-section" aria-labelledby="integration-activity-heading">
-    <h2 id="integration-activity-heading" class="integration-section-title">Recent messages</h2>
+    <h2 id="integration-activity-heading" class="console-card-title">Recent messages</h2>
     {{if $.ActivityMessages}}
     <div class="console-table-wrap">
       <table class="console-table" aria-label="Integration activity">

@@ -29,13 +29,13 @@
   {{else}}
   <form method="post"
         action="/console/integrations"
-        class="integration-create-form"
+        class="console-form"
         autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <input type="hidden" name="provider_id" value="{{.ProviderID}}">
 
-    <div class="console-form-field">
-      <label class="console-form-label" for="create-identifier">Identifier</label>
+    <div class="form-row">
+      <label class="form-label" for="create-identifier">Identifier</label>
       <input type="text"
              id="create-identifier"
              name="identifier"
@@ -44,8 +44,8 @@
              required aria-required="true">
     </div>
 
-    <div class="console-form-field">
-      <label class="console-form-label" for="create-primary">
+    <div class="form-row">
+      <label class="form-label" for="create-primary">
         <input type="checkbox" id="create-primary" name="primary" value="on">
         Set as primary provider for {{.Channel}}
       </label>
@@ -56,8 +56,8 @@
       <legend class="integration-cred-legend">Credentials</legend>
       {{range .CredFields}}
       {{$secret := or (eq .Key "password") (eq .Key "token") (eq .Key "api_token") (eq .Key "api_key") (eq .Key "bot_token") (eq .Key "access_token") (eq .Key "secret_access_key") (eq .Key "auth_token")}}
-      <div class="console-form-field">
-        <label class="console-form-label" for="create-{{.Key}}">
+      <div class="form-row">
+        <label class="form-label" for="create-{{.Key}}">
           {{.Label}}{{if .Required}} <span aria-hidden="true">*</span>{{end}}
         </label>
         {{/* autocomplete=new-password only on the actual secret fields so the

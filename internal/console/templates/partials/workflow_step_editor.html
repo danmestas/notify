@@ -70,7 +70,7 @@
           <p class="form-hint">Comma-separated for in / all in / any in; min,max for between.</p>
         </div>
         <div class="form-row wf-condition-remove">
-          <button type="button" class="btn btn-icon wf-condition-remove-btn"
+          <button type="button" class="btn btn-icon btn-icon-danger"
                   aria-label="Remove condition"
                   data-on:click="{{condRemoveExpr $i}}">{{uiIcon "x"}}</button>
         </div>
@@ -146,13 +146,13 @@
              value="{{index .ControlMap "subject"}}">
     </div>
     <div class="form-row">
-      <label class="form-label" for="cv-from">From address <span class="form-hint-inline">(optional — overrides integration default)</span></label>
+      <label class="form-label" for="cv-from">From address <span class="form-hint">(optional — overrides integration default)</span></label>
       <input class="console-input" type="text" id="cv-from" name="from"
              placeholder="sender@example.com"
              value="{{index .ControlMap "from"}}">
     </div>
     <div class="form-row">
-      <label class="form-label" for="cv-reply-to">Reply-To address <span class="form-hint-inline">(optional)</span></label>
+      <label class="form-label" for="cv-reply-to">Reply-To address <span class="form-hint">(optional)</span></label>
       <input class="console-input" type="text" id="cv-reply-to" name="reply_to"
              placeholder="support@example.com"
              value="{{index .ControlMap "replyTo"}}">
@@ -164,7 +164,7 @@
         "Editor type" "" false (index .ControlMap "editorType") true)}}
     </div>
     <div class="form-row">
-      <label class="form-label" for="cv-layout-key">Layout key <span class="form-hint-inline">(optional)</span></label>
+      <label class="form-label" for="cv-layout-key">Layout key <span class="form-hint">(optional)</span></label>
       <input class="console-input" type="text" id="cv-layout-key" name="layout_key"
              placeholder="main-layout"
              value="{{index .ControlMap "layoutKey"}}">
@@ -178,13 +178,13 @@
              value="{{index .ControlMap "subject"}}">
     </div>
     <div class="form-row">
-      <label class="form-label" for="cv-avatar">Avatar URL <span class="form-hint-inline">(optional)</span></label>
+      <label class="form-label" for="cv-avatar">Avatar URL <span class="form-hint">(optional)</span></label>
       <input class="console-input" type="text" id="cv-avatar" name="avatar"
              placeholder="https://example.com/avatar.png"
              value="{{index .ControlMap "avatar"}}">
     </div>
     <div class="form-row">
-      <label class="form-label" for="cv-primary-action-label">Primary action label <span class="form-hint-inline">(optional)</span></label>
+      <label class="form-label" for="cv-primary-action-label">Primary action label <span class="form-hint">(optional)</span></label>
       <input class="console-input" type="text" id="cv-primary-action-label" name="primary_action_label"
              placeholder="View order"
              value="{{index .ControlMap "primaryAction.label"}}">
@@ -202,7 +202,7 @@
         "Primary action redirect target" "" false (index .ControlMap "primaryAction.redirect.target") true)}}
     </div>
     <div class="form-row">
-      <label class="form-label" for="cv-secondary-action-label">Secondary action label <span class="form-hint-inline">(optional)</span></label>
+      <label class="form-label" for="cv-secondary-action-label">Secondary action label <span class="form-hint">(optional)</span></label>
       <input class="console-input" type="text" id="cv-secondary-action-label" name="secondary_action_label"
              placeholder="Dismiss"
              value="{{index .ControlMap "secondaryAction.label"}}">
@@ -220,7 +220,7 @@
         "Secondary action redirect target" "" false (index .ControlMap "secondaryAction.redirect.target") true)}}
     </div>
     <div class="form-row">
-      <label class="form-label" for="cv-redirect-url">Redirect URL <span class="form-hint-inline">(optional — clicking the message body navigates here)</span></label>
+      <label class="form-label" for="cv-redirect-url">Redirect URL <span class="form-hint">(optional — clicking the message body navigates here)</span></label>
       <input class="console-input" type="text" id="cv-redirect-url" name="redirect_url"
              placeholder="/inbox"
              value="{{index .ControlMap "redirect.url"}}">

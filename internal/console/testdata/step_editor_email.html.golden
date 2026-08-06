@@ -15,13 +15,13 @@
              value="Email subject">
     </div>
     <div class="form-row">
-      <label class="form-label" for="cv-from">From address <span class="form-hint-inline">(optional — overrides integration default)</span></label>
+      <label class="form-label" for="cv-from">From address <span class="form-hint">(optional — overrides integration default)</span></label>
       <input class="console-input" type="text" id="cv-from" name="from"
              placeholder="sender@example.com"
              value="">
     </div>
     <div class="form-row">
-      <label class="form-label" for="cv-reply-to">Reply-To address <span class="form-hint-inline">(optional)</span></label>
+      <label class="form-label" for="cv-reply-to">Reply-To address <span class="form-hint">(optional)</span></label>
       <input class="console-input" type="text" id="cv-reply-to" name="reply_to"
              placeholder="support@example.com"
              value="">
@@ -88,7 +88,7 @@
 
     </div>
     <div class="form-row">
-      <label class="form-label" for="cv-layout-key">Layout key <span class="form-hint-inline">(optional)</span></label>
+      <label class="form-label" for="cv-layout-key">Layout key <span class="form-hint">(optional)</span></label>
       <input class="console-input" type="text" id="cv-layout-key" name="layout_key"
              placeholder="main-layout"
              value="">
