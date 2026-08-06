@@ -99,7 +99,7 @@
     {{if .FailedChart.Empty}}
     <p class="console-empty-state-description">No failures in this period.</p>
     {{else}}
-    <svg class="analytics-chart-svg analytics-chart-svg--failed" role="img"
+    <svg class="analytics-chart-svg" role="img"
          viewBox="0 0 {{.FailedChart.Width}} {{.FailedChart.Height}}"
          width="{{.FailedChart.Width}}" height="{{.FailedChart.Height}}"
          style="min-height:{{.FailedChart.Height}}px"
@@ -116,7 +116,7 @@
     {{if .RunsTrendChart.Empty}}
     <p class="console-empty-state-description">No workflow runs in this period.</p>
     {{else}}
-    <svg class="analytics-chart-svg analytics-chart-svg--runs" role="img"
+    <svg class="analytics-chart-svg" role="img"
          viewBox="0 0 {{.RunsTrendChart.Width}} {{.RunsTrendChart.Height}}"
          width="{{.RunsTrendChart.Width}}" height="{{.RunsTrendChart.Height}}"
          style="min-height:{{.RunsTrendChart.Height}}px"

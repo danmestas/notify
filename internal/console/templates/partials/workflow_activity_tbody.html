@@ -8,7 +8,7 @@
 <tbody id="wf-activity-tbody">
   {{if .Rows}}
   {{range .Rows}}
-  <tr class="activity-row wf-activity-row" data-id="{{.ID}}">
+  <tr class="activity-row" data-id="{{.ID}}">
     <td class="activity-col-status">
       <span class="activity-status-chip activity-status-chip--{{.Status}} tile-tone-{{.StatusTone}}"
             title="{{.Status}}">{{.Status}}</span>
@@ -42,7 +42,7 @@
   </tr>
   {{end}}
   {{/* Pagination footer */}}
-  <tr class="activity-pagination-row" id="wf-activity-pagination">
+  <tr id="wf-activity-pagination">
     <td colspan="6" class="activity-pagination-cell">
       <div class="activity-pagination">
         {{if .TotalCount}}

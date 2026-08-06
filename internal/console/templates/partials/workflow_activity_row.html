@@ -9,7 +9,7 @@
   column instead of a workflow column).
 */}}
 {{define "workflow-activity-row"}}
-<tr class="activity-row wf-activity-row wf-activity-row--live" id="wf-activity-row-{{.ID}}" data-id="{{.ID}}">
+<tr class="activity-row" id="wf-activity-row-{{.ID}}" data-id="{{.ID}}">
   <td class="activity-col-status">
     <span class="activity-status-chip activity-status-chip--{{.Status}} tile-tone-{{.StatusTone}}"
           title="{{.Status}}">{{.Status}}</span>

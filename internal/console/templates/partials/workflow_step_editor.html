@@ -70,14 +70,14 @@
           <p class="form-hint">Comma-separated for in / all in / any in; min,max for between.</p>
         </div>
         <div class="form-row wf-condition-remove">
-          <button type="button" class="btn btn-ghost btn-icon wf-condition-remove-btn"
+          <button type="button" class="btn btn-icon wf-condition-remove-btn"
                   aria-label="Remove condition"
                   data-on:click="{{condRemoveExpr $i}}">{{uiIcon "x"}}</button>
         </div>
       </div>
       {{end}}
       <div class="wf-conditions-actions">
-        <button type="button" class="btn btn-outline wf-condition-add-btn"
+        <button type="button" class="btn btn-outline"
                 data-show="$condRowCount < {{len $step.Conditions}}"
                 data-on:click="$condRowCount = ($condRowCount < {{len $step.Conditions}} ? $condRowCount + 1 : {{len $step.Conditions}})">{{uiIcon "plus"}} Add condition</button>
       </div>

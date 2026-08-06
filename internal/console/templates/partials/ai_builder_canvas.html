@@ -5,7 +5,7 @@
 {{define "ai-builder-canvas"}}
 <div id="ai-builder-canvas">
   {{if or .Name .Steps}}
-  <div class="console-card ai-canvas" data-component="ai-builder-canvas">
+  <div class="console-card" data-component="ai-builder-canvas">
     <h3 class="console-card-title">{{if .Name}}{{.Name}}{{else}}Building the workflow{{end}}</h3>
     {{if .Steps}}
     <ol class="ai-canvas-steps">

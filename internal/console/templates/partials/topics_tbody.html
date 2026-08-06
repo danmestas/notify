@@ -11,13 +11,13 @@
     <h2 class="console-empty-state-title">No topics yet</h2>
     <p class="console-empty-state-description">Create a topic to group subscribers for broadcast delivery.</p>
     {{if not .ReadOnly}}
-    <button type="button" class="btn btn-outline console-action" data-on:click="$topicNewOpen = true">Create topic</button>
+    <button type="button" class="btn btn-outline" data-on:click="$topicNewOpen = true">Create topic</button>
     {{end}}
   </div>
   {{else if and (eq (len .Rows) 0) .HasFilters}}
   <div class="console-empty-state" data-component="no-results">
     <h2 class="console-empty-state-title">No topics match your filters.</h2>
-    <a class="btn btn-outline console-action" href="/console/topics">Reset filters</a>
+    <a class="btn btn-outline" href="/console/topics">Reset filters</a>
   </div>
   {{else}}
   <div class="console-table-wrap">
@@ -32,16 +32,16 @@
       </thead>
       <tbody>
         {{range .Rows}}
-        <tr class="console-table-row topic-table-row"
+        <tr class="console-table-row"
             data-component="topic-row">
-          <td class="topic-col-key">
+          <td>
             <a href="/console/topics/{{.Key}}"><code class="topic-key-code">{{.Key}}</code></a>
           </td>
-          <td class="topic-col-name">{{.Name}}</td>
-          <td class="topic-col-members">
+          <td>{{.Name}}</td>
+          <td>
             <span class="chip chip-default">{{.MemberCount}}</span>
           </td>
-          <td class="topic-col-actions">
+          <td>
             <div class="subscriber-row-actions">
               <a class="btn-icon" href="/console/topics/{{.Key}}" title="View topic">{{ uiIcon "arrow-up-right" }}</a>
               {{if not $.ReadOnly}}

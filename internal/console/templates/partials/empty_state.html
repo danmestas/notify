@@ -18,7 +18,7 @@
   <p class="console-empty-state-description">{{.Description}}</p>
   {{with .PrimaryAction}}
   {{if .OnClick}}
-  <button type="button" class="btn btn-outline console-action" data-on:click="{{.OnClick}}">{{.Label}}</button>
+  <button type="button" class="btn btn-outline" data-on:click="{{.OnClick}}">{{.Label}}</button>
   {{else}}
   {{template "action-button" (actionArgs .Label .Href $.ReadOnly)}}
   {{end}}
@@ -34,9 +34,9 @@
 */}}
 {{define "action-button"}}
 {{if .ReadOnly}}
-<span class="btn btn-outline console-action" aria-disabled="true"
+<span class="btn btn-outline" aria-disabled="true"
       title="Console is read-only; mutations are disabled.">{{.Label}}</span>
 {{else}}
-<a class="btn btn-outline console-action" href="{{.Href}}">{{.Label}}</a>
+<a class="btn btn-outline" href="{{.Href}}">{{.Label}}</a>
 {{end}}
 {{end}}

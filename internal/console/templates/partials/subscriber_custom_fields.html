@@ -41,14 +41,14 @@
              placeholder="gold" value="{{$row.Value}}">
     </div>
     <div class="form-row wf-condition-remove">
-      <button type="button" class="btn btn-ghost btn-icon wf-condition-remove-btn"
+      <button type="button" class="btn btn-icon wf-condition-remove-btn"
               aria-label="Remove custom field"
               data-on:click="{{subscriberCustomFieldRemoveExpr $i $total}}">{{uiIcon "x"}}</button>
     </div>
   </div>
   {{end}}
   <div class="wf-conditions-actions">
-    <button type="button" class="btn btn-outline wf-condition-add-btn"
+    <button type="button" class="btn btn-outline"
             data-show="$cfRowCount < {{$total}}"
             data-on:click="$cfRowCount = ($cfRowCount < {{$total}} ? $cfRowCount + 1 : {{$total}})">{{uiIcon "plus"}} Add field</button>
   </div>

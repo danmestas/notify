@@ -16,9 +16,9 @@
 {{/* ── subscribers-rows: data rows only, no outer wrapper ─────────────── */}}
 {{define "subscribers-rows"}}
 {{range .Rows}}
-<tr class="console-table-row subscriber-table-row"
+<tr class="console-table-row"
     data-component="subscriber-row">
-  <td class="subscriber-col-name">
+  <td>
     <div class="subscriber-avatar-cell">
       <span class="subscriber-avatar" aria-hidden="true">{{.Initials}}</span>
       <div class="subscriber-name-stack">
@@ -27,13 +27,13 @@
       </div>
     </div>
   </td>
-  <td class="subscriber-col-email">
+  <td>
     {{if .Email}}<span>{{.Email}}</span>{{else}}<span class="console-muted">—</span>{{end}}
   </td>
-  <td class="subscriber-col-phone">
+  <td>
     {{if .Phone}}<span>{{.Phone}}</span>{{else}}<span class="console-muted">—</span>{{end}}
   </td>
-  <td class="subscriber-col-actions">
+  <td>
     <div class="subscriber-row-actions">
       <a class="btn-icon" href="/console/subscribers/{{.ID}}" title="View subscriber">{{ uiIcon "arrow-up-right" }}</a>
       {{if not $.ReadOnly}}
@@ -64,7 +64,7 @@
 
 {{/* ── subscribers-pagination: pagination footer row only ─────────────── */}}
 {{define "subscribers-pagination"}}
-<tr class="subscribers-pagination-row" id="subscribers-pagination">
+<tr id="subscribers-pagination">
   <td colspan="4" class="subscribers-pagination-cell">
     <div class="subscribers-pagination">
       {{if .TotalCount}}
@@ -91,14 +91,14 @@
     <h2 class="console-empty-state-title">No subscribers yet</h2>
     <p class="console-empty-state-description">Add your first subscriber via API or the button above.</p>
     {{if not .ReadOnly}}
-    <button type="button" class="btn btn-outline console-action" data-on:click="$subNewOpen = true">Add subscriber</button>
+    <button type="button" class="btn btn-outline" data-on:click="$subNewOpen = true">Add subscriber</button>
     {{end}}
   </div>
   {{else if and (eq (len .Rows) 0) .HasFilters}}
   {{/* No results state — filters active */}}
   <div class="console-empty-state" data-component="no-results">
     <h2 class="console-empty-state-title">No subscribers match your filters.</h2>
-    <a class="btn btn-outline console-action" href="/console/subscribers">Reset filters</a>
+    <a class="btn btn-outline" href="/console/subscribers">Reset filters</a>
   </div>
   {{else}}
   <div class="console-table-wrap">
