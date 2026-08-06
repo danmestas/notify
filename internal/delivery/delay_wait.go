@@ -43,7 +43,11 @@ func (d *DelayWait) HandleScheduled(ctx context.Context, t engine.TaskPayload) (
 			return nil, fmt.Errorf("delay.scheduled: unmarshal controlValues: %w", uErr)
 		}
 	}
-	fire, err := steptype.NextScheduledFire(cfg, time.Now())
+	// Schedule in the SUBSCRIBER's timezone: an authored "09:00" means 09:00
+	// where they are. A subscriber with no timezone (the column has defaulted to
+	// empty since the first migration) or an unparseable one resolves to UTC, so
+	// scheduling is unchanged for everyone who has never had one set.
+	fire, err := steptype.NextScheduledFireIn(cfg, time.Now(), d.subscriberLocation(ctx, t.RunID))
 	if err != nil {
 		return nil, fmt.Errorf("delay.scheduled: %w", err)
 	}
@@ -268,4 +272,23 @@ func (d *DelayWait) stepInputs(ctx context.Context, runID, stepID string) (json.
 		}
 	}
 	return nil, nil, domain.Scope{}, fmt.Errorf("delay: step %q not found in workflow %q", stepID, notif.WorkflowID)
+}
+
+// subscriberLocation resolves the run's subscriber timezone to a location.
+//
+// Every failure path returns UTC rather than an error: this only decides WHEN a
+// send fires, and a lookup problem must not turn a scheduled delivery into a
+// dropped one. The previous behaviour was UTC for everyone, so UTC is also the
+// correct thing to fall back to.
+func (d *DelayWait) subscriberLocation(ctx context.Context, runID string) *time.Location {
+	notif, err := d.store.Notifications().GetByRunID(ctx, runID)
+	if err != nil {
+		return time.UTC
+	}
+	sub, err := d.store.Subscribers().GetByExternalID(ctx,
+		domain.Scope{OrgID: notif.OrgID, EnvID: notif.EnvID}, notif.SubscriberID)
+	if err != nil {
+		return time.UTC
+	}
+	return steptype.ResolveLocation(sub.Timezone)
 }

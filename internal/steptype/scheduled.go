@@ -81,12 +81,47 @@ func ParseScheduled(cfg ScheduledConfig) (parsedSchedule, error) {
 // matches every weekday (or day). With both filters set the match is their
 // intersection (e.g. "the 1st when it is also a Monday").
 func NextScheduledFire(cfg ScheduledConfig, now time.Time) (time.Time, error) {
+	return NextScheduledFireIn(cfg, now, time.UTC)
+}
+
+// ResolveLocation turns a stored subscriber timezone into a location, falling
+// back to UTC for both an empty and an unparseable value.
+//
+// Both fallbacks are load-bearing. The timezone column has existed since the
+// first migration and defaults to empty, so empty means "never set" for a large
+// share of subscribers -- resolving it to UTC preserves their scheduling exactly.
+// And a malformed value is bad profile data, not a reason to fail a delivery:
+// the send still goes, just on the previous UTC basis.
+func ResolveLocation(timezone string) *time.Location {
+	if timezone == "" {
+		return time.UTC
+	}
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
+
+// NextScheduledFireIn is NextScheduledFire computed in loc rather than UTC, so
+// an authored "09:00" means 09:00 where the subscriber is.
+//
+// The candidate is built directly in loc rather than computed in UTC and
+// converted, which is what makes it correct across a DST transition: 09:00 local
+// stays 09:00 local while its UTC offset changes underneath.
+//
+// A nil loc resolves to UTC rather than panicking -- callers derive it from
+// stored profile data, and a delivery must not die because a zone was missing.
+func NextScheduledFireIn(cfg ScheduledConfig, now time.Time, loc *time.Location) (time.Time, error) {
+	if loc == nil {
+		loc = time.UTC
+	}
 	ps, err := ParseScheduled(cfg)
 	if err != nil {
 		return time.Time{}, err
 	}
-	now = now.UTC()
-	cand := time.Date(now.Year(), now.Month(), now.Day(), ps.hour, ps.minute, 0, 0, time.UTC)
+	now = now.In(loc)
+	cand := time.Date(now.Year(), now.Month(), now.Day(), ps.hour, ps.minute, 0, 0, loc)
 	// A full leap year of days is an upper bound: any single weekday or
 	// month-day filter (and their intersection) recurs within 366 days.
 	for i := 0; i < 366; i++ {
