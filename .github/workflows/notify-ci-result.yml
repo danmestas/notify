@@ -1,0 +1,58 @@
+name: Notify CI result
+
+# Dogfooding: notify reports on its own CI. Runs after the CI workflow finishes
+# and triggers the `ci-result` workflow on the mac-mini instance.
+#
+# workflow_run (not a step inside CI) so a CI job that fails, is cancelled, or
+# times out still reports — a reporting step appended to CI would be skipped by
+# the very failures worth hearing about.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    # Self-hosted only: the runner lives on the same box as notify, so this
+    # reaches it over loopback. The API key never crosses the internet and the
+    # cloudflared tunnel is not in the path.
+    runs-on: [self-hosted, macOS, ARM64, mac-mini]
+
+    # Report failures always; report successes only on main. Every green PR push
+    # would otherwise page on every commit, and an alerting channel that cries
+    # wolf gets muted — which defeats the point of running it for real.
+    if: >-
+      github.event.workflow_run.conclusion != 'success'
+      || github.event.workflow_run.head_branch == 'main'
+
+    steps:
+      - name: Trigger notify
+        env:
+          NOTIFY_API_KEY: ${{ secrets.NOTIFY_API_KEY }}
+          STATUS: ${{ github.event.workflow_run.conclusion }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          URL: ${{ github.event.workflow_run.html_url }}
+          WF: ${{ github.event.workflow_run.name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          if [ -z "${NOTIFY_API_KEY:-}" ]; then
+            echo "NOTIFY_API_KEY not set; skipping (fork PR or missing secret)"
+            exit 0
+          fi
+          body=$(printf '{"name":"ci-result","to":{"subscriberId":"dan"},"payload":{"status":"%s","branch":"%s","sha":"%s","url":"%s","workflow":"%s","repo":"%s"}}' \
+            "$STATUS" "$BRANCH" "${SHA:0:12}" "$URL" "$WF" "$REPO")
+          code=$(curl -s -m 15 -o /tmp/notify-resp.json -w '%{http_code}' \
+            -X POST -H "Authorization: ApiKey $NOTIFY_API_KEY" \
+            -H 'Content-Type: application/json' \
+            -d "$body" http://127.0.0.1:3030/v1/events/trigger)
+          echo "notify trigger -> HTTP $code"
+          cat /tmp/notify-resp.json 2>/dev/null || true
+          # Never fail the build over a reporting problem: this job observes CI,
+          # it does not gate it. A red X here would be indistinguishable from a
+          # real CI failure in the branch list.
+          exit 0
