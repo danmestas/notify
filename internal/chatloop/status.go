@@ -22,6 +22,8 @@ import (
 const (
 	telegramTransport = "long-poll (getUpdates)"
 	discordTransport  = "gateway WebSocket"
+	mastodonTransport = "poll (mention notifications)"
+	blueskyTransport  = "poll (mention notifications)"
 
 	// chatInboundGuidance is shared by both providers: notify connects
 	// outbound, so the operator registers nothing.
@@ -43,13 +45,13 @@ type ProviderStatus struct {
 	Guidance string
 }
 
-// Snapshot is the whole-loop status the console renders. The provider list is
-// always both providers (Telegram, Discord) so the page shows each one's
-// enabled/disabled state. The default-responder fields describe the
-// cold-inbound responder NOTIFY_CHAT_DEFAULT_AGENT resolves to in the default
-// scope.
+// Snapshot is the whole-loop status the console renders. The provider list
+// always covers every provider the loop knows (Telegram, Discord, Mastodon,
+// Bluesky) so the page shows each one's enabled/disabled state. The
+// default-responder fields describe the cold-inbound responder
+// NOTIFY_CHAT_DEFAULT_AGENT resolves to in the default scope.
 type Snapshot struct {
-	// Providers is the per-provider status, always [Telegram, Discord].
+	// Providers is the per-provider status, always [Telegram, Discord, Mastodon, Bluesky].
 	Providers []ProviderStatus
 	// DefaultAgent is the configured NOTIFY_CHAT_DEFAULT_AGENT identifier
 	// (empty when unset).
@@ -81,6 +83,18 @@ func (s *Service) Status(ctx context.Context, scope domain.Scope) Snapshot {
 				Provider:  providerDiscord,
 				Enabled:   s.discordToken != "",
 				Transport: discordTransport,
+				Guidance:  chatInboundGuidance,
+			},
+			{
+				Provider:  providerMastodon,
+				Enabled:   s.mastodon != nil,
+				Transport: mastodonTransport,
+				Guidance:  chatInboundGuidance,
+			},
+			{
+				Provider:  providerBluesky,
+				Enabled:   s.bluesky != nil,
+				Transport: blueskyTransport,
 				Guidance:  chatInboundGuidance,
 			},
 		},

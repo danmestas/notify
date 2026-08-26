@@ -29,17 +29,21 @@ func TestStatus_TelegramEnabledDiscordDisabled_DefaultAgentActive(t *testing.T) 
 
 	snap := svc.Status(context.Background(), scope)
 
-	if len(snap.Providers) != 2 {
-		t.Fatalf("expected 2 providers, got %d", len(snap.Providers))
+	if len(snap.Providers) != 4 {
+		t.Fatalf("expected 4 providers, got %d", len(snap.Providers))
 	}
 
-	var tg, dc ProviderStatus
+	var tg, dc, ma, bs ProviderStatus
 	for _, p := range snap.Providers {
 		switch p.Provider {
 		case providerTelegram:
 			tg = p
 		case providerDiscord:
 			dc = p
+		case providerMastodon:
+			ma = p
+		case providerBluesky:
+			bs = p
 		}
 	}
 
@@ -55,7 +59,22 @@ func TestStatus_TelegramEnabledDiscordDisabled_DefaultAgentActive(t *testing.T) 
 	if dc.Transport != "gateway WebSocket" {
 		t.Errorf("discord transport = %q, want %q", dc.Transport, "gateway WebSocket")
 	}
-	// Both providers dial out — no webhook to register.
+	// No credential source was injected, so mastodon's poller never launches.
+	if ma.Enabled {
+		t.Errorf("mastodon should be disabled (no credential source, poller never started)")
+	}
+	if ma.Transport != "poll (mention notifications)" {
+		t.Errorf("mastodon transport = %q, want %q", ma.Transport, "poll (mention notifications)")
+	}
+	// No credential source was injected, so bluesky's poller never launches
+	// either.
+	if bs.Enabled {
+		t.Errorf("bluesky should be disabled (no credential source, poller never started)")
+	}
+	if bs.Transport != "poll (mention notifications)" {
+		t.Errorf("bluesky transport = %q, want %q", bs.Transport, "poll (mention notifications)")
+	}
+	// All providers dial out — no webhook to register.
 	for _, p := range snap.Providers {
 		if p.Guidance == "" {
 			t.Errorf("provider %q missing inbound guidance", p.Provider)

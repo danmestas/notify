@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -307,6 +308,20 @@ func runServe(args []string) error {
 		OrgID: cfg.chatDefaultOrg,
 		EnvID: cfg.chatDefaultEnv,
 	}
+	// Fediverse inbound (mastodon/bluesky mention polling, #296) reads its
+	// credentials from the integrations table, not env vars -- unlike Telegram
+	// and Discord above. conn.DecryptedCredentials resolves the active
+	// integration for that specific provider id in chatScope; chatloop.Start
+	// disables the corresponding poller when it comes back empty.
+	chat.SetCredentialSource(func(ctx context.Context, providerID string) (map[string]string, error) {
+		creds, err := conn.DecryptedCredentials(ctx, chatScope, providerID)
+		if errors.Is(err, store.ErrNotFound) {
+			// No active integration for this provider: not a failure, just
+			// "unconfigured" -- chatloop.CredentialSource's nil/nil sentinel.
+			return nil, nil
+		}
+		return creds, err
+	})
 
 	// ingress has a single reply-hook slot but both two-way loops need to act on
 	// an agent reply, so compose them: each loop's hook no-ops when the

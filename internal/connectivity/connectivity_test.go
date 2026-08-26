@@ -439,6 +439,83 @@ func TestUpdate_ScopeIsolation_WrongEnvReturnsNotFound(t *testing.T) {
 	}
 }
 
+// TestDecryptedCredentials_ReturnsProviderFields proves chatloop's inbound
+// pollers can resolve a Mastodon integration's decrypted creds by provider id
+// even though "chat" also has an active Discord integration in the same
+// scope — GetActiveByChannel would only ever return one of them.
+func TestDecryptedCredentials_ReturnsProviderFields(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	if _, err := svc.CreateDiscord(ctx, scope, "discord-primary", DiscordConfig{
+		WebhookURL: "https://discord.example/webhook",
+	}, true); err != nil {
+		t.Fatalf("CreateDiscord: %v", err)
+	}
+
+	cfg := MastodonConfig{
+		BaseURL:     "https://mastodon.example",
+		AccessToken: "tok-123",
+		Visibility:  "unlisted",
+	}
+	if _, err := svc.CreateMastodon(ctx, scope, "mastodon-1", cfg, false); err != nil {
+		t.Fatalf("CreateMastodon: %v", err)
+	}
+
+	fields, err := svc.DecryptedCredentials(ctx, scope, "mastodon")
+	if err != nil {
+		t.Fatalf("DecryptedCredentials: %v", err)
+	}
+	if fields["base_url"] != cfg.BaseURL {
+		t.Errorf("base_url = %q, want %q", fields["base_url"], cfg.BaseURL)
+	}
+	if fields["access_token"] != cfg.AccessToken {
+		t.Errorf("access_token = %q, want %q", fields["access_token"], cfg.AccessToken)
+	}
+	if fields["visibility"] != cfg.Visibility {
+		t.Errorf("visibility = %q, want %q", fields["visibility"], cfg.Visibility)
+	}
+}
+
+// TestDecryptedCredentials_NoActiveIntegration_ReturnsErrNotFound proves the
+// "provider unconfigured" case fails closed with store.ErrNotFound so
+// chatloop's CredentialSource seam can treat it as "poller disabled" rather
+// than crashing Start.
+func TestDecryptedCredentials_NoActiveIntegration_ReturnsErrNotFound(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	if _, err := svc.DecryptedCredentials(ctx, scope, "bluesky"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("DecryptedCredentials: err = %v, want store.ErrNotFound", err)
+	}
+}
+
+// TestDecryptedCredentials_InactiveIntegrationIgnored proves a deactivated
+// row for the requested provider is treated the same as "no integration" —
+// SetActive(false) must actually disable resolution, not just cosmetically
+// mark the row.
+func TestDecryptedCredentials_InactiveIntegrationIgnored(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	row, err := svc.CreateBluesky(ctx, scope, "bsky-1", BlueskyConfig{
+		PDSURL: "https://bsky.social", Identifier: "user.bsky.social", AppPassword: "app-pass",
+	}, false)
+	if err != nil {
+		t.Fatalf("CreateBluesky: %v", err)
+	}
+	if err := svc.Store().Integrations().SetActive(ctx, scope, row.ID, false); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+
+	if _, err := svc.DecryptedCredentials(ctx, scope, "bluesky"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("DecryptedCredentials: err = %v, want store.ErrNotFound", err)
+	}
+}
+
 // isErrPrimaryConflict unwraps ErrPrimaryConflict from err using errors.As and
 // writes it into out. errors.As works on value receivers when the target is a
 // non-nil pointer to the value type, so *ErrPrimaryConflict is the correct form.

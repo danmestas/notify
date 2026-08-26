@@ -7,8 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	"github.com/danmestas/notify/internal/delivery/httpaction"
+	"github.com/danmestas/notify/internal/providers/bluesky"
 )
 
 // telegramSender posts a reply via the Telegram Bot API sendMessage. It mirrors
@@ -81,6 +85,106 @@ func (s *discordSender) send(ctx context.Context, channelID, text string) error 
 		return fmt.Errorf("discord: marshal body: %w", err)
 	}
 	return doSend(ctx, s.hc, endpoint, map[string]string{"Authorization": "Bot " + s.token}, body, "discord")
+}
+
+// mastodonSender posts a reply via the Mastodon REST API
+// (POST /api/v1/statuses, form-encoded, Authorization: Bearer <token>). It
+// mirrors the outbound mastodon provider's wire (internal/providers/mastodon)
+// but is owned by chatloop because the reply path threads onto the specific
+// mention that triggered the turn (in_reply_to_id) and matches its
+// visibility, rather than always posting a fresh public status. baseURL and
+// token come from the integrations-table credential resolved at Start (see
+// Service.resolveCredentialPoller), not an env var.
+type mastodonSender struct {
+	token   string
+	baseURL string
+	hc      *http.Client
+}
+
+func newMastodonSender(token, baseURL string, hc *http.Client) *mastodonSender {
+	if hc == nil {
+		// baseURL is operator-supplied (integrations table), so the
+		// fallback client must be SSRF-guarded like the outbound path's
+		// connectivity.deliveryClient().
+		hc = httpaction.NewSSRFSafeClientWithTimeout(10 * time.Second)
+	}
+	return &mastodonSender{token: token, baseURL: baseURL, hc: hc}
+}
+
+// send posts the reply addressed to authorAcct ("@acct <text>"), threaded
+// onto inReplyToID when non-empty, with visibility matching the mention's
+// (an empty visibility lets Mastodon apply its own default).
+func (s *mastodonSender) send(ctx context.Context, authorAcct, inReplyToID, visibility, text string) error {
+	if s.token == "" {
+		return fmt.Errorf("mastodon: empty access token")
+	}
+	endpoint := strings.TrimRight(s.baseURL, "/") + "/api/v1/statuses"
+	form := url.Values{}
+	form.Set("status", "@"+authorAcct+" "+text)
+	if inReplyToID != "" {
+		form.Set("in_reply_to_id", inReplyToID)
+	}
+	if visibility != "" {
+		form.Set("visibility", visibility)
+	}
+	headers := map[string]string{
+		"Authorization": "Bearer " + s.token,
+		"Content-Type":  "application/x-www-form-urlencoded",
+	}
+	// The access token only ever travels in the Authorization header here (never
+	// the URL), so redaction is defensive rather than closing a known leak --
+	// mirrored anyway to keep every provider's token handling identical.
+	return redactToken(doSend(ctx, s.hc, endpoint, headers, []byte(form.Encode()), "mastodon"), s.token)
+}
+
+// blueskySender posts a threaded reply via the AT Protocol
+// (com.atproto.repo.createRecord, collection app.bsky.feed.post). It reuses
+// the outbound bluesky provider's *bluesky.Client (internal/providers/bluesky)
+// so the session cache (accessJwt/refreshJwt/did) and refresh-on-401 retry
+// logic is shared with -- not duplicated from -- the poller that fetches
+// mentions on the same client. The client's credentials come from the
+// integrations-table credential resolved at Start (see
+// Service.resolveCredentialPoller), not an env var.
+type blueskySender struct {
+	client *bluesky.Client
+}
+
+func newBlueskySender(client *bluesky.Client) *blueskySender {
+	return &blueskySender{client: client}
+}
+
+// send posts text as an app.bsky.feed.post record, threaded onto pending
+// when it has an addressable parent (an empty pending -- the reply's pending
+// entry was lost to a restart -- falls back to an unthreaded post, the same
+// tradeoff mastodonSender.send makes when its pending map misses).
+func (s *blueskySender) send(ctx context.Context, text string, pending blueskyPendingReply) error {
+	if err := s.client.EnsureSession(ctx); err != nil {
+		return err
+	}
+	did := s.client.DID()
+
+	record := map[string]any{
+		"$type":     "app.bsky.feed.post",
+		"text":      text,
+		"createdAt": time.Now().UTC().Format(time.RFC3339),
+	}
+	if pending.parentURI != "" {
+		record["reply"] = map[string]any{
+			"root":   map[string]string{"uri": pending.rootURI, "cid": pending.rootCID},
+			"parent": map[string]string{"uri": pending.parentURI, "cid": pending.parentCID},
+		}
+	}
+	body, err := json.Marshal(map[string]any{
+		"repo":       did,
+		"collection": "app.bsky.feed.post",
+		"record":     record,
+	})
+	if err != nil {
+		return fmt.Errorf("bluesky: marshal reply record: %w", err)
+	}
+
+	_, err = s.client.AuthedRequest(ctx, http.MethodPost, "com.atproto.repo.createRecord", nil, body)
+	return err
 }
 
 // doSend POSTs body as JSON and treats 2xx as success; any other status (or

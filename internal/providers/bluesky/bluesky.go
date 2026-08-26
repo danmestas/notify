@@ -5,7 +5,11 @@
 // (accessJwt/refreshJwt) is cached on the Client and reused across sends;
 // when the cached accessJwt has expired the client refreshes it via
 // com.atproto.server.refreshSession and retries once, falling back to a
-// full re-login when the refresh itself fails.
+// full re-login when the refresh itself fails. AuthedRequest, EnsureSession,
+// and DID export the minimal slice of that session machinery other packages
+// need to make their own authenticated XRPC calls against this account
+// (chatloop's inbound mention poller and threaded reply sender, in
+// particular) without duplicating the session cache-and-retry logic.
 package bluesky
 
 import (
@@ -16,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -110,6 +115,127 @@ func (c *Client) Send(ctx context.Context, msg providers.ChatMessage) (providers
 		return providers.Result{}, err
 	}
 	return providers.Result{ProviderMessageID: uri}, nil
+}
+
+// EnsureSession mints a session (via createSession) if none is cached yet.
+// It is the exported half of the login-on-demand behaviour Send already uses
+// internally, for callers (chatloop's Bluesky reply sender) that need the
+// account's DID before issuing an AuthedRequest.
+func (c *Client) EnsureSession(ctx context.Context) error {
+	if c.Identifier == "" {
+		return fmt.Errorf("bluesky: empty identifier")
+	}
+	if c.AppPassword == "" {
+		return fmt.Errorf("bluesky: empty app password")
+	}
+	if c.hasSession() {
+		return nil
+	}
+	return c.login(ctx, c.httpClient(), c.pdsURL())
+}
+
+// DID returns the account DID from the cached session (empty until a session
+// has been established via Send or EnsureSession).
+func (c *Client) DID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.did
+}
+
+// AuthedRequest performs one authenticated XRPC call to {pds}/xrpc/{nsid},
+// establishing a session first when none is cached and retrying once — after
+// a refresh, falling back to a full re-login when the refresh itself fails —
+// on a 401 response. query is URL-encoded onto the request for a GET-style
+// call (e.g. app.bsky.notification.listNotifications); body is sent as the
+// JSON POST body for a procedure call (e.g. com.atproto.repo.createRecord).
+// This is the minimal exported seam other packages (chatloop's inbound
+// Bluesky mention poller and threaded reply sender) use to call arbitrary
+// XRPC methods against this account's session without duplicating the
+// createSession/refreshSession cache-and-retry logic Send already implements.
+func (c *Client) AuthedRequest(ctx context.Context, method, nsid string, query url.Values, body []byte) ([]byte, error) {
+	if c.Identifier == "" {
+		return nil, fmt.Errorf("bluesky: empty identifier")
+	}
+	if c.AppPassword == "" {
+		return nil, fmt.Errorf("bluesky: empty app password")
+	}
+
+	hc := c.httpClient()
+	pds := c.pdsURL()
+
+	if !c.hasSession() {
+		if err := c.login(ctx, hc, pds); err != nil {
+			return nil, err
+		}
+	}
+
+	respBody, status, err := c.doXRPC(ctx, hc, pds, method, nsid, query, body)
+	if err == nil {
+		return respBody, nil
+	}
+	if status != http.StatusUnauthorized {
+		return nil, err
+	}
+
+	// accessJwt expired: refresh, falling back to a full re-login when the
+	// refresh itself is rejected (mirrors Send's retry shape).
+	if rerr := c.refresh(ctx, hc, pds); rerr != nil {
+		if lerr := c.login(ctx, hc, pds); lerr != nil {
+			return nil, lerr
+		}
+	}
+
+	respBody, _, err = c.doXRPC(ctx, hc, pds, method, nsid, query, body)
+	if err != nil {
+		return nil, err
+	}
+	return respBody, nil
+}
+
+// doXRPC issues one HTTP call to {pds}/xrpc/{nsid} using the currently cached
+// accessJwt, returning the response body, status code (so AuthedRequest can
+// detect a 401 and retry after refresh), and any error.
+func (c *Client) doXRPC(ctx context.Context, hc *http.Client, pds, method, nsid string, query url.Values, body []byte) ([]byte, int, error) {
+	endpoint := pds + "/xrpc/" + nsid
+	if len(query) > 0 {
+		endpoint += "?" + query.Encode()
+	}
+	var reqBody io.Reader
+	if body != nil {
+		reqBody = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reqBody)
+	if err != nil {
+		return nil, 0, fmt.Errorf("bluesky: build %s request: %w", nsid, err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	c.mu.Lock()
+	accessJwt := c.accessJwt
+	c.mu.Unlock()
+	req.Header.Set("Authorization", "Bearer "+accessJwt)
+
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, 0, c.redact(providers.NewTransientError(fmt.Errorf("bluesky: %s: %w", nsid, err)))
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return respBody, resp.StatusCode, nil
+	case resp.StatusCode >= 500:
+		return nil, resp.StatusCode, c.redact(providers.NewTransientError(
+			fmt.Errorf("bluesky: %s: status %d: %s", nsid, resp.StatusCode, strings.TrimSpace(string(respBody))),
+		))
+	default:
+		return nil, resp.StatusCode, c.redact(
+			fmt.Errorf("bluesky: %s: status %d: %s", nsid, resp.StatusCode, strings.TrimSpace(string(respBody))),
+		)
+	}
 }
 
 func (c *Client) httpClient() *http.Client {

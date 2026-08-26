@@ -24,9 +24,13 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync"
+	"time"
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
+	"github.com/danmestas/notify/internal/delivery/httpaction"
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/providers/bluesky"
 	corestore "github.com/danmestas/notify/internal/store"
 )
 
@@ -35,6 +39,8 @@ import (
 const (
 	providerTelegram = "telegram"
 	providerDiscord  = "discord"
+	providerMastodon = "mastodon"
+	providerBluesky  = "bluesky"
 )
 
 // telegramDefaultBaseURL is the Telegram Bot API host (poll + reply send).
@@ -70,11 +76,63 @@ type Service struct {
 
 	telegram *telegramSender
 	discord  *discordSender
+	mastodon *mastodonSender
+	bluesky  *blueskySender
+
+	// mastodonMu guards mastodonPending, the in-memory map from a mention
+	// author's acct (the chat_thread's chat_id) to the most recent mention's
+	// status id + visibility. chat_threads has no column for either, so the
+	// reply path (ReplyHook, generic across providers) cannot recover them from
+	// the store; runMastodonPoll records them here on every inbound mention and
+	// ReplyHook reads them back to address and thread the reply correctly. Not
+	// persisted: a reply whose pending entry was lost to a restart falls back
+	// to an untargeted (non-threaded, default-visibility) reply -- the same
+	// replay-on-restart tradeoff runTelegramPoll's in-memory offset already
+	// makes.
+	mastodonMu      sync.Mutex
+	mastodonPending map[string]mastodonPendingReply
+
+	// mastodonPollInterval overrides the gap between notifications polls.
+	// Zero (the default) uses mastodonPollInterval's package constant. Test
+	// seam only -- production always uses the default.
+	mastodonPollInterval time.Duration
+
+	// blueskyMu guards blueskyPending, the in-memory map from a mention
+	// author's DID (the chat_thread's chat_id) to the most recent
+	// mention/reply's threading refs (parent + root uri/cid). chat_threads
+	// has no column for either, so the reply path (ReplyHook, generic across
+	// providers) cannot recover them from the store; runBlueskyPoll records
+	// them here on every inbound mention and ReplyHook reads them back to
+	// thread the reply correctly. Not persisted: a reply whose pending entry
+	// was lost to a restart falls back to an unthreaded post -- the same
+	// replay-on-restart tradeoff mastodonPending already makes.
+	blueskyMu      sync.Mutex
+	blueskyPending map[string]blueskyPendingReply
+
+	// blueskyPollInterval overrides the gap between notifications polls.
+	// Zero (the default) uses blueskyPollInterval's package constant. Test
+	// seam only -- production always uses the default.
+	blueskyPollInterval time.Duration
 
 	// discordDialer lets tests point the gateway at an in-process WS server.
 	// nil uses the default dialer that connects to Discord's real gateway URL.
 	discordDialer gatewayDialer
+
+	// credentialSource resolves the active integration credentials for
+	// providers whose creds live in the integrations table rather than an env
+	// var (mastodon, bluesky mention polling). nil (the default) leaves those
+	// providers' pollers disabled. See SetCredentialSource.
+	credentialSource CredentialSource
 }
+
+// CredentialSource resolves the ACTIVE integration's decrypted credential map
+// for providerID within the loop's scope (production wires this from
+// connectivity.Service.DecryptedCredentials). A nil map with a nil error means
+// "no active integration for this provider" — that is not a failure, it just
+// means the provider is unconfigured and Start leaves its poller disabled. A
+// non-nil error means the lookup itself failed (store or decrypt error); Start
+// logs it and leaves the poller disabled either way.
+type CredentialSource func(ctx context.Context, providerID string) (map[string]string, error)
 
 // New builds the Service. responder is the default turn handler (typically an
 // AgentResponder). telegramToken/discordToken are the bot credentials read from
@@ -115,9 +173,37 @@ func (s *Service) SetDiscordRespondAll(v bool) { s.discordRespondAll = v }
 // withDiscordRespondAll is the chained test seam over SetDiscordRespondAll.
 func (s *Service) withDiscordRespondAll(v bool) *Service { s.SetDiscordRespondAll(v); return s }
 
+// SetCredentialSource injects the lookup Start uses to resolve the active
+// integration credentials for providers that read creds from the
+// integrations table instead of an env-var token (mastodon, bluesky). A nil
+// source (the default from New) leaves those pollers disabled. Production
+// wires this from main.go with a small closure over
+// connectivity.Service.DecryptedCredentials.
+func (s *Service) SetCredentialSource(src CredentialSource) { s.credentialSource = src }
+
+// withCredentialSource is the chained test seam over SetCredentialSource.
+func (s *Service) withCredentialSource(src CredentialSource) *Service {
+	s.SetCredentialSource(src)
+	return s
+}
+
 // withHTTPClient overrides the HTTP client used by pollers and senders. Test
 // seam.
 func (s *Service) withHTTPClient(hc *http.Client) *Service { s.httpClient = hc; return s }
+
+// withMastodonPollInterval overrides the gap between mastodon notifications
+// polls. Test seam.
+func (s *Service) withMastodonPollInterval(d time.Duration) *Service {
+	s.mastodonPollInterval = d
+	return s
+}
+
+// withBlueskyPollInterval overrides the gap between bluesky notifications
+// polls. Test seam.
+func (s *Service) withBlueskyPollInterval(d time.Duration) *Service {
+	s.blueskyPollInterval = d
+	return s
+}
 
 // senders lazily builds the per-provider reply senders from the loop's tokens.
 func (s *Service) telegramSender() *telegramSender {
@@ -220,6 +306,32 @@ func (s *Service) ReplyHook(ctx context.Context, scope domain.Scope, conv agentd
 		sendErr = s.telegramSender().send(ctx, binding.ChatID, text)
 	case providerDiscord:
 		sendErr = s.discordSender().send(ctx, binding.ChatID, text)
+	case providerMastodon:
+		// Sender pointer is read under the same mutex that guards its write in
+		// resolveCredentialPoller: ReplyHook can fire (via StartWorkers) while
+		// Start is still wiring pollers.
+		s.mastodonMu.Lock()
+		sender := s.mastodon
+		pending := s.mastodonPending[binding.ChatID]
+		s.mastodonMu.Unlock()
+		if sender == nil {
+			s.log.Warn("chatloop: mastodon reply hook fired but poller inactive, dropped",
+				"thread", conv.PlatformThreadID, "chat_id", binding.ChatID)
+			return
+		}
+		sendErr = sender.send(ctx, binding.ChatID, pending.statusID, pending.visibility, text)
+	case providerBluesky:
+		// Same write/read discipline as the mastodon case above.
+		s.blueskyMu.Lock()
+		sender := s.bluesky
+		pending := s.blueskyPending[binding.ChatID]
+		s.blueskyMu.Unlock()
+		if sender == nil {
+			s.log.Warn("chatloop: bluesky reply hook fired but poller inactive, dropped",
+				"thread", conv.PlatformThreadID, "chat_id", binding.ChatID)
+			return
+		}
+		sendErr = sender.send(ctx, text, pending)
 	default:
 		s.log.Warn("chatloop: reply hook hit unknown provider, dropped",
 			"provider", binding.Provider, "thread", conv.PlatformThreadID)
@@ -248,5 +360,74 @@ func (s *Service) Start(ctx context.Context, scope domain.Scope) {
 		go s.runDiscordGateway(ctx, scope)
 	} else {
 		s.log.Info("chatloop: discord gateway disabled (no token)")
+	}
+
+	s.resolveCredentialPoller(ctx, scope, providerMastodon)
+	s.resolveCredentialPoller(ctx, scope, providerBluesky)
+}
+
+// resolveCredentialPoller resolves providerID's active integration
+// credentials via the injected CredentialSource and logs the enable/disable
+// decision exactly like the token-based platforms above. A nil source, a
+// no-integration result, or a lookup error all disable the provider (logged
+// distinctly so an operator can tell "not configured" from "misconfigured"
+// apart). Providers whose mention-poll loop is implemented are launched here;
+// the rest (see #296) only surface the resolved-but-not-yet-wired decision.
+func (s *Service) resolveCredentialPoller(ctx context.Context, scope domain.Scope, providerID string) {
+	if s.credentialSource == nil {
+		s.log.Info("chatloop: poller disabled (no credential source)", "provider", providerID)
+		return
+	}
+	creds, err := s.credentialSource(ctx, providerID)
+	if err != nil {
+		s.log.Error("chatloop: resolve credentials failed", "err", err, "provider", providerID)
+		return
+	}
+	if len(creds) == 0 {
+		s.log.Info("chatloop: poller disabled (no active integration)", "provider", providerID)
+		return
+	}
+	switch providerID {
+	case providerMastodon:
+		baseURL, token := creds["base_url"], creds["access_token"]
+		if baseURL == "" || token == "" {
+			s.log.Error("chatloop: mastodon integration missing base_url or access_token, poller disabled",
+				"provider", providerID)
+			return
+		}
+		s.mastodonMu.Lock()
+		s.mastodon = newMastodonSender(token, baseURL, s.httpClient)
+		s.mastodonMu.Unlock()
+		s.log.Info("chatloop: credentials resolved, launching mention poller", "provider", providerID)
+		go s.runMastodonPoll(ctx, scope, baseURL, token)
+	case providerBluesky:
+		pdsURL, identifier, appPassword := creds["pds_url"], creds["identifier"], creds["app_password"]
+		if pdsURL == "" || identifier == "" || appPassword == "" {
+			s.log.Error("chatloop: bluesky integration missing pds_url, identifier, or app_password, poller disabled",
+				"provider", providerID)
+			return
+		}
+		blueskyHC := s.httpClient
+		if blueskyHC == nil {
+			// pds_url is operator-supplied (integrations table); guard the
+			// fallback client against SSRF like connectivity.deliveryClient()
+			// does for the outbound path, since bluesky.Client would
+			// otherwise fall back to a raw, unguarded http.Client.
+			blueskyHC = httpaction.NewSSRFSafeClientWithTimeout(10 * time.Second)
+		}
+		client := &bluesky.Client{
+			PDSURL:      pdsURL,
+			Identifier:  identifier,
+			AppPassword: appPassword,
+			HTTPClient:  blueskyHC,
+		}
+		s.blueskyMu.Lock()
+		s.bluesky = newBlueskySender(client)
+		s.blueskyMu.Unlock()
+		s.log.Info("chatloop: credentials resolved, launching mention poller", "provider", providerID)
+		go s.runBlueskyPoll(ctx, scope, client)
+	default:
+		// TODO: launch the mention-poll loop once implemented (see #296).
+		s.log.Info("chatloop: credentials resolved, poller not yet implemented", "provider", providerID)
 	}
 }

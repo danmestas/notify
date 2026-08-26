@@ -1200,6 +1200,55 @@ func (svc *Service) DecryptCredentials(enc []byte) ([]byte, error) {
 	return svc.decrypt(enc)
 }
 
+// DecryptedCredentials resolves the ACTIVE integration for providerID within
+// scope and returns its decrypted credential fields as a string map, keyed by
+// the provider's JSON config field names (e.g. MastodonConfig's "base_url",
+// "access_token"). It exists for callers that select an integration by
+// provider id rather than by channel: GetActiveByChannel picks the single
+// active row for a channel (preferring primary_provider, then priority), but
+// a channel like "chat" can have several different providers active at once
+// (Telegram, Discord, Mastodon, Bluesky), so chatloop's inbound pollers need
+// the active row for THEIR specific provider, not whichever one channel
+// resolution would prefer.
+//
+// Returns store.ErrNotFound when no active integration exists for providerID
+// in scope — chatloop.Service treats that as "provider unconfigured" and
+// leaves the corresponding poller disabled, not as a hard failure.
+func (svc *Service) DecryptedCredentials(ctx context.Context, scope domain.Scope, providerID string) (map[string]string, error) {
+	rows, err := svc.store.Integrations().List(ctx, scope)
+	if err != nil {
+		return nil, fmt.Errorf("connectivity: decrypted credentials: list: %w", err)
+	}
+
+	var id string
+	for _, row := range rows {
+		if row.ProviderID == providerID && row.Active {
+			// List() is ordered primary DESC, priority ASC, id ASC within a
+			// channel, so the first match is already the preferred row.
+			id = row.ID
+			break
+		}
+	}
+	if id == "" {
+		return nil, store.ErrNotFound
+	}
+
+	full, err := svc.store.Integrations().GetByID(ctx, scope, id)
+	if err != nil {
+		return nil, fmt.Errorf("connectivity: decrypted credentials: load: %w", err)
+	}
+	plaintext, err := svc.decrypt(full.EncCredentials)
+	if err != nil {
+		return nil, fmt.Errorf("connectivity: decrypted credentials: decrypt: %w", err)
+	}
+
+	var fields map[string]string
+	if err := json.Unmarshal(plaintext, &fields); err != nil {
+		return nil, fmt.Errorf("connectivity: decrypted credentials: unmarshal: %w", err)
+	}
+	return fields, nil
+}
+
 // Update applies mutable changes to an existing integration. Credential fields
 // in inp.Credentials that equal CredentialMaskSentinel (or are empty) are kept
 // as-is from the stored encrypted blob; only fields with new values are
