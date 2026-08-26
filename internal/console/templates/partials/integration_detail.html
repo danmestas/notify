@@ -222,7 +222,7 @@
         <label class="form-label" for="edit-{{.Key}}-{{$in.ID}}">
           {{.Label}}{{if .Required}} <span aria-hidden="true">*</span>{{end}}
         </label>
-        <input type="{{if or (eq .Key "password") (eq .Key "token") (eq .Key "api_token")}}password{{else}}text{{end}}"
+        <input type="{{if or (eq .Key "password") (eq .Key "token") (eq .Key "api_token") (eq .Key "api_key") (eq .Key "bot_token") (eq .Key "access_token") (eq .Key "secret_access_key") (eq .Key "auth_token") (eq .Key "app_password")}}password{{else}}text{{end}}"
                id="edit-{{.Key}}-{{$in.ID}}"
                name="{{.Key}}"
                class="console-input"

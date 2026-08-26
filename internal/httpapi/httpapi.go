@@ -687,6 +687,14 @@ type chatIntegrationRequest struct {
 	// WhatsApp fields.
 	AccessToken   string `json:"accessToken"`
 	PhoneNumberID string `json:"phoneNumberId"`
+	// Mastodon fields. AccessToken (above) doubles as the Mastodon Bearer
+	// token.
+	BaseURL    string `json:"baseUrl"`
+	Visibility string `json:"visibility"`
+	// Bluesky fields.
+	PDSURL            string `json:"pdsUrl"`
+	AccountIdentifier string `json:"accountIdentifier"`
+	AppPassword       string `json:"appPassword"`
 }
 
 // postChatIntegration creates a chat integration within the request Scope and
@@ -744,8 +752,40 @@ func postChatIntegration(conn *connectivity.Service) http.HandlerFunc {
 				AccessToken:   req.AccessToken,
 				PhoneNumberID: req.PhoneNumberID,
 			}, req.Primary)
+		case "mastodon":
+			if req.BaseURL == "" {
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "baseUrl is required for mastodon")
+				return
+			}
+			if req.AccessToken == "" {
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "accessToken is required for mastodon")
+				return
+			}
+			in, err = conn.CreateMastodon(r.Context(), scope, req.Identifier, connectivity.MastodonConfig{
+				BaseURL:     req.BaseURL,
+				AccessToken: req.AccessToken,
+				Visibility:  req.Visibility,
+			}, req.Primary)
+		case "bluesky":
+			if req.PDSURL == "" {
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "pdsUrl is required for bluesky")
+				return
+			}
+			if req.AccountIdentifier == "" {
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "accountIdentifier is required for bluesky")
+				return
+			}
+			if req.AppPassword == "" {
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "appPassword is required for bluesky")
+				return
+			}
+			in, err = conn.CreateBluesky(r.Context(), scope, req.Identifier, connectivity.BlueskyConfig{
+				PDSURL:      req.PDSURL,
+				Identifier:  req.AccountIdentifier,
+				AppPassword: req.AppPassword,
+			}, req.Primary)
 		default:
-			writeJSONError(w, http.StatusBadRequest, "bad_request", "unknown provider "+req.Provider+"; allowed: discord, telegram, slack, whatsapp")
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "unknown provider "+req.Provider+"; allowed: discord, telegram, slack, whatsapp, mastodon, bluesky")
 			return
 		}
 		if err != nil {
@@ -1610,8 +1650,20 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 				AccessToken:   req.Credentials["access_token"],
 				PhoneNumberID: req.Credentials["phone_number_id"],
 			}, req.Primary)
+		case "mastodon":
+			in, err = conn.CreateMastodon(r.Context(), scope, req.Identifier, connectivity.MastodonConfig{
+				BaseURL:     req.Credentials["base_url"],
+				AccessToken: req.Credentials["access_token"],
+				Visibility:  req.Credentials["visibility"],
+			}, req.Primary)
+		case "bluesky":
+			in, err = conn.CreateBluesky(r.Context(), scope, req.Identifier, connectivity.BlueskyConfig{
+				PDSURL:      req.Credentials["pds_url"],
+				Identifier:  req.Credentials["identifier"],
+				AppPassword: req.Credentials["app_password"],
+			}, req.Primary)
 		default:
-			writeJSONError(w, http.StatusBadRequest, "bad_request", "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, resend, ses, ntfy, expo, fcm, discord, telegram, slack, whatsapp, twilio, signalwire, sns, email-webhook, push-webhook, chat-webhook")
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "unknown providerId "+req.ProviderID+"; allowed: smtp, cloudflare-email, resend, ses, ntfy, expo, fcm, discord, telegram, slack, whatsapp, mastodon, bluesky, twilio, signalwire, sns, email-webhook, push-webhook, chat-webhook")
 			return
 		}
 		if err != nil {

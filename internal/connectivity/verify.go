@@ -7,8 +7,10 @@ package connectivity
 // leak a secret into the detail string.
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -131,6 +133,76 @@ func probeNtfy(ctx context.Context, client *http.Client, cfg NtfyConfig) (ok boo
 		return false, fmt.Sprintf("ntfy: credentials rejected (status %d)", status)
 	default:
 		return false, fmt.Sprintf("ntfy: unexpected status %d: %s", status, body)
+	}
+}
+
+// probeMastodon issues an authenticated GET against the Mastodon
+// verify_credentials endpoint. A 2xx proves the access token is valid; a
+// 401/403 is a definite credential negative.
+func probeMastodon(ctx context.Context, client *http.Client, cfg MastodonConfig) (ok bool, detail string) {
+	base := strings.TrimSpace(cfg.BaseURL)
+	if base == "" || strings.TrimSpace(cfg.AccessToken) == "" {
+		return false, "mastodon: base url or access token not configured"
+	}
+	endpoint := strings.TrimRight(base, "/") + "/api/v1/accounts/verify_credentials"
+	status, body, err := authedGET(ctx, client, endpoint, "Bearer "+cfg.AccessToken)
+	if err != nil {
+		return false, fmt.Sprintf("mastodon: probe %s failed: %v", endpoint, err)
+	}
+	switch {
+	case status >= 200 && status < 300:
+		return true, "mastodon: access token accepted"
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return false, fmt.Sprintf("mastodon: credentials rejected (status %d)", status)
+	default:
+		return false, fmt.Sprintf("mastodon: unexpected status %d: %s", status, body)
+	}
+}
+
+// probeBluesky attempts com.atproto.server.createSession against the
+// configured PDS. A successful session mint proves the identifier/app
+// password pair; a rejection is a definite credential negative. No message is
+// posted and the minted session is discarded after the probe.
+func probeBluesky(ctx context.Context, client *http.Client, cfg BlueskyConfig) (ok bool, detail string) {
+	identifier := strings.TrimSpace(cfg.Identifier)
+	if identifier == "" || strings.TrimSpace(cfg.AppPassword) == "" {
+		return false, "bluesky: identifier or app password not configured"
+	}
+	pds := strings.TrimSpace(cfg.PDSURL)
+	if pds == "" {
+		pds = "https://bsky.social"
+	}
+	endpoint := strings.TrimRight(pds, "/") + "/xrpc/com.atproto.server.createSession"
+
+	reqBody, err := json.Marshal(map[string]string{
+		"identifier": identifier,
+		"password":   cfg.AppPassword,
+	})
+	if err != nil {
+		return false, fmt.Sprintf("bluesky: build createSession request: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
+	if err != nil {
+		return false, fmt.Sprintf("bluesky: build createSession request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Sprintf("bluesky: probe %s failed: %v", endpoint, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return true, "bluesky: session created"
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return false, fmt.Sprintf("bluesky: credentials rejected (status %d)", resp.StatusCode)
+	default:
+		return false, fmt.Sprintf("bluesky: unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 }
 

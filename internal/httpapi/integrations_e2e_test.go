@@ -141,6 +141,16 @@ func TestPostIntegration_UnifiedCreate_Wave2Providers(t *testing.T) {
 			`{"providerId":"sns","identifier":"sns-unified","credentials":{"access_key_id":"AKIDEXAMPLE","secret_access_key":"sns_secret_signing_key","region":"us-east-1"}}`,
 			"sns_secret_signing_key",
 		},
+		{
+			"mastodon", "chat",
+			`{"providerId":"mastodon","identifier":"mastodon-unified","credentials":{"base_url":"https://mastodon.example.social","access_token":"masto_secret_token","visibility":"unlisted"}}`,
+			"masto_secret_token",
+		},
+		{
+			"bluesky", "chat",
+			`{"providerId":"bluesky","identifier":"bluesky-unified","credentials":{"pds_url":"https://bsky.social","identifier":"alice.bsky.social","app_password":"bsky_secret_app_pw"}}`,
+			"bsky_secret_app_pw",
+		},
 	} {
 		t.Run(tt.providerID, func(t *testing.T) {
 			srv, authHeader, _ := startOperatorServer(t)
@@ -220,6 +230,38 @@ func TestPostChatIntegration_InvalidIdentifier_422(t *testing.T) {
 	status, resp := doPost(t, srv.URL+"/v1/integrations/chat", authHeader, body)
 	if status != http.StatusUnprocessableEntity {
 		t.Errorf("status = %d, want 422 (resp: %s)", status, resp)
+	}
+}
+
+// TestPostChatIntegration_Mastodon proves the legacy /v1/integrations/chat
+// endpoint (not just the unified one) can create a mastodon integration and
+// never echoes the access token back.
+func TestPostChatIntegration_Mastodon(t *testing.T) {
+	srv, authHeader, _ := startOperatorServer(t)
+
+	body := `{"provider":"mastodon","identifier":"mastodon-legacy","baseUrl":"https://mastodon.example.social","accessToken":"masto_legacy_secret","visibility":"unlisted"}`
+	status, respBody := doPost(t, srv.URL+"/v1/integrations/chat", authHeader, body)
+	if status != http.StatusCreated {
+		t.Fatalf("POST /v1/integrations/chat (mastodon): status=%d body=%s", status, respBody)
+	}
+	if strings.Contains(respBody, "masto_legacy_secret") {
+		t.Errorf("response leaks mastodon access token: %s", respBody)
+	}
+}
+
+// TestPostChatIntegration_Bluesky proves the legacy /v1/integrations/chat
+// endpoint can create a bluesky integration and never echoes the app
+// password back.
+func TestPostChatIntegration_Bluesky(t *testing.T) {
+	srv, authHeader, _ := startOperatorServer(t)
+
+	body := `{"provider":"bluesky","identifier":"bluesky-legacy","pdsUrl":"https://bsky.social","accountIdentifier":"alice.bsky.social","appPassword":"bsky_legacy_secret"}`
+	status, respBody := doPost(t, srv.URL+"/v1/integrations/chat", authHeader, body)
+	if status != http.StatusCreated {
+		t.Fatalf("POST /v1/integrations/chat (bluesky): status=%d body=%s", status, respBody)
+	}
+	if strings.Contains(respBody, "bsky_legacy_secret") {
+		t.Errorf("response leaks bluesky app password: %s", respBody)
 	}
 }
 

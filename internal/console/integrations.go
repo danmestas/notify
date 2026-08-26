@@ -51,6 +51,8 @@ var providerCatalog = []providerMeta{
 	{ID: "telegram", Label: "Telegram", Channel: "chat"},
 	{ID: "slack", Label: "Slack", Channel: "chat"},
 	{ID: "whatsapp", Label: "WhatsApp", Channel: "chat"},
+	{ID: "mastodon", Label: "Mastodon", Channel: "chat"},
+	{ID: "bluesky", Label: "Bluesky", Channel: "chat"},
 	{ID: "twilio", Label: "Twilio SMS", Channel: "sms"},
 	{ID: "signalwire", Label: "SignalWire SMS", Channel: "sms"},
 	{ID: "sns", Label: "Amazon SNS", Channel: "sms"},
@@ -368,6 +370,35 @@ func credentialFieldsForProvider(providerID string) []integrationCredentialField
 		return []integrationCredentialField{
 			{Key: "access_token", Label: "Access Token", Value: connectivity.CredentialMaskSentinel, Required: true},
 			{Key: "phone_number_id", Label: "Phone Number ID", Value: connectivity.CredentialMaskSentinel, Required: true},
+		}
+	case "mastodon":
+		return []integrationCredentialField{
+			{
+				Key: "base_url", Label: "Instance URL", Value: connectivity.CredentialMaskSentinel, Required: true,
+				Help: "Your Mastodon instance, e.g. https://mastodon.social.",
+			},
+			{
+				Key: "access_token", Label: "Access Token", Value: connectivity.CredentialMaskSentinel, Required: true,
+				Help: "Preferences → Development → New application; needs write:statuses and read:notifications scopes.",
+			},
+			{
+				Key: "visibility", Label: "Default visibility", Value: connectivity.CredentialMaskSentinel,
+				Help: "public, unlisted, private, or direct. Default public.",
+			},
+		}
+	case "bluesky":
+		return []integrationCredentialField{
+			{
+				Key: "pds_url", Label: "PDS URL", Value: connectivity.CredentialMaskSentinel,
+				Help: "Leave blank for https://bsky.social.",
+			},
+			{
+				Key: "identifier", Label: "Handle or DID", Value: connectivity.CredentialMaskSentinel, Required: true,
+			},
+			{
+				Key: "app_password", Label: "App Password", Value: connectivity.CredentialMaskSentinel, Required: true,
+				Help: "Settings → Privacy and Security → App Passwords — not your account password.",
+			},
 		}
 	case "email-webhook", "push-webhook", "chat-webhook":
 		return []integrationCredentialField{
@@ -1008,6 +1039,20 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			PhoneNumberID: r.FormValue("phone_number_id"),
 		}
 		_, createErr = c.deps.Connectivity.CreateWhatsApp(r.Context(), scope, identifier, cfg, primary)
+	case "mastodon":
+		cfg := connectivity.MastodonConfig{
+			BaseURL:     r.FormValue("base_url"),
+			AccessToken: r.FormValue("access_token"),
+			Visibility:  r.FormValue("visibility"),
+		}
+		_, createErr = c.deps.Connectivity.CreateMastodon(r.Context(), scope, identifier, cfg, primary)
+	case "bluesky":
+		cfg := connectivity.BlueskyConfig{
+			PDSURL:      r.FormValue("pds_url"),
+			Identifier:  r.FormValue("identifier"),
+			AppPassword: r.FormValue("app_password"),
+		}
+		_, createErr = c.deps.Connectivity.CreateBluesky(r.Context(), scope, identifier, cfg, primary)
 	case "email-webhook":
 		cfg := connectivity.EmailWebhookConfig{
 			WebhookURL: r.FormValue("webhook_url"),

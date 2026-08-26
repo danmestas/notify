@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/providers/bluesky"
+	"github.com/danmestas/notify/internal/providers/mastodon"
 	"github.com/danmestas/notify/internal/providers/resend"
 	"github.com/danmestas/notify/internal/providers/slack"
 	"github.com/danmestas/notify/internal/providers/whatsapp"
@@ -109,5 +111,81 @@ func TestCreateWhatsApp_ThenResolveChat(t *testing.T) {
 	}
 	if c.PhoneNumberID != cfg.PhoneNumberID {
 		t.Errorf("PhoneNumberID = %q, want %q", c.PhoneNumberID, cfg.PhoneNumberID)
+	}
+}
+
+// TestCreateMastodon_ThenResolveChat proves the Mastodon credentials survive
+// seal/unseal and the resolved provider carries the base url, access token,
+// and visibility.
+func TestCreateMastodon_ThenResolveChat(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	cfg := MastodonConfig{BaseURL: "https://mastodon.social", AccessToken: "secret-token", Visibility: "unlisted"}
+	if _, err := svc.CreateMastodon(ctx, scope, "primary-mastodon", cfg, true); err != nil {
+		t.Fatalf("CreateMastodon: %v", err)
+	}
+
+	prov, providerID, integrationID, err := svc.ResolveChat(ctx, scope)
+	if err != nil {
+		t.Fatalf("ResolveChat: %v", err)
+	}
+	if providerID != "mastodon" {
+		t.Errorf("providerID = %q, want mastodon", providerID)
+	}
+	if integrationID == "" {
+		t.Error("integrationID must be non-empty after CreateMastodon")
+	}
+	c, ok := prov.(*mastodon.Client)
+	if !ok {
+		t.Fatalf("provider type = %T, want *mastodon.Client", prov)
+	}
+	if c.BaseURL != cfg.BaseURL {
+		t.Errorf("BaseURL = %q, want %q", c.BaseURL, cfg.BaseURL)
+	}
+	if c.AccessToken != cfg.AccessToken {
+		t.Errorf("AccessToken = %q, want %q", c.AccessToken, cfg.AccessToken)
+	}
+	if c.Visibility != cfg.Visibility {
+		t.Errorf("Visibility = %q, want %q", c.Visibility, cfg.Visibility)
+	}
+}
+
+// TestCreateBluesky_ThenResolveChat proves the Bluesky credentials survive
+// seal/unseal and the resolved provider carries the PDS URL, identifier, and
+// app password.
+func TestCreateBluesky_ThenResolveChat(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	cfg := BlueskyConfig{PDSURL: "https://bsky.social", Identifier: "alice.bsky.social", AppPassword: "secret-app-pw"}
+	if _, err := svc.CreateBluesky(ctx, scope, "primary-bluesky", cfg, true); err != nil {
+		t.Fatalf("CreateBluesky: %v", err)
+	}
+
+	prov, providerID, integrationID, err := svc.ResolveChat(ctx, scope)
+	if err != nil {
+		t.Fatalf("ResolveChat: %v", err)
+	}
+	if providerID != "bluesky" {
+		t.Errorf("providerID = %q, want bluesky", providerID)
+	}
+	if integrationID == "" {
+		t.Error("integrationID must be non-empty after CreateBluesky")
+	}
+	c, ok := prov.(*bluesky.Client)
+	if !ok {
+		t.Fatalf("provider type = %T, want *bluesky.Client", prov)
+	}
+	if c.PDSURL != cfg.PDSURL {
+		t.Errorf("PDSURL = %q, want %q", c.PDSURL, cfg.PDSURL)
+	}
+	if c.Identifier != cfg.Identifier {
+		t.Errorf("Identifier = %q, want %q", c.Identifier, cfg.Identifier)
+	}
+	if c.AppPassword != cfg.AppPassword {
+		t.Errorf("AppPassword = %q, want %q", c.AppPassword, cfg.AppPassword)
 	}
 }

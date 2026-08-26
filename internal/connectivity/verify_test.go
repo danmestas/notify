@@ -170,6 +170,131 @@ func TestVerifyByID_SMTP_DialFailure(t *testing.T) {
 	}
 }
 
+// TestVerifyByID_Mastodon_Accepted exercises the mastodon probe against a stub
+// that returns 200 for GET /api/v1/accounts/verify_credentials.
+func TestVerifyByID_Mastodon_Accepted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/accounts/verify_credentials" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer masto-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"username":"notifybot"}`))
+	}))
+	defer srv.Close()
+
+	svc := New(openTemp(t), testKey())
+	svc.probeHTTPClient = &http.Client{}
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	in, err := svc.CreateMastodon(context.Background(), scope, "mastodon-1",
+		MastodonConfig{BaseURL: srv.URL, AccessToken: "masto-token"}, true)
+	if err != nil {
+		t.Fatalf("CreateMastodon: %v", err)
+	}
+
+	res, err := svc.VerifyByID(context.Background(), scope, in.ID)
+	if err != nil {
+		t.Fatalf("VerifyByID: %v", err)
+	}
+	if !res.OK {
+		t.Errorf("mastodon verify OK = false, want true (detail: %s)", res.Detail)
+	}
+	if res.ProviderID != "mastodon" || res.Channel != "chat" {
+		t.Errorf("verify result = %+v, want mastodon/chat", res)
+	}
+}
+
+// TestVerifyByID_Mastodon_Rejected proves a 401 from the server is a definite
+// credential negative (ok=false, nil error).
+func TestVerifyByID_Mastodon_Rejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	svc := New(openTemp(t), testKey())
+	svc.probeHTTPClient = &http.Client{}
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	in, err := svc.CreateMastodon(context.Background(), scope, "mastodon-1",
+		MastodonConfig{BaseURL: srv.URL, AccessToken: "bad"}, true)
+	if err != nil {
+		t.Fatalf("CreateMastodon: %v", err)
+	}
+
+	res, err := svc.VerifyByID(context.Background(), scope, in.ID)
+	if err != nil {
+		t.Fatalf("VerifyByID returned error, want ok=false result: %v", err)
+	}
+	if res.OK {
+		t.Errorf("mastodon verify OK = true, want false on 401")
+	}
+}
+
+// TestVerifyByID_Bluesky_Accepted exercises the bluesky probe against a stub
+// that accepts com.atproto.server.createSession.
+func TestVerifyByID_Bluesky_Accepted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "com.atproto.server.createSession") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"accessJwt":"jwt","refreshJwt":"refresh","did":"did:plc:test"}`))
+	}))
+	defer srv.Close()
+
+	svc := New(openTemp(t), testKey())
+	svc.probeHTTPClient = &http.Client{}
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	in, err := svc.CreateBluesky(context.Background(), scope, "bluesky-1",
+		BlueskyConfig{PDSURL: srv.URL, Identifier: "notify.bsky.social", AppPassword: "app-pw"}, true)
+	if err != nil {
+		t.Fatalf("CreateBluesky: %v", err)
+	}
+
+	res, err := svc.VerifyByID(context.Background(), scope, in.ID)
+	if err != nil {
+		t.Fatalf("VerifyByID: %v", err)
+	}
+	if !res.OK {
+		t.Errorf("bluesky verify OK = false, want true (detail: %s)", res.Detail)
+	}
+	if res.ProviderID != "bluesky" || res.Channel != "chat" {
+		t.Errorf("verify result = %+v, want bluesky/chat", res)
+	}
+}
+
+// TestVerifyByID_Bluesky_Rejected proves a createSession failure is a definite
+// credential negative (ok=false, nil error).
+func TestVerifyByID_Bluesky_Rejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"AuthenticationRequired"}`))
+	}))
+	defer srv.Close()
+
+	svc := New(openTemp(t), testKey())
+	svc.probeHTTPClient = &http.Client{}
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	in, err := svc.CreateBluesky(context.Background(), scope, "bluesky-1",
+		BlueskyConfig{PDSURL: srv.URL, Identifier: "notify.bsky.social", AppPassword: "bad"}, true)
+	if err != nil {
+		t.Fatalf("CreateBluesky: %v", err)
+	}
+
+	res, err := svc.VerifyByID(context.Background(), scope, in.ID)
+	if err != nil {
+		t.Fatalf("VerifyByID returned error, want ok=false result: %v", err)
+	}
+	if res.OK {
+		t.Errorf("bluesky verify OK = true, want false on rejected session")
+	}
+}
+
 // startFakeSMTP starts a minimal SMTP greeter that speaks just enough of the
 // protocol for net/smtp's NewClient + EHLO + QUIT (no STARTTLS, no AUTH) and
 // returns its address. It closes on test cleanup.

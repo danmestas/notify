@@ -55,7 +55,7 @@
     <fieldset class="integration-cred-fieldset">
       <legend class="integration-cred-legend">Credentials</legend>
       {{range .CredFields}}
-      {{$secret := or (eq .Key "password") (eq .Key "token") (eq .Key "api_token") (eq .Key "api_key") (eq .Key "bot_token") (eq .Key "access_token") (eq .Key "secret_access_key") (eq .Key "auth_token")}}
+      {{$secret := or (eq .Key "password") (eq .Key "token") (eq .Key "api_token") (eq .Key "api_key") (eq .Key "bot_token") (eq .Key "access_token") (eq .Key "secret_access_key") (eq .Key "auth_token") (eq .Key "app_password")}}
       <div class="form-row">
         <label class="form-label" for="create-{{.Key}}">
           {{.Label}}{{if .Required}} <span aria-hidden="true">*</span>{{end}}

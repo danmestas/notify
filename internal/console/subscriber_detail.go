@@ -253,6 +253,7 @@ var chatProviderIDs = map[string]bool{
 	"slack":        true,
 	"whatsapp":     true,
 	"chat-webhook": true,
+	"mastodon":     true,
 }
 
 // pushProviderIDs are the providers whose per-subscriber credential is a push

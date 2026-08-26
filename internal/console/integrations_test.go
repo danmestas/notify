@@ -234,6 +234,8 @@ func TestFragment_IntegrationProviderForm_SecretFieldsMasked(t *testing.T) {
 		{"resend", "api_key"},
 		{"slack", "bot_token"},
 		{"whatsapp", "access_token"},
+		{"mastodon", "access_token"},
+		{"bluesky", "app_password"},
 	} {
 		rr := tc.getWithQuery(t, "/console/api/fragments/integration-provider-form",
 			url.Values{"provider": {tt.provider}}.Encode(), cookie)

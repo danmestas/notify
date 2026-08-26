@@ -20,10 +20,12 @@ import (
 	"github.com/danmestas/notify/internal/delivery/httpaction"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/providers"
+	"github.com/danmestas/notify/internal/providers/bluesky"
 	"github.com/danmestas/notify/internal/providers/cloudflareemail"
 	"github.com/danmestas/notify/internal/providers/discord"
 	"github.com/danmestas/notify/internal/providers/expo"
 	"github.com/danmestas/notify/internal/providers/fcm"
+	"github.com/danmestas/notify/internal/providers/mastodon"
 	"github.com/danmestas/notify/internal/providers/ntfy"
 	"github.com/danmestas/notify/internal/providers/resend"
 	"github.com/danmestas/notify/internal/providers/ses"
@@ -201,6 +203,30 @@ type SlackConfig struct {
 type WhatsAppConfig struct {
 	AccessToken   string `json:"access_token"`
 	PhoneNumberID string `json:"phone_number_id"`
+}
+
+// MastodonConfig is the credential payload for a Mastodon chat integration:
+// the instance base URL and access token (Bearer auth), JSON-encoded and
+// AES-256-GCM-sealed into Integration.EncCredentials. Visibility is the
+// default status visibility ("public", "unlisted", "private", "direct");
+// empty means "public". The per-subscriber @handle is the chat Address
+// carried in the rendered ChatMessage, not stored here.
+type MastodonConfig struct {
+	BaseURL     string `json:"base_url"`
+	AccessToken string `json:"access_token"`
+	Visibility  string `json:"visibility"`
+}
+
+// BlueskyConfig is the credential payload for a Bluesky (AT Protocol) chat
+// integration: the PDS URL, the account identifier (handle or DID), and an
+// app password (never the account's own login password), JSON-encoded and
+// AES-256-GCM-sealed into Integration.EncCredentials. PDSURL empty means
+// "https://bsky.social". Bluesky posts are public broadcasts, so there is no
+// per-subscriber address to store here.
+type BlueskyConfig struct {
+	PDSURL      string `json:"pds_url"`
+	Identifier  string `json:"identifier"`
+	AppPassword string `json:"app_password"`
 }
 
 // TwilioConfig is the credential payload for a Twilio SMS integration: the
@@ -824,6 +850,52 @@ func (svc *Service) CreateWhatsApp(ctx context.Context, scope domain.Scope, iden
 	})
 }
 
+// CreateMastodon stores a Mastodon chat integration for the Scope: it
+// AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="mastodon" and Channel="chat". When primary is set the
+// integration becomes the preferred provider for the channel.
+func (svc *Service) CreateMastodon(ctx context.Context, scope domain.Scope, identifier string, cfg MastodonConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal mastodon config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt mastodon config: %w", err)
+	}
+	return svc.createIntegration(ctx, scope, domain.Integration{
+		ProviderID:     "mastodon",
+		Channel:        "chat",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
+// CreateBluesky stores a Bluesky chat integration for the Scope: it
+// AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
+// ProviderID="bluesky" and Channel="chat". When primary is set the
+// integration becomes the preferred provider for the channel.
+func (svc *Service) CreateBluesky(ctx context.Context, scope domain.Scope, identifier string, cfg BlueskyConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal bluesky config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt bluesky config: %w", err)
+	}
+	return svc.createIntegration(ctx, scope, domain.Integration{
+		ProviderID:     "bluesky",
+		Channel:        "chat",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
 // ResolveChat returns the active chat provider, its provider id, and integration
 // ID for the Scope. It loads the active chat integration, decrypts its
 // credentials, and builds the appropriate provider based on the integration's
@@ -889,6 +961,28 @@ func (svc *Service) ChatProviderFromIntegration(in domain.Integration) (provider
 			return nil, fmt.Errorf("connectivity: unmarshal chat-webhook config: %w", err)
 		}
 		return &webhook.ChatClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret, HTTPClient: svc.deliveryClient()}, nil
+	case "mastodon":
+		var cfg MastodonConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, fmt.Errorf("connectivity: unmarshal mastodon config: %w", err)
+		}
+		return &mastodon.Client{
+			BaseURL:     cfg.BaseURL,
+			AccessToken: cfg.AccessToken,
+			Visibility:  cfg.Visibility,
+			HTTPClient:  svc.deliveryClient(),
+		}, nil
+	case "bluesky":
+		var cfg BlueskyConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, fmt.Errorf("connectivity: unmarshal bluesky config: %w", err)
+		}
+		return &bluesky.Client{
+			PDSURL:      cfg.PDSURL,
+			Identifier:  cfg.Identifier,
+			AppPassword: cfg.AppPassword,
+			HTTPClient:  svc.deliveryClient(),
+		}, nil
 	default:
 		// Fail closed: an unknown chat provider must not be silently decoded as
 		// another provider's config.
@@ -1214,7 +1308,9 @@ type VerifyResult struct {
 //
 //   - smtp: dial the server and run AUTH (no MAIL/DATA);
 //   - cloudflare-email: an authenticated GET against the account email scope;
-//   - ntfy: an authenticated GET against the server root.
+//   - ntfy: an authenticated GET against the server root;
+//   - mastodon: an authenticated GET against /api/v1/accounts/verify_credentials;
+//   - bluesky: a com.atproto.server.createSession handshake (no post is made).
 //
 // A nil error with VerifyResult.OK=false means "reached the provider, but the
 // credentials were rejected" — a definite negative. A non-nil error means the
@@ -1259,6 +1355,22 @@ func (svc *Service) VerifyByID(ctx context.Context, scope domain.Scope, id strin
 			return VerifyResult{}, fmt.Errorf("connectivity: verify: unmarshal ntfy config: %w", err)
 		}
 		ok, detail := probeNtfy(ctx, svc.probeClient(), cfg)
+		res.OK, res.Detail = ok, detail
+		return res, nil
+	case "mastodon":
+		var cfg MastodonConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return VerifyResult{}, fmt.Errorf("connectivity: verify: unmarshal mastodon config: %w", err)
+		}
+		ok, detail := probeMastodon(ctx, svc.probeClient(), cfg)
+		res.OK, res.Detail = ok, detail
+		return res, nil
+	case "bluesky":
+		var cfg BlueskyConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return VerifyResult{}, fmt.Errorf("connectivity: verify: unmarshal bluesky config: %w", err)
+		}
+		ok, detail := probeBluesky(ctx, svc.probeClient(), cfg)
 		res.OK, res.Detail = ok, detail
 		return res, nil
 	default:
