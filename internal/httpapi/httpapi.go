@@ -1073,6 +1073,10 @@ type workflowDetailDTO struct {
 	Critical          bool            `json:"critical"`
 	Steps             json.RawMessage `json:"steps"`
 	PayloadSchema     json.RawMessage `json:"payloadSchema,omitempty"`
+	// Outcome reports what a PUT /v1/workflows/{slug} upsert actually did:
+	// "created", "unchanged", or "updated". Left unset (omitted from the
+	// JSON body) by every other handler that returns this DTO.
+	Outcome string `json:"outcome,omitempty"`
 }
 
 // getWorkflow returns the full workflow definition for a single slug within
@@ -1111,10 +1115,22 @@ type workflowUpdateRequest struct {
 	PayloadSchema json.RawMessage       `json:"payloadSchema,omitempty"`
 }
 
-// putWorkflow updates an existing workflow's name, steps, and payload schema,
-// recompiles the DAG, and re-registers it with the engine. Returns 404 when
-// the workflow does not exist in this scope. Returns 422 when the steps fail
-// compilation (e.g. a delay step with a non-positive amount).
+// putWorkflow ensures a workflow exists matching the submitted definition --
+// PUT /v1/workflows/{slug} is an idempotent upsert, not an unconditional
+// overwrite:
+//
+//   - absent -> created, 201.
+//   - present and the submitted definition (name, steps, payload schema)
+//     canonically equals the stored one -> 200, unchanged: no write, no new
+//     workflow_version row.
+//   - present and different -> the ?onConflict= query param decides.
+//     "update" (the default, preserving the historical PUT behavior of this
+//     endpoint) overwrites and returns 200 with the updated workflow.
+//     "keep" leaves the stored row untouched and returns 409 with the
+//     stored definition so the client can diff against what it sent.
+//
+// Returns 422 when the steps fail compilation (e.g. a delay step with a
+// non-positive amount).
 func putWorkflow(au *authoring.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slug := chi.URLParam(r, "slug")
@@ -1122,6 +1138,18 @@ func putWorkflow(au *authoring.Service) http.HandlerFunc {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
+		}
+		onConflict := authoring.OnConflictUpdate
+		if v := r.URL.Query().Get("onConflict"); v != "" {
+			switch v {
+			case string(authoring.OnConflictUpdate):
+				onConflict = authoring.OnConflictUpdate
+			case string(authoring.OnConflictKeep):
+				onConflict = authoring.OnConflictKeep
+			default:
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "onConflict must be update or keep")
+				return
+			}
 		}
 		allowed := make(map[string]bool, len(allowedStepTypes))
 		for _, t := range allowedStepTypes {
@@ -1146,15 +1174,38 @@ func putWorkflow(au *authoring.Service) http.HandlerFunc {
 			})
 		}
 		scope := identity.ScopeFrom(r.Context())
-		wf, err := au.Update(r.Context(), scope, slug, authoring.UpdateInput{
-			Name:          req.Name,
-			Steps:         steps,
-			PayloadSchema: req.PayloadSchema,
-		})
+		wf, outcome, err := au.Ensure(r.Context(), scope, slug, authoring.EnsureInput{
+			Name:              req.Name,
+			TriggerIdentifier: slug,
+			Steps:             steps,
+			PayloadSchema:     req.PayloadSchema,
+		}, onConflict)
 		if err != nil {
+			var conflictErr *authoring.ErrDefinitionConflict
+			if errors.As(err, &conflictErr) {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error":   "conflict",
+					"message": "workflow exists with a different definition",
+					"existing": workflowDetailDTO{
+						ID:                conflictErr.Existing.ID,
+						Name:              conflictErr.Existing.Name,
+						TriggerIdentifier: conflictErr.Existing.TriggerIdentifier,
+						Active:            conflictErr.Existing.Active,
+						Origin:            conflictErr.Existing.Origin,
+						Critical:          conflictErr.Existing.Critical,
+						Steps:             conflictErr.Existing.Steps,
+						PayloadSchema:     conflictErr.Existing.PayloadSchema,
+					},
+				})
+				return
+			}
 			var compileErr *authoring.ErrCompileFailure
 			if errors.As(err, &compileErr) {
 				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", compileErr.Error())
+				return
+			}
+			if errors.Is(err, authoring.ErrInvalidTriggerIdentifier) {
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
 			if errors.Is(err, store.ErrNotFound) {
@@ -1164,7 +1215,26 @@ func putWorkflow(au *authoring.Service) http.HandlerFunc {
 			writeInternalError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, workflowDetailDTO{
+		if outcome == authoring.EnsureCreated {
+			// Mirrors postWorkflow: Ensure only performs the store write for
+			// a fresh row, Publish registers the compiled DAG with the
+			// engine. A publish failure here is a step-config (compile)
+			// error, not infra -- the row is already persisted, same as POST.
+			if err := au.Publish(r.Context(), scope, slug); err != nil {
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
+				return
+			}
+		}
+		status := http.StatusOK
+		outcomeStr := "updated"
+		switch outcome {
+		case authoring.EnsureCreated:
+			status = http.StatusCreated
+			outcomeStr = "created"
+		case authoring.EnsureUnchanged:
+			outcomeStr = "unchanged"
+		}
+		writeJSON(w, status, workflowDetailDTO{
 			ID:                wf.ID,
 			Name:              wf.Name,
 			TriggerIdentifier: wf.TriggerIdentifier,
@@ -1173,6 +1243,7 @@ func putWorkflow(au *authoring.Service) http.HandlerFunc {
 			Critical:          wf.Critical,
 			Steps:             wf.Steps,
 			PayloadSchema:     wf.PayloadSchema,
+			Outcome:           outcomeStr,
 		})
 	}
 }

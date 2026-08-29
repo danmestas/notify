@@ -27,7 +27,7 @@ import (
 // setupWorkflowSuite spins up a complete stack (sidecar, store, services,
 // httptest.Server) and creates+publishes a single in_app workflow. It returns
 // the server, auth header, and the trigger identifier of the created workflow.
-func setupWorkflowSuite(t *testing.T) (srv *httptest.Server, authHeader string, svc *authoring.Service, sc domain.Scope) {
+func setupWorkflowSuite(t *testing.T) (srv *httptest.Server, authHeader string, svc *authoring.Service, sc domain.Scope, st *store.Store) {
 	t.Helper()
 	natsURL, bridgeURL := dagtest.StartSidecar(t)
 	eng, err := engine.New(natsURL, bridgeURL)
@@ -37,7 +37,7 @@ func setupWorkflowSuite(t *testing.T) (srv *httptest.Server, authHeader string, 
 	t.Cleanup(func() { _ = eng.Stop() })
 
 	ctx := context.Background()
-	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "notify.db"))
+	st, err = store.Open(ctx, filepath.Join(t.TempDir(), "notify.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
@@ -58,7 +58,7 @@ func setupWorkflowSuite(t *testing.T) (srv *httptest.Server, authHeader string, 
 	srv = httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Authoring: auth}))
 	t.Cleanup(srv.Close)
 
-	return srv, "ApiKey " + key, auth, scope
+	return srv, "ApiKey " + key, auth, scope, st
 }
 
 // TestPutWorkflow_UpdatesNameAndSteps verifies PUT /v1/workflows/{slug}
@@ -66,7 +66,7 @@ func setupWorkflowSuite(t *testing.T) (srv *httptest.Server, authHeader string, 
 // subsequent GET.
 func TestPutWorkflow_UpdatesNameAndSteps(t *testing.T) {
 	ctx := context.Background()
-	srv, authHeader, auth, scope := setupWorkflowSuite(t)
+	srv, authHeader, auth, scope, _ := setupWorkflowSuite(t)
 
 	// Create via service directly (mirrors existing test patterns).
 	if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
@@ -111,14 +111,161 @@ func TestPutWorkflow_UpdatesNameAndSteps(t *testing.T) {
 	}
 }
 
-// TestPutWorkflow_404ForMissing verifies PUT returns 404 for an unknown slug.
-func TestPutWorkflow_404ForMissing(t *testing.T) {
-	srv, authHeader, _, _ := setupWorkflowSuite(t)
+// TestPutWorkflow_CreatesWhenMissing verifies PUT /v1/workflows/{slug} is an
+// idempotent upsert: an unknown slug is created (201), not 404 (#303).
+func TestPutWorkflow_CreatesWhenMissing(t *testing.T) {
+	srv, authHeader, _, _, _ := setupWorkflowSuite(t)
 
-	body := `{"name":"X","steps":[{"stepId":"S1","type":"in_app"}]}`
-	status, _ := doPut(t, srv.URL+"/v1/workflows/no-such", authHeader, body)
-	if status != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", status)
+	body := `{"name":"X","steps":[{"stepId":"S1","type":"in_app","controlValues":{"body":"hi"}}]}`
+	status, resp := doPut(t, srv.URL+"/v1/workflows/no-such", authHeader, body)
+	if status != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (body=%s)", status, resp)
+	}
+
+	var dto map[string]any
+	if err := json.Unmarshal([]byte(resp), &dto); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if dto["triggerIdentifier"] != "no-such" {
+		t.Errorf("triggerIdentifier = %v, want no-such", dto["triggerIdentifier"])
+	}
+
+	getStatus, _ := doGet(t, srv.URL+"/v1/workflows/no-such", authHeader)
+	if getStatus != http.StatusOK {
+		t.Fatalf("GET after PUT-create: status=%d, want 200", getStatus)
+	}
+}
+
+// versionCount returns the number of workflow_versions rows recorded for
+// slug within scope, so a test can prove a PUT did (or did not) append a new
+// version row -- not just that it returned 200.
+func versionCount(t *testing.T, st *store.Store, scope domain.Scope, slug string) int {
+	t.Helper()
+	wf, err := st.Workflows().GetByTriggerIdentifier(context.Background(), scope, slug)
+	if err != nil {
+		t.Fatalf("GetByTriggerIdentifier(%q): %v", slug, err)
+	}
+	versions, err := st.WorkflowVersions().ListByWorkflow(context.Background(), scope, wf.ID)
+	if err != nil {
+		t.Fatalf("ListByWorkflow(%q): %v", wf.ID, err)
+	}
+	return len(versions)
+}
+
+// TestPutWorkflow_NoopWhenEqual verifies a PUT resubmitting the exact stored
+// definition returns 200, reports outcome=unchanged, and -- the property the
+// name promises -- does NOT append a new workflow_versions row. The inverse
+// is asserted in the same test: a subsequent PUT with a genuinely different
+// definition (default onConflict=update) DOES add a version and reports
+// outcome=updated.
+func TestPutWorkflow_NoopWhenEqual(t *testing.T) {
+	ctx := context.Background()
+	srv, authHeader, auth, scope, st := setupWorkflowSuite(t)
+
+	if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Stable",
+		TriggerIdentifier: "noop-wf",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := auth.Publish(ctx, scope, "noop-wf"); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	before := versionCount(t, st, scope, "noop-wf")
+	if before == 0 {
+		t.Fatalf("versionCount after Publish = 0, want >= 1")
+	}
+
+	body := `{"name":"Stable","steps":[{"stepId":"S1","type":"in_app","controlValues":{"body":"hi"}}]}`
+	status, resp := doPut(t, srv.URL+"/v1/workflows/noop-wf", authHeader, body)
+	if status != http.StatusOK {
+		t.Fatalf("PUT (identical): status=%d body=%s", status, resp)
+	}
+
+	var dto map[string]any
+	if err := json.Unmarshal([]byte(resp), &dto); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if dto["name"] != "Stable" {
+		t.Errorf("name = %v, want Stable", dto["name"])
+	}
+	if dto["outcome"] != "unchanged" {
+		t.Errorf("outcome = %v, want unchanged", dto["outcome"])
+	}
+
+	after := versionCount(t, st, scope, "noop-wf")
+	if after != before {
+		t.Errorf("versionCount after identical PUT = %d, want unchanged from %d (no-op must not append a version)", after, before)
+	}
+
+	// Inverse: a differing PUT with the default onConflict=update DOES add a
+	// version and is not treated as a no-op.
+	changedBody := `{"name":"Stable","steps":[{"stepId":"S1","type":"in_app","controlValues":{"body":"changed"}}]}`
+	status, resp = doPut(t, srv.URL+"/v1/workflows/noop-wf", authHeader, changedBody)
+	if status != http.StatusOK {
+		t.Fatalf("PUT (differing): status=%d body=%s", status, resp)
+	}
+	if err := json.Unmarshal([]byte(resp), &dto); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if dto["outcome"] != "updated" {
+		t.Errorf("outcome = %v, want updated", dto["outcome"])
+	}
+
+	afterUpdate := versionCount(t, st, scope, "noop-wf")
+	if afterUpdate <= after {
+		t.Errorf("versionCount after differing PUT = %d, want > %d (an actual change must append a version)", afterUpdate, after)
+	}
+}
+
+// TestPutWorkflow_KeepReturnsConflictWithSummary verifies
+// ?onConflict=keep rejects a differing PUT with 409 and the stored
+// definition in the body, leaving the row untouched.
+func TestPutWorkflow_KeepReturnsConflictWithSummary(t *testing.T) {
+	ctx := context.Background()
+	srv, authHeader, auth, scope, _ := setupWorkflowSuite(t)
+
+	if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Original",
+		TriggerIdentifier: "keep-wf",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"v1"}`)}},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := auth.Publish(ctx, scope, "keep-wf"); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	body := `{"name":"Changed","steps":[{"stepId":"S1","type":"in_app","controlValues":{"body":"v2"}}]}`
+	status, resp := doPut(t, srv.URL+"/v1/workflows/keep-wf?onConflict=keep", authHeader, body)
+	if status != http.StatusConflict {
+		t.Fatalf("PUT ?onConflict=keep: status=%d body=%s, want 409", status, resp)
+	}
+	var conflict map[string]any
+	if err := json.Unmarshal([]byte(resp), &conflict); err != nil {
+		t.Fatalf("decode conflict response: %v", err)
+	}
+	existing, ok := conflict["existing"].(map[string]any)
+	if !ok {
+		t.Fatalf("conflict response missing 'existing' summary: %s", resp)
+	}
+	if existing["name"] != "Original" {
+		t.Errorf("existing.name = %v, want Original (stored row must be untouched)", existing["name"])
+	}
+
+	// GET must still show the original definition.
+	getStatus, getResp := doGet(t, srv.URL+"/v1/workflows/keep-wf", authHeader)
+	if getStatus != http.StatusOK {
+		t.Fatalf("GET after keep-conflict: status=%d", getStatus)
+	}
+	var dto map[string]any
+	if err := json.Unmarshal([]byte(getResp), &dto); err != nil {
+		t.Fatalf("decode GET response: %v", err)
+	}
+	if dto["name"] != "Original" {
+		t.Errorf("stored name = %v after keep-conflict, want Original (row must be untouched)", dto["name"])
 	}
 }
 
@@ -126,7 +273,7 @@ func TestPutWorkflow_404ForMissing(t *testing.T) {
 // has a non-positive amount (compile failure).
 func TestPutWorkflow_422OnBadDelayStep(t *testing.T) {
 	ctx := context.Background()
-	srv, authHeader, auth, scope := setupWorkflowSuite(t)
+	srv, authHeader, auth, scope, _ := setupWorkflowSuite(t)
 
 	if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
 		Name:              "WF",
@@ -149,7 +296,7 @@ func TestPutWorkflow_422OnBadDelayStep(t *testing.T) {
 // TestPutWorkflow_AuthGuard verifies PUT /v1/workflows/{slug} requires auth.
 func TestPutWorkflow_AuthGuard(t *testing.T) {
 	ctx := context.Background()
-	srv, authHeader, auth, scope := setupWorkflowSuite(t)
+	srv, authHeader, auth, scope, _ := setupWorkflowSuite(t)
 
 	if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
 		Name:              "WF",
@@ -174,7 +321,7 @@ func TestPutWorkflow_AuthGuard(t *testing.T) {
 // returns 204 and the workflow can no longer be found.
 func TestDeleteWorkflow_RemovesWorkflow(t *testing.T) {
 	ctx := context.Background()
-	srv, authHeader, auth, scope := setupWorkflowSuite(t)
+	srv, authHeader, auth, scope, _ := setupWorkflowSuite(t)
 
 	if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
 		Name:              "ToDelete",
@@ -201,7 +348,7 @@ func TestDeleteWorkflow_RemovesWorkflow(t *testing.T) {
 
 // TestDeleteWorkflow_404ForMissing verifies DELETE returns 404 for unknown slug.
 func TestDeleteWorkflow_404ForMissing(t *testing.T) {
-	srv, authHeader, _, _ := setupWorkflowSuite(t)
+	srv, authHeader, _, _, _ := setupWorkflowSuite(t)
 
 	status, _ := doDelete(t, srv.URL+"/v1/workflows/no-such-wf", authHeader)
 	if status != http.StatusNotFound {
@@ -213,7 +360,7 @@ func TestDeleteWorkflow_404ForMissing(t *testing.T) {
 // active and the trigger service skips inactive workflows.
 func TestPatchWorkflowActivate_RoundTrip(t *testing.T) {
 	ctx := context.Background()
-	srv, authHeader, auth, scope := setupWorkflowSuite(t)
+	srv, authHeader, auth, scope, _ := setupWorkflowSuite(t)
 
 	// Create a subscriber and workflow first.
 	if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
@@ -256,7 +403,7 @@ func TestPatchWorkflowActivate_RoundTrip(t *testing.T) {
 // TestPatchWorkflowActivate_404ForMissing verifies PATCH activate returns 404
 // for an unknown slug.
 func TestPatchWorkflowActivate_404ForMissing(t *testing.T) {
-	srv, authHeader, _, _ := setupWorkflowSuite(t)
+	srv, authHeader, _, _, _ := setupWorkflowSuite(t)
 
 	status, _ := doPatch(t, srv.URL+"/v1/workflows/no-such/activate", authHeader, `{"active":false}`)
 	if status != http.StatusNotFound {
@@ -268,7 +415,7 @@ func TestPatchWorkflowActivate_404ForMissing(t *testing.T) {
 // when a workflow has active=false (spec-02 B4 requirement).
 func TestTriggerSkipsInactiveWorkflow(t *testing.T) {
 	ctx := context.Background()
-	srv, authHeader, auth, scope := setupWorkflowSuite(t)
+	srv, authHeader, auth, scope, _ := setupWorkflowSuite(t)
 
 	if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
 		Name:              "InactiveWF",
@@ -337,7 +484,7 @@ func TestTriggerSkipsInactiveWorkflow(t *testing.T) {
 // a new workflow inheriting the source steps.
 func TestPostWorkflowDuplicate_CopiesWorkflow(t *testing.T) {
 	ctx := context.Background()
-	srv, authHeader, auth, scope := setupWorkflowSuite(t)
+	srv, authHeader, auth, scope, _ := setupWorkflowSuite(t)
 
 	if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
 		Name:              "Source",
@@ -384,7 +531,7 @@ func TestPostWorkflowDuplicate_CopiesWorkflow(t *testing.T) {
 // when the desired triggerIdentifier already exists.
 func TestPostWorkflowDuplicate_409OnCollision(t *testing.T) {
 	ctx := context.Background()
-	srv, authHeader, auth, scope := setupWorkflowSuite(t)
+	srv, authHeader, auth, scope, _ := setupWorkflowSuite(t)
 
 	for _, slug := range []string{"col-src", "col-existing"} {
 		if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
@@ -409,7 +556,7 @@ func TestPostWorkflowDuplicate_409OnCollision(t *testing.T) {
 // TestPostWorkflowDuplicate_404ForMissingSrc verifies POST duplicate returns
 // 404 when the source workflow does not exist.
 func TestPostWorkflowDuplicate_404ForMissingSrc(t *testing.T) {
-	srv, authHeader, _, _ := setupWorkflowSuite(t)
+	srv, authHeader, _, _, _ := setupWorkflowSuite(t)
 
 	body := `{"name":"X","triggerIdentifier":"new-id"}`
 	status, _ := doPost(t, srv.URL+"/v1/workflows/no-src/duplicate", authHeader, body)
@@ -422,7 +569,7 @@ func TestPostWorkflowDuplicate_404ForMissingSrc(t *testing.T) {
 // 409 when the triggerIdentifier already exists in this scope.
 func TestPostWorkflow_409OnDuplicateTrigger(t *testing.T) {
 	ctx := context.Background()
-	srv, authHeader, auth, scope := setupWorkflowSuite(t)
+	srv, authHeader, auth, scope, _ := setupWorkflowSuite(t)
 
 	if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
 		Name:              "Existing",
@@ -442,7 +589,7 @@ func TestPostWorkflow_409OnDuplicateTrigger(t *testing.T) {
 // TestPostWorkflow_422OnInvalidDelayStep verifies POST /v1/workflows returns
 // 422 when a delay step has a non-positive amount.
 func TestPostWorkflow_422OnInvalidDelayStep(t *testing.T) {
-	srv, authHeader, _, _ := setupWorkflowSuite(t)
+	srv, authHeader, _, _, _ := setupWorkflowSuite(t)
 
 	body := `{"name":"BadDelay","triggerIdentifier":"bad-delay-post","steps":[{"stepId":"d1","type":"delay","controlValues":{"amount":0,"unit":"seconds"}}]}`
 	status, resp := doPost(t, srv.URL+"/v1/workflows", authHeader, body)

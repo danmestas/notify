@@ -1,16 +1,19 @@
 package authoring_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/dagtest"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/secretbox"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -1063,5 +1066,402 @@ func TestCompile_ThrottleBeforeChannel(t *testing.T) {
 	}
 	if len(ch.DependsOn) != 1 || ch.DependsOn[0] != "T1" {
 		t.Errorf("channel DependsOn = %v, want [T1]", ch.DependsOn)
+	}
+}
+
+// TestEnsure_CreatesWhenAbsent proves Ensure creates a row (EnsureCreated)
+// when no workflow exists for the slug, mirroring Create.
+func TestEnsure_CreatesWhenAbsent(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, nil)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	wf, outcome, err := svc.Ensure(ctx, scope, "ensure-new", authoring.EnsureInput{
+		Name:              "New",
+		TriggerIdentifier: "ensure-new",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}},
+	}, authoring.OnConflictUpdate)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if outcome != authoring.EnsureCreated {
+		t.Fatalf("outcome = %v, want EnsureCreated", outcome)
+	}
+	if wf.TriggerIdentifier != "ensure-new" {
+		t.Fatalf("TriggerIdentifier = %q, want ensure-new", wf.TriggerIdentifier)
+	}
+
+	got, err := svc.GetBySlug(ctx, scope, "ensure-new")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	if got.Name != "New" {
+		t.Fatalf("persisted name = %q, want New", got.Name)
+	}
+}
+
+// TestEnsure_NoopWhenEqual proves that resubmitting the exact stored
+// definition (name, steps, payload schema, canonicalized) does not write:
+// the row's ID is unchanged and no new workflow_version row is recorded,
+// even though a live engine is wired (so a real Update call WOULD record
+// one).
+func TestEnsure_NoopWhenEqual(t *testing.T) {
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	defer eng.Stop()
+
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, eng)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	steps := []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}}
+	created, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Stable",
+		TriggerIdentifier: "ensure-noop",
+		Steps:             steps,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := svc.Publish(ctx, scope, "ensure-noop"); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	versionsBefore, err := st.WorkflowVersions().ListByWorkflow(ctx, scope, created.ID)
+	if err != nil {
+		t.Fatalf("ListByWorkflow (before): %v", err)
+	}
+	if len(versionsBefore) != 1 {
+		t.Fatalf("versions before Ensure = %d, want 1 (from Publish)", len(versionsBefore))
+	}
+
+	// Resubmit the identical definition, but with re-ordered object keys and
+	// extra whitespace in the step's control values -- canonicalization must
+	// treat this as equal.
+	wf, outcome, err := svc.Ensure(ctx, scope, "ensure-noop", authoring.EnsureInput{
+		Name:              "Stable",
+		TriggerIdentifier: "ensure-noop",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{ "body" : "hi" }`)}},
+	}, authoring.OnConflictUpdate)
+	if err != nil {
+		t.Fatalf("Ensure (identical): %v", err)
+	}
+	if outcome != authoring.EnsureUnchanged {
+		t.Fatalf("outcome = %v, want EnsureUnchanged", outcome)
+	}
+	if wf.ID != created.ID {
+		t.Fatalf("Ensure returned a different row: ID = %q, want %q", wf.ID, created.ID)
+	}
+
+	versionsAfter, err := st.WorkflowVersions().ListByWorkflow(ctx, scope, created.ID)
+	if err != nil {
+		t.Fatalf("ListByWorkflow (after): %v", err)
+	}
+	if len(versionsAfter) != len(versionsBefore) {
+		t.Fatalf("versions after no-op Ensure = %d, want unchanged at %d", len(versionsAfter), len(versionsBefore))
+	}
+
+	// The row itself must be byte-identical (no write happened).
+	again, err := svc.GetBySlug(ctx, scope, "ensure-noop")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	if string(again.Steps) != string(created.Steps) {
+		t.Fatalf("stored steps changed after no-op Ensure: got %s, want %s", again.Steps, created.Steps)
+	}
+}
+
+// TestEnsure_NoopWhenEqual_SecretBoxRoundTrip proves that resubmitting an
+// http_request step's plaintext header value (the IaC-caller shape: a boot
+// script re-Ensures the same workflow with the same literal Authorization
+// header every time) is recognized as unchanged even though the box seals
+// with a fresh random nonce on every call, so the stored and resubmitted
+// ciphertext bytes never match -- the comparison must be on plaintext, not
+// ciphertext. This is the exact #303 regression: every Ensure call in this
+// file constructs the service with a nil box, which cannot observe it.
+func TestEnsure_NoopWhenEqual_SecretBoxRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	box, err := secretbox.New(bytes.Repeat([]byte{0x2a}, 32))
+	if err != nil {
+		t.Fatalf("secretbox.New: %v", err)
+	}
+	svc := authoring.New(st, nil, authoring.WithSecretBox(box))
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	headers := `{"Authorization":"Bearer secret-token"}`
+	step := domain.Step{
+		StepID: "S1",
+		Type:   "http_request",
+		ControlValues: json.RawMessage(`{"url":"https://example.com","method":"POST",` +
+			`"headers":` + string(mustJSON(t, headers)) + `,"body":"","timeoutSec":30,"failurePolicy":"fail_closed"}`),
+	}
+
+	created, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Webhook",
+		TriggerIdentifier: "ensure-secret-noop",
+		Steps:             []domain.Step{step},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Resubmit with the identical plaintext header -- not the SecretMask, the
+	// real value, as an IaC caller that never GETs first would. Sealing runs
+	// again with a new random nonce, so the ciphertext bytes differ from what
+	// is stored; the comparison must still see this as unchanged.
+	wf, outcome, err := svc.Ensure(ctx, scope, "ensure-secret-noop", authoring.EnsureInput{
+		Name:              "Webhook",
+		TriggerIdentifier: "ensure-secret-noop",
+		Steps:             []domain.Step{step},
+	}, authoring.OnConflictUpdate)
+	if err != nil {
+		t.Fatalf("Ensure (identical secret): %v", err)
+	}
+	if outcome != authoring.EnsureUnchanged {
+		t.Fatalf("outcome = %v, want EnsureUnchanged", outcome)
+	}
+	if wf.ID != created.ID {
+		t.Fatalf("Ensure returned a different row: ID = %q, want %q", wf.ID, created.ID)
+	}
+}
+
+// mustJSON marshals v to a JSON string literal for embedding in a raw
+// control-values blob.
+func mustJSON(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	return b
+}
+
+// TestEnsure_UpdatesWhenDifferent proves a differing submission with the
+// default onConflict ("update") overwrites the stored definition, exactly
+// as a direct Update call would (200-equivalent EnsureUpdated outcome).
+func TestEnsure_UpdatesWhenDifferent(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, nil)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Original",
+		TriggerIdentifier: "ensure-update",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"v1"}`)}},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	wf, outcome, err := svc.Ensure(ctx, scope, "ensure-update", authoring.EnsureInput{
+		Name:              "Changed",
+		TriggerIdentifier: "ensure-update",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"v2"}`)}},
+	}, authoring.OnConflictUpdate)
+	if err != nil {
+		t.Fatalf("Ensure (differing, update): %v", err)
+	}
+	if outcome != authoring.EnsureUpdated {
+		t.Fatalf("outcome = %v, want EnsureUpdated", outcome)
+	}
+	if wf.Name != "Changed" {
+		t.Fatalf("wf.Name = %q, want Changed", wf.Name)
+	}
+
+	got, err := svc.GetBySlug(ctx, scope, "ensure-update")
+	if err != nil {
+		t.Fatalf("GetBySlug: %v", err)
+	}
+	if got.Name != "Changed" {
+		t.Fatalf("persisted name = %q, want Changed", got.Name)
+	}
+}
+
+// TestEnsure_KeepReturnsConflict proves ?onConflict=keep leaves a differing
+// stored definition untouched and returns ErrDefinitionConflict carrying the
+// stored row.
+func TestEnsure_KeepReturnsConflict(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, nil)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Original",
+		TriggerIdentifier: "ensure-keep",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"v1"}`)}},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	_, _, err = svc.Ensure(ctx, scope, "ensure-keep", authoring.EnsureInput{
+		Name:              "Changed",
+		TriggerIdentifier: "ensure-keep",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"v2"}`)}},
+	}, authoring.OnConflictKeep)
+
+	var conflictErr *authoring.ErrDefinitionConflict
+	if !errors.As(err, &conflictErr) {
+		t.Fatalf("Ensure (differing, keep) error = %v, want *authoring.ErrDefinitionConflict", err)
+	}
+	if conflictErr.Existing.Name != "Original" {
+		t.Fatalf("conflictErr.Existing.Name = %q, want Original", conflictErr.Existing.Name)
+	}
+
+	// The stored row must be untouched.
+	got, gErr := svc.GetBySlug(ctx, scope, "ensure-keep")
+	if gErr != nil {
+		t.Fatalf("GetBySlug: %v", gErr)
+	}
+	if got.Name != "Original" {
+		t.Fatalf("stored name = %q after keep-conflict, want Original (row must be untouched)", got.Name)
+	}
+}
+
+// TestEnsure_ConcurrentIdenticalCallsAllSucceed proves N concurrent Ensure
+// calls submitting the exact same definition for an absent slug all resolve
+// without error (one Created, the rest Unchanged) against exactly one stored
+// row -- the store's unique index on (environment_id, trigger_identifier)
+// lets one Create through; every loser re-reads and falls into the equal
+// check instead of surfacing the race.
+func TestEnsure_ConcurrentIdenticalCallsAllSucceed(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, nil)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	const n = 20
+	in := authoring.EnsureInput{
+		Name:              "Concurrent",
+		TriggerIdentifier: "ensure-concurrent",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}},
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	outcomes := make([]authoring.EnsureOutcome, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, outcome, err := svc.Ensure(ctx, scope, "ensure-concurrent", in, authoring.OnConflictUpdate)
+			errs[i] = err
+			outcomes[i] = outcome
+		}(i)
+	}
+	wg.Wait()
+
+	created := 0
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Ensure[%d] failed: %v", i, err)
+		}
+		if outcomes[i] == authoring.EnsureCreated {
+			created++
+		}
+	}
+	if created != 1 {
+		t.Fatalf("exactly one concurrent Ensure should have created the row, got %d", created)
+	}
+
+	all, err := svc.List(ctx, scope)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	count := 0
+	for _, wf := range all {
+		if wf.TriggerIdentifier == "ensure-concurrent" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("workflow rows for ensure-concurrent = %d, want exactly 1", count)
+	}
+}
+
+// TestEnsure_ScopeIsolation proves the same slug is independently absent (and
+// so independently created) in a different org's scope: Ensure never leaks
+// across scopes.
+func TestEnsure_ScopeIsolation(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, nil)
+	scopeA := domain.Scope{OrgID: "org_a", EnvID: "env_a"}
+	scopeB := domain.Scope{OrgID: "org_b", EnvID: "env_b"}
+
+	steps := []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}}
+	if _, err := svc.Create(ctx, scopeA, authoring.WorkflowInput{
+		Name:              "Org A",
+		TriggerIdentifier: "shared-slug",
+		Steps:             steps,
+	}); err != nil {
+		t.Fatalf("Create in scope A: %v", err)
+	}
+
+	// scope B has never seen "shared-slug": Ensure must create it there, not
+	// find/mutate org A's row.
+	wf, outcome, err := svc.Ensure(ctx, scopeB, "shared-slug", authoring.EnsureInput{
+		Name:              "Org B",
+		TriggerIdentifier: "shared-slug",
+		Steps:             steps,
+	}, authoring.OnConflictUpdate)
+	if err != nil {
+		t.Fatalf("Ensure in scope B: %v", err)
+	}
+	if outcome != authoring.EnsureCreated {
+		t.Fatalf("outcome in scope B = %v, want EnsureCreated (must not see org A's row)", outcome)
+	}
+	if wf.Name != "Org B" {
+		t.Fatalf("wf.Name = %q, want Org B", wf.Name)
+	}
+
+	// Org A's row must be untouched.
+	gotA, err := svc.GetBySlug(ctx, scopeA, "shared-slug")
+	if err != nil {
+		t.Fatalf("GetBySlug scope A: %v", err)
+	}
+	if gotA.Name != "Org A" {
+		t.Fatalf("scope A name = %q after scope B Ensure, want Org A (leaked across scopes)", gotA.Name)
 	}
 }

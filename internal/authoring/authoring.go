@@ -4,6 +4,7 @@
 package authoring
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -127,6 +128,11 @@ type WorkflowInput struct {
 	Name              string
 	TriggerIdentifier string
 	Steps             []domain.Step
+	// PayloadSchema is optional and, unlike Critical below, is not set by
+	// postWorkflow (POST /v1/workflows never accepted one) -- only Ensure's
+	// create-when-absent path populates it, so it can carry the full PUT
+	// body's payload schema into a brand-new row.
+	PayloadSchema json.RawMessage
 	// Critical marks the workflow no-opt-out: subscriber channel/workflow
 	// preferences cannot suppress its delivery (see domain.Workflow.Critical).
 	Critical bool
@@ -151,6 +157,7 @@ func (s *Service) Create(ctx context.Context, scope domain.Scope, in WorkflowInp
 		TriggerIdentifier: in.TriggerIdentifier,
 		Active:            true,
 		Steps:             steps,
+		PayloadSchema:     in.PayloadSchema,
 		Critical:          in.Critical,
 	}
 	// Validate by compiling before any write — mirrors Update. An invalid step
@@ -560,6 +567,261 @@ func (s *Service) Update(ctx context.Context, scope domain.Scope, slug string, i
 	}
 
 	return candidate, nil
+}
+
+// EnsureInput is Ensure's desired-state request: the full PUT body plus the
+// slug it targets. Unlike UpdateInput it carries no Critical field, mirroring
+// workflowUpdateRequest (the PUT /v1/workflows/{slug} body), which has never
+// accepted one -- Ensure's create-when-absent and update-when-different paths
+// both leave Critical at its zero value, exactly as Create and Update already
+// do for their respective HTTP callers.
+type EnsureInput struct {
+	Name              string
+	TriggerIdentifier string
+	Steps             []domain.Step
+	PayloadSchema     json.RawMessage
+}
+
+// EnsureOutcome reports what Ensure actually did, so the HTTP handler can
+// pick the right status code (201 for EnsureCreated, 200 otherwise).
+type EnsureOutcome int
+
+const (
+	// EnsureCreated means no row existed for the slug; one was created.
+	EnsureCreated EnsureOutcome = iota
+	// EnsureUnchanged means a row existed and its definition already
+	// matched the submitted one; nothing was written.
+	EnsureUnchanged
+	// EnsureUpdated means a row existed with a different definition and was
+	// overwritten (OnConflictUpdate).
+	EnsureUpdated
+)
+
+// OnConflict selects Ensure's behavior when the workflow already exists with
+// a definition different from the one submitted.
+type OnConflict string
+
+const (
+	// OnConflictUpdate overwrites the stored definition -- today's PUT
+	// behavior, kept as the default so existing callers see no change.
+	OnConflictUpdate OnConflict = "update"
+	// OnConflictKeep rejects the write with ErrDefinitionConflict instead of
+	// touching the stored row.
+	OnConflictKeep OnConflict = "keep"
+)
+
+// ErrDefinitionConflict is returned by Ensure when onConflict is
+// OnConflictKeep and the stored definition differs from the submitted one.
+// Existing is the stored workflow, so the caller can summarize it in a 409
+// response body for the client to diff against.
+type ErrDefinitionConflict struct {
+	Existing domain.Workflow
+}
+
+func (e *ErrDefinitionConflict) Error() string {
+	return "authoring: workflow exists with a different definition"
+}
+
+// Ensure makes the workflow identified by slug match in, treating PUT
+// /v1/workflows/{slug} as an idempotent upsert rather than an unconditional
+// overwrite:
+//
+//   - absent -> created (EnsureCreated). The caller is still responsible for
+//     Publish, exactly as postWorkflow (POST) calls Create then Publish
+//     separately -- Ensure only performs the store write.
+//   - present and the submitted definition (name, steps, payload schema)
+//     canonically equals the stored one -> EnsureUnchanged: no write, no new
+//     workflow_version row, engine left alone. TriggerIdentifier and Active
+//     are not part of the comparison: TriggerIdentifier is the lookup key
+//     (slug) so it can never differ, and PUT has never accepted an Active
+//     field (SetActive is the only mutator), so it likewise never differs.
+//   - present and different -> onConflict decides. OnConflictUpdate (the
+//     default, preserving today's PUT behavior) overwrites via Update, which
+//     registers the recompiled DAG and records a new version, exactly as a
+//     direct Update call does. OnConflictKeep returns ErrDefinitionConflict
+//     without writing.
+//
+// Concurrent identical Ensure calls racing on an absent slug are safe: the
+// store's unique index on (environment_id, trigger_identifier) lets exactly
+// one Create through, and every loser's Create returns store.ErrConflict.
+// Ensure treats that as "someone just created it" and re-reads the row the
+// winner wrote, falling into the equal/different check above instead of
+// surfacing the race as an error -- so N concurrent identical PUTs all
+// resolve to 2xx (one 201, the rest 200 EnsureUnchanged) against exactly one
+// stored row.
+func (s *Service) Ensure(ctx context.Context, scope domain.Scope, slug string, in EnsureInput, onConflict OnConflict) (domain.Workflow, EnsureOutcome, error) {
+	existing, err := s.store.Workflows().GetByTriggerIdentifier(ctx, scope, slug)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		wf, cErr := s.Create(ctx, scope, WorkflowInput{
+			Name:              in.Name,
+			TriggerIdentifier: in.TriggerIdentifier,
+			Steps:             in.Steps,
+			PayloadSchema:     in.PayloadSchema,
+		})
+		switch {
+		case cErr == nil:
+			return wf, EnsureCreated, nil
+		case errors.Is(cErr, store.ErrConflict):
+			// Lost the create race: re-read what the winner wrote and fall
+			// through to the equal/different check below.
+			existing, err = s.store.Workflows().GetByTriggerIdentifier(ctx, scope, slug)
+			if err != nil {
+				return domain.Workflow{}, 0, err
+			}
+		default:
+			return domain.Workflow{}, 0, cErr
+		}
+	case err != nil:
+		return domain.Workflow{}, 0, err
+	}
+
+	equal, err := s.definitionEqual(existing, in)
+	if err != nil {
+		return domain.Workflow{}, 0, err
+	}
+	if equal {
+		return existing, EnsureUnchanged, nil
+	}
+	if onConflict == OnConflictKeep {
+		return domain.Workflow{}, 0, &ErrDefinitionConflict{Existing: existing}
+	}
+	wf, err := s.Update(ctx, scope, slug, UpdateInput{
+		Name:          in.Name,
+		Steps:         in.Steps,
+		PayloadSchema: in.PayloadSchema,
+	})
+	if err != nil {
+		return domain.Workflow{}, 0, err
+	}
+	return wf, EnsureUpdated, nil
+}
+
+// definitionEqual reports whether in's definition already matches existing's
+// stored one. Steps are sealed exactly as Update would seal them (using
+// existing's steps as the "prior" map, so a resubmitted SecretMask resolves
+// to the already-stored ciphertext instead of comparing a mask against real
+// secret bytes), then both the sealed candidate and the stored steps are
+// decrypted back to plaintext before the canonical-JSON comparison.
+//
+// Comparing plaintext rather than ciphertext matters because secretbox.Seal
+// uses a fresh random nonce on every call: an IaC-style caller that resubmits
+// the literal plaintext secret (not the SecretMask -- it never GETs first)
+// would otherwise seal to different ciphertext bytes on every Ensure call and
+// never compare equal, turning every boot into a spurious update (or, under
+// onConflict=keep, a spurious 409). Decrypting is deterministic regardless of
+// nonce, so this still recognizes an unchanged secret while catching a
+// genuinely changed one.
+func (s *Service) definitionEqual(existing domain.Workflow, in EnsureInput) (bool, error) {
+	if existing.Name != in.Name {
+		return false, nil
+	}
+	existingSteps, err := unmarshalSteps(existing.Steps)
+	if err != nil {
+		return false, err
+	}
+	prior, err := priorStepsByID(existing.Steps)
+	if err != nil {
+		return false, err
+	}
+	sealedSteps, err := s.sealSteps(in.Steps, prior)
+	if err != nil {
+		return false, err
+	}
+
+	existingPlain, err := s.decryptSteps(existingSteps)
+	if err != nil {
+		return false, err
+	}
+	candidatePlain, err := s.decryptSteps(sealedSteps)
+	if err != nil {
+		return false, err
+	}
+
+	existingJSON, err := json.Marshal(existingPlain)
+	if err != nil {
+		return false, fmt.Errorf("authoring: marshal steps: %w", err)
+	}
+	candidateJSON, err := json.Marshal(candidatePlain)
+	if err != nil {
+		return false, fmt.Errorf("authoring: marshal steps: %w", err)
+	}
+	stepsEqual, err := canonicalJSONEqual(existingJSON, candidateJSON)
+	if err != nil {
+		return false, err
+	}
+	if !stepsEqual {
+		return false, nil
+	}
+	return canonicalJSONEqual(existing.PayloadSchema, in.PayloadSchema)
+}
+
+// decryptSteps opens each step's declared secret fields, undoing sealSteps.
+// It is used only for definitionEqual's plaintext comparison, never for
+// persistence: the stored row and any candidate written via Create/Update
+// always keep secrets sealed. A nil box (encryption disabled) is a no-op,
+// matching sealSteps.
+func (s *Service) decryptSteps(steps []domain.Step) ([]domain.Step, error) {
+	if s.box == nil {
+		return steps, nil
+	}
+	out := make([]domain.Step, len(steps))
+	for i, step := range steps {
+		opened, err := stepTypes.DecryptSecrets(s.box, step)
+		if err != nil {
+			return nil, fmt.Errorf("authoring: decrypt step %q: %w", step.StepID, err)
+		}
+		out[i] = opened
+	}
+	return out, nil
+}
+
+// unmarshalSteps decodes a persisted workflow's steps JSON into a slice,
+// preserving order. An empty or absent steps blob yields nil, not an error.
+func unmarshalSteps(raw json.RawMessage) ([]domain.Step, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var steps []domain.Step
+	if err := json.Unmarshal(raw, &steps); err != nil {
+		return nil, fmt.Errorf("authoring: unmarshal steps: %w", err)
+	}
+	return steps, nil
+}
+
+// canonicalJSONEqual reports whether a and b encode the same JSON value,
+// ignoring key order and whitespace. An empty/absent raw value is treated as
+// JSON null, so an unset payload schema compares equal to another unset one.
+func canonicalJSONEqual(a, b json.RawMessage) (bool, error) {
+	ca, err := canonicalJSON(a)
+	if err != nil {
+		return false, fmt.Errorf("authoring: canonicalize: %w", err)
+	}
+	cb, err := canonicalJSON(b)
+	if err != nil {
+		return false, fmt.Errorf("authoring: canonicalize: %w", err)
+	}
+	return ca == cb, nil
+}
+
+// canonicalJSON re-marshals raw so object key order and insignificant
+// whitespace don't affect comparison (encoding/json sorts map keys on
+// marshal). Array element order is preserved, which is correct here: step
+// order is meaningful.
+func canonicalJSON(raw json.RawMessage) (string, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return "null", nil
+	}
+	var v any
+	if err := json.Unmarshal(trimmed, &v); err != nil {
+		return "", err
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // Delete removes the workflow row. The engine does not expose an explicit
