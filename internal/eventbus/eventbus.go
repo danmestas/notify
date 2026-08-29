@@ -125,7 +125,7 @@ func Connect(ctx context.Context, natsURL string, opts ...Option) (*Bus, error) 
 		opt(&cfg)
 	}
 
-	nc, err := DialNATS(natsURL, "notify-eventbus")
+	nc, err := DialNATS(natsURL, "notify-eventbus", "dagnats sidecar (-nats-url)")
 	if err != nil {
 		return nil, err
 	}

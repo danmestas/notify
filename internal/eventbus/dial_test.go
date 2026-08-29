@@ -10,7 +10,7 @@ import "testing"
 func TestDialNATSOptions(t *testing.T) {
 	natsURL := startSidecar(t)
 
-	nc, err := DialNATS(natsURL, "notify-test")
+	nc, err := DialNATS(natsURL, "notify-test", "dagnats sidecar (-nats-url)")
 	if err != nil {
 		t.Fatalf("DialNATS: %v", err)
 	}

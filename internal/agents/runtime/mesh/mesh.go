@@ -95,7 +95,7 @@ func WithTimeout(d time.Duration) Option {
 
 // Dial connects to the hub and returns a ready Client.
 func Dial(natsURL string, opts ...Option) (*Client, error) {
-	nc, err := eventbus.DialNATS(natsURL, "notify-mesh")
+	nc, err := eventbus.DialNATS(natsURL, "notify-mesh", "mesh hub (-mesh-nats-url)")
 	if err != nil {
 		return nil, err
 	}

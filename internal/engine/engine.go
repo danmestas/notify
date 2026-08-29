@@ -176,7 +176,7 @@ type Engine struct {
 // New dials the sidecar's NATS endpoint and prepares an HTTP client for the
 // worker bridge mounted at bridgeURL.
 func New(natsURL, bridgeURL string) (*Engine, error) {
-	nc, err := eventbus.DialNATS(natsURL, "notify-engine")
+	nc, err := eventbus.DialNATS(natsURL, "notify-engine", "dagnats sidecar (-nats-url)")
 	if err != nil {
 		return nil, err
 	}

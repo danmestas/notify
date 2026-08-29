@@ -25,7 +25,12 @@ import (
 // name is set as the connection name so dagnats-side and notify-side logs can
 // attribute a connection to its owner ("notify-eventbus", "notify-engine",
 // "notify-mesh").
-func DialNATS(natsURL, name string) (*nats.Conn, error) {
+//
+// purpose describes what natsURL points at from that caller's perspective
+// (e.g. "dagnats sidecar (-nats-url)" vs "mesh hub (-mesh-nats-url)") and is
+// folded into the dial error only, since DialNATS itself is shared across
+// callers whose NATS endpoints can differ.
+func DialNATS(natsURL, name, purpose string) (*nats.Conn, error) {
 	nc, err := nats.Connect(
 		natsURL,
 		nats.Name(name),
@@ -56,7 +61,7 @@ func DialNATS(natsURL, name string) (*nats.Conn, error) {
 		}),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("eventbus: dial %q (%s): %w", natsURL, name, err)
+		return nil, fmt.Errorf("eventbus: dial %s %q (%s): %w", purpose, natsURL, name, err)
 	}
 	// Publish a live status gauge for this connection so /metrics reflects the
 	// current link state (the zombie-mode symptom this dialer guards against)
