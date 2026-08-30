@@ -340,3 +340,31 @@ type captureResolver struct {
 func (r captureResolver) ResolveEmail(_ context.Context, _ domain.Scope) (providers.EmailProvider, string, string, string, error) {
 	return r.cap, r.from, "capture", "int-cap", nil
 }
+
+// TestEmailLoop_ValidTokenNoBindingDropped locks the invariant that makes this
+// loop immune to the bind-after-dispatch reply drop fixed in chatloop (#315):
+// HandleInbound resolves the email-thread binding BEFORE dispatching the
+// responder and drops when it is missing, so a turn can never be dispatched
+// against a thread the reply path cannot later resolve. The token here is
+// genuine (correct key, correct scope) and only the binding is absent.
+func TestEmailLoop_ValidTokenNoBindingDropped(t *testing.T) {
+	ctx := context.Background()
+	f := newLoopFixture(t, nil)
+	scope, _, subID := f.armScope(t, ctx, "org-a", "env-a", "support", "inbound-a.test", "alice@customer.test")
+
+	unarmed := corestore.NewULID()
+	addr := "reply+" + f.minter.Mint(scope, unarmed, subID) + "@inbound-a.test"
+
+	status, result := postInbound(t, f.svc.HandleInbound, inboundSecret, InboundEmail{
+		From: "alice@customer.test", To: addr, EnvelopeTo: addr, Text: "anyone there?",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (drop)", status)
+	}
+	if result != "no_binding" {
+		t.Fatalf("result = %q, want no_binding", result)
+	}
+	if f.dispatchCount() != 0 {
+		t.Fatalf("dispatch count = %d, want 0: the responder must never run before the binding exists", f.dispatchCount())
+	}
+}
