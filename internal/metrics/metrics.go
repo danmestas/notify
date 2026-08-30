@@ -8,6 +8,9 @@
 //
 //   - notify_delivery_total — an expvar.Map keyed by "<channel>.<outcome>"
 //     (e.g. "email.delivered", "chat.throttled"), one counter per delivery
+//     -- plus one reserved pseudo-channel, "throttle", emitted by the
+//     standalone throttle step, which denies a run before any channel is
+//     chosen and so has no real channel to report
 //     persist/success path.
 //   - notify_nats_disconnects / notify_nats_reconnects — cumulative counters
 //     incremented from the shared DialNATS reconnect handlers.

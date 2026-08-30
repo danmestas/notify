@@ -105,9 +105,10 @@ func TestHandleThrottle_Allowed(t *testing.T) {
 
 	h := NewThrottleHandler(s, stubThrottler{allowed: true})
 	input, err := json.Marshal(runenv.InAppEnvelope{
-		Scope:        runenv.Scope{OrgID: "org_1", EnvID: "env_1"},
-		WorkflowID:   wf.ID,
-		SubscriberID: "user_123",
+		Scope:          runenv.Scope{OrgID: "org_1", EnvID: "env_1"},
+		WorkflowID:     wf.ID,
+		NotificationID: "ntf_allowed",
+		SubscriberID:   "user_123",
 	})
 	if err != nil {
 		t.Fatalf("marshal envelope: %v", err)
@@ -120,11 +121,22 @@ func TestHandleThrottle_Allowed(t *testing.T) {
 	if out != nil {
 		t.Errorf("output = %s, want nil", out)
 	}
+
+	msgs, err := s.Messages().ListByNotificationID(ctx, scope, "ntf_allowed")
+	if err != nil {
+		t.Fatalf("ListByNotificationID: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected no messages written on allow, got %d", len(msgs))
+	}
 }
 
 // TestHandleThrottle_Denied verifies that when the Throttler denies the
-// request, Handle returns a NonRetryableError containing "rate limit exceeded",
-// and no message row is written.
+// request, Handle persists exactly one "throttled" message row (correctly
+// attributed) and still returns a NonRetryableError containing "rate limit
+// exceeded" -- suppression is observable, but the run still stops so no
+// downstream channel step executes (check.throttle compiles to a plain
+// sequential dagnats task, so only a permanent task failure halts the DAG).
 func TestHandleThrottle_Denied(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
@@ -142,9 +154,11 @@ func TestHandleThrottle_Denied(t *testing.T) {
 
 	h := NewThrottleHandler(s, stubThrottler{allowed: false})
 	input, err := json.Marshal(runenv.InAppEnvelope{
-		Scope:        runenv.Scope{OrgID: "org_1", EnvID: "env_1"},
-		WorkflowID:   wf.ID,
-		SubscriberID: "user_123",
+		Scope:          runenv.Scope{OrgID: "org_1", EnvID: "env_1"},
+		TransactionID:  "txn_1",
+		WorkflowID:     wf.ID,
+		NotificationID: "ntf_1",
+		SubscriberID:   "user_123",
 	})
 	if err != nil {
 		t.Fatalf("marshal envelope: %v", err)
@@ -160,6 +174,84 @@ func TestHandleThrottle_Denied(t *testing.T) {
 	}
 	if nre != nil && nre.Err.Error() != "throttle: rate limit exceeded" {
 		t.Errorf("error message = %q, want \"throttle: rate limit exceeded\"", nre.Err.Error())
+	}
+
+	msgs, err := s.Messages().ListByNotificationID(ctx, scope, "ntf_1")
+	if err != nil {
+		t.Fatalf("ListByNotificationID: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	got := msgs[0]
+	if got.Status != "throttled" {
+		t.Errorf("Status = %q, want %q", got.Status, "throttled")
+	}
+	if got.OrgID != "org_1" || got.EnvID != "env_1" {
+		t.Errorf("scope = %q/%q, want org_1/env_1", got.OrgID, got.EnvID)
+	}
+	if got.WorkflowID != wf.ID {
+		t.Errorf("WorkflowID = %q, want %q", got.WorkflowID, wf.ID)
+	}
+	if got.SubscriberID != "user_123" {
+		t.Errorf("SubscriberID = %q, want %q", got.SubscriberID, "user_123")
+	}
+	if got.RunID != "run_1" || got.StepID != "step_t" {
+		t.Errorf("RunID/StepID = %q/%q, want run_1/step_t", got.RunID, got.StepID)
+	}
+	if got.TransactionID != "txn_1" {
+		t.Errorf("TransactionID = %q, want %q", got.TransactionID, "txn_1")
+	}
+	if got.ProviderID != "" || got.IntegrationID != "" || got.Channel != "" {
+		t.Errorf("expected no provider/integration/channel (no channel ran), got provider=%q integration=%q channel=%q", got.ProviderID, got.IntegrationID, got.Channel)
+	}
+}
+
+// TestHandleThrottle_DeniedPersistsEvenWithoutInput covers the else branch of
+// Handle (throttle follows a sleep/delay step, so t.Input is empty and
+// identifiers are rebuilt from the notification row via GetByRunID) --
+// denial must still persist a throttled message row attributed from that
+// rebuilt notification.
+func TestHandleThrottle_DeniedPersistsEvenWithoutInput(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name:              "throttle-denied-2",
+		TriggerIdentifier: "throttle-denied-2",
+		Active:            true,
+		Steps:             json.RawMessage(`[{"stepId":"step_t","type":"throttle","controlValues":{"limit":1,"windowSec":60}}]`),
+	})
+	if err != nil {
+		t.Fatalf("Create workflow: %v", err)
+	}
+	notif, err := s.Notifications().Create(ctx, scope, domain.Notification{
+		WorkflowID:    wf.ID,
+		SubscriberID:  "user_456",
+		TransactionID: "txn_2",
+		RunID:         "run_2",
+		Payload:       json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("Create notification: %v", err)
+	}
+
+	h := NewThrottleHandler(s, stubThrottler{allowed: false})
+	_, herr := h.Handle(ctx, engine.TaskPayload{RunID: "run_2", StepID: "step_t", Input: nil})
+	if herr == nil {
+		t.Fatal("Handle: expected error, got nil")
+	}
+
+	msgs, err := s.Messages().ListByNotificationID(ctx, scope, notif.ID)
+	if err != nil {
+		t.Fatalf("ListByNotificationID: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	if msgs[0].Status != "throttled" {
+		t.Errorf("Status = %q, want %q", msgs[0].Status, "throttled")
 	}
 }
 

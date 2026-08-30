@@ -363,6 +363,77 @@ func TestFragment_ActivityDetail_ShowsSeededMessages(t *testing.T) {
 	}
 }
 
+// TestFragment_ActivityDetail_ShowsThrottleSuppressedMessage guards against a
+// regression where a standalone check.throttle denial (domain.Message with
+// Channel == "" — no channel ran) was invisible on the activity detail panel.
+// fetchMessagesForNotification used to fan out over a hardcoded channel
+// allowlist and filter server-side by exact channel match, so a channel-less
+// row matched none of the queries and never came back. It now reads by
+// notification_id directly (store.MessageRepo.ListByNotificationID), which
+// includes channel-less rows.
+func TestFragment_ActivityDetail_ShowsThrottleSuppressedMessage(t *testing.T) {
+	tc := newTestConsole(t)
+	n := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-throttled",
+		RunID:        "run-throttle-test",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     n.WorkflowID,
+		NotificationID: n.ID,
+		RunID:          n.RunID,
+		SubscriberID:   n.SubscriberID,
+		Channel:        "", // no channel ran; this is what a throttle denial persists
+		Status:         "throttled",
+		Content:        "suppressed: rate limit exceeded",
+		TransactionID:  n.TransactionID,
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/activity-detail?notification_id="+n.ID, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("detail with throttled message: status = %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "throttled") {
+		t.Errorf("detail panel missing status for channel-less throttled message; body:\n%s", body)
+	}
+}
+
+// TestFragment_ActivityList_ShowsThrottleSuppressedRow is the list-row
+// counterpart of TestFragment_ActivityDetail_ShowsThrottleSuppressedMessage:
+// a notification whose only message is a channel-less "throttled" row must
+// still surface with that status in the activity list, not fall back to
+// "pending" as it did when the row was invisible to fetchMessagesForNotification.
+func TestFragment_ActivityList_ShowsThrottleSuppressedRow(t *testing.T) {
+	tc := newTestConsole(t)
+	n := tc.seedNotification(t, domain.Notification{
+		WorkflowID:   "wf",
+		SubscriberID: "sub-throttled-list",
+		RunID:        "run-throttle-list-test",
+	})
+	tc.seedMessage(t, domain.Message{
+		WorkflowID:     n.WorkflowID,
+		NotificationID: n.ID,
+		RunID:          n.RunID,
+		SubscriberID:   n.SubscriberID,
+		Channel:        "",
+		Status:         "throttled",
+		Content:        "suppressed: rate limit exceeded",
+		TransactionID:  n.TransactionID,
+	})
+	cookie, _ := tc.login(t)
+
+	rr := tc.get(t, "/console/api/fragments/activity-list", cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list: status = %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "throttled") {
+		t.Errorf("list row missing status for channel-less throttled message; body:\n%s", body)
+	}
+}
+
 // ─── helper ──────────────────────────────────────────────────────────────────
 
 // min is a local helper; Go 1.21 has builtin min but the codebase targets

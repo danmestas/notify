@@ -337,13 +337,12 @@ func (c *Console) buildActivityRow(n domain.Notification, msgs []domain.Message,
 	}
 }
 
-// fetchMessagesForNotification retrieves messages for a notification.
-// GAP-AF-04 (MessageRepo filter-by-notification_id, issue #43) is not yet
-// shipped, so this fans out one Messages.List per known channel and filters
-// the results by RunID in-process — O(channels) queries per row, each
-// returning all of that subscriber+channel's messages (query amplification;
-// unbounded per subscriber). Acceptable only for Wave 1's small datasets;
-// the indexed notification_id query in #43 replaces it. If RunID is empty,
+// fetchMessagesForNotification retrieves messages for a notification via the
+// indexed notification_id query (#43), so channel-less rows — such as a
+// standalone check.throttle suppression, which has no provider/integration
+// because no channel ran — are included. Previously this fanned out one
+// Messages.List per hardcoded channel and filtered by RunID in-process,
+// which silently dropped any row without a channel value. If RunID is empty,
 // returns nil (no messages to show).
 func (c *Console) fetchMessagesForNotification(ctx context.Context, scope domain.Scope, n domain.Notification) ([]domain.Message, error) {
 	if c == nil {
@@ -352,17 +351,14 @@ func (c *Console) fetchMessagesForNotification(ctx context.Context, scope domain
 	if n.RunID == "" {
 		return nil, nil
 	}
-	channels := []string{"in_app", "email", "push", "sms", "chat", "stream"}
-	var matched []domain.Message
-	for _, ch := range channels {
-		msgs, err := c.deps.Messages.List(ctx, scope, n.SubscriberID, ch)
-		if err != nil {
-			return nil, fmt.Errorf("list messages channel %s: %w", ch, err)
-		}
-		for _, m := range msgs {
-			if m.RunID == n.RunID {
-				matched = append(matched, m)
-			}
+	msgs, err := c.deps.Messages.ListByNotificationID(ctx, scope, n.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list messages by notification %s: %w", n.ID, err)
+	}
+	matched := msgs[:0]
+	for _, m := range msgs {
+		if m.RunID == n.RunID {
+			matched = append(matched, m)
 		}
 	}
 	return matched, nil

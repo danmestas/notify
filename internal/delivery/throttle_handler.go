@@ -5,11 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/keypath"
+	"github.com/danmestas/notify/internal/metrics"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
 )
@@ -23,8 +25,14 @@ const TaskThrottle = "check.throttle"
 // ThrottleHandler implements the check.throttle engine task. It gates an entire
 // run by a fixed-window counter keyed per (envID, subscriberID, workflowID).
 // Under the configured limit it returns (nil, nil) so downstream steps proceed;
-// at or over the limit it returns a NonRetryableError that permanently fails the
-// run — no channel steps execute and no message row is written.
+// at or over the limit it persists a status:"throttled" message row (so the
+// suppression is visible in the Activity view, mirroring the inline send-step
+// throttle handlers) and returns a NonRetryableError that permanently fails
+// the run — no channel steps execute. check.throttle compiles to a plain
+// sequential "normal" dagnats task like every send step (steptype.throttle.
+// Compile), so returning (nil, nil) here would let downstream steps run; the
+// NonRetryableError is the only mechanism that stops them, so it stays even
+// though the failure is not a delivery fault.
 type ThrottleHandler struct {
 	store    *store.Store
 	throttle Throttler
@@ -51,10 +59,12 @@ func NewThrottleHandler(s *store.Store, t Throttler) *ThrottleHandler {
 //	empty; rebuild identifiers from the notification row via GetByRunID.
 func (h *ThrottleHandler) Handle(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
 	var (
-		scope        domain.Scope
-		workflowID   string
-		subscriberID string
-		payload      json.RawMessage
+		scope          domain.Scope
+		workflowID     string
+		subscriberID   string
+		payload        json.RawMessage
+		notificationID string
+		transactionID  string
 	)
 
 	if len(t.Input) != 0 {
@@ -66,6 +76,8 @@ func (h *ThrottleHandler) Handle(ctx context.Context, t engine.TaskPayload) (jso
 		workflowID = env.WorkflowID
 		subscriberID = env.SubscriberID
 		payload = env.Payload
+		notificationID = env.NotificationID
+		transactionID = env.TransactionID
 	} else {
 		notif, err := h.store.Notifications().GetByRunID(ctx, t.RunID)
 		if err != nil {
@@ -75,6 +87,8 @@ func (h *ThrottleHandler) Handle(ctx context.Context, t engine.TaskPayload) (jso
 		workflowID = notif.WorkflowID
 		subscriberID = notif.SubscriberID
 		payload = notif.Payload
+		notificationID = notif.ID
+		transactionID = notif.TransactionID
 	}
 
 	cfg, err := h.loadStepConfig(ctx, scope, workflowID, t.StepID)
@@ -106,9 +120,60 @@ func (h *ThrottleHandler) Handle(ctx context.Context, t engine.TaskPayload) (jso
 		allowed = true
 	}
 	if !allowed {
-		return nil, engine.NewNonRetryableError(fmt.Errorf("throttle: rate limit exceeded"))
+		denyErr := fmt.Errorf("throttle: rate limit exceeded")
+		// Suppression is a normal outcome, not a delivery failure: persist a
+		// throttled message row (same attribution the inline send-step
+		// throttle handlers use, minus provider/integration since no channel
+		// ran) before returning the run-stopping error, so "my page never
+		// arrived" is diagnosable from the Activity view instead of only from
+		// counters. The persist is best-effort -- a store error here must not
+		// mask the throttle denial itself.
+		h.persistThrottleSuppressed(ctx, scope, workflowID, subscriberID, notificationID, transactionID, t.RunID, t.StepID)
+		return nil, engine.NewNonRetryableError(denyErr)
 	}
 	return nil, nil
+}
+
+// throttleSuppressedContent is the terse marker recorded as the message
+// content for a standalone check.throttle denial. The step has no authored
+// subject/body templates (unlike a send step), so there is nothing to render;
+// this stands in for it.
+const throttleSuppressedContent = "suppressed: rate limit exceeded"
+
+// persistThrottleSuppressed records a status:"throttled" message for a denied
+// standalone throttle step, attributed like the send-step persistThrottled /
+// persistChatThrottled / persistEmailThrottled helpers (same scope, workflow,
+// subscriber, notification, run, step). Channel/ProviderID/IntegrationID are
+// left empty: no channel ran.
+//
+// It is best-effort -- a store failure must not turn a throttle denial into
+// something else -- but the failure is logged rather than swallowed, because
+// a silently lost suppression row is the exact undiagnosable state this whole
+// change exists to remove. The write also runs on a context detached from the
+// dispatch context (which the engine cancels on worker shutdown), so a denial
+// during a graceful stop still leaves its trace.
+func (h *ThrottleHandler) persistThrottleSuppressed(ctx context.Context, scope domain.Scope, workflowID, subscriberID, notificationID, transactionID, runID, stepID string) {
+	metrics.Delivery("throttle", metrics.OutcomeThrottled)
+	msg := domain.Message{
+		ID:             store.NewULID(),
+		OrgID:          scope.OrgID,
+		EnvID:          scope.EnvID,
+		WorkflowID:     workflowID,
+		NotificationID: notificationID,
+		RunID:          runID,
+		StepID:         stepID,
+		SubscriberID:   subscriberID,
+		Content:        throttleSuppressedContent,
+		Status:         "throttled",
+		TransactionID:  transactionID,
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if _, err := h.store.Messages().Create(writeCtx, scope, msg); err != nil {
+		slog.Default().Warn("throttle: persist suppressed message",
+			"err", err, "run", runID, "step", stepID, "notification", notificationID)
+	}
 }
 
 // throttleStepCfg holds the flat {limit, windowSec} parsed from a throttle
