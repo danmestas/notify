@@ -9,7 +9,9 @@ package connectivity
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -204,6 +206,41 @@ func probeBluesky(ctx context.Context, client *http.Client, cfg BlueskyConfig) (
 	default:
 		return false, fmt.Sprintf("bluesky: unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
+}
+
+// probeWebPush validates that the org's auto-minted VAPID keypair (see
+// EnsureWebPushKeys) is well-formed: both keys base64url-decode, both are
+// valid P-256 points/scalars, and the private key actually derives the
+// stored public key. Unlike every other probe this makes no network call —
+// there is no third-party API to hit; a browser PushSubscription endpoint is
+// the closest thing to a "server" and per-device, not per-org, so there is
+// nothing meaningful to dial here.
+func probeWebPush(cfg WebPushConfig) (ok bool, detail string) {
+	if strings.TrimSpace(cfg.PublicKey) == "" || strings.TrimSpace(cfg.PrivateKey) == "" {
+		return false, "webpush: vapid keys are missing"
+	}
+	pubRaw, err := base64.RawURLEncoding.DecodeString(cfg.PublicKey)
+	if err != nil {
+		return false, fmt.Sprintf("webpush: public key is not valid base64url: %v", err)
+	}
+	privRaw, err := base64.RawURLEncoding.DecodeString(cfg.PrivateKey)
+	if err != nil {
+		return false, fmt.Sprintf("webpush: private key is not valid base64url: %v", err)
+	}
+
+	curve := ecdh.P256()
+	pub, err := curve.NewPublicKey(pubRaw)
+	if err != nil {
+		return false, fmt.Sprintf("webpush: public key is not a valid P-256 point: %v", err)
+	}
+	priv, err := curve.NewPrivateKey(privRaw)
+	if err != nil {
+		return false, fmt.Sprintf("webpush: private key is not a valid P-256 scalar: %v", err)
+	}
+	if !bytes.Equal(priv.PublicKey().Bytes(), pub.Bytes()) {
+		return false, "webpush: private key does not match public key"
+	}
+	return true, "webpush: vapid keypair is valid"
 }
 
 // authedGET performs a bounded GET with an optional Authorization header and

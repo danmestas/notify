@@ -69,6 +69,22 @@ type SubscriberChannel struct {
 	Credentials  json.RawMessage `db:"credentials"`
 }
 
+// WebPushSubscription is one browser PushSubscription registered for a
+// subscriber: endpoint + the p256dh/auth keys needed to encrypt payloads for
+// it. Unlike SubscriberChannel (one row per provider), a subscriber can hold
+// many of these — one per device/browser tab — so it lives in its own table.
+type WebPushSubscription struct {
+	ID           string `db:"id"`
+	OrgID        string `db:"org_id"`
+	EnvID        string `db:"environment_id"`
+	SubscriberID string `db:"subscriber_id"`
+	Endpoint     string `db:"endpoint"`
+	P256dh       string `db:"p256dh"`
+	Auth         string `db:"auth"`
+	CreatedAt    string `db:"created_at"`
+	LastUsedAt   string `db:"last_used_at"`
+}
+
 type Integration struct {
 	ID             string          `db:"id"`
 	OrgID          string          `db:"org_id"`

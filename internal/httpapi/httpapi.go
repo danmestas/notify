@@ -164,6 +164,9 @@ func New(d Deps) http.Handler {
 			pr.Post("/v1/integrations/email", postEmailIntegration(conn))
 			pr.Post("/v1/integrations/chat", postChatIntegration(conn))
 			pr.Post("/v1/integrations/sms", postSMSIntegration(conn))
+			// GET /v1/integrations/webpush/key mints the org's VAPID keypair on
+			// first use and returns the public half; rotation is delete-the-row.
+			pr.Get("/v1/integrations/webpush/key", getWebPushKey(conn))
 			// CRUD + unified create (Wave 2).
 			pr.Get("/v1/integrations", getIntegrations(conn))
 			pr.Post("/v1/integrations", postIntegration(conn))
@@ -338,11 +341,48 @@ func putSubscriberCredentials(aud *audience.Service) http.HandlerFunc {
 		}
 		subscriberID := chi.URLParam(r, "subscriberId")
 		scope := identity.ScopeFrom(r.Context())
+		// webpush upserts a per-device row in webpush_subscriptions instead of
+		// the one-row-per-provider subscriber_channels table: a subscriber can
+		// hold many live browser PushSubscriptions at once. Every other
+		// provider's path below is unchanged.
+		if req.ProviderID == "webpush" {
+			if _, err := aud.SetWebPushCredentials(r.Context(), scope, subscriberID, req.Credentials); err != nil {
+				var verr *audience.ValidationError
+				if errors.As(err, &verr) {
+					writeJSONError(w, http.StatusBadRequest, "bad_request", verr.Msg)
+					return
+				}
+				writeInternalError(w, r, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if _, err := aud.SetCredentials(r.Context(), scope, subscriberID, req.ProviderID, req.Channel, req.Credentials); err != nil {
 			writeInternalError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// webPushKeyResponse is the GET /v1/integrations/webpush/key response body.
+type webPushKeyResponse struct {
+	PublicKey string `json:"publicKey"`
+}
+
+// getWebPushKey returns the scope's Web Push VAPID public key, minting a
+// fresh keypair on first call. Rotation has no endpoint: deleting the
+// "webpush" integration row makes the next call mint a new one.
+func getWebPushKey(conn *connectivity.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scope := identity.ScopeFrom(r.Context())
+		pub, _, err := conn.EnsureWebPushKeys(r.Context(), scope)
+		if err != nil {
+			writeInternalError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, webPushKeyResponse{PublicKey: pub})
 	}
 }
 

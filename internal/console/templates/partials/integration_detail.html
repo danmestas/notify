@@ -137,6 +137,10 @@
     <p class="console-form-error" role="alert" id="integration-testsend-error">{{$.TestSendError}}</p>
     {{end}}
 
+    {{if and (not $.CanTestSend) (eq $in.ProviderID "webpush")}}
+    <p class="form-hint">Test send is unavailable for Web Push — it fans out to subscribed devices; trigger a real workflow instead.</p>
+    {{end}}
+
     {{if $.CanTestSend}}
     <form method="post" action="/console/integrations/{{$in.ID}}/test-send" class="console-form">
       <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
@@ -167,6 +171,21 @@
     </form>
     {{end}}
   </div>
+
+  {{/* webpush: no operator-entered credentials (VAPID keys are auto-minted).
+       The public key is not a secret — show it read-only for copy/paste into
+       a service worker, in place of the usual credential form. */}}
+  {{if eq $in.ProviderID "webpush"}}
+  <div class="form-row">
+    <span class="form-label">Public key (VAPID)</span>
+    {{if $.WebPushPublicKey}}
+    <code class="integration-cred-value">{{$.WebPushPublicKey}}</code>
+    <span class="form-hint">Auto-minted; not editable here. Delete this integration to rotate it.</span>
+    {{else}}
+    <span class="console-muted">Unavailable.</span>
+    {{end}}
+  </div>
+  {{end}}
 
   {{/* Edit form or read-only view */}}
   {{if $.ReadOnly}}

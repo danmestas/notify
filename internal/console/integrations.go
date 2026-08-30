@@ -47,6 +47,7 @@ var providerCatalog = []providerMeta{
 	{ID: "ntfy", Label: "ntfy Push", Channel: "push"},
 	{ID: "expo", Label: "Expo Push", Channel: "push"},
 	{ID: "fcm", Label: "Firebase (FCM)", Channel: "push"},
+	{ID: "webpush", Label: "Web Push", Channel: "push"},
 	{ID: "discord", Label: "Discord", Channel: "chat"},
 	{ID: "telegram", Label: "Telegram", Channel: "chat"},
 	{ID: "slack", Label: "Slack", Channel: "chat"},
@@ -200,6 +201,11 @@ type integrationDetailView struct {
 	// or a short failure message (no decrypted credentials). Mutually exclusive.
 	TestSendOK    bool
 	TestSendError string
+	// WebPushPublicKey carries the org's minted VAPID public key for the
+	// "webpush" provider (safe to display — it is not a secret). Empty for
+	// every other provider. Rendered read-only; the browser subscribes with
+	// it directly, so an operator needs to copy it out of the console.
+	WebPushPublicKey string
 }
 
 // integrationActivityRow is one row in the Activity tab of the detail drawer.
@@ -400,6 +406,12 @@ func credentialFieldsForProvider(providerID string) []integrationCredentialField
 				Help: "Settings → Privacy and Security → App Passwords — not your account password.",
 			},
 		}
+	case "webpush":
+		// The VAPID keypair is auto-minted server-side (see
+		// connectivity.EnsureWebPushKeys); there is no operator-entered form
+		// for it. The public key is surfaced read-only on the detail view
+		// via integrationDetailView.WebPushPublicKey instead of CredFields.
+		return nil
 	case "email-webhook", "push-webhook", "chat-webhook":
 		return []integrationCredentialField{
 			{Key: "webhook_url", Label: "Webhook URL", Value: connectivity.CredentialMaskSentinel, Required: true},
@@ -619,6 +631,20 @@ func (c *Console) serveFragmentIntegrationDetail(w http.ResponseWriter, r *http.
 	// Build masked credential fields — real secrets are never included.
 	credFields := credentialFieldsForProvider(in.ProviderID)
 
+	// webpush has no secret credential fields, but the public key is not a
+	// secret — surface it read-only so an operator can copy it into a
+	// service worker. EnsureWebPushKeys is idempotent, so this just
+	// re-decrypts the already-minted row.
+	webPushPublicKey := ""
+	if in.ProviderID == "webpush" && c.deps.Connectivity != nil {
+		pub, _, kerr := c.deps.Connectivity.EnsureWebPushKeys(r.Context(), scope)
+		if kerr != nil {
+			c.deps.Logger.Error("console: integration detail webpush key", "id", id, "err", kerr)
+		} else {
+			webPushPublicKey = pub
+		}
+	}
+
 	s, _ := sessionFromContext(r.Context())
 	// verifyRunURL is the deep-link to the run a just-completed verify minted
 	// (the handler 303-redirects here with ?verifyRun=<run_id>).
@@ -640,9 +666,14 @@ func (c *Console) serveFragmentIntegrationDetail(w http.ResponseWriter, r *http.
 		Verified:      r.URL.Query().Get("verified") == "1",
 		VerifyDetail:  r.URL.Query().Get("verifyDetail"),
 		VerifyError:   r.URL.Query().Get("verifyError"),
-		CanTestSend:   c.deps.Connectivity != nil && !c.deps.ReadOnly,
-		TestSendOK:    r.URL.Query().Get("testSendOK") == "1",
-		TestSendError: r.URL.Query().Get("testSendError"),
+		// webpush test-send needs a subscribed device (SendToSubscription, not
+		// the single-address Send every other provider uses); webpush.Client.Send
+		// always returns "not supported". Use a workflow trigger to a real
+		// subscriber instead.
+		CanTestSend:      c.deps.Connectivity != nil && !c.deps.ReadOnly && in.ProviderID != "webpush",
+		TestSendOK:       r.URL.Query().Get("testSendOK") == "1",
+		TestSendError:    r.URL.Query().Get("testSendError"),
+		WebPushPublicKey: webPushPublicKey,
 	})
 	if err != nil {
 		c.deps.Logger.Error("console: render integration detail", "err", err)
@@ -1053,6 +1084,13 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			AppPassword: r.FormValue("app_password"),
 		}
 		_, createErr = c.deps.Connectivity.CreateBluesky(r.Context(), scope, identifier, cfg, primary)
+	case "webpush":
+		// Auto-minted, no operator-entered credentials: the console create
+		// path calls the same EnsureWebPushKeys the API's
+		// GET /v1/integrations/webpush/key handler uses, so console and API
+		// agree on the singleton per-scope integration row. identifier/primary
+		// are ignored — webpush is looked up by ProviderID, not Identifier.
+		_, _, createErr = c.deps.Connectivity.EnsureWebPushKeys(r.Context(), scope)
 	case "email-webhook":
 		cfg := connectivity.EmailWebhookConfig{
 			WebhookURL: r.FormValue("webhook_url"),
@@ -1078,9 +1116,10 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 
 	if createErr != nil {
 		// A duplicate (environment_id, identifier) trips the integrations table's
-		// UNIQUE constraint. Surface it as an inline error, matching the Agents
-		// duplicate-identifier pattern — never a raw 500 dead-end (H4).
-		if strings.Contains(createErr.Error(), "UNIQUE constraint failed") {
+		// UNIQUE constraint, surfaced by integrationRepo.Create as store.ErrConflict.
+		// Surface it as an inline error, matching the Agents duplicate-identifier
+		// pattern — never a raw 500 dead-end (H4).
+		if errors.Is(createErr, store.ErrConflict) || strings.Contains(createErr.Error(), "UNIQUE constraint failed") {
 			redirectIntegrationsCreateErr(w, r, "Identifier already exists.")
 			return
 		}

@@ -11,11 +11,14 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
 	"regexp"
 	"time"
+
+	webpush "github.com/SherClockHolmes/webpush-go"
 
 	"github.com/danmestas/notify/internal/delivery/httpaction"
 	"github.com/danmestas/notify/internal/domain"
@@ -35,6 +38,7 @@ import (
 	"github.com/danmestas/notify/internal/providers/telegram"
 	"github.com/danmestas/notify/internal/providers/twilio"
 	"github.com/danmestas/notify/internal/providers/webhook"
+	webpushprovider "github.com/danmestas/notify/internal/providers/webpush"
 	"github.com/danmestas/notify/internal/providers/whatsapp"
 	"github.com/danmestas/notify/internal/store"
 )
@@ -653,14 +657,108 @@ func (svc *Service) CreatePushWebhook(ctx context.Context, scope domain.Scope, i
 	})
 }
 
+// WebPushConfig is the credential payload for the org's auto-minted Web Push
+// VAPID keypair: JSON-encoded and AES-256-GCM-sealed into
+// Integration.EncCredentials, exactly like every other provider config. There
+// is no operator-entered form for it — see EnsureWebPushKeys.
+type WebPushConfig struct {
+	PublicKey  string `json:"public_key"`
+	PrivateKey string `json:"private_key"`
+}
+
+// webPushProviderID is the fixed ProviderID (and Identifier) of the single
+// per-scope integration row that holds the minted VAPID keypair. Like every
+// other push provider it is created Active:true, so ResolvePush's
+// GetActiveByChannel query can select it — a fresh env whose only configured
+// push integration is webpush resolves straight to it, closing the loop from
+// GET /v1/integrations/webpush/key to real per-device delivery. An org that
+// already runs another push provider is unaffected: GetActiveByChannel
+// tie-breaks active rows by primary_provider desc, then priority asc, then id
+// asc, so an existing primary (or simply earlier-created) provider keeps
+// resolving ahead of a webpush row minted later. Promoting webpush to the
+// resolved provider for such an org is a deliberate operator action (PATCH
+// /v1/integrations/{id}/active, or setting it primary), exactly like
+// switching between any other pair of push providers.
+const webPushProviderID = "webpush"
+
+// EnsureWebPushKeys returns the scope's Web Push VAPID keypair, minting one on
+// first use. It looks up the scope's "webpush" integration; if absent, it
+// generates a fresh VAPID keypair (webpush-go), seals it into a new inactive
+// integration row, and returns the new keys. Repeated calls for the same scope
+// return the same keypair; different scopes get independently generated keys.
+// Rotation has no dedicated API: deleting the integration row makes the next
+// call mint a new keypair.
+func (svc *Service) EnsureWebPushKeys(ctx context.Context, scope domain.Scope) (publicKey, privateKey string, err error) {
+	in, err := svc.store.Integrations().GetByProviderID(ctx, scope, webPushProviderID)
+	if err == nil {
+		plaintext, derr := svc.decrypt(in.EncCredentials)
+		if derr != nil {
+			return "", "", fmt.Errorf("connectivity: decrypt webpush keys: %w", derr)
+		}
+		var cfg WebPushConfig
+		if uerr := json.Unmarshal(plaintext, &cfg); uerr != nil {
+			return "", "", fmt.Errorf("connectivity: unmarshal webpush keys: %w", uerr)
+		}
+		return cfg.PublicKey, cfg.PrivateKey, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return "", "", err
+	}
+
+	priv, pub, genErr := webpush.GenerateVAPIDKeys()
+	if genErr != nil {
+		return "", "", fmt.Errorf("connectivity: generate vapid keys: %w", genErr)
+	}
+	plaintext, err := json.Marshal(WebPushConfig{PublicKey: pub, PrivateKey: priv})
+	if err != nil {
+		return "", "", fmt.Errorf("connectivity: marshal webpush config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return "", "", fmt.Errorf("connectivity: encrypt webpush config: %w", err)
+	}
+	if _, err := svc.createIntegration(ctx, scope, domain.Integration{
+		ProviderID:     webPushProviderID,
+		Channel:        "push",
+		EncCredentials: enc,
+		Active:         true,
+		Identifier:     webPushProviderID,
+	}); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			// Lost the first-use minting race: another concurrent call already
+			// created the row. Re-read it and return its keys instead of
+			// surfacing the conflict — every caller of EnsureWebPushKeys must
+			// see the same keypair regardless of who won.
+			won, wonErr := svc.store.Integrations().GetByProviderID(ctx, scope, webPushProviderID)
+			if wonErr != nil {
+				return "", "", fmt.Errorf("connectivity: reread webpush keys after conflict: %w", wonErr)
+			}
+			plaintext, derr := svc.decrypt(won.EncCredentials)
+			if derr != nil {
+				return "", "", fmt.Errorf("connectivity: decrypt webpush keys after conflict: %w", derr)
+			}
+			var cfg WebPushConfig
+			if uerr := json.Unmarshal(plaintext, &cfg); uerr != nil {
+				return "", "", fmt.Errorf("connectivity: unmarshal webpush keys after conflict: %w", uerr)
+			}
+			return cfg.PublicKey, cfg.PrivateKey, nil
+		}
+		return "", "", fmt.Errorf("connectivity: store webpush keys: %w", err)
+	}
+	return pub, priv, nil
+}
+
 // ResolvePush returns the active push provider, its provider id, and
 // integration ID for the Scope. It loads the active push integration, decrypts
 // its credentials, and builds the appropriate provider based on the
 // integration's ProviderID:
 //
-//   - "ntfy" → *ntfy.Client (server base URL + token)
-//   - "expo" → *expo.Client (optional access token)
-//   - "fcm"  → *fcm.Client  (service-account JSON → OAuth2 bearer, project id)
+//   - "ntfy"    → *ntfy.Client    (server base URL + token)
+//   - "expo"    → *expo.Client    (optional access token)
+//   - "fcm"     → *fcm.Client     (service-account JSON → OAuth2 bearer, project id)
+//   - "webpush" → *webpush.Client (minted VAPID keypair) — delivery/push.go
+//     detects this providerID and fans out per-device via SendToSubscription
+//     instead of the single-address Send every other provider above uses.
 //
 // Return order: (provider, providerID, integrationID, error). The integration
 // ID is used by delivery/push.go to populate domain.Message.IntegrationID
@@ -728,6 +826,12 @@ func (svc *Service) PushProviderFromIntegration(ctx context.Context, in domain.I
 			return nil, fmt.Errorf("connectivity: unmarshal push-webhook config: %w", err)
 		}
 		return &webhook.PushClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret, HTTPClient: svc.deliveryClient()}, nil
+	case webPushProviderID:
+		var cfg WebPushConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, fmt.Errorf("connectivity: unmarshal webpush config: %w", err)
+		}
+		return &webpushprovider.Client{PublicKey: cfg.PublicKey, PrivateKey: cfg.PrivateKey, HTTPClient: svc.deliveryClient()}, nil
 	default:
 		// Fail closed: an unknown push provider must not be silently decoded as
 		// another provider's config.
@@ -1359,7 +1463,9 @@ type VerifyResult struct {
 //   - cloudflare-email: an authenticated GET against the account email scope;
 //   - ntfy: an authenticated GET against the server root;
 //   - mastodon: an authenticated GET against /api/v1/accounts/verify_credentials;
-//   - bluesky: a com.atproto.server.createSession handshake (no post is made).
+//   - bluesky: a com.atproto.server.createSession handshake (no post is made);
+//   - webpush: no network call — the auto-minted VAPID keypair is decoded and
+//     checked as a valid P-256 keypair (there is no per-org server to probe).
 //
 // A nil error with VerifyResult.OK=false means "reached the provider, but the
 // credentials were rejected" — a definite negative. A non-nil error means the
@@ -1420,6 +1526,14 @@ func (svc *Service) VerifyByID(ctx context.Context, scope domain.Scope, id strin
 			return VerifyResult{}, fmt.Errorf("connectivity: verify: unmarshal bluesky config: %w", err)
 		}
 		ok, detail := probeBluesky(ctx, svc.probeClient(), cfg)
+		res.OK, res.Detail = ok, detail
+		return res, nil
+	case "webpush":
+		var cfg WebPushConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return VerifyResult{}, fmt.Errorf("connectivity: verify: unmarshal webpush config: %w", err)
+		}
+		ok, detail := probeWebPush(cfg)
 		res.OK, res.Detail = ok, detail
 		return res, nil
 	default:

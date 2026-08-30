@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"github.com/danmestas/notify/internal/domain"
 )
@@ -23,6 +24,13 @@ type IntegrationRepo interface {
 	// ErrNotFound when the id does not exist or belongs to a different scope
 	// (both cases produce the same response to avoid information leakage).
 	GetByID(ctx context.Context, scope domain.Scope, id string) (domain.Integration, error)
+	// GetByProviderID fetches the scope's integration for providerID
+	// regardless of the active flag or channel priority ordering. Unlike
+	// GetActiveByChannel (which resolves the one provider a channel actually
+	// dispatches through), this is a direct singleton lookup — used for
+	// provider rows, such as the auto-minted webpush VAPID keypair, that are
+	// addressed by their known provider id rather than selected by channel.
+	GetByProviderID(ctx context.Context, scope domain.Scope, providerID string) (domain.Integration, error)
 	// Update overwrites the mutable fields (identifier, enc_credentials,
 	// primary_provider, priority, active) of an existing integration. It must
 	// not touch provider_id, channel, org_id, or environment_id.
@@ -39,6 +47,10 @@ type integrationRepo struct {
 	r *sql.DB
 }
 
+// Create inserts a new integration row. A duplicate (environment_id,
+// identifier) — e.g. two concurrent first-use mints racing to create the
+// same singleton provider row — maps to ErrConflict; Create never updates an
+// existing row.
 func (repo *integrationRepo) Create(ctx context.Context, scope domain.Scope, in domain.Integration) (domain.Integration, error) {
 	in.OrgID = scope.OrgID
 	in.EnvID = scope.EnvID
@@ -55,6 +67,9 @@ func (repo *integrationRepo) Create(ctx context.Context, scope domain.Scope, in 
 		[]byte(in.Configurations), in.Active, in.Primary, in.Priority, in.Identifier,
 	)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return domain.Integration{}, ErrConflict
+		}
 		return domain.Integration{}, err
 	}
 	return in, nil
@@ -74,6 +89,35 @@ func (repo *integrationRepo) GetActiveByChannel(ctx context.Context, scope domai
 		 ORDER BY primary_provider DESC, priority ASC, id ASC
 		 LIMIT 1`,
 		scope.OrgID, scope.EnvID, channel,
+	).Scan(&in.ID, &in.OrgID, &in.EnvID, &in.ProviderID, &in.Channel, &in.EncCredentials,
+		&cfg, &in.Active, &in.Primary, &in.Priority, &in.Identifier)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Integration{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Integration{}, err
+	}
+	in.Configurations = cfg
+	return in, nil
+}
+
+// GetByProviderID fetches the scope's single integration row for providerID,
+// ignoring the active flag. It scans the same columns as GetByID (including
+// enc_credentials) but filters on provider_id instead of id.
+func (repo *integrationRepo) GetByProviderID(ctx context.Context, scope domain.Scope, providerID string) (domain.Integration, error) {
+	var (
+		in  domain.Integration
+		cfg []byte
+	)
+	err := repo.r.QueryRowContext(
+		ctx,
+		`SELECT id, org_id, environment_id, provider_id, channel, enc_credentials,
+		        configurations, active, primary_provider, priority, identifier
+		 FROM integrations
+		 WHERE org_id = ? AND environment_id = ? AND provider_id = ?
+		 ORDER BY id ASC
+		 LIMIT 1`,
+		scope.OrgID, scope.EnvID, providerID,
 	).Scan(&in.ID, &in.OrgID, &in.EnvID, &in.ProviderID, &in.Channel, &in.EncCredentials,
 		&cfg, &in.Active, &in.Primary, &in.Priority, &in.Identifier)
 	if errors.Is(err, sql.ErrNoRows) {

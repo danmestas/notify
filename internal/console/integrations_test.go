@@ -530,6 +530,93 @@ func TestIntegrations_Create_Resend(t *testing.T) {
 	}
 }
 
+// TestIntegrations_Create_WebPush proves the console create path for the
+// "webpush" catalog entry goes through the same EnsureWebPushKeys the API's
+// GET /v1/integrations/webpush/key handler uses (console and API must agree
+// on the singleton per-scope integration): no credential form fields are
+// posted (there is no operator-entered form for auto-minted VAPID keys), the
+// create still 303s, a "webpush" row appears in the scope, and the detail
+// fragment surfaces the minted public key read-only.
+func TestIntegrations_Create_WebPush(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, csrf := tc.login(t)
+
+	form := url.Values{
+		"provider_id": {"webpush"},
+		"identifier":  {"webpush"},
+		"csrf_token":  {csrf},
+	}
+	rr := tc.postForm(t, "/console/integrations", form, cookie)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("create webpush: status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	integrations, err := tc.st.Integrations().List(testBackground(), tc.scope)
+	if err != nil {
+		t.Fatalf("list integrations: %v", err)
+	}
+	var in *domain.Integration
+	for i := range integrations {
+		if integrations[i].ProviderID == "webpush" {
+			in = &integrations[i]
+			break
+		}
+	}
+	if in == nil {
+		t.Fatalf("no webpush integration row after create; rows: %+v", integrations)
+	}
+
+	pub, _, err := tc.deps.Connectivity.EnsureWebPushKeys(testBackground(), tc.scope)
+	if err != nil {
+		t.Fatalf("EnsureWebPushKeys: %v", err)
+	}
+	if pub == "" {
+		t.Fatal("EnsureWebPushKeys returned an empty public key")
+	}
+
+	detail := tc.get(t, "/console/api/fragments/integration-detail?id="+in.ID, cookie).Body.String()
+	if !strings.Contains(detail, pub) {
+		t.Errorf("integration detail missing the minted public key %q; body:\n%s", pub, detail)
+	}
+	if strings.Contains(detail, "••••••") {
+		t.Errorf("integration detail rendered a masked-secret placeholder for webpush, which has no secret fields; body:\n%s", detail)
+	}
+}
+
+// TestIntegrations_Detail_WebPush_NoTestSendButton proves the detail drawer
+// does not offer Test send for a "webpush" integration: connectivity.TestSend
+// routes to webpush.Client.Send, which always returns "not supported" (the
+// provider only delivers per-device via SendToSubscription, which test-send
+// has no subscribed device to target). CanTestSend must be false for webpush
+// even though Connectivity is wired and the console is not read-only.
+func TestIntegrations_Detail_WebPush_NoTestSendButton(t *testing.T) {
+	tc := newTestConsole(t)
+	cookie, _ := tc.login(t)
+
+	if _, _, err := tc.deps.Connectivity.EnsureWebPushKeys(testBackground(), tc.scope); err != nil {
+		t.Fatalf("EnsureWebPushKeys: %v", err)
+	}
+	integrations, err := tc.st.Integrations().List(testBackground(), tc.scope)
+	if err != nil {
+		t.Fatalf("list integrations: %v", err)
+	}
+	var in *domain.Integration
+	for i := range integrations {
+		if integrations[i].ProviderID == "webpush" {
+			in = &integrations[i]
+			break
+		}
+	}
+	if in == nil {
+		t.Fatalf("no webpush integration row; rows: %+v", integrations)
+	}
+
+	detail := tc.get(t, "/console/api/fragments/integration-detail?id="+in.ID, cookie).Body.String()
+	if strings.Contains(detail, "/console/integrations/"+in.ID+"/test-send") {
+		t.Errorf("webpush integration detail offers a test-send form; body:\n%s", detail)
+	}
+}
+
 // TestIntegrations_Create_DuplicateIdentifierRejected guards H4: POSTing
 // create with an identifier that already exists in scope must NOT 500 and
 // must NOT overwrite the existing integration. The handler must 303 back to

@@ -41,6 +41,7 @@ func tenantCases() []tenantCase {
 	return []tenantCase{
 		{name: "Subscribers", check: checkSubscribers},
 		{name: "SubscriberChannels", check: checkSubscriberChannels},
+		{name: "WebPushSubscriptions", check: checkWebPushSubscriptions},
 		{name: "Workflows", check: checkWorkflows},
 		{name: "WorkflowVersions", check: checkWorkflowVersions},
 		{name: "Integrations", check: checkIntegrations},
@@ -262,6 +263,37 @@ func checkIntegrations(t *testing.T, ctx context.Context, s *Store, a, b domain.
 	}
 	if active.ID == intA.ID {
 		t.Errorf("Integrations.GetActiveByChannel: cross-tenant leak — returned scope-A integration %q", intA.ID)
+	}
+}
+
+func checkWebPushSubscriptions(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
+	repo := s.WebPushSubscriptions()
+	subA, err := repo.UpsertByEndpoint(ctx, a, domain.WebPushSubscription{
+		SubscriberID: "sub", Endpoint: "https://push.example.com/device-a", P256dh: "p256dh-a", Auth: "auth-a",
+	})
+	if err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+	subB, err := repo.UpsertByEndpoint(ctx, b, domain.WebPushSubscription{
+		SubscriberID: "sub", Endpoint: "https://push.example.com/device-b", P256dh: "p256dh-b", Auth: "auth-b",
+	})
+	if err != nil {
+		t.Fatalf("seed B: %v", err)
+	}
+
+	list, err := repo.ListBySubscriber(ctx, b, "sub")
+	if err != nil {
+		t.Fatalf("ListBySubscriber(b): %v", err)
+	}
+	var ids []string
+	for _, sub := range list {
+		ids = append(ids, sub.ID)
+	}
+	forbidID(t, "WebPushSubscriptions.ListBySubscriber", subA.ID, ids)
+	requireID(t, "WebPushSubscriptions.ListBySubscriber", subB.ID, ids)
+
+	if err := repo.DeleteByEndpoint(ctx, b, "sub", subA.Endpoint); !errors.Is(err, ErrNotFound) {
+		t.Errorf("WebPushSubscriptions.DeleteByEndpoint: cross-tenant leak — scope B deleted scope-A endpoint (err=%v, want ErrNotFound)", err)
 	}
 }
 

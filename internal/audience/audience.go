@@ -207,6 +207,39 @@ func (svc *Service) SetCredentials(ctx context.Context, scope domain.Scope, subs
 	})
 }
 
+// webPushSubscriptionInput is the shape of the browser PushSubscription JSON
+// a caller sends as `credentials` when providerId is "webpush":
+// {"endpoint":"...","keys":{"p256dh":"...","auth":"..."}}.
+type webPushSubscriptionInput struct {
+	Endpoint string `json:"endpoint"`
+	Keys     struct {
+		P256dh string `json:"p256dh"`
+		Auth   string `json:"auth"`
+	} `json:"keys"`
+}
+
+// SetWebPushCredentials registers one browser PushSubscription for the
+// subscriber, upserting by endpoint into webpush_subscriptions (NOT
+// subscriber_channels — a subscriber may hold many live device
+// subscriptions, unlike every other provider's single credentials row).
+// Called by PUT /v1/subscribers/{id}/credentials when providerId is
+// "webpush"; credentials is the raw browser PushSubscription JSON.
+func (svc *Service) SetWebPushCredentials(ctx context.Context, scope domain.Scope, subscriberID string, credentials json.RawMessage) (domain.WebPushSubscription, error) {
+	var in webPushSubscriptionInput
+	if err := json.Unmarshal(credentials, &in); err != nil {
+		return domain.WebPushSubscription{}, &ValidationError{Msg: "credentials must be a PushSubscription object with endpoint and keys.p256dh/keys.auth"}
+	}
+	if in.Endpoint == "" || in.Keys.P256dh == "" || in.Keys.Auth == "" {
+		return domain.WebPushSubscription{}, &ValidationError{Msg: "endpoint, keys.p256dh, and keys.auth are required"}
+	}
+	return svc.store.WebPushSubscriptions().UpsertByEndpoint(ctx, scope, domain.WebPushSubscription{
+		SubscriberID: subscriberID,
+		Endpoint:     in.Endpoint,
+		P256dh:       in.Keys.P256dh,
+		Auth:         in.Keys.Auth,
+	})
+}
+
 // ListChannels returns the per-provider channel addressing rows recorded for
 // the subscriber within scope, ordered by provider. Mirrors the read side of
 // SetCredentials.

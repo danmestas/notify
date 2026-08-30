@@ -85,6 +85,13 @@ func (s *Store) Notifications() NotificationRepo { return &notificationRepo{w: s
 func (s *Store) Messages() MessageRepo           { return &messageRepo{w: s.writer, r: s.reader} }
 func (s *Store) Integrations() IntegrationRepo   { return &integrationRepo{w: s.writer, r: s.reader} }
 
+// WebPushSubscriptions vends the per-device Web Push subscription repository
+// (browser PushSubscription endpoint + keys), distinct from Integrations,
+// which holds the org's single VAPID keypair.
+func (s *Store) WebPushSubscriptions() WebPushSubscriptionRepo {
+	return &webPushSubscriptionRepo{w: s.writer, r: s.reader}
+}
+
 // StreamSources vends the inbound webhook-push source repository: per-source
 // push secrets, topic scoping, and ingest-limit columns. Every method is
 // Scope-first except GetBySecretHash, whose argument (the secret hash) IS the

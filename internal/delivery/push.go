@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,9 +12,22 @@ import (
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/metrics"
 	"github.com/danmestas/notify/internal/providers"
+	webpushprovider "github.com/danmestas/notify/internal/providers/webpush"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
 )
+
+// webPushProviderID is the resolved provider id that routes HandlePush
+// through the per-device webpush fan-out instead of the single
+// subscriber_channels-addressed send every other push provider uses.
+const webPushProviderID = "webpush"
+
+// webPushSender is the subset of *webpushprovider.Client the fan-out needs.
+// Declared narrow (rather than importing the concrete type at every call
+// site) so the type assertion below stays the only coupling point.
+type webPushSender interface {
+	SendToSubscription(ctx context.Context, sub webpushprovider.Subscription, msg providers.PushMessage) (providers.Result, error)
+}
 
 // PushResolver resolves the active push provider, provider ID, and integration
 // ID for a scope. connectivity.Service satisfies this structurally (delivery
@@ -188,6 +202,13 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 		return h.persistPushError(ctx, env, t, "ntfy", "", err)
 	}
 
+	// Web Push fans out to every device subscription registered for the
+	// subscriber instead of the single subscriber_channels-addressed send
+	// every other push provider uses — see handleWebPushSend.
+	if providerID == webPushProviderID {
+		return h.handleWebPushSend(ctx, env, t, scope, provider, integrationID, subject, content)
+	}
+
 	// Per-subscriber addressing: the topic comes from the subscriber_channels
 	// row for this provider; an unaddressable subscriber is a permanent fault.
 	// From here on error rows carry the resolved provider id, so they cannot
@@ -253,6 +274,126 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	}
 	metrics.Delivery("push", metrics.OutcomeDelivered)
 	out, merr := json.Marshal(saved)
+	if merr != nil {
+		return out, merr
+	}
+	h.publishDelivery(env.Scope.EnvID, out)
+	return out, nil
+}
+
+// handleWebPushSend fans the rendered subject/content out to every device
+// subscription webpush_subscriptions holds for env.SubscriberID: one
+// SendToSubscription call per row (there is no single "topic" to address, so
+// this bypasses the subscriber_channels lookup entirely). A subscriber with
+// no rows is skipped (mirrors the missing-address path). Per row: a 404/410
+// (webpushprovider.ErrSubscriptionGone) deletes that row and continues,
+// anything else counts as a failed attempt and delivery continues to the next
+// row. The persisted message is "sent" when at least one row delivered,
+// "error" when every row failed with at least one permanent (non-transient)
+// cause. When every row fails and every failure is transient (5xx/timeout —
+// providers.IsTransient), nothing was delivered to anyone, so it is safe to
+// let the engine retry the whole step: this returns engine.NewRetryableError
+// instead of persisting a terminal message, same as the single-address path
+// below. A retry never re-sends to a device that already succeeded, because
+// sent == 0 is required to take this branch.
+func (h *PushHandler) handleWebPushSend(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, provider providers.PushProvider, integrationID, subject, content string) (json.RawMessage, error) {
+	sender, ok := provider.(webPushSender)
+	if !ok {
+		return h.persistPushError(ctx, env, t, webPushProviderID, integrationID, fmt.Errorf("webpush: resolved provider %T does not support per-device delivery", provider))
+	}
+
+	subs, err := h.store.WebPushSubscriptions().ListBySubscriber(ctx, scope, env.SubscriberID)
+	if err != nil {
+		return h.persistPushError(ctx, env, t, webPushProviderID, integrationID, fmt.Errorf("webpush: list subscriptions: %w", err))
+	}
+	if len(subs) == 0 {
+		return h.persistPushSkipped(ctx, env, t, scope, subject, content)
+	}
+
+	msg := providers.PushMessage{
+		Title:    subject,
+		Body:     content,
+		Priority: env.Step.Priority,
+		Tags:     env.Step.Tags,
+		Markdown: env.Step.Markdown,
+		Data:     env.Step.Data,
+	}
+
+	sent := 0
+	failed := 0
+	var lastErr error
+	for _, sub := range subs {
+		_, sendErr := sender.SendToSubscription(ctx, webpushprovider.Subscription{
+			Endpoint: sub.Endpoint,
+			P256dh:   sub.P256dh,
+			Auth:     sub.Auth,
+		}, msg)
+		if sendErr == nil {
+			sent++
+			continue
+		}
+		if errors.Is(sendErr, webpushprovider.ErrSubscriptionGone) {
+			// Best-effort prune: a delete failure here must not fail the send
+			// outcome for the devices that did succeed.
+			_ = h.store.WebPushSubscriptions().DeleteByEndpoint(ctx, scope, env.SubscriberID, sub.Endpoint)
+			continue
+		}
+		failed++
+		lastErr = sendErr
+	}
+
+	if sent == 0 {
+		if lastErr == nil {
+			// Every subscription was gone (pruned above): nothing left to
+			// address, same outcome as no rows at all.
+			return h.persistPushSkipped(ctx, env, t, scope, subject, content)
+		}
+		if providers.IsTransient(lastErr) {
+			// Every attempt failed transiently (5xx/timeout) and nothing was
+			// delivered: retry the whole step instead of recording a terminal
+			// failure, matching the single-address path's classification.
+			return nil, engine.NewRetryableError(fmt.Errorf("webpush: 0/%d subscriptions delivered: %w", len(subs), lastErr))
+		}
+		return h.persistPushError(ctx, env, t, webPushProviderID, integrationID, fmt.Errorf("webpush: 0/%d subscriptions delivered: %w", len(subs), lastErr))
+	}
+
+	// At least one device delivered, so the message is "sent" — but a partial
+	// failure (some devices delivered, others failed permanently) must not be
+	// invisible: record the tally in ErrorText so the activity view surfaces
+	// it instead of showing a send that looks fully clean.
+	var errorText string
+	if failed > 0 {
+		errorText = fmt.Sprintf("delivered %d/%d: %d permanent failure(s) (%s)", sent, sent+failed, failed, lastErr)
+	}
+
+	saved := domain.Message{
+		ID:             store.NewULID(),
+		OrgID:          env.Scope.OrgID,
+		EnvID:          env.Scope.EnvID,
+		WorkflowID:     env.WorkflowID,
+		NotificationID: env.NotificationID,
+		RunID:          t.RunID,
+		StepID:         env.Step.StepID,
+		SubscriberID:   env.SubscriberID,
+		Channel:        "push",
+		ProviderID:     webPushProviderID,
+		IntegrationID:  integrationID,
+		Content:        content,
+		Subject:        subject,
+		Status:         "sent",
+		ErrorText:      errorText,
+		Seen:           false,
+		Read:           false,
+		Archived:       false,
+		TransactionID:  env.TransactionID,
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+	}
+	persisted, err := h.store.Messages().Create(ctx, scope, saved)
+	if err != nil {
+		return h.persistPushError(ctx, env, t, webPushProviderID, integrationID, err)
+	}
+	metrics.Delivery("push", metrics.OutcomeDelivered)
+	out, merr := json.Marshal(persisted)
 	if merr != nil {
 		return out, merr
 	}
