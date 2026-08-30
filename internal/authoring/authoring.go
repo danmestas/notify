@@ -175,7 +175,9 @@ func (s *Service) Create(ctx context.Context, scope domain.Scope, in WorkflowInp
 // "send.<type>" tasks.
 func Compile(wf domain.Workflow) (engine.WorkflowDef, error) {
 	var steps []domain.Step
-	if err := json.Unmarshal(wf.Steps, &steps); err != nil {
+	// Empty bytes and JSON null are both "no steps yet" (a config-only draft),
+	// not malformed input.
+	if err := json.Unmarshal(wf.Steps, &steps); len(wf.Steps) > 0 && err != nil {
 		return engine.WorkflowDef{}, fmt.Errorf("authoring: unmarshal steps: %w", err)
 	}
 	def := engine.WorkflowDef{
@@ -392,6 +394,15 @@ func (s *Service) RepublishAll(ctx context.Context) (int, error) {
 	for _, wf := range wfs {
 		def, ok := s.bootDef(ctx, wf)
 		if !ok {
+			continue
+		}
+		if len(def.Steps) == 0 {
+			// A config-only draft (see ErrNoSteps): dagnats rejects a 0-step
+			// registration, and Update already declines to attempt one. It is
+			// an expected state, not a boot failure, so do not log it as one.
+			slog.Default().Info("authoring: republish skip (draft has no steps)",
+				"workflow_id", wf.ID, "trigger_identifier", wf.TriggerIdentifier,
+				"org_id", wf.OrgID, "env_id", wf.EnvID)
 			continue
 		}
 		if rErr := s.eng.RegisterWorkflow(ctx, def); rErr != nil {

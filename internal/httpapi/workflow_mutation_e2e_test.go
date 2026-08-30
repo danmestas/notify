@@ -440,7 +440,7 @@ func TestTriggerSkipsInactiveWorkflow(t *testing.T) {
 	}
 	trigBody := `{"name":"inactive-wf","to":{"subscriberId":"u1"},"payload":{}}`
 	trigStatus, trigResp := doPost(t, srv.URL+"/v1/events/trigger", authHeader, trigBody)
-	if trigStatus != http.StatusCreated {
+	if trigStatus != http.StatusUnprocessableEntity { // refused, not accepted (#310)
 		t.Fatalf("POST trigger: status=%d body=%s", trigStatus, trigResp)
 	}
 	var resp trigger.TriggerResponse

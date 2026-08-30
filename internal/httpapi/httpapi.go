@@ -497,7 +497,19 @@ func postTrigger(trg *trigger.Service) http.HandlerFunc {
 			writeInternalError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, resp)
+		// A refused trigger (unknown/inactive/empty workflow, unknown topic)
+		// used to answer 201 with acknowledged:false, so callers checking only
+		// the status believed the event was accepted (#310).
+		status := http.StatusCreated
+		if !resp.Acknowledged {
+			status = http.StatusUnprocessableEntity
+			for _, e := range resp.Error {
+				if strings.HasSuffix(e, "not found") {
+					status = http.StatusNotFound
+				}
+			}
+		}
+		writeJSON(w, status, resp)
 	}
 }
 

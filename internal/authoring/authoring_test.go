@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -1463,5 +1465,62 @@ func TestEnsure_ScopeIsolation(t *testing.T) {
 	}
 	if gotA.Name != "Org A" {
 		t.Fatalf("scope A name = %q after scope B Ensure, want Org A (leaked across scopes)", gotA.Name)
+	}
+}
+
+// TestRepublishAll_SkipsZeroStepDraftQuietly: a config-only draft (steps
+// saved empty, which Update permits and reports via ErrNoSteps) must be
+// skipped at boot without being counted or attempted — dagnats rejects a
+// 0-step registration, and until #310 that rejection surfaced as an ERROR on
+// every restart for an entirely expected state.
+func TestRepublishAll_SkipsZeroStepDraftQuietly(t *testing.T) {
+	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL, bridgeURL)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	defer eng.Stop()
+
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "authoring.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	svc := authoring.New(st, eng)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+
+	if _, err := svc.Create(ctx, scope, authoring.WorkflowInput{
+		Name:              "Welcome",
+		TriggerIdentifier: "welcome",
+		Steps:             []domain.Step{{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"body":"hi"}`)}},
+	}); err != nil {
+		t.Fatalf("Create valid: %v", err)
+	}
+
+	// An active row with no steps, written directly (Create would refuse it).
+	draft := domain.Workflow{Name: "Draft", TriggerIdentifier: "draft", Active: true}
+	if _, err := st.Workflows().Create(ctx, scope, draft); err != nil {
+		t.Fatalf("seed draft workflow: %v", err)
+	}
+
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(prev)
+
+	n, err := svc.RepublishAll(ctx)
+	if err != nil {
+		t.Fatalf("RepublishAll: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("RepublishAll registered %d workflows, want 1 (draft skipped)", n)
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Fatalf("zero-step draft must not log at ERROR, got:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "draft has no steps") {
+		t.Fatalf("expected the quiet skip line, got:\n%s", logs.String())
 	}
 }
