@@ -240,6 +240,15 @@ func (svc *Service) SetWebPushCredentials(ctx context.Context, scope domain.Scop
 	})
 }
 
+// DeleteWebPushCredentials removes one device's Web Push subscription
+// (matched by endpoint) for the subscriber within scope. Returns
+// store.ErrNotFound when no such subscription exists in this scope — the
+// caller (a browser unsubscribe) needs that distinct from a 204 to know
+// whether anything was actually removed.
+func (svc *Service) DeleteWebPushCredentials(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) error {
+	return svc.store.WebPushSubscriptions().DeleteByEndpoint(ctx, scope, subscriberID, endpoint)
+}
+
 // ListChannels returns the per-provider channel addressing rows recorded for
 // the subscriber within scope, ordered by provider. Mirrors the read side of
 // SetCredentials.

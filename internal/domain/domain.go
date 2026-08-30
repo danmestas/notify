@@ -165,16 +165,23 @@ type Notification struct {
 }
 
 type Message struct {
-	ID             string `db:"id"`
-	OrgID          string `db:"org_id"`
-	EnvID          string `db:"environment_id"`
-	WorkflowID     string `db:"workflow_id"`
-	NotificationID string `db:"notification_id"`
-	RunID          string `db:"run_id"`
-	StepID         string `db:"step_id"`
-	SubscriberID   string `db:"subscriber_id"`
-	Channel        string `db:"channel"`
-	ProviderID     string `db:"provider_id"`
+	ID         string `db:"id"`
+	OrgID      string `db:"org_id"`
+	EnvID      string `db:"environment_id"`
+	WorkflowID string `db:"workflow_id"`
+	// WorkflowIdentifier is the trigger identifier of the workflow named by
+	// WorkflowID (e.g. "quarry-mention"), resolved at read time by a
+	// scope-safe join against the workflows table. Empty when the workflow
+	// row has since been deleted, or for rows written before this field
+	// existed to no workflow at all — never an error. Not persisted on the
+	// messages table itself; Create leaves it unset.
+	WorkflowIdentifier string `db:"-"`
+	NotificationID     string `db:"notification_id"`
+	RunID              string `db:"run_id"`
+	StepID             string `db:"step_id"`
+	SubscriberID       string `db:"subscriber_id"`
+	Channel            string `db:"channel"`
+	ProviderID         string `db:"provider_id"`
 	// IntegrationID is the ID of the integration row that dispatched this
 	// message (populated from Wave 4 / migration 0017 onward). Empty for
 	// rows written before the migration; those are excluded from

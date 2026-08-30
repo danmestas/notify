@@ -29,6 +29,7 @@ import (
 	"github.com/danmestas/notify/internal/inbound"
 	"github.com/danmestas/notify/internal/inbounddomains"
 	"github.com/danmestas/notify/internal/inboxapi"
+	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
@@ -87,6 +88,12 @@ type Deps struct {
 	SourceIngest *feedingest.Gateway
 	// Authoring backs the workflow-authoring routes. Nil disables them.
 	Authoring *authoring.Service
+	// Preferences backs GET/PUT /v1/subscribers/{id}/preferences. Nil disables
+	// them. Requires Audience and Authoring to also be set (translating
+	// trigger identifiers to workflow ids and back); a nil Preferences with
+	// either of those set leaves the route unmounted, same as any other
+	// optional dependency.
+	Preferences *preferences.Service
 	// InboundMXHost is the expected MX host stamped on domains created via the
 	// inbound-domain routes (NOTIFY_INBOUND_MX_HOST, resolved once in
 	// cmd/notify). Empty falls back to the package default inside
@@ -99,7 +106,7 @@ type Deps struct {
 // identity.ScopeFrom. Optional dependencies gate their routes as documented on
 // Deps.
 func New(d Deps) http.Handler {
-	id, aud, trg, inbox, rt, feed, inb, an, ag, ing, conn, st, ev, eml, src, au := d.Identity, d.Audience, d.Trigger, d.Inbox, d.Realtime, d.Feed, d.Inbound, d.Analytics, d.Agents, d.Ingress, d.Connectivity, d.Store, d.EnvVars, d.EmailLoop, d.SourceIngest, d.Authoring
+	id, aud, trg, inbox, rt, feed, inb, an, ag, ing, conn, st, ev, eml, src, au, prf := d.Identity, d.Audience, d.Trigger, d.Inbox, d.Realtime, d.Feed, d.Inbound, d.Analytics, d.Agents, d.Ingress, d.Connectivity, d.Store, d.EnvVars, d.EmailLoop, d.SourceIngest, d.Authoring, d.Preferences
 	// Wire a webhook management service when a store is present.
 	var wh *webhooksout.ManagementService
 	if st != nil {
@@ -144,6 +151,10 @@ func New(d Deps) http.Handler {
 		pr.Use(id.Middleware)
 		pr.Post("/v1/subscribers", postSubscriber(aud))
 		pr.Put("/v1/subscribers/{subscriberId}/credentials", putSubscriberCredentials(aud))
+		// Per-device Web Push delete (#305 stage 3): a browser unsubscribe
+		// removes just that endpoint's row, leaving the subscriber's other
+		// devices (and every other provider's credentials) untouched.
+		pr.Delete("/v1/subscribers/{subscriberId}/credentials/webpush", deleteSubscriberWebPushCredentials(aud))
 		pr.Post("/v1/events/trigger", postTrigger(trg))
 		pr.Post("/v1/topics", postTopic(aud))
 		pr.Post("/v1/topics/{key}/subscribers", postTopicSubscriber(aud))
@@ -152,6 +163,13 @@ func New(d Deps) http.Handler {
 		pr.Get("/v1/subscribers/{id}", getSubscriber(aud))
 		pr.Patch("/v1/subscribers/{id}", patchSubscriber(aud))
 		pr.Delete("/v1/subscribers/{id}", deleteSubscriber(aud))
+		// Subscriber preferences (#305 stage 2). Requires both Audience
+		// (subscriber lookup/scoping) and Authoring (trigger identifier
+		// <-> workflow id translation) alongside Preferences itself.
+		if prf != nil {
+			pr.Get("/v1/subscribers/{id}/preferences", getSubscriberPreferences(aud, au, prf))
+			pr.Put("/v1/subscribers/{id}/preferences", putSubscriberPreferences(aud, au, prf))
+		}
 		// Wave-2 topic management (#35).
 		pr.Get("/v1/topics", getTopics(aud))
 		pr.Get("/v1/topics/{key}", getTopic(aud))
@@ -359,6 +377,32 @@ func putSubscriberCredentials(aud *audience.Service) http.HandlerFunc {
 			return
 		}
 		if _, err := aud.SetCredentials(r.Context(), scope, subscriberID, req.ProviderID, req.Channel, req.Credentials); err != nil {
+			writeInternalError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// deleteSubscriberWebPushCredentials removes one device's Web Push
+// subscription (?endpoint=<urlencoded>) for the subscriber and returns 204.
+// A missing/empty endpoint is 400; no matching subscription in this scope is
+// 404 — the generic (non-webpush) credentials DELETE, if any exists, is
+// untouched by this handler.
+func deleteSubscriberWebPushCredentials(aud *audience.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		subscriberID := chi.URLParam(r, "subscriberId")
+		endpoint := r.URL.Query().Get("endpoint")
+		if endpoint == "" {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "endpoint is required")
+			return
+		}
+		scope := identity.ScopeFrom(r.Context())
+		if err := aud.DeleteWebPushCredentials(r.Context(), scope, subscriberID, endpoint); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeJSONError(w, http.StatusNotFound, "not_found", "webpush subscription not found")
+				return
+			}
 			writeInternalError(w, r, err)
 			return
 		}

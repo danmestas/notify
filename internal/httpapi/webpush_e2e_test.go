@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"testing"
 
@@ -28,6 +29,16 @@ import (
 // callers can Bootstrap a second org for scope-isolation checks).
 func startWebPushServer(t *testing.T) (*httptest.Server, string, domain.Scope, *identity.Service) {
 	t.Helper()
+	srv, authHeader, scope, id, _ := startWebPushServerWithStore(t)
+	return srv, authHeader, scope, id
+}
+
+// startWebPushServerWithStore is startWebPushServer plus the underlying
+// *store.Store, for tests that need to assert directly against a repo
+// (e.g. WebPushSubscriptions().ListBySubscriber) rather than through the
+// HTTP surface alone.
+func startWebPushServerWithStore(t *testing.T) (*httptest.Server, string, domain.Scope, *identity.Service, *store.Store) {
+	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "notify.db"))
 	if err != nil {
@@ -49,7 +60,7 @@ func startWebPushServer(t *testing.T) (*httptest.Server, string, domain.Scope, *
 
 	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Connectivity: conn}))
 	t.Cleanup(srv.Close)
-	return srv, "ApiKey " + key, scope, id
+	return srv, "ApiKey " + key, scope, id, st
 }
 
 // TestGetWebPushKey_MintsOnFirstUse proves the endpoint mints a VAPID keypair
@@ -142,6 +153,146 @@ func TestPutSubscriberCredentials_WebPush_MissingFields_400(t *testing.T) {
 	status, body := doPut(t, srv.URL+"/v1/subscribers/user_wp2/credentials", authHeader, credBody)
 	if status != http.StatusBadRequest {
 		t.Fatalf("PUT credentials (webpush, missing fields): status=%d body=%s, want 400", status, body)
+	}
+}
+
+// TestDeleteSubscriberWebPushCredentials_RemovesOnlyThatDevice proves a
+// per-device delete removes exactly the targeted endpoint's row and leaves
+// a second device registered to the same subscriber untouched.
+func TestDeleteSubscriberWebPushCredentials_RemovesOnlyThatDevice(t *testing.T) {
+	srv, authHeader, scope, _, st := startWebPushServerWithStore(t)
+	ctx := context.Background()
+
+	subBody := `{"subscriberId":"user_wp3"}`
+	if status, body := doPost(t, srv.URL+"/v1/subscribers", authHeader, subBody); status != http.StatusCreated {
+		t.Fatalf("POST /v1/subscribers: status=%d body=%s", status, body)
+	}
+
+	deviceA := "https://fcm.googleapis.com/fcm/send/device-a3"
+	deviceB := "https://fcm.googleapis.com/fcm/send/device-b3"
+	for _, endpoint := range []string{deviceA, deviceB} {
+		credBody := `{"providerId":"webpush","credentials":{"endpoint":"` + endpoint + `","keys":{"p256dh":"p256dh","auth":"auth"}}}`
+		if status, body := doPut(t, srv.URL+"/v1/subscribers/user_wp3/credentials", authHeader, credBody); status != http.StatusNoContent {
+			t.Fatalf("PUT credentials (%s): status=%d body=%s", endpoint, status, body)
+		}
+	}
+
+	before, err := st.WebPushSubscriptions().ListBySubscriber(ctx, scope, "user_wp3")
+	if err != nil {
+		t.Fatalf("ListBySubscriber (before delete): %v", err)
+	}
+	if len(before) != 2 {
+		t.Fatalf("before delete: got %d rows, want 2 (%+v)", len(before), before)
+	}
+
+	status, body := doDelete(t, srv.URL+"/v1/subscribers/user_wp3/credentials/webpush?endpoint="+url.QueryEscape(deviceA), authHeader)
+	if status != http.StatusNoContent {
+		t.Fatalf("DELETE webpush credentials (device a): status=%d body=%s", status, body)
+	}
+
+	after, err := st.WebPushSubscriptions().ListBySubscriber(ctx, scope, "user_wp3")
+	if err != nil {
+		t.Fatalf("ListBySubscriber (after delete): %v", err)
+	}
+	if len(after) != 1 {
+		t.Fatalf("after delete: got %d rows, want 1 (%+v)", len(after), after)
+	}
+	if after[0].Endpoint != deviceB {
+		t.Errorf("after delete: remaining row endpoint = %q, want %q (device B survived)", after[0].Endpoint, deviceB)
+	}
+
+	// Re-registering device A (now deleted) must succeed as a fresh insert,
+	// proving the row is actually gone rather than merely hidden — the row
+	// count goes back to 2, not clobbering device B's row.
+	credBody := `{"providerId":"webpush","credentials":{"endpoint":"` + deviceA + `","keys":{"p256dh":"p256dh-again","auth":"auth-again"}}}`
+	if status, body := doPut(t, srv.URL+"/v1/subscribers/user_wp3/credentials", authHeader, credBody); status != http.StatusNoContent {
+		t.Fatalf("PUT credentials (re-register device a after delete): status=%d body=%s", status, body)
+	}
+	reRegistered, err := st.WebPushSubscriptions().ListBySubscriber(ctx, scope, "user_wp3")
+	if err != nil {
+		t.Fatalf("ListBySubscriber (after re-register): %v", err)
+	}
+	if len(reRegistered) != 2 {
+		t.Fatalf("after re-register: got %d rows, want 2 (%+v)", len(reRegistered), reRegistered)
+	}
+}
+
+// TestDeleteSubscriberWebPushCredentials_NotFound_404 proves deleting an
+// endpoint that was never registered for the subscriber 404s.
+func TestDeleteSubscriberWebPushCredentials_NotFound_404(t *testing.T) {
+	srv, authHeader, _, _ := startWebPushServer(t)
+
+	subBody := `{"subscriberId":"user_wp4"}`
+	if status, body := doPost(t, srv.URL+"/v1/subscribers", authHeader, subBody); status != http.StatusCreated {
+		t.Fatalf("POST /v1/subscribers: status=%d body=%s", status, body)
+	}
+
+	status, body := doDelete(t, srv.URL+"/v1/subscribers/user_wp4/credentials/webpush?endpoint="+url.QueryEscape("https://fcm.googleapis.com/fcm/send/never-registered"), authHeader)
+	if status != http.StatusNotFound {
+		t.Fatalf("DELETE webpush credentials (never registered): status=%d body=%s, want 404", status, body)
+	}
+}
+
+// TestDeleteSubscriberWebPushCredentials_MissingEndpoint_400 proves an
+// absent or empty endpoint query param is rejected before any store call.
+func TestDeleteSubscriberWebPushCredentials_MissingEndpoint_400(t *testing.T) {
+	srv, authHeader, _, _ := startWebPushServer(t)
+
+	subBody := `{"subscriberId":"user_wp5"}`
+	if status, body := doPost(t, srv.URL+"/v1/subscribers", authHeader, subBody); status != http.StatusCreated {
+		t.Fatalf("POST /v1/subscribers: status=%d body=%s", status, body)
+	}
+
+	status, body := doDelete(t, srv.URL+"/v1/subscribers/user_wp5/credentials/webpush", authHeader)
+	if status != http.StatusBadRequest {
+		t.Fatalf("DELETE webpush credentials (missing endpoint): status=%d body=%s, want 400", status, body)
+	}
+
+	status, body = doDelete(t, srv.URL+"/v1/subscribers/user_wp5/credentials/webpush?endpoint=", authHeader)
+	if status != http.StatusBadRequest {
+		t.Fatalf("DELETE webpush credentials (empty endpoint): status=%d body=%s, want 400", status, body)
+	}
+}
+
+// TestDeleteSubscriberWebPushCredentials_TenancyIsolation proves a device
+// registered under one org is invisible to another org's delete — a
+// cross-tenant delete attempt 404s rather than removing the row.
+func TestDeleteSubscriberWebPushCredentials_TenancyIsolation(t *testing.T) {
+	srv, authHeaderA, _, id := startWebPushServer(t)
+
+	ctx := context.Background()
+	keyB, _, err := id.Bootstrap(ctx, "OtherCorp", "prod")
+	if err != nil {
+		t.Fatalf("Bootstrap second org: %v", err)
+	}
+	authHeaderB := "ApiKey " + keyB
+
+	subBody := `{"subscriberId":"user_wp6"}`
+	if status, body := doPost(t, srv.URL+"/v1/subscribers", authHeaderA, subBody); status != http.StatusCreated {
+		t.Fatalf("POST /v1/subscribers (org A): status=%d body=%s", status, body)
+	}
+	if status, body := doPost(t, srv.URL+"/v1/subscribers", authHeaderB, subBody); status != http.StatusCreated {
+		t.Fatalf("POST /v1/subscribers (org B): status=%d body=%s", status, body)
+	}
+
+	endpoint := "https://fcm.googleapis.com/fcm/send/device-tenancy"
+	credBody := `{"providerId":"webpush","credentials":{"endpoint":"` + endpoint + `","keys":{"p256dh":"p256dh","auth":"auth"}}}`
+	if status, body := doPut(t, srv.URL+"/v1/subscribers/user_wp6/credentials", authHeaderA, credBody); status != http.StatusNoContent {
+		t.Fatalf("PUT credentials (org A): status=%d body=%s", status, body)
+	}
+
+	// Org B has a same-id subscriber but never registered this endpoint —
+	// its delete must 404, not reach into org A's row.
+	status, body := doDelete(t, srv.URL+"/v1/subscribers/user_wp6/credentials/webpush?endpoint="+url.QueryEscape(endpoint), authHeaderB)
+	if status != http.StatusNotFound {
+		t.Fatalf("DELETE webpush credentials (org B, cross-tenant): status=%d body=%s, want 404", status, body)
+	}
+
+	// Org A's delete of the same endpoint still succeeds — proves the 404
+	// above was tenancy isolation, not the row being gone.
+	status, body = doDelete(t, srv.URL+"/v1/subscribers/user_wp6/credentials/webpush?endpoint="+url.QueryEscape(endpoint), authHeaderA)
+	if status != http.StatusNoContent {
+		t.Fatalf("DELETE webpush credentials (org A, own endpoint): status=%d body=%s", status, body)
 	}
 }
 

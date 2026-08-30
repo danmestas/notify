@@ -435,3 +435,117 @@ func TestCountMessages_ScopeIsolation(t *testing.T) {
 		t.Errorf("count = %d, want 0 (scope isolation breached)", resp.Count)
 	}
 }
+
+// TestListMessages_Envelope_CarriesWorkflowIdentifier verifies that the
+// paginated envelope's message rows carry WorkflowIdentifier (the trigger
+// identifier, resolved from the workflows table), not just WorkflowID.
+// (RFC 0011 Phase 3, issue #305.)
+func TestListMessages_Envelope_CarriesWorkflowIdentifier(t *testing.T) {
+	s := newTestStore(t)
+	scope := domain.Scope{OrgID: "org1", EnvID: "envA"}
+	ctx := context.Background()
+
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name: "Mention", TriggerIdentifier: "quarry-mention", Active: true,
+	})
+	if err != nil {
+		t.Fatalf("seed workflow: %v", err)
+	}
+	if _, err := s.Messages().Create(ctx, scope, domain.Message{
+		WorkflowID:   wf.ID,
+		SubscriberID: "u1", Channel: "in_app", Status: "sent",
+	}); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
+
+	svc := New(s)
+	rec := doGet(t, svc, "/v1/messages?subscriberId=u1&channel=in_app", &scope)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	env := decodeEnvelope(t, rec.Body.Bytes())
+	if len(env.Data) != 1 {
+		t.Fatalf("len(data) = %d, want 1", len(env.Data))
+	}
+	if env.Data[0].WorkflowID != wf.ID {
+		t.Errorf("WorkflowID = %q, want %q", env.Data[0].WorkflowID, wf.ID)
+	}
+	if env.Data[0].WorkflowIdentifier != "quarry-mention" {
+		t.Errorf("WorkflowIdentifier = %q, want %q", env.Data[0].WorkflowIdentifier, "quarry-mention")
+	}
+}
+
+// TestListMessages_LegacyArray_CarriesWorkflowIdentifier verifies the same
+// for the ?format=array compatibility branch.
+func TestListMessages_LegacyArray_CarriesWorkflowIdentifier(t *testing.T) {
+	s := newTestStore(t)
+	scope := domain.Scope{OrgID: "org1", EnvID: "envA"}
+	ctx := context.Background()
+
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name: "Mention", TriggerIdentifier: "quarry-mention", Active: true,
+	})
+	if err != nil {
+		t.Fatalf("seed workflow: %v", err)
+	}
+	if _, err := s.Messages().Create(ctx, scope, domain.Message{
+		WorkflowID:   wf.ID,
+		SubscriberID: "u1", Channel: "in_app", Status: "sent",
+	}); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
+
+	svc := New(s)
+	rec := doGet(t, svc, "/v1/messages?subscriberId=u1&channel=in_app&format=array", &scope)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var list []domain.Message
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+	}
+	if len(list) != 1 {
+		t.Fatalf("len = %d, want 1", len(list))
+	}
+	if list[0].WorkflowIdentifier != "quarry-mention" {
+		t.Errorf("WorkflowIdentifier = %q, want %q", list[0].WorkflowIdentifier, "quarry-mention")
+	}
+}
+
+// TestListMessages_DeletedWorkflow_WorkflowIdentifierEmpty verifies a
+// message whose workflow was deleted yields an empty WorkflowIdentifier,
+// not an error, through the HTTP surface.
+func TestListMessages_DeletedWorkflow_WorkflowIdentifierEmpty(t *testing.T) {
+	s := newTestStore(t)
+	scope := domain.Scope{OrgID: "org1", EnvID: "envA"}
+	ctx := context.Background()
+
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name: "Temp", TriggerIdentifier: "temp-wf", Active: true,
+	})
+	if err != nil {
+		t.Fatalf("seed workflow: %v", err)
+	}
+	if _, err := s.Messages().Create(ctx, scope, domain.Message{
+		WorkflowID:   wf.ID,
+		SubscriberID: "u1", Channel: "in_app", Status: "sent",
+	}); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
+	if err := s.Workflows().Delete(ctx, scope, wf.TriggerIdentifier); err != nil {
+		t.Fatalf("delete workflow: %v", err)
+	}
+
+	svc := New(s)
+	rec := doGet(t, svc, "/v1/messages?subscriberId=u1&channel=in_app", &scope)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	env := decodeEnvelope(t, rec.Body.Bytes())
+	if len(env.Data) != 1 {
+		t.Fatalf("len(data) = %d, want 1", len(env.Data))
+	}
+	if env.Data[0].WorkflowIdentifier != "" {
+		t.Errorf("WorkflowIdentifier = %q, want empty after workflow delete", env.Data[0].WorkflowIdentifier)
+	}
+}

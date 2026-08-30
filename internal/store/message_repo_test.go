@@ -384,3 +384,113 @@ func TestMessageRepo_Count_ExcludesArchivedByDefault(t *testing.T) {
 		t.Errorf("archived=all count = %d, want 2", n)
 	}
 }
+
+// TestMessageRepo_WorkflowIdentifier_ResolvedAcrossReadPaths verifies that
+// every message read method resolves WorkflowIdentifier from the workflows
+// table's trigger_identifier, joined scope-safe on workflow_id.
+func TestMessageRepo_WorkflowIdentifier_ResolvedAcrossReadPaths(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name: "Mention", TriggerIdentifier: "quarry-mention", Active: true,
+	})
+	if err != nil {
+		t.Fatalf("seed workflow: %v", err)
+	}
+
+	m := seedMessage(t, s, domain.Message{
+		WorkflowID:    wf.ID,
+		IntegrationID: "integ-wfid",
+	})
+
+	t.Run("Get", func(t *testing.T) {
+		got, err := s.Messages().Get(ctx, scope, m.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.WorkflowIdentifier != "quarry-mention" {
+			t.Errorf("WorkflowIdentifier = %q, want %q", got.WorkflowIdentifier, "quarry-mention")
+		}
+	})
+
+	t.Run("List", func(t *testing.T) {
+		msgs, err := s.Messages().List(ctx, scope, "sub1", "email")
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(msgs) != 1 || msgs[0].WorkflowIdentifier != "quarry-mention" {
+			t.Errorf("List WorkflowIdentifier = %+v, want quarry-mention", msgs)
+		}
+	})
+
+	t.Run("ListPage", func(t *testing.T) {
+		msgs, err := s.Messages().ListPage(ctx, scope, "sub1", "email", "", 10, "", "")
+		if err != nil {
+			t.Fatalf("ListPage: %v", err)
+		}
+		if len(msgs) != 1 || msgs[0].WorkflowIdentifier != "quarry-mention" {
+			t.Errorf("ListPage WorkflowIdentifier = %+v, want quarry-mention", msgs)
+		}
+	})
+
+	t.Run("ListByIntegrationID", func(t *testing.T) {
+		msgs, err := s.Messages().ListByIntegrationID(ctx, scope, "integ-wfid", 0)
+		if err != nil {
+			t.Fatalf("ListByIntegrationID: %v", err)
+		}
+		if len(msgs) != 1 || msgs[0].WorkflowIdentifier != "quarry-mention" {
+			t.Errorf("ListByIntegrationID WorkflowIdentifier = %+v, want quarry-mention", msgs)
+		}
+	})
+
+	t.Run("ListByNotificationID", func(t *testing.T) {
+		msgs, err := s.Messages().ListByNotificationID(ctx, scope, m.NotificationID)
+		if err != nil {
+			t.Fatalf("ListByNotificationID: %v", err)
+		}
+		if len(msgs) != 1 || msgs[0].WorkflowIdentifier != "quarry-mention" {
+			t.Errorf("ListByNotificationID WorkflowIdentifier = %+v, want quarry-mention", msgs)
+		}
+	})
+}
+
+// TestMessageRepo_WorkflowIdentifier_DeletedWorkflowYieldsEmptyString verifies
+// that a message whose workflow has since been deleted resolves
+// WorkflowIdentifier to "", not an error.
+func TestMessageRepo_WorkflowIdentifier_DeletedWorkflowYieldsEmptyString(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	wf, err := s.Workflows().Create(ctx, scope, domain.Workflow{
+		Name: "Temp", TriggerIdentifier: "temp-wf", Active: true,
+	})
+	if err != nil {
+		t.Fatalf("seed workflow: %v", err)
+	}
+	m := seedMessage(t, s, domain.Message{WorkflowID: wf.ID})
+
+	if err := s.Workflows().Delete(ctx, scope, wf.TriggerIdentifier); err != nil {
+		t.Fatalf("delete workflow: %v", err)
+	}
+
+	got, err := s.Messages().Get(ctx, scope, m.ID)
+	if err != nil {
+		t.Fatalf("Get after workflow delete: %v", err)
+	}
+	if got.WorkflowIdentifier != "" {
+		t.Errorf("WorkflowIdentifier = %q, want empty after workflow delete", got.WorkflowIdentifier)
+	}
+
+	// Also unset for a message whose workflow_id never matched any row at all.
+	orphan := seedMessage(t, s, domain.Message{WorkflowID: "no-such-workflow-id"})
+	gotOrphan, err := s.Messages().Get(ctx, scope, orphan.ID)
+	if err != nil {
+		t.Fatalf("Get orphan: %v", err)
+	}
+	if gotOrphan.WorkflowIdentifier != "" {
+		t.Errorf("orphan WorkflowIdentifier = %q, want empty", gotOrphan.WorkflowIdentifier)
+	}
+}

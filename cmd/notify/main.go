@@ -423,7 +423,7 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = anStop() }()
 
-	handler := httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Realtime: rt, Feed: feed, Inbound: inb, Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, Store: st, EnvVars: ev, EmailLoop: eml, SourceIngest: srcIngest, Authoring: au, InboundMXHost: cfg.inboundMXHost})
+	handler := httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Realtime: rt, Feed: feed, Inbound: inb, Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, Store: st, EnvVars: ev, EmailLoop: eml, SourceIngest: srcIngest, Authoring: au, Preferences: prefs, InboundMXHost: cfg.inboundMXHost})
 
 	// Operator console: same listener, mounted at /console ahead of the
 	// public API. All console reads go through the same Scope-carrying

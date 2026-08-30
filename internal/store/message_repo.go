@@ -86,12 +86,25 @@ type messageRepo struct {
 	r *sql.DB
 }
 
-// messageColumns is the canonical ordered column list for SELECT and INSERT.
-// Keeping it in one place means adding a column only requires updating this
-// constant and the corresponding Scan call.
-const messageColumns = `id, org_id, environment_id, workflow_id, notification_id, run_id, step_id,
-	subscriber_id, channel, provider_id, integration_id, content, subject, status, seen, read,
-	archived, transaction_id, error_text, skip_reason, created_at, extras`
+// messageColumns is the canonical ordered column list for SELECT and INSERT,
+// aliased to the "m" table so it can be paired with messageWorkflowJoin below
+// without an ambiguous-column error (workflows has its own id/org_id/
+// environment_id columns). Keeping it in one place means adding a column
+// only requires updating this constant and the corresponding Scan call.
+const messageColumns = `m.id, m.org_id, m.environment_id, m.workflow_id, m.notification_id, m.run_id, m.step_id,
+	m.subscriber_id, m.channel, m.provider_id, m.integration_id, m.content, m.subject, m.status, m.seen, m.read,
+	m.archived, m.transaction_id, m.error_text, m.skip_reason, m.created_at, m.extras,
+	COALESCE(w.trigger_identifier, '') AS workflow_identifier`
+
+// messageWorkflowJoin resolves each message's workflow_identifier at read
+// time via a scope-safe LEFT JOIN against workflows: joined on workflow_id
+// plus the message's own org_id/environment_id, so a row can never pick up
+// another tenant's workflow. LEFT (not INNER) so a message whose workflow
+// has since been deleted, or whose workflow_id never matched any row,
+// still returns — just with an empty workflow_identifier — never an error.
+const messageWorkflowJoin = `messages m
+	LEFT JOIN workflows w
+	  ON w.id = m.workflow_id AND w.org_id = m.org_id AND w.environment_id = m.environment_id`
 
 func scanMessage(rows *sql.Rows) (domain.Message, error) {
 	var m domain.Message
@@ -100,7 +113,7 @@ func scanMessage(rows *sql.Rows) (domain.Message, error) {
 		&m.ID, &m.OrgID, &m.EnvID, &m.WorkflowID, &m.NotificationID, &m.RunID, &m.StepID,
 		&m.SubscriberID, &m.Channel, &m.ProviderID, &m.IntegrationID, &m.Content, &m.Subject,
 		&m.Status, &m.Seen, &m.Read, &m.Archived, &m.TransactionID, &m.ErrorText, &m.SkipReason, &m.CreatedAt,
-		&extras,
+		&extras, &m.WorkflowIdentifier,
 	)
 	m.Extras = json.RawMessage(extras)
 	return m, err
@@ -149,7 +162,7 @@ func scanMessageRow(row *sql.Row) (domain.Message, error) {
 		&m.ID, &m.OrgID, &m.EnvID, &m.WorkflowID, &m.NotificationID, &m.RunID, &m.StepID,
 		&m.SubscriberID, &m.Channel, &m.ProviderID, &m.IntegrationID, &m.Content, &m.Subject,
 		&m.Status, &m.Seen, &m.Read, &m.Archived, &m.TransactionID, &m.ErrorText, &m.SkipReason, &m.CreatedAt,
-		&extras,
+		&extras, &m.WorkflowIdentifier,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Message{}, ErrNotFound
@@ -165,8 +178,8 @@ func (repo *messageRepo) Get(ctx context.Context, scope domain.Scope, id string)
 	row := repo.r.QueryRowContext(
 		ctx,
 		`SELECT `+messageColumns+`
-		 FROM messages
-		 WHERE org_id = ? AND environment_id = ? AND id = ?`,
+		 FROM `+messageWorkflowJoin+`
+		 WHERE m.org_id = ? AND m.environment_id = ? AND m.id = ?`,
 		scope.OrgID, scope.EnvID, id,
 	)
 	return scanMessageRow(row)
@@ -176,9 +189,9 @@ func (repo *messageRepo) List(ctx context.Context, scope domain.Scope, subscribe
 	rows, err := repo.r.QueryContext(
 		ctx,
 		`SELECT `+messageColumns+`
-		 FROM messages
-		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND channel = ?
-		 ORDER BY created_at DESC, id DESC`,
+		 FROM `+messageWorkflowJoin+`
+		 WHERE m.org_id = ? AND m.environment_id = ? AND m.subscriber_id = ? AND m.channel = ?
+		 ORDER BY m.created_at DESC, m.id DESC`,
 		scope.OrgID, scope.EnvID, subscriberID, channel,
 	)
 	if err != nil {
@@ -208,9 +221,9 @@ func (repo *messageRepo) ListByIntegrationID(ctx context.Context, scope domain.S
 	rows, err := repo.r.QueryContext(
 		ctx,
 		`SELECT `+messageColumns+`
-		 FROM messages
-		 WHERE org_id = ? AND environment_id = ? AND integration_id = ?
-		 ORDER BY created_at DESC, id DESC
+		 FROM `+messageWorkflowJoin+`
+		 WHERE m.org_id = ? AND m.environment_id = ? AND m.integration_id = ?
+		 ORDER BY m.created_at DESC, m.id DESC
 		 LIMIT ?`,
 		scope.OrgID, scope.EnvID, integrationID, limit,
 	)
@@ -250,18 +263,18 @@ func archivedCond(conds []string, archived string) []string {
 // doc comment for why id alone is a safe, sufficient sort/cursor key, and
 // for the archived tri-state contract.
 func (repo *messageRepo) ListPage(ctx context.Context, scope domain.Scope, subscriberID, channel, before string, limit int, archived, transactionID string) ([]domain.Message, error) {
-	conds := []string{"org_id = ?", "environment_id = ?", "subscriber_id = ?"}
+	conds := []string{"m.org_id = ?", "m.environment_id = ?", "m.subscriber_id = ?"}
 	args := []any{scope.OrgID, scope.EnvID, subscriberID}
 	if channel != "" {
-		conds = append(conds, "channel = ?")
+		conds = append(conds, "m.channel = ?")
 		args = append(args, channel)
 	}
 	if before != "" {
-		conds = append(conds, "id < ?")
+		conds = append(conds, "m.id < ?")
 		args = append(args, before)
 	}
 	if transactionID != "" {
-		conds = append(conds, "transaction_id = ?")
+		conds = append(conds, "m.transaction_id = ?")
 		args = append(args, transactionID)
 	}
 	conds = archivedCond(conds, archived)
@@ -270,9 +283,9 @@ func (repo *messageRepo) ListPage(ctx context.Context, scope domain.Scope, subsc
 	rows, err := repo.r.QueryContext(
 		ctx,
 		`SELECT `+messageColumns+`
-		 FROM messages
+		 FROM `+messageWorkflowJoin+`
 		 WHERE `+strings.Join(conds, " AND ")+`
-		 ORDER BY id DESC
+		 ORDER BY m.id DESC
 		 LIMIT ?`,
 		args...,
 	)
@@ -369,9 +382,9 @@ func (repo *messageRepo) ListByNotificationID(ctx context.Context, scope domain.
 	rows, err := repo.r.QueryContext(
 		ctx,
 		`SELECT `+messageColumns+`
-		 FROM messages
-		 WHERE org_id = ? AND environment_id = ? AND notification_id = ?
-		 ORDER BY created_at DESC, id DESC`,
+		 FROM `+messageWorkflowJoin+`
+		 WHERE m.org_id = ? AND m.environment_id = ? AND m.notification_id = ?
+		 ORDER BY m.created_at DESC, m.id DESC`,
 		scope.OrgID, scope.EnvID, notificationID,
 	)
 	if err != nil {
