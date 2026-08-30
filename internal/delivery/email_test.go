@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -19,6 +20,12 @@ type stubResolver struct {
 	providerID    string // defaults to "smtp" when empty
 	integrationID string // defaults to "integ-test" when empty
 	err           error
+
+	// integrations routes explicit "integration" identifiers to a distinct
+	// provider/from/providerID/integrationID, standing in for
+	// connectivity.Service.ResolveEmailIntegration. See stubIntegrationRoute
+	// (defined in chat_test.go, shared across this package's tests).
+	integrations map[string]stubIntegrationRoute
 }
 
 func (s stubResolver) ResolveEmail(_ context.Context, _ domain.Scope) (providers.EmailProvider, string, string, string, error) {
@@ -31,6 +38,18 @@ func (s stubResolver) ResolveEmail(_ context.Context, _ domain.Scope) (providers
 		iid = "integ-test"
 	}
 	return s.provider, s.from, pid, iid, s.err
+}
+
+func (s stubResolver) ResolveEmailIntegration(ctx context.Context, scope domain.Scope, identifier string) (providers.EmailProvider, string, string, string, error) {
+	if identifier == "" {
+		return s.ResolveEmail(ctx, scope)
+	}
+	route, ok := s.integrations[identifier]
+	if !ok {
+		return nil, "", "", "", errUnknownIntegration("email", identifier)
+	}
+	p, _ := route.provider.(providers.EmailProvider)
+	return p, route.from, route.providerID, route.integrationID, nil
 }
 
 func emailEnvelope() runenv.InAppEnvelope {
@@ -385,5 +404,103 @@ func TestHandleEmail_PublishesDeliveryOnSent(t *testing.T) {
 	}
 	if m.Subject != "Hi Ada" {
 		t.Errorf("delivery Subject = %q, want %q", m.Subject, "Hi Ada")
+	}
+}
+
+// emailEnvelopeWithIntegration returns emailEnvelope with the step's
+// "integration" control set to identifier.
+func emailEnvelopeWithIntegration(identifier string) runenv.InAppEnvelope {
+	env := emailEnvelope()
+	env.Step.Integration = identifier
+	return env
+}
+
+// TestHandleEmail_ExplicitIntegration_RoutesToThatProvider proves that a step
+// with a non-empty "integration" control resolves through
+// ResolveEmailIntegration (not the primary ResolveEmail path) and sends via
+// that integration's provider, capturing its own providerID/integrationID on
+// the persisted message and its own configured From address on the outbound
+// message (not empty, and not the primary integration's From).
+func TestHandleEmail_ExplicitIntegration_RoutesToThatProvider(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	primary := providers.NewCapture()
+	secondary := providers.NewCapture()
+	h := NewEmail(s, stubResolver{
+		provider: primary,
+		from:     "noreply@acme.io",
+		integrations: map[string]stubIntegrationRoute{
+			"resend-secondary": {provider: providers.EmailProvider(secondary), providerID: "resend", integrationID: "integ-secondary", from: "secondary@acme.io"},
+		},
+	})
+
+	input, err := json.Marshal(emailEnvelopeWithIntegration("resend-secondary"))
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleEmail(ctx, engine.TaskPayload{RunID: "run_e_integ", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleEmail: %v", err)
+	}
+
+	if got := len(primary.Sent()); got != 0 {
+		t.Errorf("primary provider invoked %d times, want 0", got)
+	}
+	sent := secondary.Sent()
+	if got := len(sent); got != 1 {
+		t.Fatalf("secondary provider invoked %d times, want 1", got)
+	}
+	if sent[0].From != "secondary@acme.io" {
+		t.Errorf("EmailMessage.From = %q, want the integration's configured From %q", sent[0].From, "secondary@acme.io")
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_1", "email")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	if msgs[0].Status != "sent" {
+		t.Errorf("Status = %q, want sent", msgs[0].Status)
+	}
+	if msgs[0].ProviderID != "resend" {
+		t.Errorf("ProviderID = %q, want resend", msgs[0].ProviderID)
+	}
+	if msgs[0].IntegrationID != "integ-secondary" {
+		t.Errorf("IntegrationID = %q, want integ-secondary", msgs[0].IntegrationID)
+	}
+}
+
+// TestHandleEmail_UnknownIntegration_ErrorPersistedNoRetry proves that a step
+// naming an identifier the resolver cannot resolve persists a permanent
+// "error" message naming the identifier and never sends, returning a nil
+// error (no engine retry).
+func TestHandleEmail_UnknownIntegration_ErrorPersistedNoRetry(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	cap := providers.NewCapture()
+	h := NewEmail(s, stubResolver{provider: cap, from: "noreply@acme.io"})
+
+	input, err := json.Marshal(emailEnvelopeWithIntegration("does-not-exist"))
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleEmail(ctx, engine.TaskPayload{RunID: "run_e_unknown", StepID: "step_1", Input: input}); err != nil {
+		t.Fatalf("HandleEmail returned a retryable error, want nil (permanent fault): %v", err)
+	}
+
+	if got := len(cap.Sent()); got != 0 {
+		t.Errorf("provider invoked %d times for an unresolvable integration, want 0", got)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_1", "email")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Status != "error" {
+		t.Fatalf("expected one error message, got %+v", msgs)
+	}
+	if !strings.Contains(msgs[0].ErrorText, "does-not-exist") {
+		t.Errorf("ErrorText = %q, must name the identifier", msgs[0].ErrorText)
 	}
 }

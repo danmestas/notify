@@ -359,7 +359,11 @@ func (b *AgentLoopBuilder) handle(ctx context.Context, lc loopContext) error {
 	// No tool calls => the model believes it is done. Validate and finalize, or
 	// feed the compile error back as a self-correct round on the next iteration.
 	if len(resp.ToolCalls) == 0 {
-		if vErr := validateDraft(st.Scope, &st.Draft); vErr != nil {
+		integrations, iErr := b.ints.List(ctx, st.Scope)
+		if iErr != nil {
+			return fmt.Errorf("aibuilder: list integrations: %w", iErr)
+		}
+		if vErr := validateDraft(st.Scope, &st.Draft, integrations); vErr != nil {
 			if scErr := b.selfCorrectLimitExceeded(lc, st); scErr != nil {
 				return scErr
 			}

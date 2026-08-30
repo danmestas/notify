@@ -23,8 +23,16 @@ import (
 // the hardcoded "smtp" bug (issue #20).
 // integrationID is the row's primary key, used to populate
 // domain.Message.IntegrationID for Activity tab filtering (BP-13b).
+//
+// ResolveEmailIntegration resolves the provider, From address, providerID,
+// and integrationID for a specific integration identifier within (scope,
+// "email"), bypassing the primary-integration resolution.
+// connectivity.Service.ResolveEmailIntegration satisfies this — its return
+// shape matches ResolveEmail's exactly, so an integration-routed send picks
+// up the integration's own configured From just like the primary path does.
 type EmailResolver interface {
 	ResolveEmail(ctx context.Context, scope domain.Scope) (providers.EmailProvider, string, string, string, error)
+	ResolveEmailIntegration(ctx context.Context, scope domain.Scope, identifier string) (providers.EmailProvider, string, string, string, error)
 }
 
 // EmailHandler persists rendered email messages through the store, dispatching
@@ -85,17 +93,38 @@ func (h *EmailHandler) publishDelivery(envID string, data []byte) {
 	}
 }
 
-// resolveEmailIDs calls h.resolver.ResolveEmail and returns the providerID and
-// integrationID strings; ignores the provider and from returns. Used on
+// resolveEmailIDs resolves the providerID and integrationID strings only,
+// honoring an explicit step-level integration identifier when set. Used on
 // pre-send paths (skipped, throttled) where we want the IDs for attribution
 // but the provider itself is not needed. A resolve failure returns empty
 // strings; callers treat "" as "unknown" and continue rather than blocking.
-func (h *EmailHandler) resolveEmailIDs(ctx context.Context, scope domain.Scope) (providerID, integrationID string) {
+func (h *EmailHandler) resolveEmailIDs(ctx context.Context, scope domain.Scope, identifier string) (providerID, integrationID string) {
+	if identifier != "" {
+		_, _, pid, iid, err := h.resolver.ResolveEmailIntegration(ctx, scope, identifier)
+		if err != nil {
+			return "", ""
+		}
+		return pid, iid
+	}
 	_, _, pid, iid, err := h.resolver.ResolveEmail(ctx, scope)
 	if err != nil {
 		return "", ""
 	}
 	return pid, iid
+}
+
+// resolveEmailProvider resolves the EmailProvider, from address, providerID,
+// and integrationID for the send, routing through ResolveEmailIntegration
+// when the step sets an explicit "integration" identifier and through the
+// primary-resolution path (ResolveEmail) otherwise — byte-identical to
+// pre-#314 behavior when unset. Both paths return the integration's
+// configured From address; the caller's existing env.Step.From override
+// still applies on top of either.
+func (h *EmailHandler) resolveEmailProvider(ctx context.Context, scope domain.Scope, identifier string) (providers.EmailProvider, string, string, string, error) {
+	if identifier == "" {
+		return h.resolver.ResolveEmail(ctx, scope)
+	}
+	return h.resolver.ResolveEmailIntegration(ctx, scope, identifier)
 }
 
 // HandleEmail is registered via engine.Handle("send.email", h.HandleEmail).
@@ -182,7 +211,7 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 			return h.persistEmailSkipped(ctx, env, t, scope, subject, content)
 		}
 	}
-	provider, from, providerID, integrationID, err := h.resolver.ResolveEmail(ctx, scope)
+	provider, from, providerID, integrationID, err := h.resolveEmailProvider(ctx, scope, env.Step.Integration)
 	if err != nil {
 		return h.persistEmailError(ctx, env, t, "", "", err)
 	}
@@ -253,7 +282,7 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 // resolve is attempted best-effort to populate providerID and integrationID.
 func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
 	metrics.Delivery("email", metrics.OutcomeSkipped)
-	providerID, integrationID := h.resolveEmailIDs(ctx, scope)
+	providerID, integrationID := h.resolveEmailIDs(ctx, scope, env.Step.Integration)
 	if providerID == "" {
 		providerID = "smtp" // safe default; resolve failure must not block the record
 	}
@@ -292,7 +321,7 @@ func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InApp
 // JSON with a nil error. No email is sent; mirrors the persistEmailSkipped pattern.
 func (h *EmailHandler) persistEmailThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
 	metrics.Delivery("email", metrics.OutcomeThrottled)
-	providerID, integrationID := h.resolveEmailIDs(ctx, scope)
+	providerID, integrationID := h.resolveEmailIDs(ctx, scope, env.Step.Integration)
 	if providerID == "" {
 		providerID = "smtp"
 	}

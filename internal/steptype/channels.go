@@ -75,6 +75,9 @@ func (email) ParseForm(form url.Values) (json.RawMessage, error) {
 	if v := formField(form, "layout_key"); v != "" {
 		m["layoutKey"] = v
 	}
+	if v := formField(form, "integration"); v != "" {
+		m["integration"] = v
+	}
 	return marshalControlValues(m)
 }
 
@@ -110,6 +113,9 @@ func (push) ParseForm(form url.Values) (json.RawMessage, error) {
 			return nil, err
 		}
 		m["data_json"] = dataJSON
+	}
+	if v := formField(form, "integration"); v != "" {
+		m["integration"] = v
 	}
 	return marshalControlValues(m)
 }
@@ -147,7 +153,11 @@ func (sms) Validate(json.RawMessage) error                   { return nil }
 func (sms) EditorPartial() string                            { return "wf-step-fields-sms" }
 
 func (sms) ParseForm(form url.Values) (json.RawMessage, error) {
-	return marshalControlValues(map[string]any{"body": formField(form, "body")})
+	m := map[string]any{"body": formField(form, "body")}
+	if v := formField(form, "integration"); v != "" {
+		m["integration"] = v
+	}
+	return marshalControlValues(m)
 }
 
 // chat is the chat channel step type (body only).
@@ -162,7 +172,11 @@ func (chat) Validate(json.RawMessage) error                   { return nil }
 func (chat) EditorPartial() string                            { return "wf-step-fields-chat" }
 
 func (chat) ParseForm(form url.Values) (json.RawMessage, error) {
-	return marshalControlValues(map[string]any{"body": formField(form, "body")})
+	m := map[string]any{"body": formField(form, "body")}
+	if v := formField(form, "integration"); v != "" {
+		m["integration"] = v
+	}
+	return marshalControlValues(m)
 }
 
 // stream is the stream channel step type — a 10th, built-in (provider-less,

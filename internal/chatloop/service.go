@@ -224,9 +224,11 @@ func (s *Service) discordSender() *discordSender {
 // by (provider, chatID): a bound chat continues its conversation with the bound
 // agent; an unbound chat mints a new conversation against defaultAgent, or is
 // dropped when no defaultAgent is configured (mirrors email's "no_binding"
-// silent drop). After the responder threads the turn, the returned conversation
-// id is upserted as the chat_thread's platform_thread_id so the ReplyHook can
-// find it.
+// silent drop). For a cold chat the conversation id is minted here and the
+// chat_thread binding is committed BEFORE the turn is dispatched: the turn
+// runs as engine work, so its reply can fire ReplyHook at any moment after
+// dispatch, and ReplyHook resolves the binding by that id -- binding after
+// dispatch left a window where a fast reply found no binding and was dropped.
 //
 // scope is the tenancy the loop operates in. A single-tenant deploy routes all
 // inbound to one scope; multi-tenant routing by bot identity is a later slice.
@@ -251,9 +253,23 @@ func (s *Service) handleInbound(ctx context.Context, scope domain.Scope, provide
 			"provider", provider, "chat_id", chatID)
 		return
 	default:
-		// Cold inbound with a default agent: mint a new conversation.
+		// Cold inbound with a default agent: mint the conversation id and
+		// bind the chat to it before dispatching, so the binding is visible
+		// to ReplyHook by the time the turn can produce a reply.
+		conversationID = corestore.NewULID()
 		s.log.Info("chatloop: cold inbound, minting conversation",
-			"provider", provider, "chat_id", chatID, "agent", agentIdentifier)
+			"provider", provider, "chat_id", chatID, "agent", agentIdentifier, "conversation", conversationID)
+		if _, err := s.core.ChatThreads().Upsert(ctx, scope, corestore.ChatThread{
+			AgentIdentifier:  agentIdentifier,
+			PlatformThreadID: conversationID,
+			SubscriberID:     subscriberID,
+			Provider:         provider,
+			ChatID:           chatID,
+		}); err != nil {
+			s.log.Error("chatloop: bind chat_thread", "err", err,
+				"provider", provider, "chat_id", chatID, "conversation", conversationID)
+			return
+		}
 	}
 
 	turn := InboundTurn{
@@ -269,16 +285,11 @@ func (s *Service) handleInbound(ctx context.Context, scope domain.Scope, provide
 			"err", err, "provider", provider, "chat_id", chatID)
 		return
 	}
-
-	if _, err := s.core.ChatThreads().Upsert(ctx, scope, corestore.ChatThread{
-		AgentIdentifier:  agentIdentifier,
-		PlatformThreadID: convID,
-		SubscriberID:     subscriberID,
-		Provider:         provider,
-		ChatID:           chatID,
-	}); err != nil {
-		s.log.Error("chatloop: bind chat_thread", "err", err,
-			"provider", provider, "chat_id", chatID, "conversation", convID)
+	if convID != "" && convID != conversationID {
+		// The binding is already committed on conversationID; a responder
+		// that lands the turn elsewhere would strand replies, so make it loud.
+		s.log.Warn("chatloop: responder landed turn on a different conversation than bound",
+			"provider", provider, "chat_id", chatID, "bound", conversationID, "landed", convID)
 	}
 }
 

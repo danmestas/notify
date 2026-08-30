@@ -377,3 +377,41 @@ func TestIntegrationRepo_SetActive_WrongScope_ReturnsNotFound(t *testing.T) {
 		t.Errorf("SetActive wrong scope: want ErrNotFound, got %v", err)
 	}
 }
+
+// TestIntegrationRepo_GetByIdentifier_FoundAndNotFound proves GetByIdentifier
+// resolves an integration by its unique identifier slug regardless of
+// channel or the active flag, and returns ErrNotFound for an unknown
+// identifier or one belonging to a different scope.
+func TestIntegrationRepo_GetByIdentifier_FoundAndNotFound(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Integrations()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	other := domain.Scope{OrgID: "o2", EnvID: "e2"}
+
+	created, err := repo.Create(ctx, scope, domain.Integration{
+		ProviderID: "discord", Channel: "chat", Active: false,
+		Identifier: "discord-secondary",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := repo.GetByIdentifier(ctx, scope, "discord-secondary")
+	if err != nil {
+		t.Fatalf("GetByIdentifier: %v", err)
+	}
+	if got.ID != created.ID {
+		t.Fatalf("ID = %q, want %q", got.ID, created.ID)
+	}
+	if got.Active {
+		t.Fatalf("Active = true, want false (GetByIdentifier ignores active)")
+	}
+
+	if _, err := repo.GetByIdentifier(ctx, scope, "unknown-identifier"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown identifier: error = %v, want ErrNotFound", err)
+	}
+	if _, err := repo.GetByIdentifier(ctx, other, "discord-secondary"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("wrong scope: error = %v, want ErrNotFound", err)
+	}
+}

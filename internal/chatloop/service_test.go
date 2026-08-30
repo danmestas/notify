@@ -14,24 +14,18 @@ import (
 	corestore "github.com/danmestas/notify/internal/store"
 )
 
-// fakeResponder records the turns it is asked to handle and returns a
-// deterministic conversation id (mints "conv-<n>" when ConversationID is empty,
-// echoes the supplied one otherwise).
+// fakeResponder records the turns it is asked to handle and echoes the
+// supplied conversation id (handleInbound mints it before dispatch).
 type fakeResponder struct {
 	mu    sync.Mutex
 	turns []InboundTurn
-	next  int
 }
 
 func (f *fakeResponder) Respond(ctx context.Context, turn InboundTurn) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.turns = append(f.turns, turn)
-	if turn.ConversationID != "" {
-		return turn.ConversationID, nil
-	}
-	f.next++
-	return "conv-minted", nil
+	return turn.ConversationID, nil
 }
 
 func (f *fakeResponder) calls() []InboundTurn {
@@ -64,8 +58,8 @@ func TestHandleInbound_ColdMessageMintsBindingAndComposes(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 compose call, got %d", len(calls))
 	}
-	if calls[0].ConversationID != "" {
-		t.Fatalf("cold message must mint a new conversation (empty ConversationID), got %q", calls[0].ConversationID)
+	if calls[0].ConversationID == "" {
+		t.Fatalf("cold message must dispatch with a minted conversation id, got empty")
 	}
 	if calls[0].AgentIdentifier != "support" {
 		t.Fatalf("cold message must route to default agent, got %q", calls[0].AgentIdentifier)
@@ -76,8 +70,8 @@ func TestHandleInbound_ColdMessageMintsBindingAndComposes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("binding not created: %v", err)
 	}
-	if bind.PlatformThreadID != "conv-minted" || bind.AgentIdentifier != "support" {
-		t.Fatalf("binding mismatch: %+v", bind)
+	if bind.PlatformThreadID != calls[0].ConversationID || bind.AgentIdentifier != "support" {
+		t.Fatalf("binding mismatch: %+v, want thread %q", bind, calls[0].ConversationID)
 	}
 }
 
@@ -94,11 +88,11 @@ func TestHandleInbound_SecondMessageThreadsSameConversation(t *testing.T) {
 	if len(calls) != 2 {
 		t.Fatalf("expected 2 compose calls, got %d", len(calls))
 	}
-	if calls[0].ConversationID != "" {
-		t.Fatalf("first call should mint (empty conv id), got %q", calls[0].ConversationID)
+	if calls[0].ConversationID == "" {
+		t.Fatalf("first call should carry the minted conv id, got empty")
 	}
-	if calls[1].ConversationID != "conv-minted" {
-		t.Fatalf("second call should thread onto the same conversation, got %q", calls[1].ConversationID)
+	if calls[1].ConversationID != calls[0].ConversationID {
+		t.Fatalf("second call should thread onto the same conversation %q, got %q", calls[0].ConversationID, calls[1].ConversationID)
 	}
 }
 

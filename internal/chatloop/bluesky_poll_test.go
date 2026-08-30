@@ -161,8 +161,8 @@ func TestBlueskyPoll_MentionFeedsTextAndThreadsReply(t *testing.T) {
 		t.Fatalf("subscriber = %q, want %q", turn.SubscriberID, "bluesky:did:plc:friend")
 	}
 
-	// recordingResponder always mints "conv-x".
-	svc.ReplyHook(ctx, scope, agentdomain.Conversation{PlatformThreadID: "conv-x"}, "here is my answer")
+	// Reply on the conversation handleInbound minted and bound before dispatch.
+	svc.ReplyHook(ctx, scope, agentdomain.Conversation{PlatformThreadID: turn.ConversationID}, "here is my answer")
 
 	deadline2 := time.After(2 * time.Second)
 	for x.createRecords.Load() < 1 {
@@ -251,7 +251,8 @@ func TestBlueskyPoll_ReplyNotificationPreservesThreadRoot(t *testing.T) {
 		}
 	}
 
-	svc.ReplyHook(ctx, scope, agentdomain.Conversation{PlatformThreadID: "conv-x"}, "got it")
+	turn, _ := resp.last()
+	svc.ReplyHook(ctx, scope, agentdomain.Conversation{PlatformThreadID: turn.ConversationID}, "got it")
 
 	deadline2 := time.After(2 * time.Second)
 	for x.createRecords.Load() < 1 {

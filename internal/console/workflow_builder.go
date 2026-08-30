@@ -146,6 +146,12 @@ type workflowStepEditorStep struct {
 	// clamped to at least 1 so an unconfigured step still shows one empty row
 	// to author into.
 	VisibleConditions int
+	// IntegrationOptions is the "Integration" select's option list for the
+	// four send step types (email/sms/push/chat): a leading "" → "Default
+	// (primary)" entry followed by the scope's ACTIVE integrations of that
+	// channel, labeled "identifier — provider label". Left nil for every
+	// other step type, which hides the select (issue #314 stage 3).
+	IntegrationOptions []uiSelectOption
 }
 
 // workflowStepEditorView is what the workflow-step-editor fragment binds.
@@ -744,6 +750,9 @@ func (c *Console) serveFragmentWorkflowStepEditor(w http.ResponseWriter, r *http
 				Conditions:        conditions,
 				VisibleConditions: visible,
 			}
+			if sendIntegrationChannels[st.Type] {
+				view.Step.IntegrationOptions = c.integrationOptions(r.Context(), scope, st.Type)
+			}
 			break
 		}
 	}
@@ -758,6 +767,45 @@ func (c *Console) serveFragmentWorkflowStepEditor(w http.ResponseWriter, r *http
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
+
+// sendIntegrationChannels is the set of send step types carrying the
+// optional "integration" control value (issue #314): email, sms, push, chat.
+// in_app/stream/delay/digest/throttle/http_request never resolve through an
+// integration, so they never get the select.
+var sendIntegrationChannels = map[string]bool{
+	"email": true,
+	"sms":   true,
+	"push":  true,
+	"chat":  true,
+}
+
+// integrationOptions builds the "Integration" select's option list for
+// channel: a leading "" → "Default (primary)" entry followed by the scope's
+// ACTIVE integrations on that channel, ordered as store.IntegrationRepo.List
+// returns them (primary desc, priority asc, id asc). A nil Deps.Integrations
+// or a list error degrades to just the default entry rather than 500ing the
+// step editor over a cosmetic dropdown.
+func (c *Console) integrationOptions(ctx context.Context, scope domain.Scope, channel string) []uiSelectOption {
+	opts := []uiSelectOption{{Value: "", Label: "Default (primary)"}}
+	if c.deps.Integrations == nil {
+		return opts
+	}
+	all, err := c.deps.Integrations.List(ctx, scope)
+	if err != nil {
+		c.deps.Logger.Error("console: list integrations for step editor", "channel", channel, "err", err)
+		return opts
+	}
+	for _, in := range all {
+		if in.Channel != channel || !in.Active {
+			continue
+		}
+		opts = append(opts, uiSelectOption{
+			Value: in.Identifier,
+			Label: in.Identifier + " — " + providerLabel(in.ProviderID),
+		})
+	}
+	return opts
+}
 
 // nextStepID generates a "{type}-{n}" id where n is one past the count of
 // existing steps already carrying that type.

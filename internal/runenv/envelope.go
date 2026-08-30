@@ -47,6 +47,11 @@ type StepControls struct {
 	Priority  int      `json:"priority"`
 	Tags      []string `json:"tags"`
 	Markdown  bool     `json:"markdown"`
+	// Integration is the optional identifier of a specific integration to send
+	// through, overriding the channel's primary integration. Empty means "use
+	// primary" (existing Resolve* behavior, unchanged). Send steps only
+	// (email/sms/push/chat); absent on every other step type.
+	Integration string `json:"integration,omitempty"`
 	// Email-specific per-step overrides. Empty string means "use integration default".
 	From       string `json:"from,omitempty"`
 	ReplyTo    string `json:"replyTo,omitempty"`
@@ -84,6 +89,12 @@ type Step struct {
 	Priority int      `json:"priority,omitempty"` // 1 (min) .. 5 (max); 0 = provider default
 	Tags     []string `json:"tags,omitempty"`
 	Markdown bool     `json:"markdown,omitempty"`
+	// Integration is the optional per-step integration identifier (control key
+	// "integration"). Empty means "use the channel's primary integration" —
+	// byte-identical to pre-#314 behavior. Send handlers resolve it through
+	// connectivity.Service.ResolveIntegration instead of Resolve<Channel> when
+	// set.
+	Integration string `json:"integration,omitempty"`
 	// Data is the optional key-value map forwarded as native data to FCM and
 	// Expo (deep-links, badges). Absent/nil sends no data payload.
 	Data map[string]string `json:"data,omitempty"`

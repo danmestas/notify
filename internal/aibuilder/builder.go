@@ -172,7 +172,7 @@ func (b *Builder) Run(ctx context.Context, scope domain.Scope, draft *WorkflowDr
 
 		// No tool calls => the model is done. Validate and finalize.
 		if len(resp.ToolCalls) == 0 {
-			vErr := b.validate(scope, draft)
+			vErr := b.validate(scope, draft, integrations)
 			if vErr == nil {
 				emit(Event{Kind: KindDone, Text: resp.Text, Draft: draft.clone()})
 				return nil
@@ -255,13 +255,16 @@ func applyGatedToolCall(draft *WorkflowDraft, reg *steptype.Registry, gatedSet m
 // store rows and never persists (that is B2's confirm step); a compile failure
 // is wrapped as *authoring.ErrCompileFailure so callers and the self-correct
 // round see the same shape the HTTP layer maps to 422.
-func (b *Builder) validate(scope domain.Scope, draft *WorkflowDraft) error {
-	return validateDraft(scope, draft)
+func (b *Builder) validate(scope domain.Scope, draft *WorkflowDraft, integrations []domain.Integration) error {
+	return validateDraft(scope, draft, integrations)
 }
 
 // validateDraft is the pure draft-validation path shared by the synchronous
-// Builder loop and the durable agent-loop handler.
-func validateDraft(scope domain.Scope, draft *WorkflowDraft) error {
+// Builder loop and the durable agent-loop handler. integrations is the
+// scope's integration list (already loaded by the caller for provider
+// gating), reused here to reject a step whose "integration" control value
+// names an identifier that does not exist in scope (issue #314 stage 3).
+func validateDraft(scope domain.Scope, draft *WorkflowDraft, integrations []domain.Integration) error {
 	// Shape checks the compile path does not cover: an unnamed, untriggered, or
 	// stepless draft compiles to a degenerate workflow rather than an error.
 	// Wrapping them as ErrCompileFailure keeps the self-correct round and the
@@ -274,6 +277,9 @@ func validateDraft(scope domain.Scope, draft *WorkflowDraft) error {
 	}
 	if len(draft.Steps) == 0 {
 		return &authoring.ErrCompileFailure{Cause: errors.New("workflow must have at least one step")}
+	}
+	if err := validateStepIntegrations(draft.Steps, integrations); err != nil {
+		return &authoring.ErrCompileFailure{Cause: err}
 	}
 
 	stepsJSON, err := json.Marshal(draft.Steps)
@@ -289,6 +295,53 @@ func validateDraft(scope domain.Scope, draft *WorkflowDraft) error {
 	}
 	if _, err := authoring.Compile(wf); err != nil {
 		return &authoring.ErrCompileFailure{Cause: err}
+	}
+	return nil
+}
+
+// sendIntegrationChannels is the set of step types carrying the optional
+// "integration" control value (issue #314): email, sms, push, chat. Mirrors
+// internal/console's sendIntegrationChannels — kept local since the two
+// packages must not import each other.
+var sendIntegrationChannels = map[string]bool{
+	"email": true,
+	"sms":   true,
+	"push":  true,
+	"chat":  true,
+}
+
+// validateStepIntegrations rejects any step whose "integration" control value
+// names an identifier that does not exist, in scope, on the step's own
+// channel — the same ErrIntegrationUnusable condition connectivity.Service
+// enforces at send time, surfaced here as a draft-validation (422-style)
+// error so the model gets a self-correct chance instead of silently
+// authoring a workflow doomed to a permanent delivery failure.
+func validateStepIntegrations(steps []domain.Step, integrations []domain.Integration) error {
+	for _, st := range steps {
+		if !sendIntegrationChannels[st.Type] || len(st.ControlValues) == 0 {
+			continue
+		}
+		var cv struct {
+			Integration string `json:"integration"`
+		}
+		if err := json.Unmarshal(st.ControlValues, &cv); err != nil || cv.Integration == "" {
+			continue
+		}
+		found := false
+		inactive := false
+		for _, in := range integrations {
+			if in.Channel == st.Type && in.Identifier == cv.Integration {
+				found = true
+				inactive = !in.Active
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("step %q: integration %q is not a known %s integration in this environment", st.StepID, cv.Integration, st.Type)
+		}
+		if inactive {
+			return fmt.Errorf("step %q: integration %q is inactive", st.StepID, cv.Integration)
+		}
 	}
 	return nil
 }

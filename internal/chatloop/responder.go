@@ -7,13 +7,14 @@ import (
 )
 
 // InboundTurn is one inbound chat message delivered to a responder: the
-// resolved tenancy scope, the conversation thread it correlates to (empty for a
-// cold message that mints a new conversation), the subscriber on the chat side,
-// the responder agent, and the message text.
+// resolved tenancy scope, the conversation thread it correlates to (always set:
+// handleInbound mints and binds it before dispatch), the subscriber on the chat
+// side, the responder agent, and the message text.
 type InboundTurn struct {
 	Scope domain.Scope
-	// ConversationID is the conversation thread to continue, or empty to mint a
-	// new one (cold inbound on a chat with no existing binding).
+	// ConversationID is the conversation thread to continue. For a cold chat
+	// chatloop mints it and commits the chat_thread binding before dispatch,
+	// so the compose layer upserts (rather than mints) the conversation.
 	ConversationID string
 	SubscriberID   string
 	// AgentIdentifier is the responder agent for this turn (the default
@@ -26,8 +27,9 @@ type InboundTurn struct {
 // default is AgentResponder, which threads the turn onto the conversation and
 // lets the agent runtime generate a reply. Mirrors emailloop.Responder.
 //
-// Respond returns the conversation thread id the turn landed on so the caller
-// can bind the chat_thread to it.
+// Respond returns the conversation thread id the turn landed on; the caller
+// has already bound the chat_thread to turn.ConversationID and only uses the
+// return to flag a responder that landed elsewhere.
 type Responder interface {
 	Respond(ctx context.Context, turn InboundTurn) (conversationID string, err error)
 }
@@ -54,8 +56,7 @@ func NewAgentResponder(compose ComposeFunc) *AgentResponder {
 }
 
 // Respond threads the inbound chat onto the conversation and dispatches the
-// agent turn. An empty ConversationID mints a new conversation; a non-empty one
-// continues the existing thread.
+// agent turn (the compose layer upserts the conversation by its thread id).
 func (r *AgentResponder) Respond(ctx context.Context, turn InboundTurn) (string, error) {
 	return r.compose(ctx, turn.Scope, turn.AgentIdentifier, turn.ConversationID, turn.SubscriberID, turn.Text)
 }

@@ -95,10 +95,9 @@ func TestMastodonPoll_MentionFeedsStrippedTextAndThreadsReply(t *testing.T) {
 		t.Fatalf("subscriber = %q, want %q", turn.SubscriberID, "mastodon:friend@example.social")
 	}
 
-	// Fire the reply hook the way ingress would after the agent replies.
-	// recordingResponder always mints "conv-x", so that is the thread id
-	// handleInbound bound the chat to.
-	svc.ReplyHook(ctx, scope, agentdomain.Conversation{PlatformThreadID: "conv-x"}, "here is the answer")
+	// Fire the reply hook the way ingress would after the agent replies, on
+	// the conversation handleInbound minted and bound before dispatching.
+	svc.ReplyHook(ctx, scope, agentdomain.Conversation{PlatformThreadID: turn.ConversationID}, "here is the answer")
 
 	deadline2 := time.After(2 * time.Second)
 	for {

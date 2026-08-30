@@ -3,6 +3,7 @@ package aibuilder
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -432,5 +433,167 @@ func TestRun_RejectsStepBeyondCap(t *testing.T) {
 	}
 	if events[len(events)-1].Kind != KindDone {
 		t.Errorf("last event = %+v, want done (the cap rejection is non-fatal)", events[len(events)-1])
+	}
+}
+
+// TestValidateStepIntegrations_UnknownIdentifier_Rejected proves validateDraft
+// (via validateStepIntegrations) rejects a step whose "integration" control
+// value names an identifier absent from the scope's integration list for
+// that channel — issue #314 stage 3's aibuilder-side validation.
+func TestValidateStepIntegrations_UnknownIdentifier_Rejected(t *testing.T) {
+	draft := &WorkflowDraft{
+		Name:              "Notify",
+		TriggerIdentifier: "notify",
+		Steps: []domain.Step{{
+			StepID:        "chat-1",
+			Type:          "chat",
+			ControlValues: json.RawMessage(`{"body":"hi","integration":"does-not-exist"}`),
+		}},
+	}
+	err := validateDraft(domain.Scope{EnvID: "env1"}, draft, []domain.Integration{
+		{Channel: "chat", Identifier: "telegram-primary", Active: true},
+	})
+	if err == nil {
+		t.Fatal("expected an error for an unknown integration identifier")
+	}
+	if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("error = %v, want it to name the bad identifier", err)
+	}
+	if !strings.Contains(err.Error(), "chat-1") {
+		t.Errorf("error = %v, want it to name the offending step", err)
+	}
+	var compileErr *authoring.ErrCompileFailure
+	if !errors.As(err, &compileErr) {
+		t.Errorf("error type = %T, want *authoring.ErrCompileFailure (422-style)", err)
+	}
+}
+
+// TestValidateStepIntegrations_KnownIdentifier_Accepted proves a step whose
+// "integration" value matches an active integration on the step's own
+// channel passes.
+func TestValidateStepIntegrations_KnownIdentifier_Accepted(t *testing.T) {
+	draft := &WorkflowDraft{
+		Name:              "Notify",
+		TriggerIdentifier: "notify",
+		Steps: []domain.Step{{
+			StepID:        "chat-1",
+			Type:          "chat",
+			ControlValues: json.RawMessage(`{"body":"hi","integration":"telegram-primary"}`),
+		}},
+	}
+	err := validateDraft(domain.Scope{EnvID: "env1"}, draft, []domain.Integration{
+		{Channel: "chat", Identifier: "telegram-primary", Active: true},
+	})
+	if err != nil {
+		t.Fatalf("validateDraft: unexpected error for a known identifier: %v", err)
+	}
+}
+
+// TestValidateStepIntegrations_WrongChannel_Rejected proves an identifier that
+// exists but on a different channel is still rejected (not silently treated
+// as usable for this step's channel).
+func TestValidateStepIntegrations_WrongChannel_Rejected(t *testing.T) {
+	draft := &WorkflowDraft{
+		Name:              "Notify",
+		TriggerIdentifier: "notify",
+		Steps: []domain.Step{{
+			StepID:        "email-1",
+			Type:          "email",
+			ControlValues: json.RawMessage(`{"subject":"s","body":"hi","integration":"telegram-primary"}`),
+		}},
+	}
+	err := validateDraft(domain.Scope{EnvID: "env1"}, draft, []domain.Integration{
+		{Channel: "chat", Identifier: "telegram-primary", Active: true},
+	})
+	if err == nil {
+		t.Fatal("expected an error: telegram-primary is a chat integration, not email")
+	}
+}
+
+// TestValidateStepIntegrations_Inactive_Rejected proves a step naming an
+// integration that exists on the right channel but is inactive is still
+// rejected — an inactive integration is unusable at send time
+// (connectivity.ResolveIntegration returns ErrIntegrationUnusable for it), so
+// letting the draft pass here would author a workflow doomed to a permanent
+// delivery failure.
+func TestValidateStepIntegrations_Inactive_Rejected(t *testing.T) {
+	draft := &WorkflowDraft{
+		Name:              "Notify",
+		TriggerIdentifier: "notify",
+		Steps: []domain.Step{{
+			StepID:        "chat-1",
+			Type:          "chat",
+			ControlValues: json.RawMessage(`{"body":"hi","integration":"telegram-inactive"}`),
+		}},
+	}
+	err := validateDraft(domain.Scope{EnvID: "env1"}, draft, []domain.Integration{
+		{Channel: "chat", Identifier: "telegram-inactive", Active: false},
+	})
+	if err == nil {
+		t.Fatal("expected an error for an inactive integration")
+	}
+	if !strings.Contains(err.Error(), "telegram-inactive") {
+		t.Errorf("error = %v, want it to name the inactive identifier", err)
+	}
+	var compileErr *authoring.ErrCompileFailure
+	if !errors.As(err, &compileErr) {
+		t.Errorf("error type = %T, want *authoring.ErrCompileFailure (422-style)", err)
+	}
+}
+
+// TestRun_UnknownIntegrationIdentifier_SelfCorrects proves the full Run loop
+// surfaces an unknown "integration" identifier as a self-correctable
+// validation failure: the model gets fed the error and a follow-up
+// editStepContent that fixes it succeeds.
+func TestRun_UnknownIntegrationIdentifier_SelfCorrects(t *testing.T) {
+	draft := &WorkflowDraft{Name: "Notify", TriggerIdentifier: "notify"}
+	ints := stubLister{ints: []domain.Integration{
+		{Channel: "chat", Identifier: "telegram-primary", Active: true},
+	}}
+	client := &fnClient{fn: func(call int, _ MessageRequest) MessageResponse {
+		switch call {
+		case 1:
+			return MessageResponse{StopReason: "tool_use", ToolCalls: []ToolCall{
+				tc("t1", toolAddStep, `{"type":"chat"}`),
+			}}
+		case 2:
+			sid := draft.Steps[0].StepID
+			return MessageResponse{StopReason: "tool_use", ToolCalls: []ToolCall{
+				tc("t2", toolEditStepContent,
+					fmt.Sprintf(`{"stepId":%q,"controlValues":{"body":"hi","integration":"ghost"}}`, sid)),
+			}}
+		case 3:
+			// Model believes it's done, but "ghost" is not a known integration.
+			return MessageResponse{StopReason: "end_turn", Text: "Done."}
+		case 4:
+			sid := draft.Steps[0].StepID
+			return MessageResponse{StopReason: "tool_use", ToolCalls: []ToolCall{
+				tc("t3", toolEditStepContent,
+					fmt.Sprintf(`{"stepId":%q,"controlValues":{"body":"hi","integration":"telegram-primary"}}`, sid)),
+			}}
+		default:
+			return MessageResponse{StopReason: "end_turn", Text: "Fixed."}
+		}
+	}}
+
+	b := NewBuilder(client, ints)
+	var events []Event
+	if err := b.Run(context.Background(), domain.Scope{EnvID: "env1"}, draft, "notify over chat", collect(&events)); err != nil {
+		t.Fatalf("Run error after self-correct: %v", err)
+	}
+	if events[len(events)-1].Kind != KindDone {
+		t.Errorf("last event = %+v, want done", events[len(events)-1])
+	}
+
+	feedback := 0
+	for _, req := range client.reqs {
+		for _, m := range req.Messages {
+			if m.Role == RoleUser && strings.Contains(m.Text, "ghost") {
+				feedback++
+			}
+		}
+	}
+	if feedback == 0 {
+		t.Error("expected the unknown-identifier error to be fed back to the model")
 	}
 }

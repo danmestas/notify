@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"expvar"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -36,6 +38,30 @@ type stubChatResolver struct {
 	id            string // providerID
 	integrationID string // defaults to "integ-chat-test" when empty
 	err           error
+
+	// integrations routes explicit "integration" identifiers (env.Step.Integration)
+	// to a distinct provider/providerID/integrationID, standing in for
+	// connectivity.Service.ResolveIntegration. An identifier with no entry
+	// returns errUnknownIntegration, mirroring ErrIntegrationUnusable.
+	integrations map[string]stubIntegrationRoute
+}
+
+// stubIntegrationRoute is one (provider, providerID, integrationID) answer a
+// stub resolver hands back for a specific "integration" identifier. from is
+// only meaningful for the email stub's ResolveEmailIntegration, standing in
+// for the integration's configured From address; other channels leave it "".
+type stubIntegrationRoute struct {
+	provider      any
+	providerID    string
+	integrationID string
+	from          string
+}
+
+// errUnknownIntegration stands in for connectivity.ErrIntegrationUnusable: a
+// permanent fault (delivery never wraps it in a retryable error) that names
+// the identifier in its message.
+func errUnknownIntegration(channel, identifier string) error {
+	return fmt.Errorf("stub: integration %q unusable for channel %q: no integration with this identifier", identifier, channel)
 }
 
 func (s stubChatResolver) ResolveChat(_ context.Context, _ domain.Scope) (providers.ChatProvider, string, string, error) {
@@ -44,6 +70,17 @@ func (s stubChatResolver) ResolveChat(_ context.Context, _ domain.Scope) (provid
 		iid = "integ-chat-test"
 	}
 	return s.p, s.id, iid, s.err
+}
+
+func (s stubChatResolver) ResolveIntegration(ctx context.Context, scope domain.Scope, channel, identifier string) (any, string, string, error) {
+	if identifier == "" {
+		return s.ResolveChat(ctx, scope)
+	}
+	route, ok := s.integrations[identifier]
+	if !ok {
+		return nil, "", "", errUnknownIntegration(channel, identifier)
+	}
+	return route.provider, route.providerID, route.integrationID, nil
 }
 
 // chatEnvelope mirrors inAppEnvelope for the chat channel.
@@ -269,5 +306,96 @@ func TestHandleChat_ScopeIsolation(t *testing.T) {
 	}
 	if len(other) != 0 {
 		t.Fatalf("env_2 sees %d messages from env_1, want 0", len(other))
+	}
+}
+
+// chatEnvelopeWithIntegration returns chatEnvelope with the step's
+// "integration" control set to identifier.
+func chatEnvelopeWithIntegration(identifier string) runenv.InAppEnvelope {
+	env := chatEnvelope()
+	env.Step.Integration = identifier
+	return env
+}
+
+// TestHandleChat_ExplicitIntegration_RoutesToThatProvider proves that a step
+// with a non-empty "integration" control resolves through ResolveIntegration
+// (not the primary ResolveChat path) and sends via that integration's
+// provider, capturing its own providerID/integrationID on the persisted
+// message.
+func TestHandleChat_ExplicitIntegration_RoutesToThatProvider(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	primary := providers.NewCaptureChat()
+	secondary := providers.NewCaptureChat()
+	h := NewChat(s, stubChatResolver{
+		p:  primary,
+		id: "discord",
+		integrations: map[string]stubIntegrationRoute{
+			"disc-secondary": {provider: providers.ChatProvider(secondary), providerID: "discord", integrationID: "integ-secondary"},
+		},
+	})
+
+	input, err := json.Marshal(chatEnvelopeWithIntegration("disc-secondary"))
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleChat(ctx, engine.TaskPayload{RunID: "run_c_integ", StepID: "C1", Input: input}); err != nil {
+		t.Fatalf("HandleChat: %v", err)
+	}
+
+	if got := len(primary.Sent()); got != 0 {
+		t.Errorf("primary provider invoked %d times, want 0", got)
+	}
+	if got := len(secondary.Sent()); got != 1 {
+		t.Fatalf("secondary provider invoked %d times, want 1", got)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "chat")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	if msgs[0].Status != "sent" {
+		t.Errorf("Status = %q, want sent", msgs[0].Status)
+	}
+	if msgs[0].IntegrationID != "integ-secondary" {
+		t.Errorf("IntegrationID = %q, want integ-secondary", msgs[0].IntegrationID)
+	}
+}
+
+// TestHandleChat_UnknownIntegration_ErrorPersistedNoRetry proves that a step
+// naming an identifier the resolver cannot resolve (unknown, inactive, or
+// wrong-channel — the stub covers "unknown") persists a permanent "error"
+// message naming the identifier and never sends, returning a nil error (no
+// engine retry).
+func TestHandleChat_UnknownIntegration_ErrorPersistedNoRetry(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	capt := providers.NewCaptureChat()
+	h := NewChat(s, stubChatResolver{p: capt, id: "discord"})
+
+	input, err := json.Marshal(chatEnvelopeWithIntegration("does-not-exist"))
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandleChat(ctx, engine.TaskPayload{RunID: "run_c_unknown", StepID: "C1", Input: input}); err != nil {
+		t.Fatalf("HandleChat returned a retryable error, want nil (permanent fault): %v", err)
+	}
+
+	if got := len(capt.Sent()); got != 0 {
+		t.Errorf("provider invoked %d times for an unresolvable integration, want 0", got)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "chat")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Status != "error" {
+		t.Fatalf("expected one error message, got %+v", msgs)
+	}
+	if !strings.Contains(msgs[0].ErrorText, "does-not-exist") {
+		t.Errorf("ErrorText = %q, must name the identifier", msgs[0].ErrorText)
 	}
 }

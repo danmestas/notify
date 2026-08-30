@@ -23,8 +23,15 @@ import (
 // Return order: (provider, providerID, integrationID, error).
 // integrationID is the row's primary key, used to populate
 // domain.Message.IntegrationID for Activity tab filtering.
+//
+// ResolveIntegration resolves the provider, providerID, and integrationID for
+// a specific integration identifier within (scope, channel), bypassing the
+// channel's primary-integration resolution. connectivity.Service.ResolveIntegration
+// satisfies this. The provider is untyped (any) because the four channels have
+// no shared provider interface; HandleChat type-asserts to providers.ChatProvider.
 type ChatResolver interface {
 	ResolveChat(ctx context.Context, scope domain.Scope) (providers.ChatProvider, string, string, error)
+	ResolveIntegration(ctx context.Context, scope domain.Scope, channel, identifier string) (any, string, string, error)
 }
 
 // ChatHandler persists rendered chat messages through the store, dispatching
@@ -91,16 +98,43 @@ func (h *ChatHandler) publishDelivery(envID string, data []byte) {
 	}
 }
 
-// resolveChatIDs calls h.resolver.ResolveChat and returns the providerID and
-// integrationID strings only. Used on pre-send paths (skipped, throttled) where
-// we want the IDs for attribution but the provider itself is not needed. A
-// resolve failure returns empty strings; callers treat "" as "unknown".
-func (h *ChatHandler) resolveChatIDs(ctx context.Context, scope domain.Scope) (providerID, integrationID string) {
+// resolveChatIDs resolves the providerID and integrationID strings only,
+// honoring an explicit step-level integration identifier when set. Used on
+// pre-send paths (skipped, throttled) where we want the IDs for attribution
+// but the provider itself is not needed. A resolve failure returns empty
+// strings; callers treat "" as "unknown".
+func (h *ChatHandler) resolveChatIDs(ctx context.Context, scope domain.Scope, identifier string) (providerID, integrationID string) {
+	if identifier != "" {
+		_, pid, iid, err := h.resolver.ResolveIntegration(ctx, scope, "chat", identifier)
+		if err != nil {
+			return "", ""
+		}
+		return pid, iid
+	}
 	_, pid, iid, err := h.resolver.ResolveChat(ctx, scope)
 	if err != nil {
 		return "", ""
 	}
 	return pid, iid
+}
+
+// resolveChatProvider resolves the ChatProvider, providerID, and integrationID
+// for the send, routing through ResolveIntegration when the step sets an
+// explicit "integration" identifier and through the primary-resolution path
+// (ResolveChat) otherwise — byte-identical to pre-#314 behavior when unset.
+func (h *ChatHandler) resolveChatProvider(ctx context.Context, scope domain.Scope, identifier string) (providers.ChatProvider, string, string, error) {
+	if identifier == "" {
+		return h.resolver.ResolveChat(ctx, scope)
+	}
+	p, providerID, integrationID, err := h.resolver.ResolveIntegration(ctx, scope, "chat", identifier)
+	if err != nil {
+		return nil, "", "", err
+	}
+	cp, ok := p.(providers.ChatProvider)
+	if !ok {
+		return nil, providerID, integrationID, fmt.Errorf("chat: integration %q resolved a non-chat provider (%T)", identifier, p)
+	}
+	return cp, providerID, integrationID, nil
 }
 
 // chatAddress returns the per-subscriber chat address for providerID, or ""
@@ -210,7 +244,7 @@ func (h *ChatHandler) HandleChat(ctx context.Context, t engine.TaskPayload) (jso
 		}
 	}
 
-	provider, providerID, integrationID, err := h.resolver.ResolveChat(ctx, scope)
+	provider, providerID, integrationID, err := h.resolveChatProvider(ctx, scope, env.Step.Integration)
 	if err != nil {
 		return h.persistChatError(ctx, env, t, "", "", err)
 	}
@@ -279,7 +313,7 @@ func (h *ChatHandler) HandleChat(ctx context.Context, t engine.TaskPayload) (jso
 // chat is sent; this mirrors the existing skipped/failed-message pattern.
 func (h *ChatHandler) persistChatSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
 	metrics.Delivery("chat", metrics.OutcomeSkipped)
-	providerID, integrationID := h.resolveChatIDs(ctx, scope)
+	providerID, integrationID := h.resolveChatIDs(ctx, scope, env.Step.Integration)
 	if providerID == "" {
 		providerID = "discord" // safe default; resolve failure must not block the record
 	}
@@ -318,7 +352,7 @@ func (h *ChatHandler) persistChatSkipped(ctx context.Context, env runenv.InAppEn
 // JSON with a nil error. No chat is sent; mirrors the persistChatSkipped pattern.
 func (h *ChatHandler) persistChatThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
 	metrics.Delivery("chat", metrics.OutcomeThrottled)
-	providerID, integrationID := h.resolveChatIDs(ctx, scope)
+	providerID, integrationID := h.resolveChatIDs(ctx, scope, env.Step.Integration)
 	if providerID == "" {
 		providerID = "discord"
 	}

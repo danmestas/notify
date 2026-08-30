@@ -169,6 +169,7 @@
              placeholder="main-layout"
              value="{{index .ControlMap "layoutKey"}}">
     </div>
+    {{template "wf-step-fields-integration" .}}
     {{template "wf-preview-split" (dict "BodyLabel" "Body" "Rows" 6 "Body" (index .ControlMap "body"))}}
     {{end}}
 {{define "wf-step-fields-in_app"}}
@@ -251,13 +252,26 @@
                 placeholder='{"screen":"home","badge":"3"}'>{{index .ControlMap "data_json"}}</textarea>
       <p class="form-hint">Optional key-value JSON object forwarded to FCM and Expo (deep-links, badges). Must contain only string values.</p>
     </div>
+    {{template "wf-step-fields-integration" .}}
     {{template "wf-preview-split" (dict "BodyLabel" "Body" "Rows" 4 "Body" (index .ControlMap "body"))}}
     {{end}}
 {{define "wf-step-fields-sms"}}
+    {{template "wf-step-fields-integration" .}}
     {{template "wf-preview-split" (dict "BodyLabel" "Message" "Rows" 4 "Body" (index .ControlMap "body"))}}
     {{end}}
 {{define "wf-step-fields-chat"}}
+    {{template "wf-step-fields-integration" .}}
     {{template "wf-preview-split" (dict "BodyLabel" "Message" "Rows" 4 "Body" (index .ControlMap "body"))}}
+    {{end}}
+{{define "wf-step-fields-integration"}}
+    {{if .IntegrationOptions}}
+    <div class="form-row">
+      <label class="form-label" for="cv-integration-trigger">Integration</label>
+      {{template "ui-select" (uiSelectForm "cv-integration" "integration" "cvIntegration"
+        .IntegrationOptions
+        "Default (primary)" "" false (index .ControlMap "integration") true)}}
+    </div>
+    {{end}}
     {{end}}
 {{define "wf-step-fields-stream"}}
     <div class="form-row">

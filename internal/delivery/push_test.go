@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -20,6 +21,12 @@ type stubPushResolver struct {
 	id            string // providerID
 	integrationID string // defaults to "integ-push-test" when empty
 	err           error
+
+	// integrations routes explicit "integration" identifiers to a distinct
+	// provider/providerID/integrationID, standing in for
+	// connectivity.Service.ResolveIntegration. See stubIntegrationRoute
+	// (defined in chat_test.go, shared across this package's tests).
+	integrations map[string]stubIntegrationRoute
 }
 
 func (s stubPushResolver) ResolvePush(_ context.Context, _ domain.Scope) (providers.PushProvider, string, string, error) {
@@ -28,6 +35,17 @@ func (s stubPushResolver) ResolvePush(_ context.Context, _ domain.Scope) (provid
 		iid = "integ-push-test"
 	}
 	return s.p, s.id, iid, s.err
+}
+
+func (s stubPushResolver) ResolveIntegration(ctx context.Context, scope domain.Scope, channel, identifier string) (any, string, string, error) {
+	if identifier == "" {
+		return s.ResolvePush(ctx, scope)
+	}
+	route, ok := s.integrations[identifier]
+	if !ok {
+		return nil, "", "", errUnknownIntegration(channel, identifier)
+	}
+	return route.provider, route.providerID, route.integrationID, nil
 }
 
 // failingPushProvider always fails with the configured error.
@@ -419,5 +437,100 @@ func TestHandlePush_DataThreadedEndToEnd(t *testing.T) {
 	}
 	if sent[0].Data["badge"] != "3" {
 		t.Errorf("Data[badge] = %q, want %q", sent[0].Data["badge"], "3")
+	}
+}
+
+// pushEnvelopeWithIntegration returns pushEnvelope with the step's
+// "integration" control set to identifier.
+func pushEnvelopeWithIntegration(identifier string) runenv.InAppEnvelope {
+	env := pushEnvelope()
+	env.Step.Integration = identifier
+	return env
+}
+
+// TestHandlePush_ExplicitIntegration_RoutesToThatProvider proves that a step
+// with a non-empty "integration" control resolves through ResolveIntegration
+// (not the primary ResolvePush path) and sends via that integration's
+// provider, capturing its own providerID/integrationID on the persisted
+// message.
+func TestHandlePush_ExplicitIntegration_RoutesToThatProvider(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	seedPushAddress(t, s, "ntfy", "primary-topic")
+	seedPushAddress(t, s, "expo", "secondary-token")
+	primary := providers.NewCapturePush()
+	secondary := providers.NewCapturePush()
+	h := NewPush(s, stubPushResolver{
+		p:  primary,
+		id: "ntfy",
+		integrations: map[string]stubIntegrationRoute{
+			"expo-secondary": {provider: providers.PushProvider(secondary), providerID: "expo", integrationID: "integ-secondary"},
+		},
+	})
+
+	input, err := json.Marshal(pushEnvelopeWithIntegration("expo-secondary"))
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandlePush(ctx, engine.TaskPayload{RunID: "run_p_integ", StepID: "P1", Input: input}); err != nil {
+		t.Fatalf("HandlePush: %v", err)
+	}
+
+	if got := len(primary.Sent()); got != 0 {
+		t.Errorf("primary provider invoked %d times, want 0", got)
+	}
+	if got := len(secondary.Sent()); got != 1 {
+		t.Fatalf("secondary provider invoked %d times, want 1", got)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "push")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly one message, got %d", len(msgs))
+	}
+	if msgs[0].Status != "sent" {
+		t.Errorf("Status = %q, want sent (err=%q)", msgs[0].Status, msgs[0].ErrorText)
+	}
+	if msgs[0].ProviderID != "expo" {
+		t.Errorf("ProviderID = %q, want expo", msgs[0].ProviderID)
+	}
+	if msgs[0].IntegrationID != "integ-secondary" {
+		t.Errorf("IntegrationID = %q, want integ-secondary", msgs[0].IntegrationID)
+	}
+}
+
+// TestHandlePush_UnknownIntegration_ErrorPersistedNoRetry proves that a step
+// naming an identifier the resolver cannot resolve persists a permanent
+// "error" message naming the identifier and never sends, returning a nil
+// error (no engine retry).
+func TestHandlePush_UnknownIntegration_ErrorPersistedNoRetry(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	capt := providers.NewCapturePush()
+	h := NewPush(s, stubPushResolver{p: capt, id: "ntfy"})
+
+	input, err := json.Marshal(pushEnvelopeWithIntegration("does-not-exist"))
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := h.HandlePush(ctx, engine.TaskPayload{RunID: "run_p_unknown", StepID: "P1", Input: input}); err != nil {
+		t.Fatalf("HandlePush returned a retryable error, want nil (permanent fault): %v", err)
+	}
+
+	if got := len(capt.Sent()); got != 0 {
+		t.Errorf("provider invoked %d times for an unresolvable integration, want 0", got)
+	}
+
+	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "push")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Status != "error" {
+		t.Fatalf("expected one error message, got %+v", msgs)
+	}
+	if !strings.Contains(msgs[0].ErrorText, "does-not-exist") {
+		t.Errorf("ErrorText = %q, must name the identifier", msgs[0].ErrorText)
 	}
 }

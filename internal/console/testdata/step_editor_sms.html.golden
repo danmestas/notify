@@ -10,6 +10,9 @@
     <input type="hidden" name="csrf_token" value="csrf-golden">
     
     
+    
+    
+    
 <div class="wf-preview-split">
   <div class="wf-preview-split-editor">
     <div class="form-row">

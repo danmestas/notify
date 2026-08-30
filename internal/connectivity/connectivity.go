@@ -1234,6 +1234,150 @@ func (svc *Service) SMSProviderFromIntegration(in domain.Integration) (providers
 	}
 }
 
+// ErrIntegrationUnusable is returned by ResolveIntegration when a step's
+// explicit "integration" identifier cannot be resolved to a usable provider:
+// the identifier is unknown in scope, names an integration on a different
+// channel, or is inactive. It names the identifier and the reason in Error()
+// so the failure lands in the message's error_text. Delivery never wraps this
+// in providers.TransientError, so it is treated as PERMANENT — no retry and
+// no silent fallback to the channel's primary integration.
+type ErrIntegrationUnusable struct {
+	Identifier string
+	Channel    string
+	Reason     string
+}
+
+func (e ErrIntegrationUnusable) Error() string {
+	return fmt.Sprintf("connectivity: integration %q unusable for channel %q: %s", e.Identifier, e.Channel, e.Reason)
+}
+
+// ResolveIntegration resolves the provider, providerID, and integrationID for
+// (scope, channel), honoring an optional per-step "integration" identifier
+// override.
+//
+// identifier == "" delegates to the channel's existing primary-resolution path
+// (ResolveChat/ResolveEmail/ResolvePush/ResolveSMS) — byte-identical behavior
+// for workflows that never set the control.
+//
+// identifier != "" looks up that integration by (scope, identifier) and
+// builds its provider through the same *ProviderFromIntegration switch the
+// primary path uses. An unknown identifier, an identifier belonging to a
+// different channel, or an inactive integration all return
+// ErrIntegrationUnusable — never a silent fallback to primary.
+//
+// The returned provider is untyped (any) because the four channels have no
+// shared provider interface; callers type-assert to the channel's
+// providers.XProvider, exactly as the existing per-channel Resolve* callers
+// already do with their own typed returns.
+// resolveIntegrationRow looks up the integration named by identifier within
+// scope, validating that it belongs to channel and is active. It is the
+// shared row-lookup used by ResolveIntegration and ResolveEmailIntegration so
+// both stay consistent about what makes an identifier usable.
+func (svc *Service) resolveIntegrationRow(ctx context.Context, scope domain.Scope, channel, identifier string) (domain.Integration, error) {
+	in, err := svc.store.Integrations().GetByIdentifier(ctx, scope, identifier)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return domain.Integration{}, ErrIntegrationUnusable{Identifier: identifier, Channel: channel, Reason: "no integration with this identifier"}
+		}
+		return domain.Integration{}, err
+	}
+	if in.Channel != channel {
+		return domain.Integration{}, ErrIntegrationUnusable{Identifier: identifier, Channel: channel, Reason: fmt.Sprintf("integration belongs to channel %q", in.Channel)}
+	}
+	if !in.Active {
+		return domain.Integration{}, ErrIntegrationUnusable{Identifier: identifier, Channel: channel, Reason: "integration is inactive"}
+	}
+	return in, nil
+}
+
+// ResolveEmailIntegration resolves the EmailProvider, its configured From
+// address, providerID, and integrationID for a specific integration
+// identifier within (scope, "email"). It is the identifier-routed
+// counterpart to ResolveEmail: same return shape, same
+// EmailProviderFromIntegration switch, but scoped to one named integration
+// rather than the channel's primary. Unlike the generic ResolveIntegration,
+// this preserves the From address so an explicitly selected integration
+// sends with its configured sender rather than an empty one.
+func (svc *Service) ResolveEmailIntegration(ctx context.Context, scope domain.Scope, identifier string) (providers.EmailProvider, string, string, string, error) {
+	in, err := svc.resolveIntegrationRow(ctx, scope, "email", identifier)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+
+	providerID := in.ProviderID
+	if providerID == "" {
+		providerID = "smtp" // normalise legacy rows that predate the field
+	}
+
+	prov, from, err := svc.EmailProviderFromIntegration(in)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	return prov, from, providerID, in.ID, nil
+}
+
+func (svc *Service) ResolveIntegration(ctx context.Context, scope domain.Scope, channel, identifier string) (provider any, providerID, integrationID string, err error) {
+	if identifier == "" {
+		switch channel {
+		case "chat":
+			p, pid, iid, err := svc.ResolveChat(ctx, scope)
+			return p, pid, iid, err
+		case "email":
+			p, _, pid, iid, err := svc.ResolveEmail(ctx, scope)
+			return p, pid, iid, err
+		case "push":
+			p, pid, iid, err := svc.ResolvePush(ctx, scope)
+			return p, pid, iid, err
+		case "sms":
+			p, pid, iid, err := svc.ResolveSMS(ctx, scope)
+			return p, pid, iid, err
+		default:
+			return nil, "", "", fmt.Errorf("connectivity: ResolveIntegration: unsupported channel %q", channel)
+		}
+	}
+
+	in, err := svc.resolveIntegrationRow(ctx, scope, channel, identifier)
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	providerID = in.ProviderID
+	switch channel {
+	case "chat":
+		p, err := svc.ChatProviderFromIntegration(in)
+		if err != nil {
+			return nil, "", "", err
+		}
+		return p, providerID, in.ID, nil
+	case "email":
+		p, _, err := svc.EmailProviderFromIntegration(in)
+		if err != nil {
+			return nil, "", "", err
+		}
+		if providerID == "" {
+			providerID = "smtp" // normalise legacy rows that predate the field
+		}
+		return p, providerID, in.ID, nil
+	case "push":
+		p, err := svc.PushProviderFromIntegration(ctx, in)
+		if err != nil {
+			return nil, "", "", err
+		}
+		if providerID == "" {
+			providerID = "ntfy" // normalise legacy rows that predate the field
+		}
+		return p, providerID, in.ID, nil
+	case "sms":
+		p, err := svc.SMSProviderFromIntegration(in)
+		if err != nil {
+			return nil, "", "", err
+		}
+		return p, providerID, in.ID, nil
+	default:
+		return nil, "", "", ErrIntegrationUnusable{Identifier: identifier, Channel: channel, Reason: fmt.Sprintf("unsupported channel %q", channel)}
+	}
+}
+
 // testSendDefaultMessage is the canned body used when the operator leaves the
 // test-send message blank.
 const testSendDefaultMessage = "This is a test notification from notify."

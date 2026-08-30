@@ -36,6 +36,10 @@ func (r capResolver) ResolveEmail(_ context.Context, _ domain.Scope) (providers.
 	return r.c, r.from, "smtp", "", nil
 }
 
+func (r capResolver) ResolveEmailIntegration(_ context.Context, _ domain.Scope, identifier string) (providers.EmailProvider, string, string, string, error) {
+	return r.c, r.from, "smtp", "", nil
+}
+
 // TestEmailParity_EndToEnd is the email slice parity proof: a real dagnats
 // sidecar, a real temp SQLite store, and the real HTTP surface drive the full
 // scenario (subscriber -> trigger -> delivered email message) and

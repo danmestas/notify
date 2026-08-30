@@ -36,8 +36,16 @@ type webPushSender interface {
 // Return order: (provider, providerID, integrationID, error).
 // integrationID is the row's primary key, used to populate
 // domain.Message.IntegrationID for Activity tab filtering (BP-13b).
+//
+// ResolveIntegration resolves the provider, providerID, and integrationID for
+// a specific integration identifier within (scope, "push"), bypassing the
+// primary-integration resolution. connectivity.Service.ResolveIntegration
+// satisfies this. The provider is untyped (any) because the four channels
+// have no shared provider interface; HandlePush type-asserts to
+// providers.PushProvider.
 type PushResolver interface {
 	ResolvePush(ctx context.Context, scope domain.Scope) (providers.PushProvider, string, string, error)
+	ResolveIntegration(ctx context.Context, scope domain.Scope, channel, identifier string) (any, string, string, error)
 }
 
 // PushHandler persists rendered push messages through the store, dispatching
@@ -104,12 +112,39 @@ func (h *PushHandler) publishDelivery(envID string, data []byte) {
 // we want the IDs for attribution but the provider itself is not needed. A
 // resolve failure returns empty strings; callers treat "" as "unknown" and
 // continue rather than blocking the persist.
-func (h *PushHandler) resolvePushIDs(ctx context.Context, scope domain.Scope) (providerID, integrationID string) {
+func (h *PushHandler) resolvePushIDs(ctx context.Context, scope domain.Scope, identifier string) (providerID, integrationID string) {
+	if identifier != "" {
+		_, pid, iid, err := h.resolver.ResolveIntegration(ctx, scope, "push", identifier)
+		if err != nil {
+			return "", ""
+		}
+		return pid, iid
+	}
 	_, pid, iid, err := h.resolver.ResolvePush(ctx, scope)
 	if err != nil {
 		return "", ""
 	}
 	return pid, iid
+}
+
+// resolvePushProvider resolves the PushProvider, providerID, and
+// integrationID for the send, routing through ResolveIntegration when the
+// step sets an explicit "integration" identifier and through the
+// primary-resolution path (ResolvePush) otherwise — byte-identical to
+// pre-#314 behavior when unset.
+func (h *PushHandler) resolvePushProvider(ctx context.Context, scope domain.Scope, identifier string) (providers.PushProvider, string, string, error) {
+	if identifier == "" {
+		return h.resolver.ResolvePush(ctx, scope)
+	}
+	p, providerID, integrationID, err := h.resolver.ResolveIntegration(ctx, scope, "push", identifier)
+	if err != nil {
+		return nil, "", "", err
+	}
+	pp, ok := p.(providers.PushProvider)
+	if !ok {
+		return nil, providerID, integrationID, fmt.Errorf("push: integration %q resolved a non-push provider (%T)", identifier, p)
+	}
+	return pp, providerID, integrationID, nil
 }
 
 // HandlePush is registered via engine.Handle("send.push", h.HandlePush).
@@ -197,7 +232,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 		}
 	}
 
-	provider, providerID, integrationID, err := h.resolver.ResolvePush(ctx, scope)
+	provider, providerID, integrationID, err := h.resolvePushProvider(ctx, scope, env.Step.Integration)
 	if err != nil {
 		return h.persistPushError(ctx, env, t, "ntfy", "", err)
 	}
@@ -407,7 +442,7 @@ func (h *PushHandler) handleWebPushSend(ctx context.Context, env runenv.InAppEnv
 // resolve is attempted best-effort to populate providerID and integrationID.
 func (h *PushHandler) persistPushSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
 	metrics.Delivery("push", metrics.OutcomeSkipped)
-	providerID, integrationID := h.resolvePushIDs(ctx, scope)
+	providerID, integrationID := h.resolvePushIDs(ctx, scope, env.Step.Integration)
 	if providerID == "" {
 		providerID = "ntfy"
 	}
@@ -446,7 +481,7 @@ func (h *PushHandler) persistPushSkipped(ctx context.Context, env runenv.InAppEn
 // JSON with a nil error. No push is sent; mirrors the persistPushSkipped pattern.
 func (h *PushHandler) persistPushThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
 	metrics.Delivery("push", metrics.OutcomeThrottled)
-	providerID, integrationID := h.resolvePushIDs(ctx, scope)
+	providerID, integrationID := h.resolvePushIDs(ctx, scope, env.Step.Integration)
 	if providerID == "" {
 		providerID = "ntfy"
 	}

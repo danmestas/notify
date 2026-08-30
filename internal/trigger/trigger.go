@@ -415,6 +415,7 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 			SecondaryAction:   controls.SecondaryAction,
 			Redirect:          controls.Redirect,
 			InAppData:         controls.Data,
+			Integration:       controls.Integration,
 			Filters:           step.Filters,
 		},
 	}

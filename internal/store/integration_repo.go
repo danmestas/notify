@@ -31,6 +31,11 @@ type IntegrationRepo interface {
 	// provider rows, such as the auto-minted webpush VAPID keypair, that are
 	// addressed by their known provider id rather than selected by channel.
 	GetByProviderID(ctx context.Context, scope domain.Scope, providerID string) (domain.Integration, error)
+	// GetByIdentifier fetches the scope's integration by its unique identifier
+	// slug, regardless of channel or the active flag — callers that need a
+	// channel or active check (e.g. per-step integration resolution) apply it
+	// themselves. Returns ErrNotFound when no row matches.
+	GetByIdentifier(ctx context.Context, scope domain.Scope, identifier string) (domain.Integration, error)
 	// Update overwrites the mutable fields (identifier, enc_credentials,
 	// primary_provider, priority, active) of an existing integration. It must
 	// not touch provider_id, channel, org_id, or environment_id.
@@ -118,6 +123,35 @@ func (repo *integrationRepo) GetByProviderID(ctx context.Context, scope domain.S
 		 ORDER BY id ASC
 		 LIMIT 1`,
 		scope.OrgID, scope.EnvID, providerID,
+	).Scan(&in.ID, &in.OrgID, &in.EnvID, &in.ProviderID, &in.Channel, &in.EncCredentials,
+		&cfg, &in.Active, &in.Primary, &in.Priority, &in.Identifier)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Integration{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Integration{}, err
+	}
+	in.Configurations = cfg
+	return in, nil
+}
+
+// GetByIdentifier fetches the scope's single integration row for identifier,
+// ignoring channel and the active flag. It scans the same columns as GetByID
+// (including enc_credentials) but filters on identifier instead of id.
+func (repo *integrationRepo) GetByIdentifier(ctx context.Context, scope domain.Scope, identifier string) (domain.Integration, error) {
+	var (
+		in  domain.Integration
+		cfg []byte
+	)
+	err := repo.r.QueryRowContext(
+		ctx,
+		`SELECT id, org_id, environment_id, provider_id, channel, enc_credentials,
+		        configurations, active, primary_provider, priority, identifier
+		 FROM integrations
+		 WHERE org_id = ? AND environment_id = ? AND identifier = ?
+		 ORDER BY id ASC
+		 LIMIT 1`,
+		scope.OrgID, scope.EnvID, identifier,
 	).Scan(&in.ID, &in.OrgID, &in.EnvID, &in.ProviderID, &in.Channel, &in.EncCredentials,
 		&cfg, &in.Active, &in.Primary, &in.Priority, &in.Identifier)
 	if errors.Is(err, sql.ErrNoRows) {

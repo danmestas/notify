@@ -22,8 +22,16 @@ import (
 // Return order: (provider, providerID, integrationID, error).
 // integrationID is the row's primary key, used to populate
 // domain.Message.IntegrationID for Activity tab filtering.
+//
+// ResolveIntegration resolves the provider, providerID, and integrationID for
+// a specific integration identifier within (scope, "sms"), bypassing the
+// primary-integration resolution. connectivity.Service.ResolveIntegration
+// satisfies this. The provider is untyped (any) because the four channels
+// have no shared provider interface; HandleSMS type-asserts to
+// providers.SMSProvider.
 type SMSResolver interface {
 	ResolveSMS(ctx context.Context, scope domain.Scope) (providers.SMSProvider, string, string, error)
+	ResolveIntegration(ctx context.Context, scope domain.Scope, channel, identifier string) (any, string, string, error)
 }
 
 // SMSHandler persists rendered SMS messages through the store, dispatching via a
@@ -87,16 +95,43 @@ func (h *SMSHandler) publishDelivery(envID string, data []byte) {
 	}
 }
 
-// resolveSMSIDs calls h.resolver.ResolveSMS and returns the providerID and
-// integrationID strings only. Used on pre-send paths (skipped, throttled) where
-// we want the IDs for attribution but the provider itself is not needed. A
-// resolve failure returns empty strings; callers treat "" as "unknown".
-func (h *SMSHandler) resolveSMSIDs(ctx context.Context, scope domain.Scope) (providerID, integrationID string) {
+// resolveSMSIDs resolves the providerID and integrationID strings only,
+// honoring an explicit step-level integration identifier when set. Used on
+// pre-send paths (skipped, throttled) where we want the IDs for attribution
+// but the provider itself is not needed. A resolve failure returns empty
+// strings; callers treat "" as "unknown".
+func (h *SMSHandler) resolveSMSIDs(ctx context.Context, scope domain.Scope, identifier string) (providerID, integrationID string) {
+	if identifier != "" {
+		_, pid, iid, err := h.resolver.ResolveIntegration(ctx, scope, "sms", identifier)
+		if err != nil {
+			return "", ""
+		}
+		return pid, iid
+	}
 	_, pid, iid, err := h.resolver.ResolveSMS(ctx, scope)
 	if err != nil {
 		return "", ""
 	}
 	return pid, iid
+}
+
+// resolveSMSProvider resolves the SMSProvider, providerID, and integrationID
+// for the send, routing through ResolveIntegration when the step sets an
+// explicit "integration" identifier and through the primary-resolution path
+// (ResolveSMS) otherwise — byte-identical to pre-#314 behavior when unset.
+func (h *SMSHandler) resolveSMSProvider(ctx context.Context, scope domain.Scope, identifier string) (providers.SMSProvider, string, string, error) {
+	if identifier == "" {
+		return h.resolver.ResolveSMS(ctx, scope)
+	}
+	p, providerID, integrationID, err := h.resolver.ResolveIntegration(ctx, scope, "sms", identifier)
+	if err != nil {
+		return nil, "", "", err
+	}
+	sp, ok := p.(providers.SMSProvider)
+	if !ok {
+		return nil, providerID, integrationID, fmt.Errorf("sms: integration %q resolved a non-sms provider (%T)", identifier, p)
+	}
+	return sp, providerID, integrationID, nil
 }
 
 // HandleSMS is registered via engine.Handle("send.sms", h.HandleSMS).
@@ -188,7 +223,7 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 		}
 	}
 
-	provider, providerID, integrationID, err := h.resolver.ResolveSMS(ctx, scope)
+	provider, providerID, integrationID, err := h.resolveSMSProvider(ctx, scope, env.Step.Integration)
 	if err != nil {
 		return h.persistSMSError(ctx, env, t, "", "", err)
 	}
@@ -250,7 +285,7 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 // SMS is sent; this mirrors the existing skipped/failed-message pattern.
 func (h *SMSHandler) persistSMSSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
 	metrics.Delivery("sms", metrics.OutcomeSkipped)
-	providerID, integrationID := h.resolveSMSIDs(ctx, scope)
+	providerID, integrationID := h.resolveSMSIDs(ctx, scope, env.Step.Integration)
 	if providerID == "" {
 		providerID = "twilio" // safe default; resolve failure must not block the record
 	}
@@ -289,7 +324,7 @@ func (h *SMSHandler) persistSMSSkipped(ctx context.Context, env runenv.InAppEnve
 // JSON with a nil error. No SMS is sent; mirrors the persistSMSSkipped pattern.
 func (h *SMSHandler) persistSMSThrottled(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
 	metrics.Delivery("sms", metrics.OutcomeThrottled)
-	providerID, integrationID := h.resolveSMSIDs(ctx, scope)
+	providerID, integrationID := h.resolveSMSIDs(ctx, scope, env.Step.Integration)
 	if providerID == "" {
 		providerID = "twilio"
 	}

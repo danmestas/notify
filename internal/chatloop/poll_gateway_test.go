@@ -25,7 +25,7 @@ func (r *recordingResponder) Respond(ctx context.Context, turn InboundTurn) (str
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.turns = append(r.turns, turn)
-	return "conv-x", nil
+	return turn.ConversationID, nil
 }
 
 func (r *recordingResponder) count() int {
