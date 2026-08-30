@@ -191,9 +191,9 @@ type ComposeResult struct {
 	RunID          string
 }
 
-// errUnknownRuntime marks an agent whose runtime has no registered executor.
+// ErrUnknownRuntime marks an agent whose runtime has no registered executor.
 // Callers map it to 422 (the turn cannot be dispatched on this server).
-var errUnknownRuntime = errors.New("agent runtime is not executable on this server")
+var ErrUnknownRuntime = errors.New("agent runtime is not executable on this server")
 
 // ComposeMessage resolves the agent, upserts the conversation, appends the
 // user activity, and starts the turn run. It is the in-process entry point the
@@ -216,7 +216,7 @@ func (s *Service) ComposeMessage(
 		return ComposeResult{}, err
 	}
 	if _, ok := s.runtimes[agent.Runtime]; !ok {
-		return ComposeResult{}, fmt.Errorf("%w: %q", errUnknownRuntime, agent.Runtime)
+		return ComposeResult{}, fmt.Errorf("%w: %q", ErrUnknownRuntime, agent.Runtime)
 	}
 
 	// Inbox adapter contract (RFC 0002 §6): integration_id is empty (no
@@ -267,7 +267,7 @@ func writeComposeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, agentstore.ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-	case errors.Is(err, errUnknownRuntime):
+	case errors.Is(err, ErrUnknownRuntime):
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 	default:
 		http.Error(w, err.Error(), http.StatusInternalServerError)

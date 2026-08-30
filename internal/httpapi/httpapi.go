@@ -275,6 +275,13 @@ func New(d Deps) http.Handler {
 		if ing != nil {
 			ing.Routes(pr)
 		}
+		// Email-origin agent conversations (#317): the explicit caller that
+		// composes the first turn AND arms the email two-way loop, closing the
+		// gap ReplyHook alone cannot (it only replies once a binding already
+		// exists). Requires all three collaborators.
+		if ing != nil && eml != nil && aud != nil {
+			pr.Post("/v1/agents/{identifier}/conversations/email", postAgentEmailConversation(ing, eml, aud))
+		}
 	})
 	return r
 }

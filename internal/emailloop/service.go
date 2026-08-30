@@ -66,6 +66,12 @@ func New(
 	}
 }
 
+// InboundEnabled reports whether the inbound-parse endpoint can actually
+// accept mail: without a shared secret HandleInbound answers 503 to every
+// request, so a reply-to minted for such a scope could never be replied to.
+// Callers that hand a reply-to address to a user check this first.
+func (s *Service) InboundEnabled() bool { return s.secret != "" }
+
 // ArmEmailThread records (or refreshes) the email-origin binding for a
 // conversation so the loop knows where to mail the agent's reply and which
 // agent responds. It is called when an email-origin conversation is started
@@ -100,6 +106,14 @@ func (s *Service) ReplyToAddress(ctx context.Context, scope domain.Scope, thread
 	}
 	token := s.minter.Mint(scope, threadID, subscriberID)
 	return "reply+" + token + "@" + dom, true
+}
+
+// VerifiedInboundDomain returns the first verified inbound domain for scope
+// and whether one exists. Exported for callers that need a domain to arm an
+// email-origin conversation binding against before any inbound mail has
+// arrived (e.g. POST /v1/agents/{identifier}/conversations/email).
+func (s *Service) VerifiedInboundDomain(ctx context.Context, scope domain.Scope) (string, bool) {
+	return s.verifiedInboundDomain(ctx, scope)
 }
 
 // verifiedInboundDomain returns the first verified inbound domain for scope,
