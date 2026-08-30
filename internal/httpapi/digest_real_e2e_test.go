@@ -103,7 +103,7 @@ func (h *digestHarness) createSubscriber(t *testing.T, id string) {
 // the deadline passes, returning the sent messages.
 func (h *digestHarness) pollSent(t *testing.T, subscriberID string) []domain.Message {
 	t.Helper()
-	feedURL := h.srv.URL + "/v1/messages?subscriberId=" + subscriberID + "&channel=in_app"
+	feedURL := h.srv.URL + "/v1/messages?subscriberId=" + subscriberID + "&channel=in_app&format=array"
 	// 75s: the scheduled-digest case waits for a 5-field cron tick, whose finest
 	// granularity is one minute, so the worst case is ~60s plus delivery.
 	deadline := time.Now().Add(75 * time.Second)

@@ -167,7 +167,7 @@ func newPrefHarness(t *testing.T) (srv *httptest.Server, scope domain.Scope, pre
 // pollMessage polls the in_app message feed until at least one message arrives.
 func pollMessage(t *testing.T, baseURL, authHeader, subscriberID string) domain.Message {
 	t.Helper()
-	feedURL := baseURL + "/v1/messages?subscriberId=" + subscriberID + "&channel=in_app"
+	feedURL := baseURL + "/v1/messages?subscriberId=" + subscriberID + "&channel=in_app&format=array"
 	var lastBody string
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {

@@ -272,3 +272,115 @@ func TestMessageRepo_ListByNotificationID_ScopeIsolation(t *testing.T) {
 		t.Fatalf("scopeB: expected 1 msg with OrgID=o-B, got %+v", msgsB)
 	}
 }
+
+// TestMessageRepo_ListPage_ExcludesArchivedByDefault verifies the default
+// (archived="") inbox feed omits archived messages.
+func TestMessageRepo_ListPage_ExcludesArchivedByDefault(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	kept := seedMessage(t, s, domain.Message{SubscriberID: "sub1", Channel: "in_app"})
+	archived := seedMessage(t, s, domain.Message{SubscriberID: "sub1", Channel: "in_app"})
+	if err := s.Messages().MarkOne(ctx, scope, archived.ID, "sub1", "archived", true); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	msgs, err := s.Messages().ListPage(ctx, scope, "sub1", "in_app", "", 10, "", "")
+	if err != nil {
+		t.Fatalf("ListPage: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].ID != kept.ID {
+		t.Fatalf("ListPage(archived=\"\") = %+v, want only %q", msgs, kept.ID)
+	}
+
+	msgs, err = s.Messages().ListPage(ctx, scope, "sub1", "in_app", "", 10, "true", "")
+	if err != nil {
+		t.Fatalf("ListPage(archived=true): %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].ID != archived.ID {
+		t.Fatalf("ListPage(archived=\"true\") = %+v, want only %q", msgs, archived.ID)
+	}
+
+	msgs, err = s.Messages().ListPage(ctx, scope, "sub1", "in_app", "", 10, "all", "")
+	if err != nil {
+		t.Fatalf("ListPage(archived=all): %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("ListPage(archived=\"all\") returned %d messages, want 2", len(msgs))
+	}
+}
+
+// TestMessageRepo_ListPage_FiltersByTransactionID verifies the
+// transactionID parameter narrows the page to just that transaction, the
+// same filter the legacy array branch applies.
+func TestMessageRepo_ListPage_FiltersByTransactionID(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	want := seedMessage(t, s, domain.Message{SubscriberID: "sub1", Channel: "in_app", TransactionID: "txn-a"})
+	if _, err := s.Messages().Create(ctx, scope, domain.Message{
+		WorkflowID: "wf1", NotificationID: "ntf1", RunID: "run1", StepID: "step1",
+		SubscriberID: "sub1", Channel: "in_app", ProviderID: "smtp", Status: "sent",
+		TransactionID: "txn-b",
+	}); err != nil {
+		t.Fatalf("seed other txn: %v", err)
+	}
+
+	msgs, err := s.Messages().ListPage(ctx, scope, "sub1", "in_app", "", 10, "", "txn-a")
+	if err != nil {
+		t.Fatalf("ListPage: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].ID != want.ID {
+		t.Fatalf("ListPage(transactionID=\"txn-a\") = %+v, want only %q", msgs, want.ID)
+	}
+}
+
+// TestMessageRepo_Count_ExcludesArchivedByDefault verifies Count's archived
+// tri-state, and that an archived-but-still-unread message no longer counts
+// toward the default (archived="") unread/unseen totals.
+func TestMessageRepo_Count_ExcludesArchivedByDefault(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	_ = seedMessage(t, s, domain.Message{SubscriberID: "sub1", Channel: "in_app"})
+	archived := seedMessage(t, s, domain.Message{SubscriberID: "sub1", Channel: "in_app"})
+	if err := s.Messages().MarkOne(ctx, scope, archived.ID, "sub1", "archived", true); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	// Both messages are still unread/unseen; archiving one must drop it out
+	// of the default (non-archived) unread/unseen counts.
+	n, err := s.Messages().Count(ctx, scope, "sub1", "in_app", true, false, "")
+	if err != nil {
+		t.Fatalf("Count unread: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("unread count = %d, want 1 (archived message must not count)", n)
+	}
+	n, err = s.Messages().Count(ctx, scope, "sub1", "in_app", false, true, "")
+	if err != nil {
+		t.Fatalf("Count unseen: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("unseen count = %d, want 1 (archived message must not count)", n)
+	}
+
+	n, err = s.Messages().Count(ctx, scope, "sub1", "in_app", false, false, "true")
+	if err != nil {
+		t.Fatalf("Count archived=true: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("archived=true count = %d, want 1", n)
+	}
+
+	n, err = s.Messages().Count(ctx, scope, "sub1", "in_app", false, false, "all")
+	if err != nil {
+		t.Fatalf("Count archived=all: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("archived=all count = %d, want 2", n)
+	}
+}

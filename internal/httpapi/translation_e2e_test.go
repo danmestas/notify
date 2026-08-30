@@ -102,7 +102,7 @@ func TestTranslation_LocalizedInApp(t *testing.T) {
 		t.Fatalf("POST /v1/events/trigger: status=%d body=%s", status, body)
 	}
 
-	feedURL := srv.URL + "/v1/messages?subscriberId=loc_user&channel=in_app"
+	feedURL := srv.URL + "/v1/messages?subscriberId=loc_user&channel=in_app&format=array"
 	var msgs []domain.Message
 	var lastBody string
 	deadline := time.Now().Add(20 * time.Second)

@@ -463,14 +463,14 @@ func TestTriggerSkipsInactiveWorkflow(t *testing.T) {
 		t.Errorf("inactive workflow produced a transaction id %q: work was started", resp.TransactionID)
 	}
 
-	msgStatus, msgBody := doGet(t, srv.URL+"/v1/messages", authHeader)
+	// ?format=array opts back into the pre-envelope bare-array shape.
+	msgStatus, msgBody := doGet(t, srv.URL+"/v1/messages?format=array", authHeader)
 	if msgStatus != http.StatusOK {
 		t.Fatalf("GET messages: status=%d body=%s", msgStatus, msgBody)
 	}
 	if strings.Contains(msgBody, "inactive-wf") {
 		t.Errorf("inactive workflow left a message row behind: %s", msgBody)
 	}
-	// /v1/messages answers with a bare JSON array, not an envelope.
 	var msgs []json.RawMessage
 	if err := json.Unmarshal([]byte(msgBody), &msgs); err != nil {
 		t.Fatalf("decode messages: %v (body=%s)", err, msgBody)

@@ -108,7 +108,7 @@ func (h *httpActionHarness) createSubscriber(t *testing.T, id string) {
 // filter-gate test can assert a gated step's status.
 func (h *httpActionHarness) pollMessage(t *testing.T, subscriberID string) domain.Message {
 	t.Helper()
-	feedURL := h.srv.URL + "/v1/messages?subscriberId=" + subscriberID + "&channel=in_app"
+	feedURL := h.srv.URL + "/v1/messages?subscriberId=" + subscriberID + "&channel=in_app&format=array"
 	deadline := time.Now().Add(25 * time.Second)
 	var lastBody string
 	for time.Now().Before(deadline) {

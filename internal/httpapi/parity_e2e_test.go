@@ -114,7 +114,7 @@ func TestInAppParity_EndToEnd(t *testing.T) {
 	}
 
 	// Poll GET /v1/messages until the delivered in_app message arrives.
-	feedURL := srv.URL + "/v1/messages?subscriberId=user_123&channel=in_app"
+	feedURL := srv.URL + "/v1/messages?subscriberId=user_123&channel=in_app&format=array"
 	var msgs []domain.Message
 	var lastBody string
 	deadline := time.Now().Add(20 * time.Second)

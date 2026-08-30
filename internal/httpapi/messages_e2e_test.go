@@ -10,8 +10,8 @@ import (
 )
 
 // TestGetMessages_NoIntegrationId_ReturnsEmptyFeed verifies that GET /v1/messages
-// without integrationId falls through to the in-app subscriber feed (returning
-// an empty array for a fresh tenant rather than 400).
+// without integrationId falls through to the in-app subscriber feed, returning
+// the paginated envelope (empty data for a fresh tenant) rather than 400.
 func TestGetMessages_NoIntegrationId_ReturnsEmptyFeed(t *testing.T) {
 	srv, authHeader, _, _, _ := startConsoleServer(t)
 
@@ -19,12 +19,34 @@ func TestGetMessages_NoIntegrationId_ReturnsEmptyFeed(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET /v1/messages without integrationId: status=%d body=%s", status, body)
 	}
-	var list []any
-	if err := json.Unmarshal([]byte(body), &list); err != nil {
+	var env struct {
+		Data        []any `json:"data"`
+		UnreadCount int   `json:"unreadCount"`
+		UnseenCount int   `json:"unseenCount"`
+	}
+	if err := json.Unmarshal([]byte(body), &env); err != nil {
 		t.Fatalf("decode response: %v (body=%s)", err, body)
 	}
+	if len(env.Data) != 0 {
+		t.Errorf("expected empty in-app feed, got %d items", len(env.Data))
+	}
+}
+
+// TestGetMessages_LegacyArrayFormat verifies the ?format=array escape hatch
+// still returns the bare array shape for callers depending on it.
+func TestGetMessages_LegacyArrayFormat(t *testing.T) {
+	srv, authHeader, _, _, _ := startConsoleServer(t)
+
+	status, body := doGet(t, srv.URL+"/v1/messages?format=array", authHeader)
+	if status != http.StatusOK {
+		t.Fatalf("GET /v1/messages?format=array: status=%d body=%s", status, body)
+	}
+	var list []any
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("decode response as bare array: %v (body=%s)", err, body)
+	}
 	if len(list) != 0 {
-		t.Errorf("expected empty in-app feed, got %d items", len(list))
+		t.Errorf("expected empty legacy array, got %d items", len(list))
 	}
 }
 

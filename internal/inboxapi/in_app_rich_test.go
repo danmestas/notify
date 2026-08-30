@@ -29,7 +29,7 @@ func TestListMessages_ReturnsExtras(t *testing.T) {
 	}
 
 	svc := New(s)
-	rec := doGet(t, svc, "/v1/messages?subscriberId=u1&channel=in_app", &scope)
+	rec := doGet(t, svc, "/v1/messages?subscriberId=u1&channel=in_app&format=array", &scope)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -77,7 +77,7 @@ func TestListMessages_LegacyEmptyExtras(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	svc := New(s)
-	rec := doGet(t, svc, "/v1/messages?subscriberId=u1&channel=in_app", &scope)
+	rec := doGet(t, svc, "/v1/messages?subscriberId=u1&channel=in_app&format=array", &scope)
 	if !strings.Contains(rec.Body.String(), `"extras":{}`) {
 		t.Errorf("legacy message extras not {} ; body=%s", rec.Body.String())
 	}

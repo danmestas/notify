@@ -92,7 +92,7 @@ func TestFullJourney_RealBinary(t *testing.T) {
 	var msg domain.Message
 	deadline := time.Now().Add(35 * time.Second)
 	for time.Now().Before(deadline) {
-		st, body := doReq(t, http.MethodGet, base+"/v1/messages?subscriberId=e2e_user&channel=in_app", authHeader, "")
+		st, body := doReq(t, http.MethodGet, base+"/v1/messages?subscriberId=e2e_user&channel=in_app&format=array", authHeader, "")
 		if st != http.StatusOK {
 			t.Fatalf("GET /v1/messages: status=%d body=%s", st, body)
 		}

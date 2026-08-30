@@ -105,7 +105,7 @@ func TestDelay_InAppDeliveredAfterSleep(t *testing.T) {
 		t.Fatalf("POST /v1/events/trigger: status=%d body=%s", status, body)
 	}
 
-	feedURL := srv.URL + "/v1/messages?subscriberId=d_user&channel=in_app"
+	feedURL := srv.URL + "/v1/messages?subscriberId=d_user&channel=in_app&format=array"
 	sentCount := func(body string) int {
 		var got []domain.Message
 		if err := json.Unmarshal([]byte(body), &got); err != nil {

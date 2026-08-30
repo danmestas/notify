@@ -126,7 +126,7 @@ func TestEmailParity_EndToEnd(t *testing.T) {
 	}
 
 	// Poll GET /v1/messages until the delivered email message arrives.
-	feedURL := srv.URL + "/v1/messages?subscriberId=user_9&channel=email"
+	feedURL := srv.URL + "/v1/messages?subscriberId=user_9&channel=email&format=array"
 	var msgs []domain.Message
 	var lastBody string
 	deadline := time.Now().Add(20 * time.Second)

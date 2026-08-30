@@ -264,7 +264,7 @@ func TestThrottle_SecondSendThrottled(t *testing.T) {
 		t.Fatalf("POST /v1/subscribers: status=%d body=%s", status, body)
 	}
 
-	feedURL := srv.URL + "/v1/messages?subscriberId=user_123&channel=in_app"
+	feedURL := srv.URL + "/v1/messages?subscriberId=user_123&channel=in_app&format=array"
 	pollFor := func(want int) []domain.Message {
 		t.Helper()
 		var lastBody string

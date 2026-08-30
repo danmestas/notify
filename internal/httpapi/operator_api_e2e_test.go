@@ -423,7 +423,7 @@ func TestOperatorAPI_SelfSufficiency(t *testing.T) {
 	}
 
 	// Step 4 — Poll GET /v1/messages until the in_app message arrives with status="sent".
-	feedURL := srv.URL + "/v1/messages?subscriberId=op-user-1&channel=in_app"
+	feedURL := srv.URL + "/v1/messages?subscriberId=op-user-1&channel=in_app&format=array"
 	var msgs []domain.Message
 	var lastBody string
 	deadline := time.Now().Add(20 * time.Second)

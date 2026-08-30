@@ -53,7 +53,7 @@ func TestListMessages_ReturnsSeeded(t *testing.T) {
 	}
 
 	svc := New(s)
-	rec := doGet(t, svc, "/v1/messages?subscriberId=u1&channel=in_app", &scopeA)
+	rec := doGet(t, svc, "/v1/messages?subscriberId=u1&channel=in_app&format=array", &scopeA)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -98,7 +98,7 @@ func TestListMessages_ScopeIsolation(t *testing.T) {
 	}
 
 	svc := New(s)
-	rec := doGet(t, svc, "/v1/messages?subscriberId=u1&channel=in_app", &scopeB)
+	rec := doGet(t, svc, "/v1/messages?subscriberId=u1&channel=in_app&format=array", &scopeB)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -115,9 +115,70 @@ func TestListMessages_ScopeIsolation(t *testing.T) {
 func TestListMessages_NoScope_Unauthorized(t *testing.T) {
 	s := newTestStore(t)
 	svc := New(s)
-	rec := doGet(t, svc, "/v1/messages?subscriberId=u1&channel=in_app", nil)
+	rec := doGet(t, svc, "/v1/messages?subscriberId=u1&channel=in_app&format=array", nil)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+// TestAcceptsCompatArray covers the Accept-header media-type parsing used
+// to opt into the legacy bare-array response: it must match on media type
+// alone, ignoring parameters (e.g. ";q=1") and tolerating the type
+// appearing anywhere within a comma-separated Accept list.
+func TestAcceptsCompatArray(t *testing.T) {
+	cases := []struct {
+		name   string
+		accept string
+		want   bool
+	}{
+		{"exact", "application/vnd.notify.v1+json", true},
+		{"with q-value", "application/vnd.notify.v1+json;q=1", true},
+		{"with q-value and space", "application/vnd.notify.v1+json; q=0.9", true},
+		{"in a list, not first", "text/html, application/vnd.notify.v1+json;q=0.8", true},
+		{"in a list, first with params", "application/vnd.notify.v1+json;q=1, text/html", true},
+		{"unrelated type", "application/json", false},
+		{"empty", "", false},
+		{"prefix collision", "application/vnd.notify.v1+jsonx", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := acceptsCompatArray(tc.accept); got != tc.want {
+				t.Errorf("acceptsCompatArray(%q) = %v, want %v", tc.accept, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestListMessages_AcceptHeader_QValue_OptsIntoArray verifies the HTTP path
+// end-to-end: an Accept header carrying a q-value still selects the legacy
+// bare-array shape, not the envelope.
+func TestListMessages_AcceptHeader_QValue_OptsIntoArray(t *testing.T) {
+	s := newTestStore(t)
+	scope := domain.Scope{OrgID: "org1", EnvID: "envA"}
+	if _, err := s.Messages().Create(context.Background(), scope, domain.Message{
+		SubscriberID: "u1", Channel: "in_app", Status: "sent",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	svc := New(s)
+	r := chi.NewRouter()
+	svc.Routes(r)
+	req := httptest.NewRequest(http.MethodGet, "/v1/messages?subscriberId=u1&channel=in_app", nil)
+	req.Header.Set("Accept", "application/vnd.notify.v1+json;q=1")
+	req = req.WithContext(domain.ContextWithScope(req.Context(), scope))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got []domain.Message
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("expected a bare array (legacy shape) for Accept with q-value; unmarshal: %v; body=%s", err, rec.Body.String())
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
 	}
 }

@@ -111,7 +111,7 @@ func TestDigest_BatchesEvents(t *testing.T) {
 		}
 	}
 
-	feedURL := srv.URL + "/v1/messages?subscriberId=dg_user&channel=in_app"
+	feedURL := srv.URL + "/v1/messages?subscriberId=dg_user&channel=in_app&format=array"
 	sentMsgs := func(body string) []domain.Message {
 		var got []domain.Message
 		if err := json.Unmarshal([]byte(body), &got); err != nil {

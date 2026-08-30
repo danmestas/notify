@@ -119,7 +119,7 @@ func TestInbound_FiresWorkflow(t *testing.T) {
 	}
 
 	// Poll GET /v1/messages until the delivered in_app message arrives.
-	feedURL := srv.URL + "/v1/messages?subscriberId=inb_user&channel=in_app"
+	feedURL := srv.URL + "/v1/messages?subscriberId=inb_user&channel=in_app&format=array"
 	var msgs []domain.Message
 	var lastBody string
 	deadline := time.Now().Add(10 * time.Second)
