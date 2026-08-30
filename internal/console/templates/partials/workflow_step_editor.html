@@ -383,6 +383,13 @@
              value="{{index .ControlMap "windowSec"}}">
       <p class="form-hint">Fixed window duration in seconds (e.g. 3600 = 1 hour).</p>
     </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-throttleKey">Throttle key (optional)</label>
+      <input class="console-input console-input-mono" type="text" id="cv-throttleKey" name="throttleKey"
+             placeholder="payload.check"
+             value="{{index .ControlMap "throttleKey"}}">
+      <p class="form-hint">Payload dot-path giving each value its own budget, e.g. <code>payload.check</code>. Leave blank for one shared budget per subscriber.</p>
+    </div>
     {{end}}
 {{define "wf-step-fields-http_request"}}
     <div class="form-row">

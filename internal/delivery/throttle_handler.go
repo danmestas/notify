@@ -9,6 +9,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/keypath"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
 )
@@ -53,6 +54,7 @@ func (h *ThrottleHandler) Handle(ctx context.Context, t engine.TaskPayload) (jso
 		scope        domain.Scope
 		workflowID   string
 		subscriberID string
+		payload      json.RawMessage
 	)
 
 	if len(t.Input) != 0 {
@@ -63,6 +65,7 @@ func (h *ThrottleHandler) Handle(ctx context.Context, t engine.TaskPayload) (jso
 		scope = domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
 		workflowID = env.WorkflowID
 		subscriberID = env.SubscriberID
+		payload = env.Payload
 	} else {
 		notif, err := h.store.Notifications().GetByRunID(ctx, t.RunID)
 		if err != nil {
@@ -71,6 +74,7 @@ func (h *ThrottleHandler) Handle(ctx context.Context, t engine.TaskPayload) (jso
 		scope = domain.Scope{OrgID: notif.OrgID, EnvID: notif.EnvID}
 		workflowID = notif.WorkflowID
 		subscriberID = notif.SubscriberID
+		payload = notif.Payload
 	}
 
 	cfg, err := h.loadStepConfig(ctx, scope, workflowID, t.StepID)
@@ -87,6 +91,15 @@ func (h *ThrottleHandler) Handle(ctx context.Context, t engine.TaskPayload) (jso
 		return base64.RawURLEncoding.EncodeToString([]byte(s))
 	}
 	key := b64(scope.EnvID) + "." + b64(subscriberID) + "." + b64(workflowID)
+	// An optional throttleKey partitions the budget by payload content, so a
+	// flapping check cannot consume the allowance a different alert needs
+	// (#295). Absent, or resolving to nothing, leaves the key unchanged --
+	// the pre-throttleKey behaviour. The value is b64-encoded like every
+	// other segment so two distinct values cannot collide after the key
+	// sanitizer runs.
+	if v := keypath.Resolve(cfg.throttleKey, payload, nil); v != "" {
+		key += "." + b64(v)
+	}
 	allowed, err := h.throttle.ThrottleAllow(key, cfg.limit, time.Duration(cfg.windowSec)*time.Second)
 	if err != nil {
 		// Best-effort: a transient counter error does not block the run.
@@ -101,8 +114,9 @@ func (h *ThrottleHandler) Handle(ctx context.Context, t engine.TaskPayload) (jso
 // throttleStepCfg holds the flat {limit, windowSec} parsed from a throttle
 // step's ControlValues.
 type throttleStepCfg struct {
-	limit     int
-	windowSec int
+	limit       int
+	windowSec   int
+	throttleKey string
 }
 
 // loadStepConfig loads the workflow by ID, finds the step whose ID matches
@@ -129,13 +143,14 @@ func (h *ThrottleHandler) loadStepConfig(ctx context.Context, scope domain.Scope
 		return throttleStepCfg{}, fmt.Errorf("throttle: step %q not found in workflow %q", stepID, workflowID)
 	}
 	var raw struct {
-		Limit     int `json:"limit"`
-		WindowSec int `json:"windowSec"`
+		Limit       int    `json:"limit"`
+		WindowSec   int    `json:"windowSec"`
+		ThrottleKey string `json:"throttleKey"`
 	}
 	if len(found.ControlValues) > 0 {
 		if err := json.Unmarshal(found.ControlValues, &raw); err != nil {
 			return throttleStepCfg{}, fmt.Errorf("throttle: unmarshal control values: %w", err)
 		}
 	}
-	return throttleStepCfg{limit: raw.Limit, windowSec: raw.WindowSec}, nil
+	return throttleStepCfg{limit: raw.Limit, windowSec: raw.WindowSec, throttleKey: raw.ThrottleKey}, nil
 }

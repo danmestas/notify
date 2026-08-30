@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
@@ -39,7 +40,14 @@ func (throttle) ParseForm(form url.Values) (json.RawMessage, error) {
 	if err != nil || windowSec < 1 {
 		return nil, fmt.Errorf("windowSec must be a positive whole number")
 	}
-	return marshalControlValues(map[string]any{"limit": limit, "windowSec": windowSec})
+	cv := map[string]any{"limit": limit, "windowSec": windowSec}
+	// Omitted when blank so an unset key never appears in stored control
+	// values -- absent means "one budget per (env, subscriber, workflow)",
+	// which is the pre-throttleKey behaviour.
+	if k := formField(form, "throttleKey"); k != "" {
+		cv["throttleKey"] = k
+	}
+	return marshalControlValues(cv)
 }
 
 func (throttle) Validate(cv json.RawMessage) error {
@@ -60,6 +68,10 @@ func (throttle) Compile(step domain.Step) (engine.StepDef, error) {
 type throttleCfg struct {
 	Limit     int `json:"limit"`
 	WindowSec int `json:"windowSec"`
+	// ThrottleKey is an optional payload dot-path (e.g. "payload.check").
+	// Its resolved value is appended to the throttle key so unrelated alerts
+	// on one workflow get their own budget instead of competing (#295).
+	ThrottleKey string `json:"throttleKey,omitempty"`
 }
 
 // throttleConfig parses and validates a throttle step's controlValues. Both
@@ -76,6 +88,17 @@ func throttleConfig(cv json.RawMessage) (throttleCfg, error) {
 	}
 	if cfg.WindowSec <= 0 {
 		return throttleCfg{}, fmt.Errorf("throttle windowSec must be positive, got %d", cfg.WindowSec)
+	}
+	if k := cfg.ThrottleKey; k != "" {
+		if !strings.HasPrefix(k, "payload.") || len(k) <= len("payload.") {
+			// subscriber-rooted paths are rejected rather than ignored: the
+			// base key already contains the subscriber id, so partitioning by
+			// it again would be a no-op the author could not see.
+			return throttleCfg{}, fmt.Errorf(
+				"throttle throttleKey must be a payload dot-path like \"payload.check\", got %q "+
+					"(the budget is already per-subscriber, so subscriber paths add nothing)", k,
+			)
+		}
 	}
 	return cfg, nil
 }

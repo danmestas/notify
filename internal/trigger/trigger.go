@@ -11,8 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -21,6 +19,7 @@ import (
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/keypath"
 	"github.com/danmestas/notify/internal/observe"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
@@ -118,54 +117,10 @@ func digestKeyPath(controlValues json.RawMessage) string {
 	return cv.DigestKey
 }
 
-// resolveDigestKeyValue walks a dot-path (e.g. "payload.orderId" or
-// "subscriber.data.plan") against the event payload or subscriber JSON and
-// returns the scalar value as a string. The first segment selects the root
-// ("payload" or "subscriber"); a missing intermediate or leaf, a non-object
-// node, an unknown root, or a single-segment path all resolve to "" — which the
-// caller treats as "no grouping value" (fall back to the base key).
+// resolveDigestKeyValue resolves a digestKey dot-path against the event.
+// Shared with throttle's throttleKey; see internal/keypath.
 func resolveDigestKeyValue(path string, payload, subscriber json.RawMessage) string {
-	if path == "" {
-		return ""
-	}
-	parts := strings.Split(path, ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	var root json.RawMessage
-	switch parts[0] {
-	case "payload":
-		root = payload
-	case "subscriber":
-		root = subscriber
-	default:
-		return ""
-	}
-	var node map[string]any
-	if len(root) == 0 || json.Unmarshal(root, &node) != nil {
-		return ""
-	}
-	var cur any = node
-	for _, p := range parts[1:] {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return ""
-		}
-		cur, ok = m[p]
-		if !ok {
-			return ""
-		}
-	}
-	switch v := cur.(type) {
-	case string:
-		return v
-	case float64:
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	case bool:
-		return strconv.FormatBool(v)
-	default:
-		return ""
-	}
+	return keypath.Resolve(path, payload, subscriber)
 }
 
 // buildDigestKey appends the resolved grouping value to the base window key. An
