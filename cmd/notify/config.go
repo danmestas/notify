@@ -17,8 +17,14 @@ import (
 // the one place the environment is interpreted.
 type config struct {
 	// Core transport / storage (flag- and env-overridable).
-	natsURL     string
-	bridgeURL   string
+	natsURL   string
+	bridgeURL string
+	// bridgeToken authenticates notify against the dagnats worker bridge.
+	// Env-only, and deliberately not a flag: a flag value is visible to every
+	// user on the box via ps. The name matches the variable dagnats itself
+	// reads, so a host that already configured the sidecar needs no new
+	// setting.
+	bridgeToken string
 	dbPath      string
 	addr        string
 	dev         bool
@@ -125,6 +131,7 @@ func loadConfig(args []string) (config, error) {
 	return config{
 		natsURL:     *natsURL,
 		bridgeURL:   *bridgeURL,
+		bridgeToken: os.Getenv("DAGNATS_BRIDGE_TOKEN"),
 		dbPath:      *dbPath,
 		addr:        *addr,
 		dev:         *dev,

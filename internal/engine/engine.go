@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -157,6 +158,15 @@ type Engine struct {
 	nc        *nats.Conn
 	bridgeURL string
 	http      *http.Client
+	log       *slog.Logger
+
+	// bridgeToken authenticates every worker-bridge request. dagnats gates
+	// the bridge on DAGNATS_BRIDGE_TOKEN: with it set, a request without a
+	// matching bearer is answered 401 and no task is ever handed over, so a
+	// notify that does not send it accepts triggers and executes nothing
+	// (#325). Empty means the bridge is in open dev mode, which is how the
+	// test sidecar and the mini both run it.
+	bridgeToken string
 
 	handlers      map[string]HandlerFunc
 	agentHandlers map[string]AgentLoopFunc
@@ -173,20 +183,46 @@ type Engine struct {
 	wg     sync.WaitGroup
 }
 
+// Option configures an Engine at construction. Options are variadic so the
+// many existing New(natsURL, bridgeURL) call sites stay untouched.
+type Option func(*Engine)
+
+// WithBridgeToken sets the bearer token sent on every worker-bridge request.
+// Empty is the zero value and sends no Authorization header, matching a
+// dagnats bridge running in open dev mode.
+func WithBridgeToken(token string) Option {
+	return func(e *Engine) { e.bridgeToken = token }
+}
+
+// WithLogger sets the logger used for bridge faults. Defaults to
+// slog.Default().
+func WithLogger(l *slog.Logger) Option {
+	return func(e *Engine) {
+		if l != nil {
+			e.log = l
+		}
+	}
+}
+
 // New dials the sidecar's NATS endpoint and prepares an HTTP client for the
 // worker bridge mounted at bridgeURL.
-func New(natsURL, bridgeURL string) (*Engine, error) {
+func New(natsURL, bridgeURL string, opts ...Option) (*Engine, error) {
 	nc, err := eventbus.DialNATS(natsURL, "notify-engine", "dagnats sidecar (-nats-url)")
 	if err != nil {
 		return nil, err
 	}
-	return &Engine{
+	e := &Engine{
 		nc:            nc,
 		bridgeURL:     bridgeURL,
 		http:          &http.Client{Timeout: 30 * time.Second},
+		log:           slog.Default(),
 		handlers:      make(map[string]HandlerFunc),
 		agentHandlers: make(map[string]AgentLoopFunc),
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e, nil
 }
 
 // Handle registers a handler for a task type. It must be called before
@@ -350,6 +386,14 @@ const (
 	pollTimeoutAgentLoopMs = 1000
 )
 
+// pollFaultReportInterval rate-limits repeated poll-failure reports for one
+// task type. A poll long-polls for at most pollTimeoutMs and fails instantly
+// when the bridge rejects it, so a persistent fault (a 401 from a bridge whose
+// DAGNATS_BRIDGE_TOKEN we do not carry) recurs several times a second per task
+// type. Reporting every occurrence would bury the log; reporting none is what
+// let #325 run for four days with no log line at all.
+const pollFaultReportInterval = 30 * time.Second
+
 // pollLoop long-polls the bridge for one task type and dispatches each task to
 // its handler in its own goroutine.
 func (e *Engine) pollLoop(ctx context.Context, taskType string) {
@@ -358,6 +402,12 @@ func (e *Engine) pollLoop(ctx context.Context, taskType string) {
 	if _, ok := e.agentHandlers[taskType]; ok {
 		timeoutMs = pollTimeoutAgentLoopMs
 	}
+	// Fault state is per-loop, and each loop owns exactly one task type, so
+	// these need no synchronisation.
+	var (
+		consecutiveFailures int
+		lastReported        time.Time
+	)
 	for {
 		if ctx.Err() != nil {
 			return
@@ -367,9 +417,32 @@ func (e *Engine) pollLoop(ctx context.Context, taskType string) {
 			if ctx.Err() != nil {
 				return
 			}
+			// A poll failure is reported on its first occurrence and then at
+			// most once per pollFaultReportInterval while it persists. The
+			// error is never silent: a bridge that rejects or cannot serve
+			// this task type means the step never runs, and nothing else in
+			// the system will say so.
+			consecutiveFailures++
+			if lastReported.IsZero() || time.Since(lastReported) >= pollFaultReportInterval {
+				e.log.Warn("engine: bridge poll failed, tasks for this type are not being executed",
+					"task_type", taskType,
+					"bridge_url", e.bridgeURL,
+					"consecutive_failures", consecutiveFailures,
+					"err", err)
+				lastReported = time.Now()
+			}
 			// Transient bridge/network error; back off briefly and retry.
 			time.Sleep(200 * time.Millisecond)
 			continue
+		}
+		if consecutiveFailures > 0 {
+			// Clearing lastReported as well as the counter is what makes the
+			// next fault report immediately instead of waiting out a timer
+			// left over from the previous one.
+			e.log.Info("engine: bridge poll recovered",
+				"task_type", taskType, "after_failures", consecutiveFailures)
+			consecutiveFailures = 0
+			lastReported = time.Time{}
 		}
 		if len(tasks) == 0 {
 			// The bridge's long-poll sometimes returns immediately with no
@@ -463,6 +536,9 @@ func (e *Engine) post(ctx context.Context, url string, body []byte) ([]byte, err
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if e.bridgeToken != "" {
+		req.Header.Set("Authorization", "Bearer "+e.bridgeToken)
+	}
 	// Every bridge POST carries traceparent — dagnats's bridge already
 	// extracts it, so the resolve leg stitches with no dagnats change.
 	observe.InjectHTTPHeader(ctx, req.Header)

@@ -197,7 +197,7 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = st.Close() }()
 
-	eng, err := engine.New(cfg.natsURL, cfg.bridgeURL)
+	eng, err := engine.New(cfg.natsURL, cfg.bridgeURL, engine.WithBridgeToken(cfg.bridgeToken))
 	if err != nil {
 		return fmt.Errorf("engine.New: %w", err)
 	}
@@ -214,6 +214,20 @@ func runServe(args []string) error {
 	bridgeClient := &http.Client{Timeout: bridgeProbeTimeout}
 	if err := probeBridgeReachable(ctx, bridgeClient, cfg.bridgeURL); err != nil {
 		return fmt.Errorf("probeBridgeReachable: %w", err)
+	}
+
+	// Reachability is not permission. dagnats serves /ready outside its auth
+	// middleware, so a bridge that refuses every one of our task polls still
+	// probes healthy -- which is exactly how #325 stayed invisible. Verify the
+	// credentials before serving, and refuse to boot rather than accept
+	// triggers we can never execute.
+	if cfg.bridgeToken == "" {
+		slog.Default().Info("dagnats bridge auth disabled: DAGNATS_BRIDGE_TOKEN unset")
+	} else {
+		slog.Default().Info("dagnats bridge auth enabled", "url", cfg.bridgeURL)
+	}
+	if err := probeBridgeAuth(ctx, bridgeClient, cfg.bridgeURL, cfg.bridgeToken); err != nil {
+		return fmt.Errorf("probeBridgeAuth: %w", err)
 	}
 
 	bus, err := eventbus.Connect(ctx, cfg.natsURL)

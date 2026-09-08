@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -118,4 +120,117 @@ func readyzHandler(bridgeURL string, client *http.Client, writer *sql.DB) http.H
 		}
 		_ = json.NewEncoder(w).Encode(resp)
 	}
+}
+
+// Bridge-auth preflight bounds: a rejected credential is fatal on the first
+// answer (it is never transient), but a 5xx or transport error may be a bridge
+// still finishing its own startup, so those get a few short retries.
+const (
+	bridgeAuthAttempts = 3
+	bridgeAuthBackoff  = 2 * time.Second
+)
+
+// probeBridgeAuth verifies that the dagnats bridge accepts our credentials
+// before notify starts serving. It is the companion to probeBridgeReachable:
+// that one proves something is listening, this one proves it will hand us
+// tasks.
+//
+// The probe POSTs a DELIBERATELY INVALID body -- {"task_types":[]} -- to
+// /v1/tasks/poll. That is not a trick for its own sake: dagnats authenticates
+// in middleware, before it parses the request, so an unparseable body reaches
+// the auth decision and stops there. That makes it the only cheap probe
+// available. A *valid* poll would either block for the full long-poll window
+// (dagnats clamps timeout_ms <= 0 up to 5000) or fetch and silently drop a
+// real task (it clamps max_tasks <= 0 up to 1) -- a boot check must not eat a
+// customer's notification to prove it can read the queue.
+//
+// So the status code carries the whole answer:
+//
+//	400        credentials accepted, body rejected as designed -- pass
+//	200        also pass; the bridge somehow accepted the body, which is fine
+//	401 / 403  bad or missing token -- fatal, and never retried
+//	404 / 405  not a dagnats bridge at all (the -bridge-url default is
+//	           :8080, which is dockerd on some hosts) -- fatal
+//	5xx        possibly still starting -- retried, then fatal
+//
+// Booting past any of those is what #325 cost four days: notify accepted 117
+// triggers, executed none of them, and logged nothing.
+func probeBridgeAuth(ctx context.Context, client *http.Client, bridgeURL, token string) error {
+	return probeBridgeAuthN(ctx, client, bridgeURL, token, bridgeAuthAttempts, bridgeAuthBackoff)
+}
+
+// probeBridgeAuthN is probeBridgeAuth with the retry bound injected, for tests.
+func probeBridgeAuthN(ctx context.Context, client *http.Client, bridgeURL, token string, attempts int, backoff time.Duration) error {
+	// Describes how notify is configured without ever revealing the secret.
+	credentials := "no DAGNATS_BRIDGE_TOKEN set"
+	if token != "" {
+		credentials = "DAGNATS_BRIDGE_TOKEN set"
+	}
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		status, err := bridgeAuthProbeStatus(ctx, client, bridgeURL, token)
+		if err == nil {
+			switch {
+			case status == http.StatusBadRequest, status == http.StatusOK:
+				return nil
+			case status == http.StatusUnauthorized, status == http.StatusForbidden:
+				return fmt.Errorf(
+					"dagnats bridge at %s rejected notify's credentials (HTTP %d, %s): "+
+						"the bridge requires Authorization: Bearer <DAGNATS_BRIDGE_TOKEN> and notify must be "+
+						"given the same value the sidecar was started with; without it every task poll is "+
+						"refused and no workflow step ever runs",
+					bridgeURL, status, credentials,
+				)
+			case status == http.StatusNotFound, status == http.StatusMethodNotAllowed:
+				return fmt.Errorf(
+					"%s does not look like a dagnats worker bridge (HTTP %d on /v1/tasks/poll): "+
+						"check -bridge-url/NOTIFY_BRIDGE_URL points at the sidecar's bridge port",
+					bridgeURL, status,
+				)
+			case status >= 500:
+				lastErr = fmt.Errorf("dagnats bridge at %s answered HTTP %d", bridgeURL, status)
+			default:
+				return fmt.Errorf(
+					"dagnats bridge at %s answered unexpected HTTP %d to the auth preflight (%s)",
+					bridgeURL, status, credentials,
+				)
+			}
+		} else {
+			lastErr = err
+		}
+		if attempt < attempts {
+			slog.Default().Info("dagnats bridge auth preflight: retrying",
+				"url", bridgeURL, "attempt", attempt, "attempts", attempts, "retry_in", backoff, "err", lastErr)
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("dagnats bridge auth preflight at %s: %w", bridgeURL, ctx.Err())
+			case <-time.After(backoff):
+			}
+		}
+	}
+	return fmt.Errorf("dagnats bridge auth preflight failed at %s after %d attempts: %w", bridgeURL, attempts, lastErr)
+}
+
+// bridgeAuthProbeStatus performs one preflight POST and returns its status
+// code. The returned error is only ever a transport-level failure.
+func bridgeAuthProbeStatus(ctx context.Context, client *http.Client, bridgeURL, token string) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, bridgeProbeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, bridgeURL+"/v1/tasks/poll",
+		strings.NewReader(`{"task_types":[]}`))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	// Drain so the connection can be reused; the body is never interesting.
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, nil
 }
