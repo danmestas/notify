@@ -33,3 +33,6 @@ mise.local.toml
 # Agent/session trace artifacts. Never repo content: they are per-run scratch
 # and get swept up by `git add -A` if not ignored.
 .agent-config/
+
+# Release artifacts built by scripts/build-release.sh
+dist/

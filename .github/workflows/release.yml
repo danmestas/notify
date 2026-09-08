@@ -1,0 +1,73 @@
+# Cuts a GitHub release when a version-* tag is pushed.
+#
+#   git tag -a version-0.1.0 -m "Requires DAGNATS_BRIDGE_TOKEN when the bridge is gated."
+#   git push origin version-0.1.0
+#
+# The tag's ANNOTATION becomes the release's upgrade notes, so operator-visible
+# changes (a new or newly-enforced environment variable especially) travel with
+# the tag instead of in a file someone has to remember to edit. An unannotated
+# tag still releases; it just has no upgrade notes.
+name: Release
+on:
+  push:
+    tags: ['version-*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tag annotations are not fetched by the default shallow checkout, and
+          # generate-notes needs the history to diff against the previous tag.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Derive version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#version-}" >> "$GITHUB_OUTPUT"
+
+      - name: Build artifacts
+        run: scripts/build-release.sh "${{ steps.version.outputs.version }}"
+
+      - name: Verify the binary reports its version
+        # Guards the ldflags path itself: a stamping mistake ships a binary that
+        # says 0.0.0-dev, and a host running one cannot tell you what it is.
+        run: |
+          tar -xzf "dist/notify-${{ steps.version.outputs.version }}-linux-amd64.tar.gz" -C dist
+          got=$(dist/notify-${{ steps.version.outputs.version }}-linux-amd64/notify version)
+          want="notify ${{ steps.version.outputs.version }}"
+          if [ "$got" != "$want" ]; then
+            echo "::error::binary reports '$got', want '$want'"; exit 1
+          fi
+          rm -rf "dist/notify-${{ steps.version.outputs.version }}-linux-amd64"
+
+      - name: Upgrade notes from the tag annotation
+        run: |
+          {
+            notes=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")
+            if [ -n "$notes" ]; then
+              echo "## Upgrade notes"
+              echo
+              echo "$notes"
+              echo
+            fi
+            echo "## Verify"
+            echo
+            echo '```'
+            echo "sha256sum -c SHA256SUMS"
+            echo '```'
+          } > notes.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "$(cat notes.md)" \
+            --generate-notes \
+            dist/*.tar.gz dist/SHA256SUMS

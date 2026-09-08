@@ -14,6 +14,8 @@ FROM golang:1.26.3 AS notify-builder
 WORKDIR /src
 COPY . .
 ARG VERSION=dev
+# Same stamping recipe as scripts/build-release.sh, which is what the release
+# workflow ships; keep the -ldflags in step with it.
 # CGO disabled => fully static binary; the duckdb-tagged code is excluded, so no
 # C toolchain or DuckDB bindings are pulled.
 RUN CGO_ENABLED=0 go build -trimpath \
