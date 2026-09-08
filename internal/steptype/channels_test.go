@@ -17,7 +17,7 @@ const wantDataErrMsg = "data must be a JSON object with string values only"
 
 func TestPushParseForm_NullValue_Rejected(t *testing.T) {
 	form := url.Values{
-		"title":     {"Alert"},
+		"subject":   {"Alert"},
 		"body":      {"Body"},
 		"data_json": {`{"key": null}`},
 	}
@@ -32,7 +32,7 @@ func TestPushParseForm_NullValue_Rejected(t *testing.T) {
 
 func TestPushParseForm_NonStringValue_Rejected(t *testing.T) {
 	form := url.Values{
-		"title":     {"Alert"},
+		"subject":   {"Alert"},
 		"body":      {"Body"},
 		"data_json": {`{"count": 1}`},
 	}
@@ -47,7 +47,7 @@ func TestPushParseForm_NonStringValue_Rejected(t *testing.T) {
 
 func TestPushParseForm_ValidStringMap_Accepted(t *testing.T) {
 	form := url.Values{
-		"title":     {"Alert"},
+		"subject":   {"Alert"},
 		"body":      {"Body"},
 		"data_json": {`{"screen":"home","badge":"3"}`},
 	}

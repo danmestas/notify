@@ -10,8 +10,8 @@
     <input type="hidden" name="csrf_token" value="csrf-golden">
     
     <div class="form-row">
-      <label class="form-label" for="cv-title">Title</label>
-      <input class="console-input" type="text" id="cv-title" name="title"
+      <label class="form-label" for="cv-subject">Title</label>
+      <input class="console-input" type="text" id="cv-subject" name="subject"
              value="Push title">
     </div>
     <div class="form-row">

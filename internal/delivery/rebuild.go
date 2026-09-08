@@ -120,7 +120,7 @@ func RebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 		Step: runenv.Step{
 			StepID:            t.StepID,
 			Channel:           found.Type,
-			SubjectTemplate:   controls.Subject,
+			SubjectTemplate:   controls.SubjectTemplate(),
 			BodyTemplate:      controls.Body,
 			Topic:             controls.Topic,
 			ThrottleLimit:     controls.Throttle.Limit,

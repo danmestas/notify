@@ -202,7 +202,9 @@ func TestThrottle_Has(t *testing.T) {
 func TestPush_ParseForm_ValidDataJSON(t *testing.T) {
 	r := steptype.Default()
 	form := url.Values{
-		"title":     {"Alert"},
+		// The editor labels this "Title"; the field and the stored key are
+		// "subject", the one spelling every reader uses (#334).
+		"subject":   {"Alert"},
 		"body":      {"Something happened"},
 		"data_json": {`{"screen":"home","badge":"3"}`},
 	}
@@ -214,8 +216,8 @@ func TestPush_ParseForm_ValidDataJSON(t *testing.T) {
 	if err := json.Unmarshal(got, &m); err != nil {
 		t.Fatalf("output not valid JSON: %v", err)
 	}
-	if m["title"] != "Alert" {
-		t.Errorf("title = %v, want Alert", m["title"])
+	if m["subject"] != "Alert" {
+		t.Errorf("subject = %v, want Alert", m["subject"])
 	}
 	dj, ok := m["data_json"].(string)
 	if !ok {

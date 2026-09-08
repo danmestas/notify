@@ -35,7 +35,7 @@ var stepEditorGoldenCases = []stepEditorGoldenCase{
 	// pinned exactly once.
 	{"in_app", domain.Step{StepID: "in_app-1", Type: "in_app", ControlValues: json.RawMessage(`{"subject":"In-app subject","body":"In-app body {{payload.x}}"}`)}, true},
 	{"email", domain.Step{StepID: "email-1", Type: "email", ControlValues: json.RawMessage(`{"subject":"Email subject","body":"Email body {{payload.x}}"}`)}, false},
-	{"push", domain.Step{StepID: "push-1", Type: "push", ControlValues: json.RawMessage(`{"title":"Push title","body":"Push body {{payload.x}}"}`)}, false},
+	{"push", domain.Step{StepID: "push-1", Type: "push", ControlValues: json.RawMessage(`{"subject":"Push title","body":"Push body {{payload.x}}"}`)}, false},
 	{"sms", domain.Step{StepID: "sms-1", Type: "sms", ControlValues: json.RawMessage(`{"body":"SMS body {{payload.x}}"}`)}, false},
 	{"chat", domain.Step{StepID: "chat-1", Type: "chat", ControlValues: json.RawMessage(`{"body":"Chat body {{payload.x}}"}`)}, false},
 	{"delay", domain.Step{StepID: "delay-1", Type: "delay", ControlValues: json.RawMessage(`{"amount":5,"unit":"hours"}`)}, false},

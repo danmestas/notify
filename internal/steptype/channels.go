@@ -84,10 +84,21 @@ func (email) ParseForm(form url.Values) (json.RawMessage, error) {
 // push is the push channel step type (title + body).
 type push struct{}
 
-func (push) Name() string                                     { return "push" }
-func (push) DisplayName() string                              { return "Push" }
-func (push) DefaultControlValues() json.RawMessage            { return emptyControlValues() }
-func (push) ControlMap(cv json.RawMessage) map[string]string  { return flattenControlValues(cv) }
+func (push) Name() string                          { return "push" }
+func (push) DisplayName() string                   { return "Push" }
+func (push) DefaultControlValues() json.RawMessage { return emptyControlValues() }
+
+// ControlMap promotes a legacy "title" to "subject" so a step authored before
+// #334 shows its title in the editor. Without this, opening such a step would
+// render an empty Title box and saving would overwrite the stored value with
+// nothing — the fix would destroy the data it was meant to rescue.
+func (push) ControlMap(cv json.RawMessage) map[string]string {
+	m := flattenControlValues(cv)
+	if m["subject"] == "" && m["title"] != "" {
+		m["subject"] = m["title"]
+	}
+	return m
+}
 func (push) Compile(step domain.Step) (engine.StepDef, error) { return channelStepDef(step), nil }
 func (push) Validate(cv json.RawMessage) error {
 	if len(cv) == 0 {
@@ -105,8 +116,11 @@ func (push) EditorPartial() string { return "wf-step-fields-push" }
 
 func (push) ParseForm(form url.Values) (json.RawMessage, error) {
 	m := map[string]any{
-		"title": formField(form, "title"),
-		"body":  formField(form, "body"),
+		// Stored as "subject", the one spelling every reader uses, even though
+		// the editor labels it "Title" and providers call it Title. Storing it
+		// as "title" is what made every push notification titleless (#334).
+		"subject": formField(form, "subject"),
+		"body":    formField(form, "body"),
 	}
 	if dataJSON := formField(form, "data_json"); dataJSON != "" {
 		if err := validateDataJSON(dataJSON); err != nil {

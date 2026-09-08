@@ -2084,6 +2084,11 @@ func TestWorkflowStepSave_EmailSubjectAndBodyRoundTrip(t *testing.T) {
 
 // TestWorkflowStepSave_PushTitleRoundTrip proves the push step-save handler
 // persists the title (and body) and the editor repopulates them on reload.
+//
+// The form field is "subject" while the label stays "Title" (#334): this round
+// trip passed for the whole life of the bug because it was console-to-console
+// and the two ends agreed on a key nothing else read. Delivery-side coverage
+// lives in TestPushControls_TitleReachesSubjectTemplate.
 func TestWorkflowStepSave_PushTitleRoundTrip(t *testing.T) {
 	tc := newTestConsole(t)
 	tc.seedWorkflowWithSteps(t, "My WF", "my-wf", []domain.Step{
@@ -2093,7 +2098,7 @@ func TestWorkflowStepSave_PushTitleRoundTrip(t *testing.T) {
 
 	rr := tc.postForm(t, "/console/api/workflows/my-wf/steps/push-1/save", url.Values{
 		"csrf_token": {csrf},
-		"title":      {"Ping title"},
+		"subject":    {"Ping title"},
 		"body":       {"Ping body"},
 	}, cookie)
 	if rr.Code != http.StatusSeeOther {

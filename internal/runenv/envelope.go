@@ -35,7 +35,13 @@ type InAppAction struct {
 // between the two paths instead of relying on developer discipline.
 type StepControls struct {
 	Subject string `json:"subject"`
-	Body    string `json:"body"`
+	// Title is the legacy spelling of Subject on push steps: the console
+	// editor stored the push title under "title" while every reader looked at
+	// "subject", so authored titles never reached the device (#334). It is
+	// read only as a fallback by SubjectTemplate, never written, and exists so
+	// steps authored before the fix keep rendering without being re-saved.
+	Title string `json:"title"`
+	Body  string `json:"body"`
 	// Topic is the stream channel's routing key: a dot-key template rendered
 	// against {subscriber,payload}. Absent on every other channel.
 	Topic    string `json:"topic,omitempty"`
@@ -68,6 +74,17 @@ type StepControls struct {
 	SecondaryAction *InAppAction    `json:"secondaryAction,omitempty"`
 	Redirect        *InAppRedirect  `json:"redirect,omitempty"`
 	Data            json.RawMessage `json:"data,omitempty"`
+}
+
+// SubjectTemplate is the authored subject line for the step: the value that
+// becomes runenv.Step.SubjectTemplate. Prefer it over reading Subject
+// directly, so the legacy push "title" spelling is honoured in exactly one
+// place rather than at each mapping site.
+func (c StepControls) SubjectTemplate() string {
+	if c.Subject != "" {
+		return c.Subject
+	}
+	return c.Title
 }
 
 // Step is the per-step authored config the handler needs at runtime. Templates
