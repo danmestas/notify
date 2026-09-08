@@ -147,9 +147,23 @@ func New(d Deps) http.Handler {
 	if src != nil {
 		src.Routes(r)
 	}
+	// The inbox is the one route group reachable with a subscriber session, so
+	// it gets its own middleware. Everything else stays behind the tenant-wide
+	// Middleware above, which means a session token is simply not a valid
+	// credential anywhere else -- structurally, rather than by every handler
+	// remembering to refuse it (#332).
+	r.Group(func(sr chi.Router) {
+		sr.Use(id.SubscriberMiddleware)
+		inbox.Routes(sr)
+	})
 	r.Group(func(pr chi.Router) {
 		pr.Use(id.Middleware)
 		pr.Post("/v1/subscribers", postSubscriber(aud))
+		// Mint a subscriber session (#332). Deliberately an API-key route:
+		// minting is a backend act, performed for a user the consumer has
+		// already authenticated. The token it returns is the only credential
+		// a browser may hold.
+		pr.Post("/v1/subscribers/{subscriberId}/session", id.PostSubscriberSession)
 		pr.Put("/v1/subscribers/{subscriberId}/credentials", putSubscriberCredentials(aud))
 		// Per-device Web Push delete (#305 stage 3): a browser unsubscribe
 		// removes just that endpoint's row, leaving the subscriber's other
@@ -256,7 +270,6 @@ func New(d Deps) http.Handler {
 			pr.Post("/v1/inbound/domains/{name}/verify", postInboundDomainVerify(inboundDomainSvc))
 			pr.Delete("/v1/inbound/domains/{name}", deleteInboundDomain(inboundDomainSvc))
 		}
-		inbox.Routes(pr)
 		if inb != nil {
 			inb.Routes(pr)
 		}

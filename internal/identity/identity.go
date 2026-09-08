@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -30,8 +31,12 @@ const apiKeyMaskPrefix = "••••••••••••••••••
 
 // Service issues and verifies API keys against the backing store.
 type Service struct {
-	store *store.Store
-	gcm   cipher.AEAD
+	// sessionKey signs subscriber session tokens. Derived from the master key
+	// rather than reusing it directly so a signing oracle can never be turned
+	// into a decryption oracle for stored credentials.
+	sessionKey []byte
+	store      *store.Store
+	gcm        cipher.AEAD
 }
 
 // New builds a Service. masterKey must be exactly 32 bytes (AES-256-GCM); New
@@ -49,7 +54,12 @@ func New(s *store.Store, masterKey []byte) *Service {
 	if err != nil {
 		panic(fmt.Sprintf("identity: cipher.NewGCM: %v", err))
 	}
-	return &Service{store: s, gcm: gcm}
+	// HMAC-SHA256 of a fixed label under the master key: a standard
+	// domain-separated subkey, so subscriber tokens are signed with a key
+	// distinct from the AES key that seals provider credentials.
+	mac := hmac.New(sha256.New, masterKey)
+	mac.Write([]byte("notify/subscriber-session/v1"))
+	return &Service{store: s, gcm: gcm, sessionKey: mac.Sum(nil)}
 }
 
 // Bootstrap provisions a fresh tenant: an Organization, an Environment (which

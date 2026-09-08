@@ -80,9 +80,19 @@ func (svc *Service) listMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
+	pinned, isPinned := domain.PinnedSubscriberFromContext(r.Context())
 
 	// Wave-4 #42: integrationId filter takes priority.
 	if integrationID := q.Get("integrationId"); integrationID != "" {
+		// This branch lists messages across EVERY subscriber for an
+		// integration -- the console's activity tab. A subscriber-scoped
+		// credential must never reach it, and narrowing it to the pinned
+		// subscriber would silently answer a different question than the one
+		// asked, so it is refused outright.
+		if isPinned {
+			http.Error(w, "integrationId is not available to a subscriber session", http.StatusForbidden)
+			return
+		}
 		msgs, err := svc.store.Messages().ListByIntegrationID(r.Context(), scope, integrationID, 0)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -97,6 +107,12 @@ func (svc *Service) listMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	subscriberID := q.Get("subscriberId")
+	if isPinned {
+		// The credential decides whose inbox this is, not the caller. Any
+		// supplied subscriberId is discarded rather than compared: a token
+		// must not be able to widen its own scope by naming someone else.
+		subscriberID = pinned
+	}
 	channel := q.Get("channel")
 	transactionID := q.Get("transactionId")
 
@@ -232,6 +248,10 @@ func (svc *Service) countMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	subscriberID := q.Get("subscriberId")
+	if pinned, ok := domain.PinnedSubscriberFromContext(r.Context()); ok {
+		subscriberID = pinned
+	}
 	// Default channel to "in_app" when omitted — same reasoning as
 	// listMessages's envelope path: an omitted channel here would
 	// otherwise count delivery records across every channel, not just the
@@ -241,7 +261,7 @@ func (svc *Service) countMessages(w http.ResponseWriter, r *http.Request) {
 		channel = "in_app"
 	}
 	n, err := svc.store.Messages().Count(
-		r.Context(), scope, q.Get("subscriberId"), channel,
+		r.Context(), scope, subscriberID, channel,
 		q.Get("unread") == "true", q.Get("unseen") == "true", q.Get("archived"),
 	)
 	if err != nil {
@@ -298,6 +318,12 @@ func (svc *Service) markMessage(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if pinned, ok := domain.PinnedSubscriberFromContext(r.Context()); ok {
+		// Overwrite rather than compare: a subscriber session decides whose
+		// message this is. The store's own owner check below then does the
+		// rest, answering 404 for a message belonging to anyone else.
+		req.SubscriberID = pinned
 	}
 	if req.SubscriberID == "" {
 		http.Error(w, "subscriberId is required", http.StatusBadRequest)
@@ -358,6 +384,12 @@ func (svc *Service) markMessagesBulk(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if pinned, ok := domain.PinnedSubscriberFromContext(r.Context()); ok {
+		// Overwrite rather than compare: a subscriber session decides whose
+		// message this is. The store's own owner check below then does the
+		// rest, answering 404 for a message belonging to anyone else.
+		req.SubscriberID = pinned
 	}
 	if req.SubscriberID == "" {
 		http.Error(w, "subscriberId is required", http.StatusBadRequest)
