@@ -201,6 +201,17 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	translate := storeTranslator(ctx, h.store, scope, subMap)
 	subject := template.RenderI18n(env.Step.SubjectTemplate, data, translate)
 	content := template.RenderI18n(env.Step.BodyTemplate, data, translate)
+	// Step.Data is authored in the same editor and the same {{path}} namespace
+	// as subject and body -- {"url":"{{payload.link}}"} is the common case, a
+	// per-notification deep link -- so it renders here, once, for every send
+	// path below (ntfy at the end of this function, web push via
+	// handleWebPushSend). Left unrendered it reaches the device as the literal
+	// template and the deep link is dead (#328). A NEW map is assigned rather
+	// than the existing one mutated, so the authored templates in the envelope
+	// are never overwritten in place.
+	env.Step.Data = renderPushData(env.Step.Data, func(tmpl string) string {
+		return template.RenderI18n(tmpl, data, translate)
+	})
 
 	// Per-step condition gate. When the step authored a filter condition, it is
 	// evaluated against the {subscriber, payload} context; a false (or
@@ -547,4 +558,19 @@ func (h *PushHandler) persistPushError(ctx context.Context, env runenv.InAppEnve
 	out, merr := json.Marshal(saved)
 	h.publishDelivery(env.Scope.EnvID, out)
 	return out, merr
+}
+
+// renderPushData returns a new map with every value rendered. Keys are left
+// alone: they are the receiving app's contract for reading the data payload,
+// not authored copy. A nil or empty map renders to nil so no data payload is
+// sent, exactly as before.
+func renderPushData(in map[string]string, render func(string) string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = render(v)
+	}
+	return out
 }

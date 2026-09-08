@@ -207,8 +207,10 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 		Read:           false,
 		Archived:       false,
 		TransactionID:  env.TransactionID,
-		Extras:         inAppExtras(env.Step),
-		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+		Extras: inAppExtras(env.Step, func(tmpl string) string {
+			return template.RenderI18n(tmpl, data, translate)
+		}),
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 
 	saved, err := h.store.Messages().Create(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, msg)
@@ -359,7 +361,18 @@ func (h *Handler) publishDelivery(envID string, data []byte) {
 // API output is wire-compatible. Absent fields are omitted; a step with no rich
 // fields yields "{}". Only the sent path snapshots extras — skipped/throttled/
 // errored messages leave Extras nil and the repo coerces it to "{}".
-func inAppExtras(step runenv.Step) json.RawMessage {
+//
+// render evaluates one authored string against the run payload. The rich
+// fields are authored in the same editor and the same {{path}} namespace as
+// subject and body, so they are rendered the same way: a redirect stored
+// verbatim reaches the inbox API as the literal "{{payload.link}}" and every
+// row linking to it is dead (#328). Callers pass a closure over the data and
+// translate func they already built for subject/body; a nil render renders
+// nothing, which keeps the function usable from tests that do not care.
+func inAppExtras(step runenv.Step, render func(string) string) json.RawMessage {
+	if render == nil {
+		render = func(s string) string { return s }
+	}
 	payload := struct {
 		Avatar          string                `json:"avatar,omitempty"`
 		PrimaryAction   *runenv.InAppAction   `json:"primaryAction,omitempty"`
@@ -367,11 +380,11 @@ func inAppExtras(step runenv.Step) json.RawMessage {
 		Redirect        *runenv.InAppRedirect `json:"redirect,omitempty"`
 		Data            json.RawMessage       `json:"data,omitempty"`
 	}{
-		Avatar:          step.Avatar,
-		PrimaryAction:   step.PrimaryAction,
-		SecondaryAction: step.SecondaryAction,
-		Redirect:        step.Redirect,
-		Data:            step.InAppData,
+		Avatar:          render(step.Avatar),
+		PrimaryAction:   renderInAppAction(step.PrimaryAction, render),
+		SecondaryAction: renderInAppAction(step.SecondaryAction, render),
+		Redirect:        renderInAppRedirect(step.Redirect, render),
+		Data:            renderJSONStrings(step.InAppData, render),
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -392,4 +405,81 @@ func inAppExtras(step runenv.Step) json.RawMessage {
 		return json.RawMessage("{}")
 	}
 	return b
+}
+
+// renderInAppRedirect returns a NEW redirect with its url rendered, or nil when
+// the url renders empty — mirroring inAppRedirectFromForm, which omits the
+// whole object for a blank url even when target is set. Target is not a
+// template: it is _blank/_self, not authorable content.
+//
+// A new value rather than a mutated one: Redirect is a pointer into the run
+// envelope, and rendering in place would overwrite the authored template with
+// one subscriber's payload for every step that reads it afterwards.
+func renderInAppRedirect(r *runenv.InAppRedirect, render func(string) string) *runenv.InAppRedirect {
+	if r == nil {
+		return nil
+	}
+	url := render(r.URL)
+	if url == "" {
+		return nil
+	}
+	return &runenv.InAppRedirect{URL: url, Target: r.Target}
+}
+
+// renderInAppAction returns a NEW action with its label and redirect rendered,
+// or nil when the label renders empty — mirroring inAppActionFromForm. The
+// action's redirect drops independently, on its own blank-url rule.
+func renderInAppAction(a *runenv.InAppAction, render func(string) string) *runenv.InAppAction {
+	if a == nil {
+		return nil
+	}
+	label := render(a.Label)
+	if label == "" {
+		return nil
+	}
+	return &runenv.InAppAction{Label: label, Redirect: renderInAppRedirect(a.Redirect, render)}
+}
+
+// renderJSONStrings renders every string leaf of a free-form JSON value,
+// walking objects and arrays. Object KEYS are left alone: they are the
+// consumer's contract for reading the blob, not authored copy.
+//
+// in_app "data" is authored as arbitrary JSON (steptype.parseDataObject only
+// requires an object), so there is no fixed set of fields to render one by one.
+// Unparseable input is passed through untouched, leaving the caller's existing
+// marshal-failure path (warn, send without rich fields) to handle it exactly as
+// it did before rendering existed.
+func renderJSONStrings(raw json.RawMessage, render func(string) string) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return raw
+	}
+	out, err := json.Marshal(renderJSONValue(v, render))
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+// renderJSONValue is renderJSONStrings's recursion over a decoded JSON value.
+func renderJSONValue(v any, render func(string) string) any {
+	switch t := v.(type) {
+	case string:
+		return render(t)
+	case map[string]any:
+		for k, val := range t {
+			t[k] = renderJSONValue(val, render)
+		}
+		return t
+	case []any:
+		for i, val := range t {
+			t[i] = renderJSONValue(val, render)
+		}
+		return t
+	default:
+		return v
+	}
 }
