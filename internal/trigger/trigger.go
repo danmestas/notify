@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -314,7 +315,21 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 	var digestKey string
 	if step.Type == "digest" && svc.digester != nil {
 		base := scope.EnvID + ":" + subscriberID + ":" + wf.ID
-		value := resolveDigestKeyValue(digestKeyPath(step.ControlValues), req.Payload, subscriberJSON)
+		path := digestKeyPath(step.ControlValues)
+		value := resolveDigestKeyValue(path, req.Payload, subscriberJSON)
+		if path != "" && value == "" {
+			// A configured key that resolves to nothing silently collapses
+			// every event into one bucket. Authoring now refuses an unrooted
+			// path, but steps stored before that still carry one, and a rooted
+			// path can also miss on a payload that lacks the field -- either
+			// way the author gets a digest that merges unrelated events and no
+			// other signal that it happened (#336).
+			slog.Default().Warn(
+				"trigger: digestKey resolved to nothing, events will merge into one digest",
+				"digest_key_path", path, "workflow_id", wf.ID,
+				"trigger_identifier", wf.TriggerIdentifier, "subscriber_id", subscriberID,
+			)
+		}
 		digestKey = buildDigestKey(base, value)
 		if err := svc.digester.DigestAppend(digestKey, req.Payload); err != nil {
 			return "", err

@@ -58,6 +58,40 @@ type digestControlValues struct {
 	DigestKey string `json:"digestKey"`
 }
 
+// digestKeyRoots are the roots a digestKey may be rooted at -- the same two
+// keypath.Resolve understands. Unlike throttle, which rejects subscriber paths
+// because its budget is already per-subscriber, digest accepts them: grouping a
+// window by a subscriber attribute is long-standing, tested behaviour here.
+var digestKeyRoots = []string{"payload.", "subscriber."}
+
+// validateDigestKey rejects a digestKey that is not a rooted dot-path.
+//
+// keypath.Resolve returns "" for an unrooted path, and buildDigestKey reads ""
+// as "no grouping" -- so "repo" instead of "payload.repo" used to provision
+// cleanly and then merge every event into one bucket, silently (#336).
+//
+// This is enforced where a step is AUTHORED (ParseForm, Validate), not in
+// digestType, which Compile calls. Compile also runs on the boot republish
+// path, so rejecting there would un-register an already-stored workflow that
+// carries a bad key -- turning a misgrouped digest into no digest at all on
+// upgrade. Steps already stored keep compiling; trigger.go logs when their key
+// resolves to nothing, so they are visible rather than silent.
+func validateDigestKey(k string) error {
+	if k == "" {
+		return nil
+	}
+	for _, root := range digestKeyRoots {
+		if strings.HasPrefix(k, root) && len(k) > len(root) {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"digest digestKey must be a rooted dot-path like \"payload.repo\" or "+
+			"\"subscriber.data.plan\", got %q (an unrooted path resolves to nothing "+
+			"and silently groups every event into one digest)", k,
+	)
+}
+
 // digestType reports the digest window type ("regular" or "scheduled"),
 // defaulting absent/empty to "regular" so legacy {amount,unit} blobs (written
 // before the scheduled window existed) keep compiling to a sleep step.
@@ -445,6 +479,9 @@ func (digest) ParseForm(form url.Values) (json.RawMessage, error) {
 		typ = "regular"
 	}
 	digestKey := formField(form, "digestKey")
+	if err := validateDigestKey(digestKey); err != nil {
+		return nil, err
+	}
 	switch typ {
 	case "regular":
 		amount, err := strconv.Atoi(formField(form, "amount"))
@@ -476,6 +513,9 @@ func (digest) ParseForm(form url.Values) (json.RawMessage, error) {
 func (digest) Validate(cv json.RawMessage) error {
 	dcv, err := digestType(cv)
 	if err != nil {
+		return err
+	}
+	if err := validateDigestKey(dcv.DigestKey); err != nil {
 		return err
 	}
 	if dcv.Type == "scheduled" {
