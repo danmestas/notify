@@ -45,6 +45,11 @@ type config struct {
 	// Inbound email loop.
 	inboundSecret string
 	inboundMXHost string
+	// smtpAddr, when set, starts the embedded SMTP receiver on that address so
+	// the inbound MX host can be notify itself. Empty (the default) leaves it
+	// off: notify becomes internet-facing on a protocol it was not previously
+	// hardened for, so the operator chooses it explicitly.
+	smtpAddr string
 
 	// Chat two-way loop (Telegram/Discord).
 	telegramBotToken  string
@@ -119,6 +124,7 @@ func loadConfig(args []string) (config, error) {
 	natsURL := fs.String("nats-url", envOr("NOTIFY_NATS_URL", "nats://127.0.0.1:4222"), "NATS client URL of the running dagnats sidecar (notify does not embed it)")
 	bridgeURL := fs.String("bridge-url", envOr("NOTIFY_BRIDGE_URL", "http://127.0.0.1:8080"), "worker bridge URL of the running dagnats sidecar")
 	sendmailCommand := fs.String("sendmail-command", envOr("NOTIFY_SENDMAIL_COMMAND", "/usr/sbin/sendmail -ti"), "command the \"sendmail\" email provider pipes messages to (split on whitespace, run without a shell)")
+	smtpAddr := fs.String("smtp", envOr("NOTIFY_SMTP_ADDR", ""), "address for the embedded SMTP receiver, e.g. 0.0.0.0:25 (empty = off); makes the inbound MX host notify itself")
 	dbPath := fs.String("db", envOr("NOTIFY_DB", "notify.db"), "SQLite database path")
 	addr := fs.String("addr", envOr("NOTIFY_ADDR", "127.0.0.1:3000"), "HTTP listen address")
 	masterKeyHex := fs.String("master-key-hex", os.Getenv("NOTIFY_MASTER_KEY_HEX"), "32-byte AES master key as hex (required unless -dev)")
@@ -152,6 +158,7 @@ func loadConfig(args []string) (config, error) {
 		ssrfAllowedHosts: *ssrfAllow,
 
 		inboundSecret: os.Getenv("NOTIFY_INBOUND_SECRET"),
+		smtpAddr:      *smtpAddr,
 		inboundMXHost: os.Getenv("NOTIFY_INBOUND_MX_HOST"),
 
 		telegramBotToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),

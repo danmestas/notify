@@ -7,6 +7,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.53.0
 	github.com/aymerick/raymond v2.0.2+incompatible
 	github.com/coder/websocket v1.8.15
+	github.com/emersion/go-smtp v0.25.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/nats-io/nats.go v1.50.0
 	github.com/openai/openai-go v1.12.0
@@ -36,6 +37,7 @@ require (
 	github.com/duckdb/duckdb-go-bindings/linux-amd64 v0.1.21 // indirect
 	github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.1.21 // indirect
 	github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.1.21 // indirect
+	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect

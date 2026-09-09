@@ -49,6 +49,7 @@ import (
 	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/replyhook"
 	"github.com/danmestas/notify/internal/secretbox"
+	"github.com/danmestas/notify/internal/smtpin"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/streamsource"
 	"github.com/danmestas/notify/internal/trigger"
@@ -112,6 +113,11 @@ func main() {
 		if err := runValidateSteps(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "notify validate-steps: %v\n", err)
 			os.Exit(1)
+		}
+	case "inbound":
+		if err := runInbound(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "notify inbound: %v\n", err)
+			os.Exit(exitCodeFor(err))
 		}
 	case "version", "-v", "--version":
 		fmt.Printf("notify %s\n", version.Version)
@@ -524,6 +530,23 @@ func runServe(args []string) error {
 	// tunnel, so argv must never surface there.
 	root.Handle("/metrics", metrics.Handler())
 	root.Handle("/", handler)
+
+	// Embedded SMTP receiver (#340): opt-in, so the inbound MX host can be
+	// notify itself. It shares ParseMessage/Accept with the webhook, and its
+	// banner names the MX host the operator told subscribers to use.
+	if cfg.smtpAddr != "" {
+		eml.EnableListener()
+		bannerHost := cfg.inboundMXHost
+		if bannerHost == "" {
+			bannerHost, _ = os.Hostname()
+		}
+		receiver := smtpin.New(eml, bannerHost, slog.Default())
+		go func() {
+			if err := receiver.ListenAndServe(ctx, cfg.smtpAddr); err != nil {
+				slog.Default().Error("smtpin: receiver stopped", "addr", cfg.smtpAddr, "err", err)
+			}
+		}()
+	}
 
 	srv := &http.Server{Addr: cfg.addr, Handler: root}
 

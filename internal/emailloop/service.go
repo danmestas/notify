@@ -35,6 +35,9 @@ type Service struct {
 	responder Responder
 	secret    string
 	log       *slog.Logger
+	// listener records that an SMTP receiver (internal/smtpin) is serving this
+	// Service, which makes inbound reachable with no forwarder secret at all.
+	listener bool
 }
 
 // New builds the Service. secret is the shared secret the inbound mail
@@ -70,7 +73,13 @@ func New(
 // accept mail: without a shared secret HandleInbound answers 503 to every
 // request, so a reply-to minted for such a scope could never be replied to.
 // Callers that hand a reply-to address to a user check this first.
-func (s *Service) InboundEnabled() bool { return s.secret != "" }
+func (s *Service) InboundEnabled() bool { return s.secret != "" || s.listener }
+
+// EnableListener records that an embedded SMTP receiver is the inbound door,
+// so reply-to addresses are handed out even with no forwarder secret. The
+// JSON webhook still refuses without the secret; the two doors are gated
+// independently.
+func (s *Service) EnableListener() { s.listener = true }
 
 // ArmEmailThread records (or refreshes) the email-origin binding for a
 // conversation so the loop knows where to mail the agent's reply and which
