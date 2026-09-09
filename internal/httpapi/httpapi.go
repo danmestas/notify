@@ -31,6 +31,7 @@ import (
 	"github.com/danmestas/notify/internal/inboxapi"
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/realtime"
+	"github.com/danmestas/notify/internal/secretbox"
 	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
@@ -77,6 +78,10 @@ type Deps struct {
 	Store *store.Store
 	// EnvVars backs environment-variable management routes. Nil disables them.
 	EnvVars *envvars.Service
+	// Secrets seals webhook endpoint signing secrets (#346). Nil means
+	// endpoints are created unsigned and rotate answers 503 -- acceptable in
+	// tests, a wiring fault in production.
+	Secrets *secretbox.Box
 	// EmailLoop handles the inbound email parse webhook (POST /v1/inbound/email),
 	// mounted OUTSIDE the API-key group with its own X-Inbound-Secret auth. Nil
 	// leaves the route unmounted.
@@ -110,7 +115,7 @@ func New(d Deps) http.Handler {
 	// Wire a webhook management service when a store is present.
 	var wh *webhooksout.ManagementService
 	if st != nil {
-		wh = webhooksout.NewManagement(st)
+		wh = webhooksout.NewManagement(st, d.Secrets)
 	}
 	// Wire the contexts service when a store is present (#54).
 	var ctxSvc *contexts.Service
@@ -246,6 +251,7 @@ func New(d Deps) http.Handler {
 			pr.Get("/v1/webhooks/endpoints/{id}", getWebhookEndpoint(wh))
 			pr.Put("/v1/webhooks/endpoints/{id}", putWebhookEndpoint(wh))
 			pr.Delete("/v1/webhooks/endpoints/{id}", deleteWebhookEndpoint(wh))
+			pr.Post("/v1/webhooks/endpoints/{id}/secret", postWebhookEndpointSecret(wh))
 		}
 		// W4-C1 contexts management (#54).
 		if ctxSvc != nil {
@@ -2316,10 +2322,50 @@ type webhookEndpointDTO struct {
 	ID     string `json:"id"`
 	URL    string `json:"url"`
 	Active bool   `json:"active"`
+	// Signed reports whether events to this endpoint carry X-Notify-Signature.
+	// The secret itself is never in this DTO; it is returned once, on create
+	// and on rotate, as webhookEndpointSecretDTO.
+	Signed bool `json:"signed"`
 }
 
 func toWebhookEndpointDTO(e domain.WebhookEndpoint) webhookEndpointDTO {
-	return webhookEndpointDTO{ID: e.ID, URL: e.URL, Active: e.Active}
+	return webhookEndpointDTO{ID: e.ID, URL: e.URL, Active: e.Active, Signed: e.Secret != ""}
+}
+
+// webhookEndpointSecretDTO is the create/rotate response: the endpoint plus
+// its signing secret in the clear, shown this once. Events are signed
+// X-Notify-Signature: sha256=hex(HMAC-SHA256(secret, X-Notify-Timestamp + "." + body)).
+type webhookEndpointSecretDTO struct {
+	webhookEndpointDTO
+	Secret string `json:"secret,omitempty"`
+}
+
+func toWebhookEndpointSecretDTO(c webhooksout.Created) webhookEndpointSecretDTO {
+	return webhookEndpointSecretDTO{webhookEndpointDTO: toWebhookEndpointDTO(c.Endpoint), Secret: c.Secret}
+}
+
+// postWebhookEndpointSecret handles POST /v1/webhooks/endpoints/{id}/secret:
+// rotate the signing secret and return the new one once. Existing endpoints
+// that predate signing get their first secret this way.
+func postWebhookEndpointSecret(wh *webhooksout.ManagementService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		scope := identity.ScopeFrom(r.Context())
+		c, err := wh.RotateSecret(r.Context(), scope, id)
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrNotFound):
+				writeJSONError(w, http.StatusNotFound, "not_found", "webhook endpoint not found")
+			case errors.Is(err, webhooksout.ErrSigningUnavailable):
+				writeJSONError(w, http.StatusServiceUnavailable, "unavailable", err.Error())
+			default:
+				writeInternalError(w, r, err)
+			}
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, toWebhookEndpointSecretDTO(c))
+	}
 }
 
 // getWebhookEndpoints handles GET /v1/webhooks/endpoints.
@@ -2362,12 +2408,14 @@ func postWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
-		ep, err := wh.Create(r.Context(), scope, req.URL, req.Active)
+		created, err := wh.Create(r.Context(), scope, req.URL, req.Active)
 		if err != nil {
 			writeInternalError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, toWebhookEndpointDTO(ep))
+		// The secret is in this response and nowhere else.
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusCreated, toWebhookEndpointSecretDTO(created))
 	}
 }
 

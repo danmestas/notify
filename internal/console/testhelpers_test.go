@@ -175,7 +175,7 @@ func newTestConsole(t *testing.T) *testConsole {
 		Connectivity:     conn,
 		StreamSources:    streamsource.New(st, masterKey),
 		Audience:         audience.New(st),
-		Webhooks:         webhooksout.NewManagement(st),
+		Webhooks:         webhooksout.NewManagement(st, nil),
 		Contexts:         contexts.New(st),
 		Layouts:          st.Layouts(),
 		Translations:     st.Translations(),

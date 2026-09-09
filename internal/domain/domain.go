@@ -30,6 +30,10 @@ type WebhookEndpoint struct {
 	EnvID  string `db:"environment_id"`
 	URL    string `db:"url"`
 	Active bool   `db:"active"`
+	// Secret is the SEALED signing secret (secretbox), never the plaintext.
+	// Empty means the endpoint predates signing and receives unsigned events.
+	// The plaintext is shown exactly once, on create or rotate.
+	Secret string `db:"secret"`
 }
 
 type APIKey struct {

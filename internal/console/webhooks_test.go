@@ -42,7 +42,7 @@ func (tc *testConsole) seedWebhook(t *testing.T, rawURL string, active bool) dom
 	if err != nil {
 		t.Fatalf("seed webhook %q: %v", rawURL, err)
 	}
-	return ep
+	return ep.Endpoint
 }
 
 // ─── page render ──────────────────────────────────────────────────────────────

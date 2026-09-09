@@ -44,14 +44,20 @@ package webhooksout
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/danmestas/notify/internal/delivery/httpaction"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/eventbus"
+	"github.com/danmestas/notify/internal/secretbox"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -80,6 +86,10 @@ type Consumer struct {
 	bus       *eventbus.Bus
 	endpoints endpointLister
 	client    *http.Client
+	// box opens each endpoint's sealed signing secret. nil means every
+	// endpoint is delivered unsigned, which is the pre-#346 behaviour and
+	// what tests without a master key get.
+	box *secretbox.Box
 }
 
 // New builds a Consumer bound to bus and st with a short-timeout, SSRF-safe
@@ -112,6 +122,31 @@ func NewWithClient(bus *eventbus.Bus, st *store.Store, client *http.Client) *Con
 // message JSON, looks up the active webhook endpoints for that scope, and
 // POSTs the raw event bytes to each endpoint URL with a small bounded retry
 // on error/non-2xx. The returned stop func drains the consumer.
+// WithSecrets attaches the secretbox that opens endpoint signing secrets.
+func (c *Consumer) WithSecrets(box *secretbox.Box) *Consumer {
+	c.box = box
+	return c
+}
+
+// Signing headers. The scheme is the one the first consumer already speaks:
+// the signature covers "<timestamp>.<body>" so a captured event cannot be
+// replayed later with the same signature, and the timestamp is sent alongside
+// so the receiver can bound how old an event it will accept.
+const (
+	signatureHeader = "X-Notify-Signature"
+	timestampHeader = "X-Notify-Timestamp"
+)
+
+// sign returns the X-Notify-Signature value for body at ts under secret:
+// sha256=hex(HMAC-SHA256(secret, ts + "." + body)).
+func sign(secret string, ts string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ts))
+	mac.Write([]byte("."))
+	mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
 func (c *Consumer) Start(ctx context.Context) (stop func() error, err error) {
 	stop, err = c.bus.ConsumeAllDeliveryDurable(ctx, durableName, func(data []byte) error {
 		return c.dispatch(ctx, data)
@@ -146,14 +181,39 @@ func (c *Consumer) dispatch(ctx context.Context, data []byte) error {
 		return fmt.Errorf("webhooksout: list active endpoints: %w", err)
 	}
 	for _, e := range endpoints {
-		c.post(ctx, e.URL, data)
+		secret, ok := c.secretFor(e)
+		if !ok {
+			// A sealed secret this process cannot open is a master-key
+			// mismatch. Sending unsigned instead would be rejected by any
+			// receiver that verifies, so say why and skip.
+			slog.Default().Error("webhooksout: cannot open endpoint signing secret, skipping",
+				"endpoint", e.ID, "url", e.URL)
+			continue
+		}
+		c.post(ctx, e.URL, secret, data)
 	}
 	return nil
 }
 
 // post sends data as application/json to url, retrying up to maxAttempts on
 // transport error or non-2xx response.
-func (c *Consumer) post(ctx context.Context, url string, data []byte) {
+// secretFor opens the endpoint's sealed secret. ("", true) is an unsigned
+// endpoint -- no secret stored, or no box to open one.
+func (c *Consumer) secretFor(e domain.WebhookEndpoint) (string, bool) {
+	if e.Secret == "" || c.box == nil {
+		return "", true
+	}
+	plain, err := c.box.Open(e.Secret)
+	if err != nil {
+		return "", false
+	}
+	return plain, true
+}
+
+// post sends data as application/json to url, signed when secret is non-empty.
+// Each attempt is signed afresh with its own timestamp, so a retry is never a
+// replay of an earlier attempt's signature.
+func (c *Consumer) post(ctx context.Context, url, secret string, data []byte) {
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			select {
@@ -167,6 +227,11 @@ func (c *Consumer) post(ctx context.Context, url string, data []byte) {
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
+		if secret != "" {
+			ts := strconv.FormatInt(time.Now().Unix(), 10)
+			req.Header.Set(timestampHeader, ts)
+			req.Header.Set(signatureHeader, sign(secret, ts, data))
+		}
 
 		resp, err := c.client.Do(req)
 		if err != nil {

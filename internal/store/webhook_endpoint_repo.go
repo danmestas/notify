@@ -26,6 +26,8 @@ type WebhookEndpointRepo interface {
 	// SetActive enables or disables an endpoint and returns the updated row.
 	// Returns ErrNotFound when no row matches.
 	SetActive(ctx context.Context, scope domain.Scope, id string, active bool) (domain.WebhookEndpoint, error)
+	// SetSecret stores the SEALED signing secret; "" clears it.
+	SetSecret(ctx context.Context, scope domain.Scope, id, sealed string) (domain.WebhookEndpoint, error)
 	// Delete permanently removes an endpoint.
 	// Returns ErrNotFound when no row matches.
 	Delete(ctx context.Context, scope domain.Scope, id string) error
@@ -44,9 +46,9 @@ func (repo *webhookEndpointRepo) Create(ctx context.Context, scope domain.Scope,
 	}
 	_, err := repo.w.ExecContext(
 		ctx,
-		`INSERT INTO webhook_endpoints (id, org_id, environment_id, url, active)
-		 VALUES (?, ?, ?, ?, ?)`,
-		e.ID, e.OrgID, e.EnvID, e.URL, e.Active,
+		`INSERT INTO webhook_endpoints (id, org_id, environment_id, url, active, secret)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		e.ID, e.OrgID, e.EnvID, e.URL, e.Active, e.Secret,
 	)
 	if err != nil {
 		return domain.WebhookEndpoint{}, err
@@ -57,7 +59,7 @@ func (repo *webhookEndpointRepo) Create(ctx context.Context, scope domain.Scope,
 func (repo *webhookEndpointRepo) ListActiveByEnv(ctx context.Context, scope domain.Scope) ([]domain.WebhookEndpoint, error) {
 	rows, err := repo.r.QueryContext(
 		ctx,
-		`SELECT id, org_id, environment_id, url, active
+		`SELECT id, org_id, environment_id, url, active, secret
 		 FROM webhook_endpoints
 		 WHERE org_id = ? AND environment_id = ? AND active = 1
 		 ORDER BY id ASC`,
@@ -71,7 +73,7 @@ func (repo *webhookEndpointRepo) ListActiveByEnv(ctx context.Context, scope doma
 	var out []domain.WebhookEndpoint
 	for rows.Next() {
 		var e domain.WebhookEndpoint
-		if err := rows.Scan(&e.ID, &e.OrgID, &e.EnvID, &e.URL, &e.Active); err != nil {
+		if err := rows.Scan(&e.ID, &e.OrgID, &e.EnvID, &e.URL, &e.Active, &e.Secret); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -86,7 +88,7 @@ func (repo *webhookEndpointRepo) ListActiveByEnv(ctx context.Context, scope doma
 func (repo *webhookEndpointRepo) List(ctx context.Context, scope domain.Scope) ([]domain.WebhookEndpoint, error) {
 	rows, err := repo.r.QueryContext(
 		ctx,
-		`SELECT id, org_id, environment_id, url, active
+		`SELECT id, org_id, environment_id, url, active, secret
 		 FROM webhook_endpoints
 		 WHERE org_id = ? AND environment_id = ?
 		 ORDER BY id ASC`,
@@ -100,7 +102,7 @@ func (repo *webhookEndpointRepo) List(ctx context.Context, scope domain.Scope) (
 	var out []domain.WebhookEndpoint
 	for rows.Next() {
 		var e domain.WebhookEndpoint
-		if err := rows.Scan(&e.ID, &e.OrgID, &e.EnvID, &e.URL, &e.Active); err != nil {
+		if err := rows.Scan(&e.ID, &e.OrgID, &e.EnvID, &e.URL, &e.Active, &e.Secret); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -116,11 +118,11 @@ func (repo *webhookEndpointRepo) GetByID(ctx context.Context, scope domain.Scope
 	var e domain.WebhookEndpoint
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, org_id, environment_id, url, active
+		`SELECT id, org_id, environment_id, url, active, secret
 		 FROM webhook_endpoints
 		 WHERE org_id = ? AND environment_id = ? AND id = ?`,
 		scope.OrgID, scope.EnvID, id,
-	).Scan(&e.ID, &e.OrgID, &e.EnvID, &e.URL, &e.Active)
+	).Scan(&e.ID, &e.OrgID, &e.EnvID, &e.URL, &e.Active, &e.Secret)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.WebhookEndpoint{}, ErrNotFound
 	}
@@ -152,6 +154,21 @@ func (repo *webhookEndpointRepo) UpdateURL(ctx context.Context, scope domain.Sco
 }
 
 // SetActive enables or disables an endpoint and returns the updated row.
+// SetSecret stores a sealed signing secret for the endpoint and returns the
+// updated row. The caller seals; this repo never sees plaintext.
+func (repo *webhookEndpointRepo) SetSecret(ctx context.Context, scope domain.Scope, id, sealed string) (domain.WebhookEndpoint, error) {
+	res, err := repo.w.ExecContext(ctx,
+		`UPDATE webhook_endpoints SET secret = ? WHERE id = ? AND org_id = ? AND environment_id = ?`,
+		sealed, id, scope.OrgID, scope.EnvID)
+	if err != nil {
+		return domain.WebhookEndpoint{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.WebhookEndpoint{}, ErrNotFound
+	}
+	return repo.GetByID(ctx, scope, id)
+}
+
 func (repo *webhookEndpointRepo) SetActive(ctx context.Context, scope domain.Scope, id string, active bool) (domain.WebhookEndpoint, error) {
 	res, err := repo.w.ExecContext(
 		ctx,

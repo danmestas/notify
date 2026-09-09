@@ -396,7 +396,7 @@ func runServe(args []string) error {
 		}
 	}
 
-	whStop, err := webhooksout.New(bus, st).Start(ctx)
+	whStop, err := webhooksout.New(bus, st).WithSecrets(secrets).Start(ctx)
 	if err != nil {
 		return fmt.Errorf("webhooksout.Start: %w", err)
 	}
@@ -446,7 +446,7 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = anStop() }()
 
-	handler := httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Realtime: rt, Feed: feed, Inbound: inb, Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, Store: st, EnvVars: ev, EmailLoop: eml, SourceIngest: srcIngest, Authoring: au, Preferences: prefs, InboundMXHost: cfg.inboundMXHost})
+	handler := httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Realtime: rt, Feed: feed, Inbound: inb, Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, Store: st, EnvVars: ev, EmailLoop: eml, SourceIngest: srcIngest, Authoring: au, Preferences: prefs, InboundMXHost: cfg.inboundMXHost, Secrets: secrets})
 
 	// Operator console: same listener, mounted at /console ahead of the
 	// public API. All console reads go through the same Scope-carrying
@@ -466,7 +466,7 @@ func runServe(args []string) error {
 		// gateway authenticates against).
 		StreamSources:  srcSvc,
 		Audience:       aud,
-		Webhooks:       webhooksout.NewManagement(st),
+		Webhooks:       webhooksout.NewManagement(st, secrets),
 		Contexts:       contexts.New(st),
 		Layouts:        st.Layouts(),
 		Translations:   st.Translations(),
