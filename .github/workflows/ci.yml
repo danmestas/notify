@@ -37,13 +37,21 @@ jobs:
         run: go build ./...
       - name: build dagnats sidecar
         run: |
-          # pinned to danmestas/dagnats@main as of 2026-07-19 (NATS server v2.14.3 / client v1.52.0); bump periodically.
-          # f35e3c0 completes the cross-service trace seam this repo depends on:
-          # #527 (NATS extract), #531 (span volume), #534 (poll-response trace
-          # context, which internal/engine parses), #530 (trigger entrypoints) and
-          # #529 (handler coverage). Pinning behind #534 would let a trace-stitch
-          # assertion pass against a sidecar that cannot carry the context at all.
-          GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@f35e3c0cd47c19e949d3fa027bced29b8cc522b2
+          # danmestas/dagnats v0.0.14 (9b79475), 2026-09-08. Pinned to the
+          # release tag rather than a bare SHA so the version being run is
+          # legible; the SHA is recorded here for traceability.
+          #
+          # Keep this current: notify tracks the latest dagnats, and a stale pin
+          # is a bug rather than a constraint to design around. It must stay at
+          # or ahead of:
+          #   #534 poll-response trace context, which internal/engine parses --
+          #        pinning behind it lets a trace-stitch assertion pass against a
+          #        sidecar that cannot carry the context at all
+          #   #553 until_input_path sleep flavor, which a regular digest step
+          #        compiles to so its window can be resolved per subscriber from
+          #        the run input (#336)
+          # Bump here and in Dockerfile's DAGNATS_VERSION together.
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@v0.0.14
           echo "DAGNATS_BIN=$RUNNER_TEMP/bin/dagnats" >> "$GITHUB_ENV"
       - name: test (race + coverage)
         # Explicit -timeout for the same reason as lefthook.yml: Go's 10m
