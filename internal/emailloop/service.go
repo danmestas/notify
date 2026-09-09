@@ -186,20 +186,59 @@ func (s *Service) HandleInbound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, host, ok := extractToken(payload.recipient())
-	if !ok {
-		// Not a reply mailbox: nothing to thread. Drop quietly (200) so the
-		// forwarder treats it as accepted.
-		s.log.Info("emailloop: inbound mail with no reply token, dropped", "to", payload.recipient())
-		writeAccepted(w, "no_token")
+	status, err := s.Accept(r.Context(), payload)
+	if err != nil {
+		// A responder failure IS worth a non-2xx: the forwarder retry gives the
+		// turn another chance (the compose primitive is idempotent on the
+		// activity it appends per delivery).
+		http.Error(w, "responder error", http.StatusInternalServerError)
 		return
 	}
+	writeAccepted(w, string(status))
+}
 
+// AcceptStatus is the outcome of Accept: what happened to a message. Every
+// drop is a distinct status rather than an error, because a mail notify
+// intentionally ignores must be acknowledged to the sender, not retried.
+type AcceptStatus string
+
+const (
+	StatusNoToken          AcceptStatus = "no_token"
+	StatusInvalidToken     AcceptStatus = "invalid_token"
+	StatusDomainUnverified AcceptStatus = "domain_unverified"
+	StatusNoBinding        AcceptStatus = "no_binding"
+	StatusEmptyBody        AcceptStatus = "empty_body"
+	StatusAgentNotFound    AcceptStatus = "agent_not_found"
+	StatusThreaded         AcceptStatus = "threaded"
+)
+
+// Recipient is a reply mailbox that passed every check needing only the
+// address: the token verified, its domain is verified for the token's scope,
+// and the thread it names is armed.
+type Recipient struct {
+	Scope   domain.Scope
+	Claims  Claims
+	Binding corestore.EmailThread
+}
+
+// CheckRecipient runs every check that needs only the recipient address, and
+// is the whole reason an SMTP receiver can refuse at RCPT TO: a message for a
+// mailbox that is not a valid, armed reply address is rejected at the
+// envelope and its body is never read. Accept calls the same function, so the
+// two transports cannot disagree about which addresses are live.
+//
+// Every refusal is logged with the address and the reason. The one thing this
+// loop must never be is silent.
+func (s *Service) CheckRecipient(ctx context.Context, addr string) (Recipient, AcceptStatus) {
+	token, host, ok := extractToken(addr)
+	if !ok {
+		s.log.Info("emailloop: inbound mail with no reply token, dropped", "to", addr)
+		return Recipient{}, StatusNoToken
+	}
 	claims, err := s.minter.Verify(token)
 	if err != nil {
-		s.log.Warn("emailloop: inbound token verify failed, dropped", "err", err)
-		writeAccepted(w, "invalid_token")
-		return
+		s.log.Warn("emailloop: inbound token verify failed, dropped", "to", addr, "err", err)
+		return Recipient{}, StatusInvalidToken
 	}
 	scope := domain.Scope{OrgID: claims.OrgID, EnvID: claims.EnvID}
 
@@ -207,55 +246,65 @@ func (s *Service) HandleInbound(w http.ResponseWriter, r *http.Request) {
 	// the token's scope. This closes a window where a token was minted against
 	// a domain that has since been removed/unverified, and binds the address
 	// host to the tenant rather than trusting the token alone.
-	if !s.isVerifiedInboundDomain(ctx(r), scope, host) {
+	if !s.isVerifiedInboundDomain(ctx, scope, host) {
 		s.log.Warn("emailloop: inbound domain not verified for scope, dropped",
-			"host", host, "org", scope.OrgID, "env", scope.EnvID)
-		writeAccepted(w, "domain_unverified")
-		return
+			"to", addr, "host", host, "org", scope.OrgID, "env", scope.EnvID)
+		return Recipient{}, StatusDomainUnverified
 	}
 
 	// Resolve the email-thread binding to learn the responder agent. The token
 	// carries the thread id; the binding carries the agent. A missing binding
 	// means the thread was never armed (e.g. token replayed after the binding
 	// was pruned) — drop.
-	binding, err := s.core.EmailThreads().Get(ctx(r), scope, claims.ThreadID)
+	binding, err := s.core.EmailThreads().Get(ctx, scope, claims.ThreadID)
 	if err != nil {
 		s.log.Warn("emailloop: no email-thread binding for token, dropped",
-			"thread", claims.ThreadID, "err", err)
-		writeAccepted(w, "no_binding")
-		return
+			"to", addr, "thread", claims.ThreadID, "err", err)
+		return Recipient{}, StatusNoBinding
+	}
+	return Recipient{Scope: scope, Claims: claims, Binding: binding}, ""
+}
+
+// Accept runs the whole inbound path for an already-parsed message: recipient
+// checks, body selection, and dispatch to the responder. It is the single
+// path every transport feeds -- the JSON webhook, an SMTP listener, a piped
+// message -- so a test that proves one proves the others.
+//
+// err is non-nil only when the responder failed in a way worth retrying; the
+// transport maps that to its own "try again" (HTTP 500, SMTP 451). Every
+// other outcome, including every drop, is a status the transport acknowledges.
+func (s *Service) Accept(ctx context.Context, payload InboundEmail) (AcceptStatus, error) {
+	rcpt, status := s.CheckRecipient(ctx, payload.recipient())
+	if status != "" {
+		return status, nil
 	}
 
 	body := bestBody(payload)
 	if body == "" {
-		s.log.Info("emailloop: inbound mail had empty body, dropped", "thread", claims.ThreadID)
-		writeAccepted(w, "empty_body")
-		return
+		s.log.Info("emailloop: inbound mail had empty body, dropped", "thread", rcpt.Claims.ThreadID)
+		return StatusEmptyBody, nil
 	}
 
 	turn := InboundTurn{
-		Scope:           scope,
-		ThreadID:        claims.ThreadID,
-		SubscriberID:    claims.SubscriberID,
-		AgentIdentifier: binding.AgentIdentifier,
+		Scope:           rcpt.Scope,
+		ThreadID:        rcpt.Claims.ThreadID,
+		SubscriberID:    rcpt.Claims.SubscriberID,
+		AgentIdentifier: rcpt.Binding.AgentIdentifier,
 		Text:            body,
 	}
-	if _, err := s.responder.Respond(ctx(r), turn); err != nil {
-		// A responder failure IS worth a non-2xx: the forwarder retry gives the
-		// turn another chance (the compose primitive is idempotent on the
-		// activity it appends per delivery). Store-not-found (bad agent) is a
-		// permanent drop instead.
+	if _, err := s.responder.Respond(ctx, turn); err != nil {
+		// Store-not-found (bad agent) is a permanent drop; anything else is
+		// the retryable case the transport must surface.
 		if errors.Is(err, agentstore.ErrNotFound) {
 			s.log.Warn("emailloop: responder agent not found, dropped",
-				"agent", binding.AgentIdentifier, "err", err)
-			writeAccepted(w, "agent_not_found")
-			return
+				"agent", rcpt.Binding.AgentIdentifier, "err", err)
+			return StatusAgentNotFound, nil
 		}
 		s.log.Error("emailloop: responder dispatch failed", "err", err)
-		http.Error(w, "responder error", http.StatusInternalServerError)
-		return
+		return "", err
 	}
-	writeAccepted(w, "threaded")
+	s.log.Info("emailloop: inbound mail threaded", "thread", rcpt.Claims.ThreadID, "agent", rcpt.Binding.AgentIdentifier)
+	return StatusThreaded, nil
 }
 
 // ReplyHook is the close-the-loop seam ingress calls after persisting an agent
@@ -308,7 +357,3 @@ func writeAccepted(w http.ResponseWriter, status string) {
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(acceptedResponse{Status: status})
 }
-
-// ctx is a tiny helper so the handler reads the request context once per use
-// without repeating r.Context().
-func ctx(r *http.Request) context.Context { return r.Context() }
