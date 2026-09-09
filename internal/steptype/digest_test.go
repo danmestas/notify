@@ -34,8 +34,8 @@ func TestCompile_DigestRegular_WithDigestKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile keyed: %v", err)
 	}
-	if plain.Type != "sleep" || string(plain.Config) != `{"duration":180000000000}` {
-		t.Fatalf("regular digest def = %+v, want sleep 180000000000", plain)
+	if plain.Type != "sleep" || string(plain.Config) != `{"until_input_path":"digestDeadline"}` {
+		t.Fatalf("regular digest def = %+v, want a run-input-resolved sleep", plain)
 	}
 	if string(keyed.Config) != string(plain.Config) || keyed.Type != plain.Type {
 		t.Fatalf("digestKey changed compiled StepDef: %+v vs %+v", keyed, plain)
@@ -52,8 +52,16 @@ func TestCompile_DigestRegular_BackwardCompat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if def.Type != "sleep" || string(def.Config) != `{"duration":1000000000}` {
-		t.Fatalf("legacy digest def = %+v, want sleep 1000000000", def)
+	if def.Type != "sleep" || string(def.Config) != `{"until_input_path":"digestDeadline"}` {
+		t.Fatalf("legacy digest def = %+v, want a run-input-resolved sleep", def)
+	}
+	// The authored window is no longer IN the compiled config, so Compile must
+	// still validate it -- otherwise a bad amount would only surface at
+	// dispatch, as a failed run rather than a refused workflow.
+	if _, err := steptype.Default().Get("digest").Compile(domain.Step{
+		StepID: "dg", Type: "digest", ControlValues: json.RawMessage(`{"amount":0,"unit":"seconds"}`),
+	}); err == nil {
+		t.Fatal("Compile accepted a zero digest amount; the window is validated here or nowhere")
 	}
 }
 

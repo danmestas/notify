@@ -46,6 +46,83 @@ func (svc *Service) SetGlobal(ctx context.Context, scope domain.Scope, subscribe
 	return err
 }
 
+// typeWorkflowDigest is the preference row holding a subscriber's per-workflow
+// digest window override. It reuses the preferences table unchanged: the unique
+// key is (env, subscriber, TYPE, workflow), so a digest row coexists with the
+// channel-toggle row for the same workflow with no migration.
+const typeWorkflowDigest = "workflowDigest"
+
+// SetDigestWindow records a subscriber's digest cadence override for one
+// workflow. It is stored in the same `channels` blob column as a channel map --
+// the column holds whatever that row type means -- so no schema change is
+// needed.
+func (svc *Service) SetDigestWindow(ctx context.Context, scope domain.Scope, subscriberID, workflowID string, w domain.DigestWindow) error {
+	raw, err := json.Marshal(w)
+	if err != nil {
+		return err
+	}
+	_, err = svc.store.Preferences().Upsert(ctx, scope, domain.Preference{
+		Type:         typeWorkflowDigest,
+		SubscriberID: subscriberID,
+		WorkflowID:   workflowID,
+		Channels:     raw,
+	})
+	return err
+}
+
+// ClearDigestWindow removes a subscriber's override so the workflow step's own
+// window applies again. Storing a zero window rather than deleting the row
+// keeps Upsert as the single write path; resolution treats a zero window as
+// "no override", identical to an absent row.
+func (svc *Service) ClearDigestWindow(ctx context.Context, scope domain.Scope, subscriberID, workflowID string) error {
+	return svc.SetDigestWindow(ctx, scope, subscriberID, workflowID, domain.DigestWindow{})
+}
+
+// DigestWindowFor returns the subscriber's override for one workflow. A zero
+// window (ok=false) means "no override" and the caller must fall back to the
+// step's authored window.
+func (svc *Service) DigestWindowFor(ctx context.Context, scope domain.Scope, subscriberID, workflowID string) (domain.DigestWindow, bool, error) {
+	rows, err := svc.GetForSubscriber(ctx, scope, subscriberID)
+	if err != nil {
+		return domain.DigestWindow{}, false, err
+	}
+	for _, row := range rows {
+		if row.Type != typeWorkflowDigest || row.WorkflowID != workflowID {
+			continue
+		}
+		var w domain.DigestWindow
+		if len(row.Channels) > 0 {
+			if err := json.Unmarshal(row.Channels, &w); err != nil {
+				return domain.DigestWindow{}, false, err
+			}
+		}
+		return w, !w.IsZero(), nil
+	}
+	return domain.DigestWindow{}, false, nil
+}
+
+// DigestWindowRows filters GetForSubscriber output to the digest overrides,
+// keyed by workflow id. The DTO builder uses it to report every override in one
+// pass rather than a lookup per workflow.
+func (svc *Service) DigestWindowRows(rows []domain.Preference) (map[string]domain.DigestWindow, error) {
+	out := make(map[string]domain.DigestWindow)
+	for _, row := range rows {
+		if row.Type != typeWorkflowDigest {
+			continue
+		}
+		var w domain.DigestWindow
+		if len(row.Channels) > 0 {
+			if err := json.Unmarshal(row.Channels, &w); err != nil {
+				return nil, err
+			}
+		}
+		if !w.IsZero() {
+			out[row.WorkflowID] = w
+		}
+	}
+	return out, nil
+}
+
 // SetForWorkflow upserts the subscriber's per-workflow channel prefs.
 func (svc *Service) SetForWorkflow(ctx context.Context, scope domain.Scope, subscriberID, workflowID string, channels map[string]bool) error {
 	raw, err := json.Marshal(channels)

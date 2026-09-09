@@ -220,6 +220,19 @@ type Preference struct {
 	Channels     json.RawMessage `db:"channels"`    // JSON object {"in_app":true,"email":false,...}
 }
 
+// DigestWindow is a digest cadence: "every Amount Unit". It is the shape a
+// subscriber may override per workflow (preference type "workflowDigest") and
+// the shape a digest step authors in its controlValues, so resolution compares
+// like with like.
+type DigestWindow struct {
+	Amount int64  `json:"amount"`
+	Unit   string `json:"unit"`
+}
+
+// IsZero reports whether no window is set. A zero Amount is the only marker:
+// an empty Unit is a valid "seconds" default in steptype.UnitDuration.
+func (w DigestWindow) IsZero() bool { return w.Amount <= 0 }
+
 type AnalyticsDelivery struct {
 	ID            string `db:"id"`
 	OrgID         string `db:"org_id"`

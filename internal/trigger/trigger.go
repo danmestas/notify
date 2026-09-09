@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -23,6 +24,7 @@ import (
 	"github.com/danmestas/notify/internal/keypath"
 	"github.com/danmestas/notify/internal/observe"
 	"github.com/danmestas/notify/internal/runenv"
+	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/timestamp"
 )
@@ -34,6 +36,15 @@ type Service struct {
 	s        *store.Store
 	eng      *engine.Engine
 	digester Digester
+	windows  DigestWindowResolver
+}
+
+// DigestWindowResolver reports a subscriber's per-workflow digest window
+// override. preferences.Service satisfies it. A nil resolver means "no
+// overrides": every subscriber gets the step's authored window, which is the
+// behaviour before #336.
+type DigestWindowResolver interface {
+	DigestWindowFor(ctx context.Context, scope domain.Scope, subscriberID, workflowID string) (domain.DigestWindow, bool, error)
 }
 
 // Digester batches rapid trigger events for the same (env, subscriber,
@@ -53,6 +64,13 @@ func New(aud *audience.Service, s *store.Store, eng *engine.Engine) *Service {
 // WithDigester attaches an optional digester and returns the Service for
 // chaining. When set, a workflow whose first step is "digest" merges rapid
 // events into one run; a nil digester leaves trigger behaviour unchanged.
+// WithDigestWindows attaches the resolver consulted for per-subscriber digest
+// cadences. Optional: without it every subscriber uses the step's window.
+func (svc *Service) WithDigestWindows(r DigestWindowResolver) *Service {
+	svc.windows = r
+	return svc
+}
+
 func (svc *Service) WithDigester(d Digester) *Service {
 	svc.digester = d
 	return svc
@@ -313,6 +331,7 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 	// and starts the run; the rest merge silently (no new run) and are drained
 	// + rendered by the owning run after the window fires.
 	var digestKey string
+	var digestDeadline string
 	if step.Type == "digest" && svc.digester != nil {
 		base := scope.EnvID + ":" + subscriberID + ":" + wf.ID
 		path := digestKeyPath(step.ControlValues)
@@ -331,6 +350,13 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 			)
 		}
 		digestKey = buildDigestKey(base, value)
+		// Resolve THIS subscriber's window and carry the closing instant in the
+		// envelope; the compiled sleep reads it back by dot-path at dispatch.
+		var wErr error
+		digestDeadline, wErr = svc.resolveDigestDeadline(ctx, scope, subscriberID, wf.ID, step.ControlValues, time.Now().UTC())
+		if wErr != nil {
+			return "", wErr
+		}
 		if err := svc.digester.DigestAppend(digestKey, req.Payload); err != nil {
 			return "", err
 		}
@@ -363,6 +389,7 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 		// would collide their runs; per-recipient composition dedupes only a
 		// genuine retry of the same (transaction, recipient) pair.
 		IdempotencyKey: req.TransactionID + ":" + base64.RawURLEncoding.EncodeToString([]byte(subscriberID)),
+		DigestDeadline: digestDeadline,
 		Step: runenv.Step{
 			StepID:            step.StepID,
 			Channel:           step.Type,
@@ -420,4 +447,43 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 		return "", err
 	}
 	return runID, nil
+}
+
+// resolveDigestDeadline returns the RFC3339 instant a regular digest window
+// closes for one subscriber: now plus the subscriber's override, or the step's
+// authored window when there is none.
+//
+// A scheduled (cron) digest returns "" -- it compiles to a digest.wait task
+// that resolves its own cron at dispatch and never reads the deadline.
+//
+// A resolver error is returned rather than swallowed: falling back to the step
+// window on a failed preference read would quietly ignore a cadence the
+// subscriber has actually set, which is the class of silent-wrong-answer bug
+// this file has been bitten by before.
+func (svc *Service) resolveDigestDeadline(
+	ctx context.Context, scope domain.Scope, subscriberID, workflowID string,
+	controlValues json.RawMessage, now time.Time,
+) (string, error) {
+	authored, scheduled, err := steptype.DigestWindow(controlValues)
+	if err != nil {
+		return "", fmt.Errorf("trigger: digest window for workflow %s: %w", workflowID, err)
+	}
+	if scheduled {
+		return "", nil
+	}
+	window := authored
+	if svc.windows != nil {
+		override, ok, oErr := svc.windows.DigestWindowFor(ctx, scope, subscriberID, workflowID)
+		if oErr != nil {
+			return "", fmt.Errorf("trigger: resolve digest window override: %w", oErr)
+		}
+		if ok {
+			window = override
+		}
+	}
+	unit, err := steptype.UnitDuration(window.Unit)
+	if err != nil {
+		return "", fmt.Errorf("trigger: digest window unit: %w", err)
+	}
+	return now.Add(time.Duration(window.Amount) * unit).Format(time.RFC3339), nil
 }

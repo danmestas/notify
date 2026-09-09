@@ -15,6 +15,7 @@ import (
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/preferences"
+	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -61,6 +62,29 @@ func isKnownPreferenceChannel(name string) bool {
 type subscriberPreferencesDTO struct {
 	Global    map[string]bool            `json:"global"`
 	Workflows map[string]map[string]bool `json:"workflows"`
+	// Digests is a SIBLING of Workflows rather than a key inside it, keyed the
+	// same way by trigger identifier (#336). Workflows answers "which channels
+	// are on"; a digest window answers "how often are they batched" -- two
+	// different questions, and nesting the second inside the first would turn
+	// that map[string]bool into a union, breaking every client decoding it on a
+	// GET consumers make on every settings-page load.
+	//
+	// On GET this reports the EFFECTIVE window for every workflow that has a
+	// regular digest step, with Source naming where it came from -- mirroring
+	// how Global reports every known channel resolved rather than only stored
+	// rows, so a consumer can display the cadence in force without re-deriving
+	// it. On PUT only amount and unit are read; a null value clears the
+	// override.
+	Digests map[string]*digestWindowDTO `json:"digests,omitempty"`
+}
+
+// digestWindowDTO is one digest cadence. Source is GET-only ("subscriber" when
+// the subscriber has overridden, "workflow" when the step's authored window
+// applies) and is ignored on PUT.
+type digestWindowDTO struct {
+	Amount int64  `json:"amount"`
+	Unit   string `json:"unit"`
+	Source string `json:"source,omitempty"`
 }
 
 // firstUnknownChannel reports the first key in m that is not a known
@@ -124,6 +148,12 @@ func buildPreferencesDTO(ctx context.Context, au *authoring.Service, scope domai
 	workflows := make(map[string]map[string]bool)
 
 	for _, row := range rows {
+		// Only channel-map rows decode here. A "workflowDigest" row stores an
+		// {amount,unit} object in the same blob column and would fail this
+		// unmarshal, taking the whole preferences read down with it.
+		if row.Type != "subscriberGlobal" && row.Type != "workflow" {
+			continue
+		}
 		var channels map[string]bool
 		if len(row.Channels) > 0 {
 			if err := json.Unmarshal(row.Channels, &channels); err != nil {
@@ -151,7 +181,81 @@ func buildPreferencesDTO(ctx context.Context, au *authoring.Service, scope domai
 		workflows[wf.TriggerIdentifier] = channels
 	}
 
-	return subscriberPreferencesDTO{Global: global, Workflows: workflows}, nil
+	digests, err := buildDigestsDTO(ctx, au, scope, rows)
+	if err != nil {
+		return subscriberPreferencesDTO{}, err
+	}
+	return subscriberPreferencesDTO{Global: global, Workflows: workflows, Digests: digests}, nil
+}
+
+// buildDigestsDTO reports the effective digest window for every workflow in the
+// environment that has a regular digest step: the subscriber's override when
+// they have one, else the step's authored window. A workflow with no digest
+// step is absent, so the map answers "which cadences can this subscriber set"
+// as well as "which is in force".
+func buildDigestsDTO(ctx context.Context, au *authoring.Service, scope domain.Scope, rows []domain.Preference) (map[string]*digestWindowDTO, error) {
+	overrides := make(map[string]domain.DigestWindow)
+	for _, row := range rows {
+		if row.Type != "workflowDigest" || len(row.Channels) == 0 {
+			continue
+		}
+		var w domain.DigestWindow
+		if err := json.Unmarshal(row.Channels, &w); err != nil {
+			return nil, err
+		}
+		if !w.IsZero() {
+			overrides[row.WorkflowID] = w
+		}
+	}
+
+	wfs, err := au.List(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*digestWindowDTO)
+	for _, wf := range wfs {
+		authored, ok, wErr := firstDigestWindow(wf)
+		if wErr != nil || !ok {
+			// A workflow whose digest step will not parse is reported as having
+			// no window rather than failing the read: one bad step must not
+			// make a subscriber unable to see any of their settings.
+			continue
+		}
+		window, source := authored, "workflow"
+		if o, has := overrides[wf.ID]; has {
+			window, source = o, "subscriber"
+		}
+		out[wf.TriggerIdentifier] = &digestWindowDTO{Amount: window.Amount, Unit: window.Unit, Source: source}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// firstDigestWindow reports the authored window of a workflow's first digest
+// step. ok is false when the workflow has no digest step, or only a scheduled
+// (cron) one -- a schedule is not a duration and an {amount,unit} override
+// cannot express it.
+func firstDigestWindow(wf domain.Workflow) (domain.DigestWindow, bool, error) {
+	if len(wf.Steps) == 0 {
+		return domain.DigestWindow{}, false, nil
+	}
+	var steps []domain.Step
+	if err := json.Unmarshal(wf.Steps, &steps); err != nil {
+		return domain.DigestWindow{}, false, err
+	}
+	for _, st := range steps {
+		if st.Type != "digest" {
+			continue
+		}
+		w, scheduled, err := steptype.DigestWindow(st.ControlValues)
+		if err != nil || scheduled {
+			return domain.DigestWindow{}, false, err
+		}
+		return w, true, nil
+	}
+	return domain.DigestWindow{}, false, nil
 }
 
 // putSubscriberPreferences handles PUT /v1/subscribers/{id}/preferences.
@@ -211,6 +315,43 @@ func putSubscriberPreferences(aud *audience.Service, au *authoring.Service, pref
 				"unknown trigger identifier(s): "+strings.Join(unknown, ", "))
 			return
 		}
+		// Digest overrides validate the same way and in the same pass: unknown
+		// identifier, a workflow with no regular digest step, or an unusable
+		// amount/unit all fail the whole PUT closed before anything is written.
+		// Refusing a window on a workflow that never digests is worth the extra
+		// lookup -- it is a setting that would otherwise be stored, read back,
+		// and never do anything.
+		digestWorkflowIDs := make(map[string]string, len(req.Digests))
+		for triggerID, window := range req.Digests {
+			wf, wErr := au.GetBySlug(r.Context(), scope, triggerID)
+			if wErr != nil {
+				if errors.Is(wErr, store.ErrNotFound) {
+					writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity",
+						"unknown trigger identifier: "+triggerID)
+					return
+				}
+				writeInternalError(w, r, wErr)
+				return
+			}
+			if _, ok, fErr := firstDigestWindow(wf); fErr != nil || !ok {
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity",
+					"workflow "+triggerID+" has no regular digest step to set a window on")
+				return
+			}
+			if window != nil {
+				if window.Amount <= 0 {
+					writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity",
+						"digest amount for "+triggerID+" must be positive")
+					return
+				}
+				if _, uErr := steptype.UnitDuration(window.Unit); uErr != nil {
+					writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity",
+						"digest unit for "+triggerID+": "+uErr.Error())
+					return
+				}
+			}
+			digestWorkflowIDs[triggerID] = wf.ID
+		}
 
 		// Serialize the read-merge-write below per (scope, subscriber): without
 		// this, two concurrent partial PUTs can each read the same pre-update
@@ -229,6 +370,13 @@ func putSubscriberPreferences(aud *audience.Service, au *authoring.Service, pref
 		existingGlobal := map[string]bool{}
 		existingByWorkflowID := map[string]map[string]bool{}
 		for _, row := range existingRows {
+			// Same filter as buildPreferencesDTO: a "workflowDigest" row holds
+			// an {amount,unit} object in this blob column and must not be
+			// decoded as a channel map. Missing it here 500s any PUT made by a
+			// subscriber who has a digest override.
+			if row.Type != "subscriberGlobal" && row.Type != "workflow" {
+				continue
+			}
 			var channels map[string]bool
 			if len(row.Channels) > 0 {
 				if err := json.Unmarshal(row.Channels, &channels); err != nil {
@@ -254,6 +402,25 @@ func putSubscriberPreferences(aud *audience.Service, au *authoring.Service, pref
 			workflowID := workflowIDs[triggerID]
 			merged := mergeChannels(existingByWorkflowID[workflowID], channels)
 			if err := prefs.SetForWorkflow(r.Context(), scope, sub.SubscriberID, workflowID, merged); err != nil {
+				writeInternalError(w, r, err)
+				return
+			}
+		}
+
+		for triggerID, window := range req.Digests {
+			workflowID := digestWorkflowIDs[triggerID]
+			// An explicit null clears the override so the step's own window
+			// applies again. Omitting the key leaves it untouched, matching how
+			// every other field in this PUT merges rather than replaces.
+			if window == nil {
+				if err := prefs.ClearDigestWindow(r.Context(), scope, sub.SubscriberID, workflowID); err != nil {
+					writeInternalError(w, r, err)
+					return
+				}
+				continue
+			}
+			if err := prefs.SetDigestWindow(r.Context(), scope, sub.SubscriberID, workflowID,
+				domain.DigestWindow{Amount: window.Amount, Unit: window.Unit}); err != nil {
 				writeInternalError(w, r, err)
 				return
 			}

@@ -124,6 +124,12 @@ func TestCompile_DelayThenInApp(t *testing.T) {
 	if d.Task != "" {
 		t.Fatalf("sleep step Task = %q, want empty", d.Task)
 	}
+	// A delay keeps its duration baked into the DAG. Only digest moved to a
+	// run-input-resolved deadline (#336); see
+	// steptype.TestDelayDigestCompileDiverged.
+	// A regular digest resolves its deadline from the per-subscriber run input
+	// rather than a duration baked into the DAG, which is what lets one
+	// workflow serve subscribers on different cadences (#336).
 	if string(d.Config) != `{"duration":1000000000}` {
 		t.Fatalf("sleep config = %s, want {\"duration\":1000000000}", d.Config)
 	}
@@ -159,8 +165,8 @@ func TestCompile_DigestThenInApp(t *testing.T) {
 	if d.ID != "dg" || d.Type != "sleep" || d.Task != "" {
 		t.Fatalf("digest step = %+v, want {ID:dg Type:sleep Task:\"\"}", d)
 	}
-	if string(d.Config) != `{"duration":1000000000}` {
-		t.Fatalf("sleep config = %s, want {\"duration\":1000000000}", d.Config)
+	if string(d.Config) != `{"until_input_path":"digestDeadline"}` {
+		t.Fatalf("sleep config = %s, want {\"until_input_path\":\"digestDeadline\"}", d.Config)
 	}
 	if len(d.DependsOn) != 0 {
 		t.Fatalf("root sleep DependsOn = %v, want empty", d.DependsOn)

@@ -164,4 +164,14 @@ type InAppEnvelope struct {
 	// genuine client retry of the identical (transaction, recipient) pair,
 	// without merging distinct recipients of the same multicast.
 	IdempotencyKey string `json:"idempotencyKey"`
+	// DigestDeadline is the instant a regular digest window closes for THIS
+	// subscriber, RFC3339. A regular digest step compiles to an engine sleep
+	// whose config is {"until_input_path":"digestDeadline"}, so dagnats reads
+	// this field out of the run input at dispatch and sleeps until it.
+	//
+	// The window therefore lives in the per-subscriber run input rather than in
+	// the per-workflow DAG, which is what lets one workflow serve subscribers on
+	// different cadences (#336). trigger.go fills it with
+	// now + (subscriber override, else the step's authored window).
+	DigestDeadline string `json:"digestDeadline,omitempty"`
 }

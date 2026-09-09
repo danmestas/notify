@@ -454,6 +454,29 @@ func parseMonthDays(s string) ([]int, error) {
 	return out, nil
 }
 
+// DigestDeadlineInputPath is the run-input dot-path a regular digest's sleep
+// resolves. It names runenv.InAppEnvelope.DigestDeadline; the two must agree,
+// which is why the constant is exported and referenced from both sides rather
+// than spelled twice.
+const DigestDeadlineInputPath = "digestDeadline"
+
+// DigestWindow reports a digest step's authored window. scheduled is true for a
+// cron window, whose cadence is a schedule rather than a duration and which
+// therefore has no DigestWindow to override.
+func DigestWindow(controlValues json.RawMessage) (w domain.DigestWindow, scheduled bool, err error) {
+	dcv, err := digestType(controlValues)
+	if err != nil {
+		return domain.DigestWindow{}, false, err
+	}
+	if dcv.Type == "scheduled" {
+		return domain.DigestWindow{}, true, nil
+	}
+	if dcv.Amount <= 0 {
+		return domain.DigestWindow{}, false, fmt.Errorf("digest amount must be positive, got %d", dcv.Amount)
+	}
+	return domain.DigestWindow{Amount: dcv.Amount, Unit: dcv.Unit}, false, nil
+}
+
 // digest is the digest step type. A regular window (type absent or "regular")
 // compiles to the SAME engine sleep as delay; a scheduled window
 // (type "scheduled" + cron) compiles to a normal "digest.wait" task whose wait
@@ -540,5 +563,27 @@ func (digest) Compile(step domain.Step) (engine.StepDef, error) {
 		}
 		return engine.StepDef{ID: step.StepID, Type: "normal", Task: "digest.wait", Retry: delayRetryPolicy()}, nil
 	}
-	return sleepStepDef(step)
+	// A regular window sleeps until an instant carried in the RUN INPUT rather
+	// than for a duration baked into the DAG. The DAG is per-workflow and the
+	// run is per-subscriber, so this is what lets one workflow serve people on
+	// different cadences (#336): trigger.go resolves each subscriber's window
+	// and writes the deadline into the envelope.
+	//
+	// It stays an engine-native sleep, which matters: the alternative was to
+	// route regular digests through the digest.wait handler like scheduled
+	// ones, and that handler holds a worker goroutine for the whole window.
+	//
+	// The authored window is still validated here so a bad amount/unit is
+	// rejected at authoring rather than at dispatch, even though the compiled
+	// config no longer carries it.
+	if _, err := sleepConfig(step.ControlValues); err != nil {
+		return engine.StepDef{}, err
+	}
+	cfg, err := json.Marshal(struct {
+		UntilInputPath string `json:"until_input_path"`
+	}{UntilInputPath: DigestDeadlineInputPath})
+	if err != nil {
+		return engine.StepDef{}, fmt.Errorf("marshal digest sleep config: %w", err)
+	}
+	return engine.StepDef{ID: step.StepID, Type: "sleep", Config: cfg}, nil
 }

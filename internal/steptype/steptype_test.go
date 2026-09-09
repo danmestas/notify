@@ -44,11 +44,16 @@ func TestGetAndHas(t *testing.T) {
 	}
 }
 
-// TestDelayDigestCompileIdentical documents that delay and digest produce the
-// identical engine sleep StepDef today while owning SEPARATE Compile funcs —
-// the structural split that lets them diverge later without contaminating each
-// other.
-func TestDelayDigestCompileIdentical(t *testing.T) {
+// TestDelayDigestCompileDiverged pins the split the old
+// TestDelayDigestCompileIdentical anticipated ("the structural split that lets
+// them diverge later"). They now do diverge, deliberately: a delay waits a
+// duration baked into the DAG, while a regular digest waits until an instant
+// carried in the per-subscriber run input, which is what lets one workflow
+// serve subscribers on different cadences (#336).
+//
+// Delay must be unaffected -- that is half the point of the separate Compile
+// funcs.
+func TestDelayDigestCompileDiverged(t *testing.T) {
 	r := steptype.Default()
 	cv := json.RawMessage(`{"amount":3,"unit":"minutes"}`)
 	delayDef, err := r.Get("delay").Compile(domain.Step{StepID: "s", Type: "delay", ControlValues: cv})
@@ -60,10 +65,14 @@ func TestDelayDigestCompileIdentical(t *testing.T) {
 		t.Fatalf("digest compile: %v", err)
 	}
 	if delayDef.Type != "sleep" || string(delayDef.Config) != `{"duration":180000000000}` {
-		t.Fatalf("delay def = %+v", delayDef)
+		t.Fatalf("delay def = %+v, want an unchanged baked duration", delayDef)
 	}
-	if !reflect.DeepEqual(delayDef, digestDef) {
-		t.Fatalf("delay/digest StepDef diverged: %+v vs %+v", delayDef, digestDef)
+	if digestDef.Type != "sleep" || string(digestDef.Config) != `{"until_input_path":"digestDeadline"}` {
+		t.Fatalf("digest def = %+v, want a run-input-resolved sleep", digestDef)
+	}
+	if reflect.DeepEqual(delayDef, digestDef) {
+		t.Fatal("delay and digest compiled identically; the per-subscriber digest window " +
+			"needs digest to resolve its deadline from the run input")
 	}
 }
 

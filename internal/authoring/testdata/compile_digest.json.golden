@@ -6,7 +6,7 @@
       "task": "",
       "type": "sleep",
       "config": {
-        "duration": 172800000000000
+        "until_input_path": "digestDeadline"
       }
     }
   ],

@@ -408,7 +408,7 @@ func runServe(args []string) error {
 		slog.Default().Info("authoring: re-registered persisted workflows", "count", n)
 	}
 
-	trg := trigger.New(aud, st, eng).WithDigester(bus)
+	trg := trigger.New(aud, st, eng).WithDigester(bus).WithDigestWindows(prefs)
 	inbox := inboxapi.New(st)
 	rt := realtime.New(bus)
 	feed := feedapi.New(bus)
