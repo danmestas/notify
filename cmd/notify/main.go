@@ -252,12 +252,6 @@ func runServe(args []string) error {
 	// else would ever reclaim an abandoned deadline row.
 	startDelayDeadlinePurge(ctx, st)
 
-	// All step-task handlers register in one place so the set can be compared
-	// mechanically against steptype.Registry.TaskTypes() -- see the coverage test.
-	registerStepTaskHandlers(eng, stepTaskDeps{
-		store: st, conn: conn, prefs: prefs, bus: bus, secrets: secrets,
-	})
-
 	// W4 ADR-013 (#55): durable credential-verify action. The verify task runs
 	// in this worker pool (registered before StartWorkers); the workflow is
 	// declared with the engine just after the workers start (below).
@@ -292,7 +286,16 @@ func runServe(args []string) error {
 		st, ags, emailloop.NewMinter(mk), conn,
 		emailloop.NewAgentResponder(emlCompose),
 		cfg.inboundSecret, slog.Default(),
-	)
+	).WithEventPublisher(bus) // webhook-kind replies ride the delivery stream (#345)
+
+	// All step-task handlers register in one place so the set can be compared
+	// mechanically against steptype.Registry.TaskTypes() -- see the coverage
+	// test. Registered here, after the email loop exists, because send.email
+	// takes it as its reply armer; nothing between the old site and this one
+	// dispatches a task, and StartWorkers is later still.
+	registerStepTaskHandlers(eng, stepTaskDeps{
+		store: st, conn: conn, prefs: prefs, bus: bus, secrets: secrets, replyArmer: eml,
+	})
 
 	// Chat two-way loop: inbound Telegram (getUpdates long-poll) and Discord
 	// (gateway WS) messages route to the agent and the agent's reply is sent

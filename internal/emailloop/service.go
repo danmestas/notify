@@ -38,6 +38,9 @@ type Service struct {
 	// listener records that an SMTP receiver (internal/smtpin) is serving this
 	// Service, which makes inbound reachable with no forwarder secret at all.
 	listener bool
+	// events carries webhook-kind replies (reply.go). nil until
+	// WithEventPublisher; an agent-only deployment never needs it.
+	events EventPublisher
 }
 
 // New builds the Service. secret is the shared secret the inbound mail
@@ -292,6 +295,17 @@ func (s *Service) Accept(ctx context.Context, payload InboundEmail) (AcceptStatu
 	if body == "" {
 		s.log.Info("emailloop: inbound mail had empty body, dropped", "thread", rcpt.Claims.ThreadID)
 		return StatusEmptyBody, nil
+	}
+
+	// The binding's kind selects who answers. A webhook-kind thread never
+	// reaches the agent responder, and an agent-kind thread is untouched by
+	// the reply path -- the two are selected here and nowhere else.
+	if rcpt.Binding.Kind == KindWebhook {
+		if err := s.publishReply(rcpt, payload, body); err != nil {
+			s.log.Error("emailloop: reply event not published", "thread", rcpt.Claims.ThreadID, "err", err)
+			return "", err
+		}
+		return StatusThreaded, nil
 	}
 
 	turn := InboundTurn{

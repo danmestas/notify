@@ -3,6 +3,8 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/danmestas/notify/internal/delivery/template"
@@ -44,6 +46,24 @@ type EmailHandler struct {
 	pub      EventPublisher
 	throttle Throttler
 	digester Digester
+	armer    ReplyArmer
+}
+
+// ReplyArmer arms a reply-to-notification thread for one recipient before an
+// email step sends, returning the tokenized reply mailbox to put on the
+// message. ok=false with no error means the loop cannot take a reply for this
+// scope (inbound not enabled, no verified inbound domain): the send proceeds
+// with the step's static Reply-To rather than promising a reply it cannot
+// honour. emailloop.Service satisfies this.
+type ReplyArmer interface {
+	ArmReply(ctx context.Context, scope domain.Scope, notificationID, transactionID, workflowIdentifier, subscriberID, subscriberEmail string) (replyTo string, ok bool, err error)
+}
+
+// WithReplyArmer attaches the reply loop. Without it a step's Reply opt-in is
+// logged and ignored rather than failing the send.
+func (h *EmailHandler) WithReplyArmer(a ReplyArmer) *EmailHandler {
+	h.armer = a
+	return h
 }
 
 // NewEmail constructs an EmailHandler backed by s and resolver r.
@@ -230,13 +250,37 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 		msgText = content
 	}
 
+	// Reply-to-notification (#345): arm the thread BEFORE the send, so a reply
+	// can never arrive at a mailbox nothing is bound to -- the same
+	// bind-before-dispatch rule the chat and conversation loops follow. An arm
+	// failure fails the send: a message that promises a reply it cannot take
+	// is worse than no message.
+	replyTo := env.Step.ReplyTo
+	if env.Step.ReplyEnabled && h.armer == nil {
+		slog.Default().Warn("delivery: email step asks for replies but no reply loop is wired; sending without",
+			"notification", env.NotificationID, "workflow", env.WorkflowIdentifier)
+	}
+	if env.Step.ReplyEnabled && h.armer != nil {
+		armed, ok, aerr := h.armer.ArmReply(ctx, scope, env.NotificationID, env.TransactionID,
+			env.WorkflowIdentifier, env.SubscriberID, to)
+		if aerr != nil {
+			return h.persistEmailError(ctx, env, t, providerID, integrationID, fmt.Errorf("arm reply thread: %w", aerr))
+		}
+		if ok {
+			replyTo = armed
+		} else {
+			slog.Default().Info("delivery: email step asks for replies but inbound is not available for this scope; sending without",
+				"notification", env.NotificationID, "workflow", env.WorkflowIdentifier)
+		}
+	}
+
 	if _, err := provider.Send(ctx, providers.EmailMessage{
 		From:    effectiveFrom,
 		To:      to,
 		Subject: subject,
 		Text:    msgText,
 		HTML:    msgHTML,
-		ReplyTo: env.Step.ReplyTo,
+		ReplyTo: replyTo,
 	}); err != nil {
 		return h.persistEmailError(ctx, env, t, providerID, integrationID, err)
 	}

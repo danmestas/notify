@@ -78,6 +78,11 @@ func (email) ParseForm(form url.Values) (json.RawMessage, error) {
 	if v := formField(form, "integration"); v != "" {
 		m["integration"] = v
 	}
+	// A checkbox posts "on" when ticked and nothing at all when not; storing
+	// the key only when true keeps existing control values byte-identical.
+	if v := formField(form, "reply"); v == "on" || v == "true" {
+		m["reply"] = true
+	}
 	return marshalControlValues(m)
 }
 

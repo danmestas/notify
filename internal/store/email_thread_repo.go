@@ -22,8 +22,17 @@ type EmailThread struct {
 	SubscriberID     string `db:"subscriber_id"`
 	SubscriberEmail  string `db:"subscriber_email"`
 	InboundDomain    string `db:"inbound_domain"`
-	CreatedAt        string `db:"created_at"`
-	LastActivityAt   string `db:"last_activity_at"`
+	// Kind selects the responder for the thread: "agent" (every row that
+	// predates the column) or "webhook" (#345). Constants live in emailloop.
+	Kind string `db:"kind"`
+	// TransactionID and WorkflowIdentifier are carried on webhook-kind rows so
+	// a reply event can name what was replied to. The thread itself is keyed
+	// on the per-recipient notification id -- a multicast trigger shares one
+	// transaction id across every recipient, which would collide here.
+	TransactionID      string `db:"transaction_id"`
+	WorkflowIdentifier string `db:"workflow_identifier"`
+	CreatedAt          string `db:"created_at"`
+	LastActivityAt     string `db:"last_activity_at"`
 }
 
 // EmailThreadRepo persists email-origin conversation bindings, scoped to
@@ -61,17 +70,22 @@ func (repo *emailThreadRepo) Upsert(ctx context.Context, scope domain.Scope, t E
 		ctx,
 		`INSERT INTO email_threads (id, org_id, environment_id, agent_identifier,
 		   platform_thread_id, subscriber_id, subscriber_email, inbound_domain,
+		   kind, transaction_id, workflow_identifier,
 		   created_at, last_activity_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (org_id, environment_id, platform_thread_id)
 		 DO UPDATE SET agent_identifier=excluded.agent_identifier,
 		   subscriber_id=excluded.subscriber_id,
 		   subscriber_email=excluded.subscriber_email,
 		   inbound_domain=excluded.inbound_domain,
+		   kind=excluded.kind,
+		   transaction_id=excluded.transaction_id,
+		   workflow_identifier=excluded.workflow_identifier,
 		   last_activity_at=excluded.last_activity_at
 		 WHERE org_id = excluded.org_id AND environment_id = excluded.environment_id`,
 		id, scope.OrgID, scope.EnvID, t.AgentIdentifier, t.PlatformThreadID,
-		t.SubscriberID, t.SubscriberEmail, t.InboundDomain, now, now,
+		t.SubscriberID, t.SubscriberEmail, t.InboundDomain,
+		kindOrAgent(t.Kind), t.TransactionID, t.WorkflowIdentifier, now, now,
 	)
 	if err != nil {
 		return EmailThread{}, err
@@ -85,12 +99,12 @@ func (repo *emailThreadRepo) Get(ctx context.Context, scope domain.Scope, platfo
 	err := repo.r.QueryRowContext(
 		ctx,
 		`SELECT id, org_id, environment_id, agent_identifier, platform_thread_id,
-		   subscriber_id, subscriber_email, inbound_domain, created_at, last_activity_at
+		   subscriber_id, subscriber_email, inbound_domain, kind, transaction_id, workflow_identifier, created_at, last_activity_at
 		 FROM email_threads
 		 WHERE org_id = ? AND environment_id = ? AND platform_thread_id = ?`,
 		scope.OrgID, scope.EnvID, platformThreadID,
 	).Scan(&out.ID, &out.OrgID, &out.EnvID, &out.AgentIdentifier, &out.PlatformThreadID,
-		&out.SubscriberID, &out.SubscriberEmail, &out.InboundDomain, &out.CreatedAt, &out.LastActivityAt)
+		&out.SubscriberID, &out.SubscriberEmail, &out.InboundDomain, &out.Kind, &out.TransactionID, &out.WorkflowIdentifier, &out.CreatedAt, &out.LastActivityAt)
 	if err == sql.ErrNoRows {
 		return EmailThread{}, ErrNotFound
 	}
@@ -124,7 +138,7 @@ func (repo *emailThreadRepo) List(ctx context.Context, scope domain.Scope, after
 		rows, err = repo.r.QueryContext(
 			ctx,
 			`SELECT id, org_id, environment_id, agent_identifier, platform_thread_id,
-			   subscriber_id, subscriber_email, inbound_domain, created_at, last_activity_at
+			   subscriber_id, subscriber_email, inbound_domain, kind, transaction_id, workflow_identifier, created_at, last_activity_at
 			 FROM email_threads
 			 WHERE org_id = ? AND environment_id = ?
 			 ORDER BY platform_thread_id ASC
@@ -135,7 +149,7 @@ func (repo *emailThreadRepo) List(ctx context.Context, scope domain.Scope, after
 		rows, err = repo.r.QueryContext(
 			ctx,
 			`SELECT id, org_id, environment_id, agent_identifier, platform_thread_id,
-			   subscriber_id, subscriber_email, inbound_domain, created_at, last_activity_at
+			   subscriber_id, subscriber_email, inbound_domain, kind, transaction_id, workflow_identifier, created_at, last_activity_at
 			 FROM email_threads
 			 WHERE org_id = ? AND environment_id = ? AND platform_thread_id > ?
 			 ORDER BY platform_thread_id ASC
@@ -152,7 +166,7 @@ func (repo *emailThreadRepo) List(ctx context.Context, scope domain.Scope, after
 	for rows.Next() {
 		var out EmailThread
 		if err := rows.Scan(&out.ID, &out.OrgID, &out.EnvID, &out.AgentIdentifier, &out.PlatformThreadID,
-			&out.SubscriberID, &out.SubscriberEmail, &out.InboundDomain, &out.CreatedAt, &out.LastActivityAt); err != nil {
+			&out.SubscriberID, &out.SubscriberEmail, &out.InboundDomain, &out.Kind, &out.TransactionID, &out.WorkflowIdentifier, &out.CreatedAt, &out.LastActivityAt); err != nil {
 			return nil, "", 0, err
 		}
 		items = append(items, out)
@@ -169,4 +183,13 @@ func (repo *emailThreadRepo) List(ctx context.Context, scope domain.Scope, after
 		nextCursor = items[limit-1].PlatformThreadID
 	}
 	return items, nextCursor, total, nil
+}
+
+// kindOrAgent defaults an unset Kind to "agent", matching the column default,
+// so callers that predate the column keep writing the rows they always did.
+func kindOrAgent(k string) string {
+	if k == "" {
+		return "agent"
+	}
+	return k
 }

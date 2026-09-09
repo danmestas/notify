@@ -51,10 +51,12 @@ func wireCommon[T common[T]](h T, d deliveryDeps) T {
 // entirely off those events via bus.SubscribeAllDelivery, so email sends
 // were silently invisible to /v1/analytics/deliveries and
 // /v1/analytics/timeseries).
-func registerDeliveryHandlers(eng taskRegistrar, st *store.Store, conn *connectivity.Service, prefs *preferences.Service, bus *eventbus.Bus) {
+func registerDeliveryHandlers(eng taskRegistrar, st *store.Store, conn *connectivity.Service, prefs *preferences.Service, bus *eventbus.Bus, armer delivery.ReplyArmer) {
 	d := deliveryDeps{prefs: prefs, bus: bus}
 	eng.Handle("send.in_app", wireCommon(delivery.New(st), d).HandleInApp)
-	eng.Handle("send.email", wireCommon(delivery.NewEmail(st, conn), d).HandleEmail)
+	// send.email carries one dependency the other channels do not: the reply
+	// loop, so an email step can opt into reply-to-notification.
+	eng.Handle("send.email", wireCommon(delivery.NewEmail(st, conn), d).WithReplyArmer(armer).HandleEmail)
 	eng.Handle("send.push", wireCommon(delivery.NewPush(st, conn), d).HandlePush)
 	eng.Handle("send.chat", wireCommon(delivery.NewChat(st, conn), d).HandleChat)
 	eng.Handle("send.sms", wireCommon(delivery.NewSMS(st, conn), d).HandleSMS)
@@ -80,6 +82,10 @@ type stepTaskDeps struct {
 	prefs   *preferences.Service
 	bus     *eventbus.Bus
 	secrets *secretbox.Box
+	// replyArmer is the email loop, for steps that opt into
+	// reply-to-notification (#345). nil is allowed (tests, or a deployment
+	// with no email loop): the step's opt-in is then logged and ignored.
+	replyArmer delivery.ReplyArmer
 }
 
 // registerStepTaskHandlers registers a handler for every engine task type a
@@ -90,7 +96,7 @@ type stepTaskDeps struct {
 // Previously the send.* handlers lived here and the rest were registered inline
 // during boot, each with a comment asking the reader to remember the invariant.
 func registerStepTaskHandlers(eng taskRegistrar, d stepTaskDeps) {
-	registerDeliveryHandlers(eng, d.store, d.conn, d.prefs, d.bus)
+	registerDeliveryHandlers(eng, d.store, d.conn, d.prefs, d.bus, d.replyArmer)
 
 	// Scheduled (cron) digest window: sleeps until the next tick, then the
 	// downstream channel step self-sources and drains the accumulated events.

@@ -27,6 +27,13 @@
              value="">
     </div>
     <div class="form-row">
+      <label class="form-label" for="cv-reply">
+        <input type="checkbox" id="cv-reply" name="reply" value="on">
+        Accept replies
+      </label>
+      <span class="form-hint">Sends with a tokenized reply address; a reply comes back to this environment's webhook endpoints as an <code>email.reply</code> event. Overrides Reply-To. Needs a verified inbound domain.</span>
+    </div>
+    <div class="form-row">
       <label class="form-label" for="cv-editor-type-trigger">Editor type</label>
       
 <div class="ui-select" id="cv-editor-type" data-signals="{uiSelOpen_cv_editor_type: false, uiSelFilter_cv_editor_type: &#39;&#39;, cvEditorType: &#34;&#34;}"

@@ -62,7 +62,7 @@ func TestRegisterDeliveryHandlers_EmailPublishesDeliveryEvent(t *testing.T) {
 	conn := connectivity.New(st, mk)
 	prefs := preferences.New(st)
 
-	registerDeliveryHandlers(eng, st, conn, prefs, bus)
+	registerDeliveryHandlers(eng, st, conn, prefs, bus, nil)
 	eng.StartWorkers(ctx)
 
 	scope := domain.Scope{OrgID: "acme", EnvID: "wiring-test"}

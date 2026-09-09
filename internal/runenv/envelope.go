@@ -62,6 +62,11 @@ type StepControls struct {
 	From       string `json:"from,omitempty"`
 	ReplyTo    string `json:"replyTo,omitempty"`
 	EditorType string `json:"editorType,omitempty"`
+	// Reply opts an email step into reply-to-notification (#345): the send
+	// carries a tokenized reply mailbox and a reply is handed back to the
+	// environment's webhook endpoints. Default off, so existing workflows are
+	// byte-identical.
+	Reply bool `json:"reply,omitempty"`
 	// DataJSON is the raw JSON string stored under "data_json" in controlValues
 	// (written by push.ParseForm). Unmarshaled to map[string]string at
 	// envelope-build time and forwarded as runenv.Step.Data.
@@ -120,6 +125,9 @@ type Step struct {
 	From       string `json:"from,omitempty"`
 	ReplyTo    string `json:"replyTo,omitempty"`
 	EditorType string `json:"editorType,omitempty"` // "html" \u2192 HTML body; "" or "block" \u2192 Text body
+	// ReplyEnabled mirrors StepControls.Reply: the send handler arms a reply
+	// thread and overrides ReplyTo with the tokenized mailbox when set.
+	ReplyEnabled bool `json:"replyEnabled,omitempty"`
 	// In-app rich fields carried to the in_app send handler, which snapshots them
 	// onto the persisted message's extras blob (the reference platform field names). Non-in_app
 	// handlers ignore them. InAppData is named distinctly from the push Data map
@@ -148,12 +156,16 @@ type InAppEnvelope struct {
 	// loaded workflow row. It is the sole channel by which delivery handlers
 	// learn a workflow is no-opt-out; they forward it verbatim to
 	// preferences.Service.ChannelEnabled rather than re-deriving it.
-	WorkflowCritical bool            `json:"workflowCritical,omitempty"`
-	NotificationID   string          `json:"notificationId"`
-	SubscriberID     string          `json:"subscriberId"`
-	Subscriber       json.RawMessage `json:"subscriber"`
-	Payload          json.RawMessage `json:"payload"`
-	Step             Step            `json:"step"`
+	WorkflowCritical bool `json:"workflowCritical,omitempty"`
+	// WorkflowIdentifier is the trigger identifier (the name a caller triggers
+	// by), carried so a reply event can say which workflow the recipient
+	// answered without a lookup. WorkflowID above is the internal row id.
+	WorkflowIdentifier string          `json:"workflowIdentifier,omitempty"`
+	NotificationID     string          `json:"notificationId"`
+	SubscriberID       string          `json:"subscriberId"`
+	Subscriber         json.RawMessage `json:"subscriber"`
+	Payload            json.RawMessage `json:"payload"`
+	Step               Step            `json:"step"`
 	// IdempotencyKey is the dagnats StartRun admission value: authoring.Compile
 	// points every compiled DAG's IdempotencyKey dot-path at this field. It
 	// combines TransactionID with SubscriberID (trigger.go composes it) rather

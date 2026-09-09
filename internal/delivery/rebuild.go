@@ -109,14 +109,15 @@ func RebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 	}
 
 	return runenv.InAppEnvelope{
-		Scope:            runenv.Scope{OrgID: notif.OrgID, EnvID: notif.EnvID},
-		TransactionID:    notif.TransactionID,
-		WorkflowID:       notif.WorkflowID,
-		WorkflowCritical: wf.Critical,
-		NotificationID:   notif.ID,
-		SubscriberID:     notif.SubscriberID,
-		Subscriber:       subscriberJSON,
-		Payload:          notif.Payload,
+		Scope:              runenv.Scope{OrgID: notif.OrgID, EnvID: notif.EnvID},
+		TransactionID:      notif.TransactionID,
+		WorkflowID:         notif.WorkflowID,
+		WorkflowCritical:   wf.Critical,
+		WorkflowIdentifier: wf.TriggerIdentifier,
+		NotificationID:     notif.ID,
+		SubscriberID:       notif.SubscriberID,
+		Subscriber:         subscriberJSON,
+		Payload:            notif.Payload,
 		Step: runenv.Step{
 			StepID:            t.StepID,
 			Channel:           found.Type,
@@ -132,6 +133,7 @@ func RebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 			Data:              stepData,
 			From:              controls.From,
 			ReplyTo:           controls.ReplyTo,
+			ReplyEnabled:      controls.Reply,
 			EditorType:        controls.EditorType,
 			Avatar:            controls.Avatar,
 			PrimaryAction:     controls.PrimaryAction,

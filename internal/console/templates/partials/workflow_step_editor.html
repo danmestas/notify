@@ -158,6 +158,13 @@
              value="{{index .ControlMap "replyTo"}}">
     </div>
     <div class="form-row">
+      <label class="form-label" for="cv-reply">
+        <input type="checkbox" id="cv-reply" name="reply" value="on"{{if eq (index .ControlMap "reply") "true"}} checked{{end}}>
+        Accept replies
+      </label>
+      <span class="form-hint">Sends with a tokenized reply address; a reply comes back to this environment's webhook endpoints as an <code>email.reply</code> event. Overrides Reply-To. Needs a verified inbound domain.</span>
+    </div>
+    <div class="form-row">
       <label class="form-label" for="cv-editor-type-trigger">Editor type</label>
       {{template "ui-select" (uiSelectForm "cv-editor-type" "editor_type" "cvEditorType"
         (uiSelectOptions "block" "Block (plain text)" "html" "HTML")
