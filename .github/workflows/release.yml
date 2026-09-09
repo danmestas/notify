@@ -46,7 +46,16 @@ jobs:
           rm -rf "dist/notify-${{ steps.version.outputs.version }}-linux-amd64"
 
       - name: Upgrade notes from the tag annotation
+        # actions/checkout replaces the tag it checks out with a LIGHTWEIGHT
+        # tag pointing at the commit, so %(contents) would return the commit
+        # message rather than the annotation. Re-fetching the tag object
+        # restores it. The first release (version-0.1.0) shipped with #347's
+        # commit body as its upgrade notes for exactly this reason.
         run: |
+          git fetch --force --tags origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          if [ "$(git cat-file -t "$GITHUB_REF_NAME")" != "tag" ]; then
+            echo "::warning::$GITHUB_REF_NAME is not an annotated tag; the release will have no upgrade notes"
+          fi
           {
             notes=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")
             if [ -n "$notes" ]; then
