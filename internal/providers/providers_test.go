@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 var (
@@ -67,17 +68,21 @@ func TestCapture_ConcurrentSendsAreSafe(t *testing.T) {
 }
 
 func TestBuildMIME_HeadersAndBody(t *testing.T) {
-	textMIME := string(BuildMIME(EmailMessage{
+	textRaw, messageID := BuildMIME(EmailMessage{
 		From:    "from@x.com",
 		To:      "to@x.com",
 		Subject: "Subject Line",
 		Text:    "hello body",
-	}))
+	})
+	textMIME := string(textRaw)
 	for _, want := range []string{
 		"From: from@x.com\r\n",
 		"To: to@x.com\r\n",
 		"Subject: Subject Line\r\n",
 		"MIME-Version: 1.0\r\n",
+		"Content-Transfer-Encoding: quoted-printable\r\n",
+		"Date: ",
+		"Message-ID: <" + messageID + ">\r\n",
 		"text/plain",
 		"hello body",
 	} {
@@ -93,13 +98,14 @@ func TestBuildMIME_HeadersAndBody(t *testing.T) {
 		t.Errorf("text MIME missing header/body separator:\n%s", textMIME)
 	}
 
-	htmlMIME := string(BuildMIME(EmailMessage{
+	htmlRaw, _ := BuildMIME(EmailMessage{
 		From:    "from@x.com",
 		To:      "to@x.com",
 		Subject: "HTML",
 		Text:    "plain fallback",
 		HTML:    "<p>hi</p>",
-	}))
+	})
+	htmlMIME := string(htmlRaw)
 	if !strings.Contains(htmlMIME, "text/html") {
 		t.Errorf("html MIME missing text/html:\n%s", htmlMIME)
 	}
@@ -108,5 +114,41 @@ func TestBuildMIME_HeadersAndBody(t *testing.T) {
 	}
 	if strings.Contains(htmlMIME, "text/plain") {
 		t.Errorf("html MIME should not be text/plain:\n%s", htmlMIME)
+	}
+}
+
+// TestBuildMIME_MessageIDAndEncoding pins the parts a pipe to an MTA depends
+// on: a well-formed Message-ID at the sender's domain, an RFC 5322 Date, and a
+// quoted-printable body so 8-bit text and long lines survive the pipe.
+func TestBuildMIME_MessageIDAndEncoding(t *testing.T) {
+	raw, id := BuildMIME(EmailMessage{
+		From:    "Quarry <forge@example.org>",
+		To:      "to@x.com",
+		Subject: "S",
+		Text:    "caf\u00e9 " + strings.Repeat("x", 1200),
+	})
+	mime := string(raw)
+	if !strings.HasSuffix(id, "@example.org") {
+		t.Errorf("Message-ID = %q, want the sender's domain", id)
+	}
+	if strings.Contains(mime, "caf\u00e9") {
+		t.Errorf("8-bit body was written raw; want quoted-printable")
+	}
+	if !strings.Contains(mime, "caf=C3=A9") {
+		t.Errorf("body not quoted-printable encoded:\n%s", mime)
+	}
+	for _, line := range strings.Split(mime, "\r\n") {
+		if len(line) > 998 {
+			t.Fatalf("line of %d octets exceeds the RFC 5322 limit; soft-wrap missing", len(line))
+		}
+	}
+	dateLine := ""
+	for _, line := range strings.Split(mime, "\r\n") {
+		if strings.HasPrefix(line, "Date: ") {
+			dateLine = strings.TrimPrefix(line, "Date: ")
+		}
+	}
+	if _, err := time.Parse(time.RFC1123Z, dateLine); err != nil {
+		t.Errorf("Date header %q is not RFC 1123Z: %v", dateLine, err)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/danmestas/notify/internal/agents/runtime/mesh"
 )
@@ -25,12 +26,17 @@ type config struct {
 	// reads, so a host that already configured the sidecar needs no new
 	// setting.
 	bridgeToken string
-	dbPath      string
-	addr        string
-	dev         bool
-	masterKey   []byte
-	meshAllow   string
-	meshNATSURL string
+	// sendmailCommand is the argv the "sendmail" email provider pipes each
+	// message to. Host configuration like dbPath: it names a binary on this
+	// machine, so it is a flag/env rather than a per-tenant integration field
+	// -- otherwise any API-key holder could run an arbitrary command here.
+	sendmailCommand []string
+	dbPath          string
+	addr            string
+	dev             bool
+	masterKey       []byte
+	meshAllow       string
+	meshNATSURL     string
 
 	// Comma-separated exact hosts exempted from the outbound SSRF guard.
 	// Empty -- the default -- blocks every internal range, as before.
@@ -112,6 +118,7 @@ func loadConfig(args []string) (config, error) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	natsURL := fs.String("nats-url", envOr("NOTIFY_NATS_URL", "nats://127.0.0.1:4222"), "NATS client URL of the running dagnats sidecar (notify does not embed it)")
 	bridgeURL := fs.String("bridge-url", envOr("NOTIFY_BRIDGE_URL", "http://127.0.0.1:8080"), "worker bridge URL of the running dagnats sidecar")
+	sendmailCommand := fs.String("sendmail-command", envOr("NOTIFY_SENDMAIL_COMMAND", "/usr/sbin/sendmail -ti"), "command the \"sendmail\" email provider pipes messages to (split on whitespace, run without a shell)")
 	dbPath := fs.String("db", envOr("NOTIFY_DB", "notify.db"), "SQLite database path")
 	addr := fs.String("addr", envOr("NOTIFY_ADDR", "127.0.0.1:3000"), "HTTP listen address")
 	masterKeyHex := fs.String("master-key-hex", os.Getenv("NOTIFY_MASTER_KEY_HEX"), "32-byte AES master key as hex (required unless -dev)")
@@ -132,12 +139,15 @@ func loadConfig(args []string) (config, error) {
 		natsURL:     *natsURL,
 		bridgeURL:   *bridgeURL,
 		bridgeToken: os.Getenv("DAGNATS_BRIDGE_TOKEN"),
-		dbPath:      *dbPath,
-		addr:        *addr,
-		dev:         *dev,
-		masterKey:   mk,
-		meshAllow:   *meshAllow,
-		meshNATSURL: *meshNATSURL,
+		// Whitespace split, no shell: there is no quoting to get wrong and
+		// nothing an operator-typed value could inject through.
+		sendmailCommand: strings.Fields(*sendmailCommand),
+		dbPath:          *dbPath,
+		addr:            *addr,
+		dev:             *dev,
+		masterKey:       mk,
+		meshAllow:       *meshAllow,
+		meshNATSURL:     *meshNATSURL,
 
 		ssrfAllowedHosts: *ssrfAllow,
 

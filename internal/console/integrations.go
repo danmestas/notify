@@ -41,6 +41,7 @@ type providerMeta struct {
 // The ID must match the ProviderID stored in the integrations table.
 var providerCatalog = []providerMeta{
 	{ID: "smtp", Label: "Custom SMTP", Channel: "email"},
+	{ID: "sendmail", Label: "Local MTA (sendmail)", Channel: "email"},
 	{ID: "cloudflare_email", Label: "Cloudflare Email", Channel: "email"},
 	{ID: "resend", Label: "Resend", Channel: "email"},
 	{ID: "ses", Label: "Amazon SES", Channel: "email"},
@@ -346,6 +347,14 @@ func credentialFieldsForProvider(providerID string) []integrationCredentialField
 		return []integrationCredentialField{
 			{Key: "api_key", Label: "API Key", Value: connectivity.CredentialMaskSentinel, Required: true},
 			{Key: "from", Label: "From address", Value: connectivity.CredentialMaskSentinel, Required: true},
+		}
+	case "sendmail":
+		return []integrationCredentialField{
+			{
+				Key: "from", Label: "From address", Value: connectivity.CredentialMaskSentinel, Required: true,
+				Help: "Messages are piped to this host's MTA (the operator's -sendmail-command, " +
+					"default /usr/sbin/sendmail -ti). The command is not configurable here.",
+			},
 		}
 	case "ses":
 		return []integrationCredentialField{
@@ -1019,6 +1028,9 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			From:   r.FormValue("from"),
 		}
 		_, createErr = c.deps.Connectivity.CreateResend(r.Context(), scope, identifier, cfg, primary)
+	case "sendmail":
+		cfg := connectivity.SendmailConfig{From: r.FormValue("from")}
+		_, createErr = c.deps.Connectivity.CreateSendmail(r.Context(), scope, identifier, cfg, primary)
 	case "ses":
 		cfg := connectivity.SESConfig{
 			AccessKeyID:     r.FormValue("access_key_id"),

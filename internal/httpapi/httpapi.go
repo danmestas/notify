@@ -657,7 +657,7 @@ func postTopicSubscriber(aud *audience.Service) http.HandlerFunc {
 // Password and apiToken are never echoed in the response DTO.
 type emailIntegrationRequest struct {
 	Identifier string `json:"identifier"`
-	Provider   string `json:"provider"` // "smtp" (default) or "cloudflare-email"
+	Provider   string `json:"provider"` // "smtp" (default), "cloudflare-email", "resend", "ses", "sendmail"
 	From       string `json:"from"`
 	Primary    bool   `json:"primary"`
 	// SMTP fields.
@@ -742,6 +742,14 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 				Region:          req.Region,
 				From:            req.From,
 			}, req.Primary)
+		case "sendmail":
+			// Only the sender is tenant data. The pipe command is operator
+			// configuration (-sendmail-command) and is deliberately not
+			// accepted here: an API-key holder must not be able to choose
+			// which binary the notify process executes.
+			in, err = conn.CreateSendmail(r.Context(), scope, req.Identifier, connectivity.SendmailConfig{
+				From: req.From,
+			}, req.Primary)
 		case "smtp", "": // empty provider defaults to smtp for backward compatibility.
 			if req.Host == "" {
 				writeJSONError(w, http.StatusBadRequest, "bad_request", "host is required")
@@ -762,7 +770,7 @@ func postEmailIntegration(conn *connectivity.Service) http.HandlerFunc {
 		default:
 			// Fail closed on unknown providers rather than silently storing
 			// them as SMTP rows with empty credentials.
-			writeJSONError(w, http.StatusBadRequest, "bad_request", "unknown provider "+req.Provider+"; allowed: smtp, cloudflare-email, resend, ses")
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "unknown provider "+req.Provider+"; allowed: smtp, cloudflare-email, resend, ses, sendmail")
 			return
 		}
 
@@ -1594,6 +1602,7 @@ func getNotificationMessages(st *store.Store) http.HandlerFunc {
 // enforces that, and maskCredentials fails CLOSED for any provider missing here.
 var integrationSecretFields = map[string]map[string]bool{
 	"smtp":             {"password": true},
+	"sendmail":         {}, // only "from" is stored; nothing to mask
 	"cloudflare-email": {"api_token": true},
 	"ntfy":             {"token": true},
 	"expo":             {"access_token": true},
@@ -1820,6 +1829,11 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 			in, err = conn.CreateResend(r.Context(), scope, req.Identifier, connectivity.ResendConfig{
 				APIKey: req.Credentials["api_key"],
 				From:   req.Credentials["from"],
+			}, req.Primary)
+		case "sendmail":
+			// See postEmailIntegration: the pipe command is never tenant data.
+			in, err = conn.CreateSendmail(r.Context(), scope, req.Identifier, connectivity.SendmailConfig{
+				From: req.Credentials["from"],
 			}, req.Primary)
 		case "ses":
 			in, err = conn.CreateSES(r.Context(), scope, req.Identifier, connectivity.SESConfig{

@@ -31,6 +31,7 @@ import (
 	"github.com/danmestas/notify/internal/providers/mastodon"
 	"github.com/danmestas/notify/internal/providers/ntfy"
 	"github.com/danmestas/notify/internal/providers/resend"
+	"github.com/danmestas/notify/internal/providers/sendmail"
 	"github.com/danmestas/notify/internal/providers/ses"
 	"github.com/danmestas/notify/internal/providers/signalwire"
 	"github.com/danmestas/notify/internal/providers/slack"
@@ -79,6 +80,15 @@ type SMTPConfig struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	From     string `json:"from"`
+}
+
+// SendmailConfig is the pipe-to-MTA email integration. It carries only the
+// sender: the command that is piped to is operator configuration fixed at
+// boot (Service.sendmailCommand), never tenant data. Storing a command here
+// would let any API-key holder run an arbitrary binary as the notify process
+// by creating an integration.
+type SendmailConfig struct {
+	From string `json:"from"`
 }
 
 // NtfyConfig is the credential payload for an ntfy push integration: the
@@ -269,6 +279,12 @@ type Service struct {
 	// httptest.Server on loopback, which the guard otherwise blocks by design.
 	deliveryHTTPClient *http.Client
 
+	// sendmailCommand is the argv the "sendmail" email provider pipes each
+	// message to. Operator configuration (-sendmail-command); empty means the
+	// provider's own default. It is host config in the same sense as the
+	// database path, which is why it is not stored per integration.
+	sendmailCommand []string
+
 	// probeHTTPClient overrides the client used by VerifyByID's credential
 	// probes (see probeClient in verify.go). Same rationale as
 	// deliveryHTTPClient: nil in production (SSRF-safe), overridable by tests
@@ -286,6 +302,22 @@ type Option func(*Service)
 // Intended for tests only: the default (no option) is the SSRF-safe client,
 // which blocks loopback/RFC1918/link-local by design, so an end-to-end test
 // that drives real delivery against a loopback stub server must pass this.
+// WithSendmailCommand sets the argv the "sendmail" provider pipes to. Empty
+// leaves the provider's default (`/usr/sbin/sendmail -ti`).
+func WithSendmailCommand(argv []string) Option {
+	return func(svc *Service) { svc.sendmailCommand = append([]string(nil), argv...) }
+}
+
+// SendmailCommand reports the effective pipe command, for display: the
+// console shows it beside a sendmail integration so an operator can see which
+// MTA a tenant's mail goes through.
+func (svc *Service) SendmailCommand() []string {
+	if len(svc.sendmailCommand) == 0 {
+		return sendmail.DefaultCommand
+	}
+	return svc.sendmailCommand
+}
+
 func WithHTTPClient(c *http.Client) Option {
 	return func(s *Service) {
 		s.deliveryHTTPClient = c
@@ -366,6 +398,28 @@ func (svc *Service) CreateSMTP(ctx context.Context, scope domain.Scope, identifi
 	}
 	return svc.createIntegration(ctx, scope, domain.Integration{
 		ProviderID:     "smtp",
+		Channel:        "email",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
+// CreateSendmail stores a pipe-to-MTA email integration for the Scope with
+// ProviderID="sendmail" and Channel="email". Only the sender is stored; the
+// pipe command is operator configuration.
+func (svc *Service) CreateSendmail(ctx context.Context, scope domain.Scope, identifier string, cfg SendmailConfig, primary bool) (domain.Integration, error) {
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal sendmail config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt sendmail config: %w", err)
+	}
+	return svc.createIntegration(ctx, scope, domain.Integration{
+		ProviderID:     "sendmail",
 		Channel:        "email",
 		EncCredentials: enc,
 		Active:         true,
@@ -547,6 +601,12 @@ func (svc *Service) EmailProviderFromIntegration(in domain.Integration) (provide
 		// EmailMessage and is serialised into the JSON body unchanged. Return ""
 		// so the caller's From default stays whatever the message carried.
 		return &webhook.EmailClient{URL: cfg.WebhookURL, HMACSecret: cfg.HMACSecret, HTTPClient: svc.deliveryClient()}, "", nil
+	case "sendmail":
+		var cfg SendmailConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, "", fmt.Errorf("connectivity: unmarshal sendmail config: %w", err)
+		}
+		return &sendmail.Client{Command: svc.SendmailCommand(), From: cfg.From}, cfg.From, nil
 	case "smtp", "": // empty ProviderID covers legacy rows created before the field was enforced.
 		var cfg SMTPConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
@@ -1632,6 +1692,10 @@ func (svc *Service) VerifyByID(ctx context.Context, scope domain.Scope, id strin
 	res := VerifyResult{ProviderID: providerID, Channel: in.Channel}
 
 	switch providerID {
+	case "sendmail":
+		ok, detail := probeSendmail(svc.SendmailCommand())
+		res.OK, res.Detail = ok, detail
+		return res, nil
 	case "smtp", "":
 		var cfg SMTPConfig
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {

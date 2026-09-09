@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"net/url"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -263,4 +264,18 @@ func authedGET(ctx context.Context, client *http.Client, endpoint, authHeader st
 	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 	return resp.StatusCode, strings.TrimSpace(string(b)), nil
+}
+
+// probeSendmail verifies the pipe command can be found and is executable. It
+// deliberately does not run it: invoking an MTA with no message is not a
+// meaningful check, and some MTAs would wait on stdin.
+func probeSendmail(argv []string) (ok bool, detail string) {
+	if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
+		return false, "sendmail: no command configured"
+	}
+	path, err := exec.LookPath(argv[0])
+	if err != nil {
+		return false, fmt.Sprintf("sendmail: %s not found or not executable: %v", argv[0], err)
+	}
+	return true, fmt.Sprintf("sendmail: %s found (%s)", path, strings.Join(argv, " "))
 }
