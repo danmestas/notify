@@ -57,6 +57,9 @@ type EmailHandler struct {
 // honour. emailloop.Service satisfies this.
 type ReplyArmer interface {
 	ArmReply(ctx context.Context, scope domain.Scope, notificationID, transactionID, workflowIdentifier, subscriberID, subscriberEmail string) (replyTo string, ok bool, err error)
+	// DisarmReply drops the thread ArmReply bound when the send failed, so
+	// no mailbox stays live for a message that never left.
+	DisarmReply(ctx context.Context, scope domain.Scope, notificationID string) error
 }
 
 // WithReplyArmer attaches the reply loop. Without it a step's Reply opt-in is
@@ -256,18 +259,19 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 	// failure fails the send: a message that promises a reply it cannot take
 	// is worse than no message.
 	replyTo := env.Step.ReplyTo
+	armed := false
 	if env.Step.ReplyEnabled && h.armer == nil {
 		slog.Default().Warn("delivery: email step asks for replies but no reply loop is wired; sending without",
 			"notification", env.NotificationID, "workflow", env.WorkflowIdentifier)
 	}
 	if env.Step.ReplyEnabled && h.armer != nil {
-		armed, ok, aerr := h.armer.ArmReply(ctx, scope, env.NotificationID, env.TransactionID,
+		mailbox, ok, aerr := h.armer.ArmReply(ctx, scope, env.NotificationID, env.TransactionID,
 			env.WorkflowIdentifier, env.SubscriberID, to)
 		if aerr != nil {
 			return h.persistEmailError(ctx, env, t, providerID, integrationID, fmt.Errorf("arm reply thread: %w", aerr))
 		}
 		if ok {
-			replyTo = armed
+			replyTo, armed = mailbox, true
 		} else {
 			slog.Default().Info("delivery: email step asks for replies but inbound is not available for this scope; sending without",
 				"notification", env.NotificationID, "workflow", env.WorkflowIdentifier)
@@ -282,6 +286,12 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 		HTML:    msgHTML,
 		ReplyTo: replyTo,
 	}); err != nil {
+		if armed {
+			if derr := h.armer.DisarmReply(ctx, scope, env.NotificationID); derr != nil {
+				slog.Default().Error("delivery: reply thread left armed for a send that failed",
+					"notification", env.NotificationID, "err", derr)
+			}
+		}
 		return h.persistEmailError(ctx, env, t, providerID, integrationID, err)
 	}
 

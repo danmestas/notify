@@ -224,8 +224,8 @@ Content-Type: text/html
 func TestParseMessage_FeedsAccept(t *testing.T) {
 	f := newLoopFixture(t, nil)
 	ctx := t.Context()
-	scope, threadID, subID := f.armScope(t, ctx, "org1", "env1", "helper", "mail.example.org", "dev@example.com")
-	token := f.minter.Mint(scope, threadID, subID)
+	scope, threadID, _ := f.armScope(t, ctx, "org1", "env1", "helper", "mail.example.org", "dev@example.com")
+	token := f.token(t, scope, threadID)
 
 	raw := crlf(`
 From: dev@example.com

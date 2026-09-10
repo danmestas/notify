@@ -157,7 +157,7 @@ func (s *session) Rcpt(to string, _ *smtp.RcptOptions) error {
 		return errNoSuchMailbox
 	}
 	s.to, s.rcpt = to, rcpt
-	s.server.log.Info("smtpin: recipient accepted", "to", to, "from", s.from, "remote", s.remote, "thread", rcpt.Claims.ThreadID)
+	s.server.log.Info("smtpin: recipient accepted", "to", to, "from", s.from, "remote", s.remote, "thread", rcpt.Binding.PlatformThreadID)
 	return nil
 }
 

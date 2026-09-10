@@ -35,6 +35,17 @@ type loopFixture struct {
 	dispatches []InboundTurn
 }
 
+// token mints the reply token for an armed thread: the row id the token
+// names is only known to the store.
+func (f *loopFixture) token(t *testing.T, scope domain.Scope, threadID string) string {
+	t.Helper()
+	row, err := f.st.EmailThreads().Get(context.Background(), scope, threadID)
+	if err != nil {
+		t.Fatalf("thread %s not armed: %v", threadID, err)
+	}
+	return f.minter.Mint(row.ID)
+}
+
 func newLoopFixture(t *testing.T, resolver EmailResolver) *loopFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -157,12 +168,12 @@ func TestEmailLoop_OutboundReplyTo_ThenInboundThreadsAndDispatches(t *testing.T)
 	}
 	token := strings.TrimSuffix(strings.TrimPrefix(addr, "reply+"), "@inbound-a.test")
 	// The token round-trips to the conversation it correlates.
-	claims, err := f.minter.Verify(token)
+	rowID, err := f.minter.Verify(token)
 	if err != nil {
 		t.Fatalf("token from reply-to does not verify: %v", err)
 	}
-	if claims.ThreadID != threadID || claims.EnvID != "env-a" {
-		t.Fatalf("token claims = %+v, want thread=%s env=env-a", claims, threadID)
+	if row, err := f.st.EmailThreads().GetByID(ctx, rowID); err != nil || row.PlatformThreadID != threadID || row.EnvID != "env-a" {
+		t.Fatalf("token row = %+v (%v), want thread=%s env=env-a", row, err, threadID)
 	}
 
 	// (2) Inbound: a customer reply arrives at the reply-to mailbox. The body
@@ -263,11 +274,11 @@ func TestEmailLoop_MissingSecretRejected(t *testing.T) {
 func TestEmailLoop_ScopeIsolation(t *testing.T) {
 	ctx := context.Background()
 	f := newLoopFixture(t, nil)
-	scopeA, threadA, subA := f.armScope(t, ctx, "org-a", "env-a", "support", "inbound-a.test", "alice@a.test")
+	scopeA, threadA, _ := f.armScope(t, ctx, "org-a", "env-a", "support", "inbound-a.test", "alice@a.test")
 	f.armScope(t, ctx, "org-b", "env-b", "support", "inbound-b.test", "bob@b.test")
 
 	// Mint a token for env-a's conversation, but present it at env-b's domain.
-	tokenA := f.minter.Mint(scopeA, threadA, subA)
+	tokenA := f.token(t, scopeA, threadA)
 	crossAddr := "reply+" + tokenA + "@inbound-b.test"
 	status, result := postInbound(t, f.svc.HandleInbound, inboundSecret, InboundEmail{
 		To: crossAddr, EnvelopeTo: crossAddr, Text: "cross-tenant attempt",
@@ -324,9 +335,12 @@ func TestEmailLoop_CloseTheLoop_AgentReplyMailedBack(t *testing.T) {
 	}
 	// The closing reply-to token re-correlates to the same conversation.
 	tok := strings.TrimSuffix(strings.TrimPrefix(msg.ReplyTo, "reply+"), "@inbound-a.test")
-	claims, err := f.minter.Verify(tok)
-	if err != nil || claims.ThreadID != threadID {
-		t.Fatalf("closing token claims = %+v err=%v, want thread=%s", claims, err, threadID)
+	rowID, err := f.minter.Verify(tok)
+	if err != nil {
+		t.Fatalf("closing token does not verify: %v", err)
+	}
+	if row, err := f.st.EmailThreads().GetByID(ctx, rowID); err != nil || row.PlatformThreadID != threadID {
+		t.Fatalf("closing token row = %+v err=%v, want thread=%s", row, err, threadID)
 	}
 }
 
@@ -350,10 +364,10 @@ func (r captureResolver) ResolveEmail(_ context.Context, _ domain.Scope) (provid
 func TestEmailLoop_ValidTokenNoBindingDropped(t *testing.T) {
 	ctx := context.Background()
 	f := newLoopFixture(t, nil)
-	scope, _, subID := f.armScope(t, ctx, "org-a", "env-a", "support", "inbound-a.test", "alice@customer.test")
+	f.armScope(t, ctx, "org-a", "env-a", "support", "inbound-a.test", "alice@customer.test")
 
-	unarmed := corestore.NewULID()
-	addr := "reply+" + f.minter.Mint(scope, unarmed, subID) + "@inbound-a.test"
+	// A valid signature over a row that was never written.
+	addr := "reply+" + f.minter.Mint(corestore.NewULID()) + "@inbound-a.test"
 
 	status, result := postInbound(t, f.svc.HandleInbound, inboundSecret, InboundEmail{
 		From: "alice@customer.test", To: addr, EnvelopeTo: addr, Text: "anyone there?",

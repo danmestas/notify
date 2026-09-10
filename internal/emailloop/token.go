@@ -14,9 +14,11 @@
 //  3. Close — the responder (agent) reply is mailed back out with the same
 //     tokenized Reply-To, so the thread continues.
 //
-// The token is a stateless HMAC-signed envelope: no store row is needed to
-// verify it, it cannot be forged without the master key, and it embeds the
-// org+env so a token minted for one tenant cannot thread into another.
+// The token names an email_threads row by id and carries an HMAC over that id
+// under the master key: <row id>.<mac>. Every claim -- tenant, thread,
+// subscriber -- lives on the row, so the address stays well inside the 64
+// octets RFC 5321 allows a local part (#350), a token cannot be forged without
+// the key, and a token for a row that no longer exists is refused at RCPT.
 package emailloop
 
 import (
@@ -25,23 +27,12 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
-
-	"github.com/danmestas/notify/internal/domain"
 )
 
 // macLen is the number of HMAC bytes carried in the token. 16 bytes (128 bits)
 // is well past any practical forgery margin for an unguessable mailbox token
 // while keeping the address short.
 const macLen = 16
-
-// Claims is the verified content of a reply token: the tenancy scope plus the
-// conversation thread and subscriber it correlates to.
-type Claims struct {
-	OrgID        string
-	EnvID        string
-	ThreadID     string
-	SubscriberID string
-}
 
 // Minter mints and verifies reply tokens with an HMAC keyed by the deployment
 // master key (the same 32-byte key identity uses). A Minter is safe for
@@ -63,64 +54,39 @@ func NewMinter(masterKey []byte) *Minter {
 	return &Minter{key: k}
 }
 
-// Mint returns an opaque token correlating a conversation thread + subscriber
-// within scope. The token is URL/address safe (base64url, no padding) so it
-// drops straight into reply+<token>@<domain>.
-func (m *Minter) Mint(scope domain.Scope, threadID, subscriberID string) string {
-	payload := encodePayload(scope.EnvID, scope.OrgID, threadID, subscriberID)
-	mac := m.sign(payload)
-	return b64(payload) + "." + b64(mac[:macLen])
+// Mint returns the token for an email_threads row id. The id is a ULID, so
+// the token is address safe as-is and 49 characters long.
+func (m *Minter) Mint(threadRowID string) string {
+	mac := m.sign(threadRowID)
+	return threadRowID + "." + b64(mac[:macLen])
 }
 
-// Verify parses and authenticates a token, returning its Claims. A malformed
-// token, a tampered payload, or a wrong-key signature returns an error; callers
-// MUST treat any error as "unknown mailbox" and drop the inbound mail rather
-// than acting on partial data.
-func (m *Minter) Verify(token string) (Claims, error) {
+// Verify authenticates a token and returns the email_threads row id it names.
+// A malformed token or a wrong-key signature returns an error; callers MUST
+// treat any error as "unknown mailbox" and drop the inbound mail.
+func (m *Minter) Verify(token string) (string, error) {
 	dot := strings.IndexByte(token, '.')
 	if dot <= 0 || dot == len(token)-1 {
-		return Claims{}, fmt.Errorf("emailloop: malformed token")
+		return "", fmt.Errorf("emailloop: malformed token")
 	}
-	payload, err := unb64(token[:dot])
-	if err != nil {
-		return Claims{}, fmt.Errorf("emailloop: decode payload: %w", err)
-	}
+	id := token[:dot]
 	gotMAC, err := unb64(token[dot+1:])
 	if err != nil {
-		return Claims{}, fmt.Errorf("emailloop: decode mac: %w", err)
+		return "", fmt.Errorf("emailloop: decode mac: %w", err)
 	}
-	want := m.sign(payload)
+	want := m.sign(id)
 	// Constant-time compare on the truncated MAC.
 	if len(gotMAC) != macLen || !hmac.Equal(gotMAC, want[:macLen]) {
-		return Claims{}, fmt.Errorf("emailloop: token signature mismatch")
+		return "", fmt.Errorf("emailloop: token signature mismatch")
 	}
-	env, org, thread, sub, err := decodePayload(payload)
-	if err != nil {
-		return Claims{}, err
-	}
-	return Claims{OrgID: org, EnvID: env, ThreadID: thread, SubscriberID: sub}, nil
+	return id, nil
 }
 
-// sign computes the full HMAC-SHA256 of payload under the master key.
-func (m *Minter) sign(payload []byte) []byte {
+// sign computes the full HMAC-SHA256 of id under the master key.
+func (m *Minter) sign(id string) []byte {
 	h := hmac.New(sha256.New, m.key)
-	h.Write(payload)
+	h.Write([]byte(id))
 	return h.Sum(nil)
-}
-
-// encodePayload joins the fields with a separator that cannot appear in the
-// values (a control byte), so the payload parses unambiguously regardless of
-// id contents.
-func encodePayload(env, org, thread, sub string) []byte {
-	return []byte(strings.Join([]string{env, org, thread, sub}, "\x1f"))
-}
-
-func decodePayload(payload []byte) (env, org, thread, sub string, err error) {
-	parts := strings.Split(string(payload), "\x1f")
-	if len(parts) != 4 {
-		return "", "", "", "", fmt.Errorf("emailloop: token payload has %d fields, want 4", len(parts))
-	}
-	return parts[0], parts[1], parts[2], parts[3], nil
 }
 
 func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }

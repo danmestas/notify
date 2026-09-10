@@ -131,3 +131,42 @@ func TestEmailThreadRepo_List_LimitClamp(t *testing.T) {
 		t.Errorf("len(items) = %d, want 1 (limit=0 should default, not return zero)", len(items))
 	}
 }
+
+// TestEmailThreadRepo_GetByIDAndDelete: a reply token names the row by id
+// (#350), so the row must be readable by id alone, and disarming must remove
+// it so the token stops resolving.
+func TestEmailThreadRepo_GetByIDAndDelete(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	scope := domain.Scope{OrgID: "orgA", EnvID: "envA"}
+	row, err := s.EmailThreads().Upsert(ctx, scope, EmailThread{
+		PlatformThreadID: "ntf_1", SubscriberID: "sub", SubscriberEmail: "s@example.com", InboundDomain: "in.example.com",
+	})
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	got, err := s.EmailThreads().GetByID(ctx, row.ID)
+	if err != nil || got.PlatformThreadID != "ntf_1" || got.OrgID != "orgA" || got.EnvID != "envA" {
+		t.Fatalf("GetByID = %+v, %v", got, err)
+	}
+	// Re-arming keeps the id, so a token minted before the re-arm still resolves.
+	again, err := s.EmailThreads().Upsert(ctx, scope, EmailThread{PlatformThreadID: "ntf_1", SubscriberID: "sub", SubscriberEmail: "s@example.com", InboundDomain: "in.example.com"})
+	if err != nil || again.ID != row.ID {
+		t.Fatalf("re-upsert id = %q, want %q (%v)", again.ID, row.ID, err)
+	}
+	if err := s.EmailThreads().Delete(ctx, domain.Scope{OrgID: "orgB", EnvID: "envB"}, "ntf_1"); err != nil {
+		t.Fatalf("Delete other scope: %v", err)
+	}
+	if _, err := s.EmailThreads().GetByID(ctx, row.ID); err != nil {
+		t.Fatal("a delete from another tenant removed the row")
+	}
+	if err := s.EmailThreads().Delete(ctx, scope, "ntf_1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := s.EmailThreads().GetByID(ctx, row.ID); err != ErrNotFound {
+		t.Fatalf("GetByID after delete = %v, want ErrNotFound", err)
+	}
+	if err := s.EmailThreads().Delete(ctx, scope, "ntf_1"); err != nil {
+		t.Fatalf("Delete of a missing row: %v", err)
+	}
+}

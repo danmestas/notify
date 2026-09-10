@@ -116,8 +116,11 @@ func (s *Service) ReplyToAddress(ctx context.Context, scope domain.Scope, thread
 	if !ok {
 		return "", false
 	}
-	token := s.minter.Mint(scope, threadID, subscriberID)
-	return "reply+" + token + "@" + dom, true
+	binding, err := s.core.EmailThreads().Get(ctx, scope, threadID)
+	if err != nil {
+		return "", false
+	}
+	return "reply+" + s.minter.Mint(binding.ID) + "@" + dom, true
 }
 
 // VerifiedInboundDomain returns the first verified inbound domain for scope
@@ -225,11 +228,10 @@ const (
 )
 
 // Recipient is a reply mailbox that passed every check needing only the
-// address: the token verified, its domain is verified for the token's scope,
-// and the thread it names is armed.
+// address: the token verified, the thread it names is armed, and the address
+// host is a verified inbound domain for the thread's tenant.
 type Recipient struct {
 	Scope   domain.Scope
-	Claims  Claims
 	Binding corestore.EmailThread
 }
 
@@ -247,15 +249,25 @@ func (s *Service) CheckRecipient(ctx context.Context, addr string) (Recipient, A
 		s.log.Info("emailloop: inbound mail with no reply token, dropped", "to", addr)
 		return Recipient{}, StatusNoToken
 	}
-	claims, err := s.minter.Verify(token)
+	rowID, err := s.minter.Verify(token)
 	if err != nil {
 		s.log.Warn("emailloop: inbound token verify failed, dropped", "to", addr, "err", err)
 		return Recipient{}, StatusInvalidToken
 	}
-	scope := domain.Scope{OrgID: claims.OrgID, EnvID: claims.EnvID}
+
+	// The token names an email_threads row; every claim comes from it. A
+	// missing row means the thread was never armed, or was disarmed when the
+	// send it belonged to failed (#350) — drop.
+	binding, err := s.core.EmailThreads().GetByID(ctx, rowID)
+	if err != nil {
+		s.log.Warn("emailloop: no email-thread binding for token, dropped",
+			"to", addr, "row", rowID, "err", err)
+		return Recipient{}, StatusNoBinding
+	}
+	scope := domain.Scope{OrgID: binding.OrgID, EnvID: binding.EnvID}
 
 	// Confirm the inbound domain in the address is still a verified domain for
-	// the token's scope. This closes a window where a token was minted against
+	// the thread's scope. This closes a window where a token was minted against
 	// a domain that has since been removed/unverified, and binds the address
 	// host to the tenant rather than trusting the token alone.
 	if !s.isVerifiedInboundDomain(ctx, scope, host) {
@@ -263,18 +275,7 @@ func (s *Service) CheckRecipient(ctx context.Context, addr string) (Recipient, A
 			"to", addr, "host", host, "org", scope.OrgID, "env", scope.EnvID)
 		return Recipient{}, StatusDomainUnverified
 	}
-
-	// Resolve the email-thread binding to learn the responder agent. The token
-	// carries the thread id; the binding carries the agent. A missing binding
-	// means the thread was never armed (e.g. token replayed after the binding
-	// was pruned) — drop.
-	binding, err := s.core.EmailThreads().Get(ctx, scope, claims.ThreadID)
-	if err != nil {
-		s.log.Warn("emailloop: no email-thread binding for token, dropped",
-			"to", addr, "thread", claims.ThreadID, "err", err)
-		return Recipient{}, StatusNoBinding
-	}
-	return Recipient{Scope: scope, Claims: claims, Binding: binding}, ""
+	return Recipient{Scope: scope, Binding: binding}, ""
 }
 
 // Accept runs the whole inbound path for an already-parsed message: recipient
@@ -293,7 +294,7 @@ func (s *Service) Accept(ctx context.Context, payload InboundEmail) (AcceptStatu
 
 	body := bestBody(payload)
 	if body == "" {
-		s.log.Info("emailloop: inbound mail had empty body, dropped", "thread", rcpt.Claims.ThreadID)
+		s.log.Info("emailloop: inbound mail had empty body, dropped", "thread", rcpt.Binding.PlatformThreadID)
 		return StatusEmptyBody, nil
 	}
 
@@ -302,7 +303,7 @@ func (s *Service) Accept(ctx context.Context, payload InboundEmail) (AcceptStatu
 	// the reply path -- the two are selected here and nowhere else.
 	if rcpt.Binding.Kind == KindWebhook {
 		if err := s.publishReply(rcpt, payload, body); err != nil {
-			s.log.Error("emailloop: reply event not published", "thread", rcpt.Claims.ThreadID, "err", err)
+			s.log.Error("emailloop: reply event not published", "thread", rcpt.Binding.PlatformThreadID, "err", err)
 			return "", err
 		}
 		return StatusThreaded, nil
@@ -310,8 +311,8 @@ func (s *Service) Accept(ctx context.Context, payload InboundEmail) (AcceptStatu
 
 	turn := InboundTurn{
 		Scope:           rcpt.Scope,
-		ThreadID:        rcpt.Claims.ThreadID,
-		SubscriberID:    rcpt.Claims.SubscriberID,
+		ThreadID:        rcpt.Binding.PlatformThreadID,
+		SubscriberID:    rcpt.Binding.SubscriberID,
 		AgentIdentifier: rcpt.Binding.AgentIdentifier,
 		Text:            body,
 	}
@@ -326,7 +327,7 @@ func (s *Service) Accept(ctx context.Context, payload InboundEmail) (AcceptStatu
 		s.log.Error("emailloop: responder dispatch failed", "err", err)
 		return "", err
 	}
-	s.log.Info("emailloop: inbound mail threaded", "thread", rcpt.Claims.ThreadID, "agent", rcpt.Binding.AgentIdentifier)
+	s.log.Info("emailloop: inbound mail threaded", "thread", rcpt.Binding.PlatformThreadID, "agent", rcpt.Binding.AgentIdentifier)
 	return StatusThreaded, nil
 }
 
@@ -354,7 +355,7 @@ func (s *Service) ReplyHook(ctx context.Context, scope domain.Scope, conv agentd
 		s.log.Error("emailloop: resolve email for reply", "err", err, "thread", conv.PlatformThreadID)
 		return
 	}
-	replyTo := "reply+" + s.minter.Mint(scope, conv.PlatformThreadID, binding.SubscriberID) + "@" + binding.InboundDomain
+	replyTo := "reply+" + s.minter.Mint(binding.ID) + "@" + binding.InboundDomain
 	if _, err := provider.Send(ctx, providers.EmailMessage{
 		From:    from,
 		To:      binding.SubscriberEmail,

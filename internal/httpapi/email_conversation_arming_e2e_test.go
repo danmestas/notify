@@ -385,21 +385,12 @@ func TestAgentEmailConversation_ClosesTheLoop_EndToEnd(t *testing.T) {
 		t.Fatalf("subscriber upsert: %v", err)
 	}
 
-	// --- (1) BEFORE arming: ComposeMessage alone creates a thread, but with no
-	// binding written a genuine reply-to for it drops "no_binding". This is
-	// the exact bug #317 fixes: nothing in production ever called
-	// ArmEmailThread, so the loop never armed itself.
-	unarmedThread := "thr-unarmed-01"
-	unarmedAddr, ok := h.eml.ReplyToAddress(context.Background(), scope, unarmedThread, "sub-ada")
-	if !ok {
-		t.Fatal("ReplyToAddress: ok=false, want a mintable reply-to (domain is verified)")
-	}
-	preStatus, preBody := postInboundEmail(t, h.srv.URL, emailArmInboundSecret, unarmedAddr, "reply before arming")
-	if preStatus != http.StatusOK {
-		t.Fatalf("pre-arm inbound status = %d, want 200 (body=%s)", preStatus, preBody)
-	}
-	if preResult(t, preBody) != "no_binding" {
-		t.Fatalf("pre-arm inbound result = %q, want no_binding (proves the loop is broken without arming)", preResult(t, preBody))
+	// --- (1) BEFORE arming: a thread with no binding has no reply mailbox at
+	// all. The token names the email_threads row (#350), so nothing can be
+	// minted for a thread nobody armed -- the #317 symptom (a reply-to that
+	// drops "no_binding") cannot be produced any more.
+	if addr, ok := h.eml.ReplyToAddress(context.Background(), scope, "thr-unarmed-01", "sub-ada"); ok {
+		t.Fatalf("ReplyToAddress for an unarmed thread = %q, want ok=false", addr)
 	}
 
 	// --- (2) Start the email-origin conversation via the new route.

@@ -86,7 +86,11 @@ func newFixture(t *testing.T) *fixture {
 	if err := svc.ArmEmailThread(ctx, scope, "helper", threadID, "sub-1", "dev@example.com", "mail.example.org"); err != nil {
 		t.Fatalf("ArmEmailThread: %v", err)
 	}
-	token := minter.Mint(scope, threadID, "sub-1")
+	row, err := st.EmailThreads().Get(ctx, scope, threadID)
+	if err != nil {
+		t.Fatalf("thread row: %v", err)
+	}
+	token := minter.Mint(row.ID)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

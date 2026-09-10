@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/danmestas/notify/internal/domain"
+	corestore "github.com/danmestas/notify/internal/store"
 )
 
 // TestAccept_StatusPerDrop pins every outcome of the shared inbound path in
@@ -14,13 +14,13 @@ import (
 func TestAccept_StatusPerDrop(t *testing.T) {
 	f := newLoopFixture(t, nil)
 	ctx := context.Background()
-	scope, threadID, subID := f.armScope(t, ctx, "org1", "env1", "helper", "mail.example.org", "dev@example.com")
-	good := f.minter.Mint(scope, threadID, subID)
+	scope, threadID, _ := f.armScope(t, ctx, "org1", "env1", "helper", "mail.example.org", "dev@example.com")
+	good := f.token(t, scope, threadID)
 
 	// A token whose thread was never armed: valid signature, no binding.
-	unarmed := f.minter.Mint(scope, "thread-never-armed", subID)
-	// A token for a domain that is not verified for the scope.
-	other := NewMinter(testKey()).Mint(domain.Scope{OrgID: "org1", EnvID: "env1"}, threadID, subID)
+	unarmed := f.minter.Mint(corestore.NewULID())
+	// The armed token presented at a domain that is not verified for the scope.
+	other := good
 
 	tests := []struct {
 		name string
@@ -62,9 +62,9 @@ func TestAccept_StatusPerDrop(t *testing.T) {
 func TestCheckRecipient_RefusesWithoutABody(t *testing.T) {
 	f := newLoopFixture(t, nil)
 	ctx := context.Background()
-	scope, threadID, subID := f.armScope(t, ctx, "org1", "env1", "helper", "mail.example.org", "dev@example.com")
-	good := f.minter.Mint(scope, threadID, subID)
-	unarmed := f.minter.Mint(scope, "never-armed", subID)
+	scope, threadID, _ := f.armScope(t, ctx, "org1", "env1", "helper", "mail.example.org", "dev@example.com")
+	good := f.token(t, scope, threadID)
+	unarmed := f.minter.Mint(corestore.NewULID())
 
 	for _, tc := range []struct {
 		addr string
@@ -82,7 +82,7 @@ func TestCheckRecipient_RefusesWithoutABody(t *testing.T) {
 			t.Errorf("CheckRecipient(%q) = %q, want %q", tc.addr, status, tc.want)
 		}
 		if status == "" {
-			if rcpt.Binding.AgentIdentifier != "helper" || rcpt.Claims.ThreadID != threadID {
+			if rcpt.Binding.AgentIdentifier != "helper" || rcpt.Binding.PlatformThreadID != threadID {
 				t.Errorf("accepted recipient carries wrong binding: %+v", rcpt)
 			}
 			// Accept must agree with the address-only verdict.
@@ -107,8 +107,8 @@ func (r failingResponder) Respond(context.Context, InboundTurn) (string, error) 
 func TestAccept_ResponderFailureIsTheOnlyError(t *testing.T) {
 	f := newLoopFixture(t, nil)
 	ctx := context.Background()
-	scope, threadID, subID := f.armScope(t, ctx, "org1", "env1", "helper", "mail.example.org", "dev@example.com")
-	good := f.minter.Mint(scope, threadID, subID)
+	scope, threadID, _ := f.armScope(t, ctx, "org1", "env1", "helper", "mail.example.org", "dev@example.com")
+	good := f.token(t, scope, threadID)
 
 	f.svc.responder = failingResponder{err: errors.New("nats: connection closed")}
 	status, err := f.svc.Accept(ctx, InboundEmail{To: "reply+" + good + "@mail.example.org", Text: "hi"})

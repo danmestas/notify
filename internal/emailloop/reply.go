@@ -70,7 +70,7 @@ func (s *Service) ArmReply(ctx context.Context, scope domain.Scope, notification
 	if !ok {
 		return "", false, nil
 	}
-	if _, err := s.core.EmailThreads().Upsert(ctx, scope, corestore.EmailThread{
+	row, err := s.core.EmailThreads().Upsert(ctx, scope, corestore.EmailThread{
 		Kind:               KindWebhook,
 		PlatformThreadID:   notificationID,
 		SubscriberID:       subscriberID,
@@ -78,10 +78,18 @@ func (s *Service) ArmReply(ctx context.Context, scope domain.Scope, notification
 		InboundDomain:      dom,
 		TransactionID:      transactionID,
 		WorkflowIdentifier: workflowIdentifier,
-	}); err != nil {
+	})
+	if err != nil {
 		return "", false, fmt.Errorf("emailloop: arm reply thread: %w", err)
 	}
-	return "reply+" + s.minter.Mint(scope, notificationID, subscriberID) + "@" + dom, true, nil
+	return "reply+" + s.minter.Mint(row.ID) + "@" + dom, true, nil
+}
+
+// DisarmReply drops the thread ArmReply bound when the send it was armed for
+// never left (#350), so a reply mailbox is never live for mail nobody got.
+// A thread that is already gone is not an error.
+func (s *Service) DisarmReply(ctx context.Context, scope domain.Scope, notificationID string) error {
+	return s.core.EmailThreads().Delete(ctx, scope, notificationID)
 }
 
 // ReplyEvent is the email.reply event published for a webhook-kind reply.
@@ -118,7 +126,7 @@ func (s *Service) publishReply(rcpt Recipient, payload InboundEmail, text string
 		SubscriberID:   rcpt.Binding.SubscriberID,
 		TransactionID:  rcpt.Binding.TransactionID,
 		Workflow:       rcpt.Binding.WorkflowIdentifier,
-		NotificationID: rcpt.Claims.ThreadID,
+		NotificationID: rcpt.Binding.PlatformThreadID,
 		Text:           text,
 		From:           payload.From,
 		MessageID:      payload.Headers["Message-Id"],

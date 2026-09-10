@@ -45,6 +45,12 @@ type EmailThreadRepo interface {
 	// Get reads the binding for a thread without creating one. ErrNotFound when
 	// absent.
 	Get(ctx context.Context, scope domain.Scope, platformThreadID string) (EmailThread, error)
+	// GetByID reads a binding by its row id, the key a reply token names
+	// (#350). It is unscoped by design: the row carries the tenant, and the
+	// caller has nothing but the id until it does. ErrNotFound when absent.
+	GetByID(ctx context.Context, id string) (EmailThread, error)
+	// Delete removes the binding for a thread. A missing row is not an error.
+	Delete(ctx context.Context, scope domain.Scope, platformThreadID string) error
 	// List returns the scope's email-thread bindings, keyset-paginated on
 	// platform_thread_id (the stable, scope-unique key) ascending. The over-fetch
 	// + cursor mirrors InboundDomainRepo.List. SQL ordering is by
@@ -112,6 +118,35 @@ func (repo *emailThreadRepo) Get(ctx context.Context, scope domain.Scope, platfo
 		return EmailThread{}, err
 	}
 	return out, nil
+}
+
+// GetByID reads a binding by row id across tenants; see the interface note.
+func (repo *emailThreadRepo) GetByID(ctx context.Context, id string) (EmailThread, error) {
+	var out EmailThread
+	err := repo.r.QueryRowContext(
+		ctx,
+		`SELECT id, org_id, environment_id, agent_identifier, platform_thread_id,
+		   subscriber_id, subscriber_email, inbound_domain, kind, transaction_id, workflow_identifier, created_at, last_activity_at
+		 FROM email_threads
+		 WHERE id = ?`,
+		id,
+	).Scan(&out.ID, &out.OrgID, &out.EnvID, &out.AgentIdentifier, &out.PlatformThreadID,
+		&out.SubscriberID, &out.SubscriberEmail, &out.InboundDomain, &out.Kind, &out.TransactionID, &out.WorkflowIdentifier, &out.CreatedAt, &out.LastActivityAt)
+	if err == sql.ErrNoRows {
+		return EmailThread{}, ErrNotFound
+	}
+	if err != nil {
+		return EmailThread{}, err
+	}
+	return out, nil
+}
+
+// Delete removes the binding for platformThreadID within scope.
+func (repo *emailThreadRepo) Delete(ctx context.Context, scope domain.Scope, platformThreadID string) error {
+	_, err := repo.w.ExecContext(ctx,
+		`DELETE FROM email_threads WHERE org_id = ? AND environment_id = ? AND platform_thread_id = ?`,
+		scope.OrgID, scope.EnvID, platformThreadID)
+	return err
 }
 
 // List returns the scope's email-thread bindings, keyset-paginated on

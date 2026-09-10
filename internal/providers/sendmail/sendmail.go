@@ -77,6 +77,9 @@ func (c *Client) Send(ctx context.Context, msg providers.EmailMessage) (provider
 	cmd.Stdout = io.Discard
 	var stderr limitedBuffer
 	cmd.Stderr = &stderr
+	// Killing the MTA on timeout does not close the pipes a child it spawned
+	// still holds; without a WaitDelay, Run would wait for that child too.
+	cmd.WaitDelay = time.Second
 
 	err := cmd.Run()
 	switch {

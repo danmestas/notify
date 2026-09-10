@@ -68,8 +68,8 @@ func TestArmReply_MintsMailboxAndWebhookBinding(t *testing.T) {
 		t.Fatalf("CheckRecipient on the armed mailbox = %q", status)
 	}
 	if rcpt.Binding.Kind != KindWebhook || rcpt.Binding.TransactionID != "mention:chat:alpha:7:alice" ||
-		rcpt.Binding.WorkflowIdentifier != "quarry-mention" || rcpt.Claims.ThreadID != "ntf_1" {
-		t.Fatalf("binding = %+v claims = %+v", rcpt.Binding, rcpt.Claims)
+		rcpt.Binding.WorkflowIdentifier != "quarry-mention" || rcpt.Binding.PlatformThreadID != "ntf_1" {
+		t.Fatalf("binding = %+v", rcpt.Binding)
 	}
 }
 
@@ -147,8 +147,8 @@ func TestAccept_AgentKindUntouched(t *testing.T) {
 	bus := &spyBus{}
 	f.svc.WithEventPublisher(bus)
 	ctx := context.Background()
-	scope, threadID, subID := f.armScope(t, ctx, "org1", "env1", "helper", "mail.example.org", "dev@example.com")
-	token := f.minter.Mint(scope, threadID, subID)
+	scope, threadID, _ := f.armScope(t, ctx, "org1", "env1", "helper", "mail.example.org", "dev@example.com")
+	token := f.token(t, scope, threadID)
 
 	status, err := f.svc.Accept(ctx, InboundEmail{To: "reply+" + token + "@mail.example.org", Text: "hi"})
 	if err != nil || status != StatusThreaded {
@@ -176,5 +176,51 @@ func TestAccept_WebhookKindWithoutBusIsAnError(t *testing.T) {
 	f.svc.WithEventPublisher(&spyBus{err: errors.New("nats: connection closed")})
 	if _, err := f.svc.Accept(ctx, InboundEmail{To: replyTo, Text: "hi"}); err == nil {
 		t.Fatal("publish failure was acknowledged as delivered")
+	}
+}
+
+// TestArmReply_MailboxFitsALocalPart is the assertion #350 asked for: three
+// ULID-length ids and a long subscriber id must still yield a local part
+// within RFC 5321's 64 octets.
+func TestArmReply_MailboxFitsALocalPart(t *testing.T) {
+	f := newLoopFixture(t, nil)
+	ctx := context.Background()
+	scope := domain.Scope{OrgID: "01ARZ3NDEKTSV4RRFFQ69G5FAV", EnvID: "01BX5ZZKBKACTAV9WEVGEMMVRZ"}
+	if _, err := f.st.InboundDomains().Create(ctx, scope, "mail.zeitforge.app", "mx.notify.test", 10); err != nil {
+		t.Fatalf("inbound domain create: %v", err)
+	}
+	if err := f.st.InboundDomains().SetStatus(ctx, scope, "mail.zeitforge.app", "verified", true); err != nil {
+		t.Fatalf("inbound domain verify: %v", err)
+	}
+	sub := strings.Repeat("s", 32)
+	replyTo, ok, err := f.svc.ArmReply(ctx, scope, "01M24AFECVTC7Y30TAC9EJHMT1", "01M24AFECVTC7Y30TAC9EJHMT2", "quarry-mention", sub, "dev@example.com")
+	if err != nil || !ok {
+		t.Fatalf("ArmReply = %q, %v, %v", replyTo, ok, err)
+	}
+	local := replyTo[:strings.IndexByte(replyTo, '@')]
+	if len(local) > 64 {
+		t.Fatalf("local part is %d octets, want <= 64: %q", len(local), local)
+	}
+	rcpt, status := f.svc.CheckRecipient(ctx, replyTo)
+	if status != "" || rcpt.Binding.SubscriberID != sub {
+		t.Fatalf("CheckRecipient = %+v, %q", rcpt.Binding, status)
+	}
+}
+
+// TestDisarmReply_TokenStopsResolving: after a disarm the minted mailbox is
+// refused at RCPT like any unknown address.
+func TestDisarmReply_TokenStopsResolving(t *testing.T) {
+	f := newLoopFixture(t, nil)
+	ctx := context.Background()
+	scope := armReplyScope(t, f)
+	replyTo, ok, err := f.svc.ArmReply(ctx, scope, "ntf_1", "t", "w", "dmestas", "dev@example.com")
+	if err != nil || !ok {
+		t.Fatalf("ArmReply: %v %v", ok, err)
+	}
+	if err := f.svc.DisarmReply(ctx, scope, "ntf_1"); err != nil {
+		t.Fatalf("DisarmReply: %v", err)
+	}
+	if _, status := f.svc.CheckRecipient(ctx, replyTo); status != StatusNoBinding {
+		t.Fatalf("status after disarm = %q, want %q", status, StatusNoBinding)
 	}
 }

@@ -15,11 +15,17 @@ import (
 
 // spyArmer records the arm request and answers as configured.
 type spyArmer struct {
-	calls   int
-	last    []string
-	replyTo string
-	ok      bool
-	err     error
+	calls    int
+	last     []string
+	replyTo  string
+	ok       bool
+	err      error
+	disarmed []string
+}
+
+func (a *spyArmer) DisarmReply(_ context.Context, _ domain.Scope, notificationID string) error {
+	a.disarmed = append(a.disarmed, notificationID)
+	return nil
 }
 
 func (a *spyArmer) ArmReply(_ context.Context, _ domain.Scope, notificationID, transactionID, workflowIdentifier, subscriberID, subscriberEmail string) (string, bool, error) {
@@ -137,5 +143,45 @@ func TestHandleEmail_ReplyArmFailureFailsTheSend(t *testing.T) {
 	}
 	if len(capt.Sent()) != 0 {
 		t.Fatal("a message was sent promising a reply to a thread that was never bound")
+	}
+}
+
+// refusingProvider stands in for a provider that rejects the message (#350:
+// Resend refusing an over-long Reply-To).
+type refusingProvider struct{ err error }
+
+func (p refusingProvider) Send(context.Context, providers.EmailMessage) (providers.Result, error) {
+	return providers.Result{}, p.err
+}
+
+// TestHandleEmail_ProviderRefusalDisarmsTheThread: a thread armed for a send
+// the provider refused is dropped again, so email_threads never holds a
+// live mailbox for mail nobody received.
+func TestHandleEmail_ProviderRefusalDisarmsTheThread(t *testing.T) {
+	s := newStore(t)
+	armer := &spyArmer{replyTo: "reply+tok@mail.example.org", ok: true}
+	refuse := refusingProvider{err: errors.New("resend: status 422: Invalid reply_to field")}
+	h := NewEmail(s, stubResolver{provider: refuse, from: "noreply@example.org"}).WithReplyArmer(armer)
+
+	if _, err := sendReplyEnvelope(t, h, replyEnvelope(true)); err != nil {
+		t.Fatalf("HandleEmail: %v", err)
+	}
+	if got := strings.Join(armer.disarmed, "|"); got != "ntf_1" {
+		t.Fatalf("disarmed = %q, want the armed notification ntf_1", got)
+	}
+}
+
+// TestHandleEmail_SuccessLeavesTheThreadArmed pins the other half: a send that
+// went out keeps its binding.
+func TestHandleEmail_SuccessLeavesTheThreadArmed(t *testing.T) {
+	s := newStore(t)
+	armer := &spyArmer{replyTo: "reply+tok@mail.example.org", ok: true}
+	h := NewEmail(s, stubResolver{provider: providers.NewCapture(), from: "noreply@example.org"}).WithReplyArmer(armer)
+
+	if _, err := sendReplyEnvelope(t, h, replyEnvelope(true)); err != nil {
+		t.Fatalf("HandleEmail: %v", err)
+	}
+	if len(armer.disarmed) != 0 {
+		t.Fatalf("disarmed = %v after a successful send", armer.disarmed)
 	}
 }
