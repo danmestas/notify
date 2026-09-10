@@ -3,6 +3,20 @@
          data-signals="{{$page.Signals}}">
   {{template "page-header" $page.Header}}
 
+  {{/* One-time secret card — only shown right after create or rotate */}}
+  {{if $page.NewSecret}}
+  <div class="console-alert console-alert-success" role="alert" id="webhook-secret-card">
+    <strong>Signing secret{{if $page.NewSecretURL}} for <code>{{$page.NewSecretURL}}</code>{{end}}.</strong>
+    Copy it now — it will not be shown again. Events carry
+    <code>X-Notify-Signature: sha256=HMAC-SHA256(secret, timestamp + "." + body)</code>.
+    <div class="console-secret-reveal">
+      <code id="webhook-secret-value" class="console-secret-value">{{$page.NewSecret}}</code>
+      <button type="button" class="btn btn-outline btn-sm"
+              data-on:click="navigator.clipboard.writeText(document.getElementById('webhook-secret-value').textContent)">Copy</button>
+    </div>
+  </div>
+  {{end}}
+
   <div class="console-filter-bar">
     {{if not $page.ReadOnly}}
     <button type="button" class="btn btn-primary" data-on:click="$webhookNewOpen = true">+ Add endpoint</button>

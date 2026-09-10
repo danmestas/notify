@@ -109,6 +109,10 @@ func (s *Store) WebhookEndpoints() WebhookEndpointRepo {
 	return &webhookEndpointRepo{w: s.writer, r: s.reader}
 }
 
+func (s *Store) WebhookDeliveries() WebhookDeliveryRepo {
+	return &webhookDeliveryRepo{w: s.writer, r: s.reader}
+}
+
 func (s *Store) Topics() TopicRepo { return &topicRepo{w: s.writer, r: s.reader} }
 
 func (s *Store) Translations() TranslationRepo {

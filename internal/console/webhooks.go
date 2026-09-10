@@ -9,6 +9,7 @@ package console
 
 import (
 	"encoding/json"
+	"errors"
 	"html/template"
 	"net/http"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/webhooksout"
 )
 
 // ─── signal keys ─────────────────────────────────────────────────────────────
@@ -32,6 +34,12 @@ type webhooksPageView struct {
 	Fragment webhooksListView
 	Signals  template.JS
 	ReadOnly bool
+	// NewSecret is an endpoint's signing secret, shown exactly once after
+	// create or rotate. It rides behind a one-shot reveal token (reveal.go),
+	// never in the URL, and is empty on every other render.
+	NewSecret string
+	// NewSecretURL names the endpoint the secret belongs to.
+	NewSecretURL string
 }
 
 // webhooksListView is the #webhooks-tbody fragment binding.
@@ -41,6 +49,9 @@ type webhooksListView struct {
 	// ConfirmDelete names the endpoint ID awaiting inline two-step delete
 	// confirmation (chassis idiom — no native confirm() dialogs).
 	ConfirmDelete string
+	// ConfirmRotate names the endpoint ID awaiting inline confirmation of a
+	// secret rotation, which has no overlap window.
+	ConfirmRotate string
 	// CSRF is the session token for the POST forms rendered inside the
 	// fragment.
 	CSRF string
@@ -51,6 +62,9 @@ type webhookRow struct {
 	ID     string
 	URL    string
 	Active bool
+	// Signed is whether the endpoint has a signing secret. Endpoints from
+	// before #346 have none until one is rotated in.
+	Signed bool
 }
 
 // webhooksSignalsJSON renders the initial Datastar signal envelope for the
@@ -102,6 +116,7 @@ func (c *Console) buildWebhooksListView(r *http.Request) (webhooksListView, erro
 			ID:     ep.ID,
 			URL:    ep.URL,
 			Active: ep.Active,
+			Signed: ep.Secret != "",
 		})
 	}
 
@@ -111,6 +126,7 @@ func (c *Console) buildWebhooksListView(r *http.Request) (webhooksListView, erro
 		Rows:          rows,
 		ReadOnly:      c.deps.ReadOnly,
 		ConfirmDelete: r.URL.Query().Get("confirmDelete"),
+		ConfirmRotate: r.URL.Query().Get("confirmRotate"),
 		CSRF:          s.CSRF,
 	}, nil
 }
@@ -128,6 +144,8 @@ func (c *Console) serveWebhooksPage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := domain.ScopeFromContext(r.Context()); !ok {
 		panic("serveWebhooksPage: no scope in context")
 	}
+
+	scope, _ := domain.ScopeFromContext(r.Context())
 
 	frag, err := c.buildWebhooksListView(r)
 	if err != nil {
@@ -153,7 +171,34 @@ func (c *Console) serveWebhooksPage(w http.ResponseWriter, r *http.Request) {
 		Signals:  webhooksSignalsJSON("", false),
 		ReadOnly: c.deps.ReadOnly,
 	}
+	// A freshly minted secret rides behind a one-shot reveal token, so a
+	// reload of the same URL shows nothing.
+	if token := r.URL.Query().Get("revealed"); token != "" {
+		if secret, ok := c.takeReveal(token); ok {
+			view.NewSecret = secret
+			if ep, err := c.deps.Webhooks.GetByID(r.Context(), scope, r.URL.Query().Get("for")); err == nil {
+				view.NewSecretURL = ep.URL
+			}
+		}
+	}
 	c.renderPage(w, r, http.StatusOK, "webhooks", "Webhooks", view)
+}
+
+// redirectWithSecret sends the operator back to the list with the secret
+// stashed behind a one-shot token. With no secret (no master key) it is a
+// plain redirect.
+func (c *Console) redirectWithSecret(w http.ResponseWriter, r *http.Request, created webhooksout.Created) {
+	if created.Secret == "" {
+		http.Redirect(w, r, "/console/webhooks", http.StatusSeeOther)
+		return
+	}
+	token, err := c.stashReveal(created.Secret)
+	if err != nil {
+		c.deps.Logger.Error("console: stash webhook secret", "err", err)
+		http.Redirect(w, r, "/console/webhooks", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/console/webhooks?revealed="+token+"&for="+created.Endpoint.ID, http.StatusSeeOther)
 }
 
 // serveWebhookNew renders GET /console/webhooks/new with the create slide-over
@@ -256,13 +301,53 @@ func (c *Console) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	active := r.FormValue("active") == "1"
 
-	if _, err := c.deps.Webhooks.Create(r.Context(), scope, rawURL, active); err != nil {
+	created, err := c.deps.Webhooks.Create(r.Context(), scope, rawURL, active)
+	if err != nil {
 		c.deps.Logger.Error("console: create webhook", "err", err)
 		http.Error(w, "create failed", http.StatusInternalServerError)
 		return
 	}
 
-	http.Redirect(w, r, "/console/webhooks", http.StatusSeeOther)
+	c.redirectWithSecret(w, r, created)
+}
+
+// handleWebhookRotate handles POST /console/api/webhooks/{id}/secret. It
+// mints a fresh signing secret and shows it once. There is no overlap
+// window, so the list row asks for confirmation first.
+func (c *Console) handleWebhookRotate(w http.ResponseWriter, r *http.Request) {
+	if w == nil {
+		panic("handleWebhookRotate: w is nil")
+	}
+	if r == nil {
+		panic("handleWebhookRotate: r is nil")
+	}
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
+		panic("handleWebhookRotate: no scope in context")
+	}
+	if c.deps.ReadOnly {
+		http.Error(w, "console is read-only", http.StatusForbidden)
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+
+	created, err := c.deps.Webhooks.RotateSecret(r.Context(), scope, id)
+	if err != nil {
+		if errors.Is(err, webhooksout.ErrSigningUnavailable) {
+			http.Error(w, "signing unavailable: no master key", http.StatusServiceUnavailable)
+			return
+		}
+		c.deps.Logger.Error("console: rotate webhook secret", "err", err)
+		http.Error(w, "rotate failed", http.StatusInternalServerError)
+		return
+	}
+
+	c.redirectWithSecret(w, r, created)
 }
 
 // handleWebhookUpdate handles POST /console/api/webhooks/{id}. It updates the

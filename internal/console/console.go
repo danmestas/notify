@@ -549,6 +549,7 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/webhooks", c.handleWebhookCreate)
 		pr.Post("/console/api/webhooks/{id}/toggle", c.handleWebhookToggle)
 		pr.Post("/console/api/webhooks/{id}/delete", c.handleWebhookDelete)
+		pr.Post("/console/api/webhooks/{id}/secret", c.handleWebhookRotate)
 		pr.Post("/console/api/webhooks/{id}", c.handleWebhookUpdate)
 		pr.Get("/console/api/fragments/webhooks-list", c.serveFragmentWebhooksList)
 		// W4-C2: contexts management

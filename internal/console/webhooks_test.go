@@ -23,6 +23,7 @@
 package console
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -30,6 +31,8 @@ import (
 	"testing"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/secretbox"
+	"github.com/danmestas/notify/internal/webhooksout"
 )
 
 // ─── seed helpers ─────────────────────────────────────────────────────────────
@@ -402,6 +405,7 @@ func TestWebhooks_RouteAuth(t *testing.T) {
 		{http.MethodPost, "/console/api/webhooks/x"},
 		{http.MethodPost, "/console/api/webhooks/x/toggle"},
 		{http.MethodPost, "/console/api/webhooks/x/delete"},
+		{http.MethodPost, "/console/api/webhooks/x/secret"},
 	}
 
 	for _, rt := range routes {
@@ -420,4 +424,151 @@ func TestWebhooks_RouteAuth(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ─── signing secret (#346) ───────────────────────────────────────────────────
+
+// signingConsole swaps in a webhook management service that has a master
+// key, so create and rotate mint real secrets.
+func signingConsole(t *testing.T) *testConsole {
+	t.Helper()
+	tc := newTestConsole(t)
+	box, err := secretbox.New(bytes.Repeat([]byte{0x5a}, 32))
+	if err != nil {
+		t.Fatalf("secretbox.New: %v", err)
+	}
+	tc.c.deps.Webhooks = webhooksout.NewManagement(tc.st, box)
+	tc.deps.Webhooks = tc.c.deps.Webhooks
+	return tc
+}
+
+// followReveal asserts rr is a redirect carrying a one-shot token (never the
+// secret) and returns the redirect target.
+func followReveal(t *testing.T, rr *httptest.ResponseRecorder) string {
+	t.Helper()
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303 (body: %s)", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/console/webhooks?revealed=") {
+		t.Fatalf("Location = %q, want a one-shot reveal token", loc)
+	}
+	return loc
+}
+
+func TestWebhooks_Create_ShowsSecretOnce(t *testing.T) {
+	tc := signingConsole(t)
+	cookie, csrf := tc.login(t)
+
+	rr := tc.postForm(t, "/console/webhooks",
+		url.Values{"url": {"https://example.com/signed"}, "active": {"1"}, "csrf_token": {csrf}},
+		cookie)
+	loc := followReveal(t, rr)
+
+	eps, err := tc.deps.Webhooks.List(testBackground(), tc.scope)
+	if err != nil || len(eps) != 1 || eps[0].Secret == "" {
+		t.Fatalf("after create: eps=%+v err=%v, want one sealed-secret endpoint", eps, err)
+	}
+	if strings.Contains(loc, eps[0].Secret) {
+		t.Fatal("the sealed secret is in the redirect URL")
+	}
+
+	page := tc.get(t, loc, cookie)
+	body := page.Body.String()
+	if !strings.Contains(body, `id="webhook-secret-card"`) || !strings.Contains(body, "https://example.com/signed") {
+		t.Fatalf("first render after create lacks the secret card: %s", body)
+	}
+	secret := between(body, `id="webhook-secret-value" class="console-secret-value">`, "</code>")
+	if len(secret) != 64 {
+		t.Fatalf("revealed secret = %q, want 64 hex chars", secret)
+	}
+	// The plaintext shown is the one the consumer will sign with.
+	box, _ := secretbox.New(bytes.Repeat([]byte{0x5a}, 32))
+	if plain, err := box.Open(eps[0].Secret); err != nil || plain != secret {
+		t.Fatalf("revealed %q does not open the stored secret (%v)", secret, err)
+	}
+
+	again := tc.get(t, loc, cookie)
+	if strings.Contains(again.Body.String(), "webhook-secret-card") {
+		t.Fatal("reloading the reveal URL showed the secret a second time")
+	}
+	if strings.Contains(again.Body.String(), secret) {
+		t.Fatal("the secret is on the page after the reveal was consumed")
+	}
+}
+
+func TestWebhooks_Rotate_ShowsNewSecretOnce(t *testing.T) {
+	tc := signingConsole(t)
+	ep := tc.seedWebhook(t, "https://example.com/rotate", true)
+	cookie, csrf := tc.login(t)
+
+	// The row offers rotate through an inline confirm, never a bare click.
+	frag := tc.get(t, "/console/api/fragments/webhooks-list?confirmRotate="+ep.ID, cookie)
+	if !strings.Contains(frag.Body.String(), "/console/api/webhooks/"+ep.ID+"/secret") {
+		t.Fatalf("confirm row lacks the rotate form: %s", frag.Body.String())
+	}
+
+	rr := tc.postForm(t, "/console/api/webhooks/"+ep.ID+"/secret", url.Values{"csrf_token": {csrf}}, cookie)
+	loc := followReveal(t, rr)
+	body := tc.get(t, loc, cookie).Body.String()
+	secret := between(body, `id="webhook-secret-value" class="console-secret-value">`, "</code>")
+	if len(secret) != 64 {
+		t.Fatalf("revealed secret = %q, want 64 hex chars", secret)
+	}
+	after, err := tc.deps.Webhooks.GetByID(testBackground(), tc.scope, ep.ID)
+	if err != nil || after.Secret == ep.Secret {
+		t.Fatalf("secret not rotated (err=%v)", err)
+	}
+}
+
+func TestWebhooks_Rotate_ReadOnlyBlocked(t *testing.T) {
+	tc := newReadOnlyTestConsole(t)
+	ep := tc.seedWebhook(t, "https://example.com/ro-rotate", true)
+	cookie, _ := tc.login(t)
+	rr := tc.postForm(t, "/console/api/webhooks/"+ep.ID+"/secret", url.Values{}, cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("read-only rotate: status = %d, want 403", rr.Code)
+	}
+}
+
+func TestWebhooks_Rotate_WithoutMasterKeyIsLoud(t *testing.T) {
+	tc := newTestConsole(t) // NewManagement(st, nil): no box
+	ep := tc.seedWebhook(t, "https://example.com/nokey", true)
+	cookie, csrf := tc.login(t)
+	rr := tc.postForm(t, "/console/api/webhooks/"+ep.ID+"/secret", url.Values{"csrf_token": {csrf}}, cookie)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("rotate with no master key: status = %d, want 503", rr.Code)
+	}
+}
+
+func TestWebhooks_ListShowsSigningState(t *testing.T) {
+	tc := signingConsole(t)
+	tc.seedWebhook(t, "https://example.com/signed-row", true)
+	cookie, _ := tc.login(t)
+	body := tc.get(t, "/console/api/fragments/webhooks-list", cookie).Body.String()
+	if !strings.Contains(body, ">Signed<") || strings.Contains(body, ">Unsigned<") {
+		t.Fatalf("signed endpoint row: %s", body)
+	}
+
+	plain := newTestConsole(t)
+	plain.seedWebhook(t, "https://example.com/unsigned-row", true)
+	cookie2, _ := plain.login(t)
+	body = plain.get(t, "/console/api/fragments/webhooks-list", cookie2).Body.String()
+	if !strings.Contains(body, ">Unsigned<") || !strings.Contains(body, "Add secret") {
+		t.Fatalf("unsigned endpoint row: %s", body)
+	}
+}
+
+// between returns the text between the first occurrence of a and the next b.
+func between(s, a, b string) string {
+	i := strings.Index(s, a)
+	if i < 0 {
+		return ""
+	}
+	s = s[i+len(a):]
+	j := strings.Index(s, b)
+	if j < 0 {
+		return ""
+	}
+	return s[:j]
 }

@@ -190,6 +190,17 @@ func (f *flakyLister) ListActiveByEnv(_ context.Context, _ domain.Scope) ([]doma
 	return f.endpoints, nil
 }
 
+func (f *flakyLister) GetByID(_ context.Context, _ domain.Scope, id string) (domain.WebhookEndpoint, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, e := range f.endpoints {
+		if e.ID == id {
+			return e, nil
+		}
+	}
+	return domain.WebhookEndpoint{}, fmt.Errorf("no endpoint %q", id)
+}
+
 func (f *flakyLister) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -219,13 +230,10 @@ func TestConsumer_StoreErrorNaksAndRedelivers(t *testing.T) {
 	// Well within MaxDeliver:5.
 	lister := &flakyLister{
 		failFirst: 2,
-		endpoints: []domain.WebhookEndpoint{{URL: srv.URL, Active: true}},
+		endpoints: []domain.WebhookEndpoint{{ID: "ep1", URL: srv.URL, Active: true}},
 	}
-	consumer := &Consumer{
-		bus:       bus,
-		endpoints: lister,
-		client:    &http.Client{Timeout: 5 * time.Second},
-	}
+	consumer := NewWithClient(bus, newStore(t), &http.Client{Timeout: 5 * time.Second})
+	consumer.endpoints = lister
 	stop, err := consumer.Start(ctx)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -254,93 +262,5 @@ func TestConsumer_StoreErrorNaksAndRedelivers(t *testing.T) {
 	// genuinely exercised (not an accidental first-try success).
 	if n := lister.callCount(); n <= lister.failFirst {
 		t.Fatalf("lookup calls = %d, want > %d (redelivery should have retried the store)", n, lister.failFirst)
-	}
-}
-
-// TestConsumer_EndpointDownIsAckedAfterRetries asserts an endpoint that never
-// succeeds is acked (not naked) once post's bounded retry is exhausted, so a
-// single dead tenant endpoint doesn't wedge the shared durable for other
-// events: e2 is still attempted right after e1's retries exhaust, and e1
-// sees exactly maxAttempts POSTs (not endless redelivery-driven retries).
-func TestConsumer_EndpointDownIsAckedAfterRetries(t *testing.T) {
-	bus := newBus(t)
-	st := newStore(t)
-	ctx := context.Background()
-	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
-
-	var mu sync.Mutex
-	attempts := map[string]int{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var got domain.Message
-		_ = json.Unmarshal(body, &got)
-		mu.Lock()
-		attempts[got.Status]++
-		mu.Unlock()
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	if _, err := st.WebhookEndpoints().Create(ctx, scope, domain.WebhookEndpoint{
-		URL:    srv.URL,
-		Active: true,
-	}); err != nil {
-		t.Fatalf("create endpoint: %v", err)
-	}
-
-	consumer := NewWithClient(bus, st, &http.Client{Timeout: 5 * time.Second})
-	stop, err := consumer.Start(ctx)
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	defer func() { _ = stop() }()
-
-	msg1 := domain.Message{OrgID: scope.OrgID, EnvID: scope.EnvID, Channel: "in_app", Status: "e1"}
-	if err := bus.PublishDelivery(scope.EnvID, mustJSON(t, msg1)); err != nil {
-		t.Fatalf("PublishDelivery(e1): %v", err)
-	}
-
-	// Wait for e1 to see exactly maxAttempts POSTs (post's bounded retry
-	// exhausting, then the handler acking rather than naking).
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		mu.Lock()
-		n := attempts["e1"]
-		mu.Unlock()
-		if n >= maxAttempts {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for e1 to see %d attempts, got %d", maxAttempts, n)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	msg2 := domain.Message{OrgID: scope.OrgID, EnvID: scope.EnvID, Channel: "in_app", Status: "e2"}
-	if err := bus.PublishDelivery(scope.EnvID, mustJSON(t, msg2)); err != nil {
-		t.Fatalf("PublishDelivery(e2): %v", err)
-	}
-
-	deadline = time.Now().Add(3 * time.Second)
-	for {
-		mu.Lock()
-		n := attempts["e2"]
-		mu.Unlock()
-		if n >= 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for e2 to be attempted: e1's exhausted retries appear to have wedged the durable")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// Give any further (unwanted) redeliveries of e1 a chance to show up.
-	time.Sleep(300 * time.Millisecond)
-	mu.Lock()
-	got := attempts["e1"]
-	mu.Unlock()
-	if got != maxAttempts {
-		t.Fatalf("e1 attempts = %d, want exactly %d (endpoint failure after retries must be acked, not redelivered)", got, maxAttempts)
 	}
 }

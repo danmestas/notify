@@ -12,6 +12,7 @@
       <tr>
         <th>URL</th>
         <th>Status</th>
+        <th>Signing</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -20,7 +21,7 @@
       {{if eq $v.ConfirmDelete .ID}}
       {{/* Two-step inline confirm row */}}
       <tr id="webhook-row-{{.ID}}" class="confirm-row">
-        <td colspan="2">
+        <td colspan="3">
           <span class="console-confirm-label">Delete <code>{{.URL}}</code>? This cannot be undone.</span>
         </td>
         <td>
@@ -29,6 +30,21 @@
           <form method="POST" action="/console/api/webhooks/{{.ID}}/delete" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
             <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else if eq $v.ConfirmRotate .ID}}
+      {{/* Two-step inline confirm row: rotation has no overlap window */}}
+      <tr id="webhook-row-{{.ID}}" class="confirm-row">
+        <td colspan="3">
+          <span class="console-confirm-label">Rotate the signing secret for <code>{{.URL}}</code>? Events are signed with the new secret immediately; update the receiver's verifier first.</span>
+        </td>
+        <td>
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/webhooks-list')">Cancel</button>
+          <form method="POST" action="/console/api/webhooks/{{.ID}}/secret" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
+            <button type="submit" class="btn btn-primary btn-sm">Rotate secret</button>
           </form>
         </td>
       </tr>
@@ -44,8 +60,17 @@
           <span class="chip chip-warning">Inactive</span>
           {{end}}
         </td>
+        <td>
+          {{if .Signed}}
+          <span class="chip chip-success">Signed</span>
+          {{else}}
+          <span class="chip chip-warning">Unsigned</span>
+          {{end}}
+        </td>
         <td class="console-action-row">
           {{if not $v.ReadOnly}}
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="@get('/console/api/fragments/webhooks-list?confirmRotate={{.ID | urlquery}}')">{{if .Signed}}Rotate secret{{else}}Add secret{{end}}</button>
           <form method="POST" action="/console/api/webhooks/{{.ID}}/toggle" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
             <button type="submit" class="btn btn-outline btn-sm">

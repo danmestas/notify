@@ -60,6 +60,12 @@ func tenantCases() []tenantCase {
 		{name: "InboundDomains", check: checkInboundDomains},
 		{name: "StreamSources", check: checkStreamSources},
 		{name: "EmailThreads", check: checkEmailThreads},
+		{
+			name: "WebhookDeliveries",
+			exempt: "the outbound webhook outbox is drained by one process-wide worker, so Due/Claim " +
+				"are intentionally unscoped; rows are written only by the stream consumer with the " +
+				"scope of the event they carry, and never read on a tenant's behalf",
+		},
 		{name: "ChatThreads", check: checkChatThreads},
 		{name: "BuilderSessions", check: checkBuilderSessions},
 		{name: "Environments", check: checkEnvironments},
