@@ -110,7 +110,9 @@ func stripQuotedHistory(body string) string {
 		line := strings.TrimSpace(raw)
 		switch {
 		// "On <date>, <person> wrote:" — Gmail/Apple Mail attribution line.
-		case strings.HasPrefix(line, "On ") && strings.HasSuffix(line, "wrote:"):
+		// Both wrap it at ~78 columns, so "wrote:" may sit alone one or two
+		// lines down (#352).
+		case strings.HasPrefix(line, "On ") && endsWithWrote(lines[i:min(i+3, len(lines))]):
 			cut = i
 		// Outlook / many clients original-message divider.
 		case line == "-----Original Message-----":
@@ -123,7 +125,41 @@ func stripQuotedHistory(body string) string {
 			break
 		}
 	}
+	// A run of ">" lines that reaches the end of the body is quoted history
+	// even with no attribution line above it. The same run followed by more
+	// text is someone answering inline, and is left alone.
+	if tail := quotedTail(lines[:cut]); tail < cut {
+		cut = tail
+	}
 	return strings.TrimSpace(strings.Join(lines[:cut], "\n"))
+}
+
+// endsWithWrote reports whether any of lines ends with "wrote:".
+func endsWithWrote(lines []string) bool {
+	for _, l := range lines {
+		if strings.HasSuffix(strings.TrimSpace(l), "wrote:") {
+			return true
+		}
+	}
+	return false
+}
+
+// quotedTail returns the index of the first line of a ">"-quoted run that
+// continues, blank lines allowed, to the end of lines; len(lines) when the
+// body does not end in one.
+func quotedTail(lines []string) int {
+	tail := len(lines)
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, ">") {
+			break
+		}
+		tail = i
+	}
+	return tail
 }
 
 // stripTags is a crude HTML-to-text fallback: it drops everything between
