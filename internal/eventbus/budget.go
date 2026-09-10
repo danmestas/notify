@@ -27,30 +27,23 @@ import (
 // saturate it. That residual is accepted for the MVP; per-env streams /
 // per-tenant accounting are the real fix (tracked, deferred).
 //
-// Relationship to ThrottleAllow: same fixed-window-over-KV shape and the same
-// window-epoch-in-key trick (NATS KV TTL is bucket-wide, not per-key, so a
-// distinct window must be a distinct key that naturally starts at zero). Two
-// differences, both load-bearing for a byte budget:
-//
-//  1. Cost-weighted: a spend adds `cost` units, not 1 — a batch POST spends its
-//     whole byte/event weight in one call.
-//  2. Revision-CAS instead of best-effort Get/Put: ThrottleAllow tolerates a
-//     tiny undercount under concurrency because over-admitting a rate limit is
-//     minor. A byte budget cannot — an undercount is exactly the eviction this
-//     guard exists to prevent — so BudgetAllow reads the revision and Updates
-//     under CAS, retrying on conflict and NEVER recording a spend it did not
-//     confirm.
+// Relationship to ThrottleAllow: both are casSpend over a fixed-window key
+// (the window epoch is baked into the key because NATS KV TTL is bucket-wide,
+// not per-key, so a distinct window must be a distinct key that starts at
+// zero). BudgetAllow is cost-weighted: a batch POST spends its whole
+// byte/event weight in one call. ThrottleAllow spends 1.
 //
 // Failure mode is fail-CLOSED for every unresolved outcome: a KV transport
 // error and CAS-retry exhaustion both return (false, err) so the ingest caller
 // rejects the request (503) rather than admit unmetered bytes when the broker
-// is unhealthy or contended.
+// is unhealthy or contended. ThrottleAllow's caller makes the opposite call
+// for the same (false, err); the counter itself never guesses.
 
-// maxBudgetCASRetries bounds the read-modify-write CAS loop. Under realistic
-// per-source concurrency a spend resolves in one or two attempts; exhausting
+// maxCASRetries bounds the read-modify-write CAS loop. Under realistic
+// per-key concurrency a spend resolves in one or two attempts; exhausting
 // this many consecutive lost races means the key is pathologically contended
-// and the limiter fails closed rather than spin or guess.
-const maxBudgetCASRetries = 16
+// and the limiter reports that rather than spin or guess.
+const maxCASRetries = 16
 
 // budgetKey builds the KV key for a caller key within the current fixed window.
 // The window epoch (Unix-nanos / window) is baked into the key so each window is
@@ -82,27 +75,37 @@ func (b *Bus) BudgetAllow(key string, cost, limit int64, window time.Duration) (
 	if window <= 0 {
 		return false, fmt.Errorf("eventbus: BudgetAllow: window must be positive, got %s", window)
 	}
+	return casSpend(context.Background(), b.budget, "budget", budgetKey(key, window), cost, limit)
+}
 
-	ctx := context.Background()
-	bucketKey := budgetKey(key, window)
-
-	for attempt := 0; attempt < maxBudgetCASRetries; attempt++ {
-		entry, getErr := b.budget.Get(ctx, bucketKey)
+// casSpend adds cost to the counter at bucketKey if the result stays within
+// limit, under a revision compare-and-swap so concurrent spenders serialise
+// on the key. name labels errors ("throttle", "budget").
+//
+// Returns:
+//   - (true, nil):  the spend fit and was durably recorded.
+//   - (false, nil): the spend would exceed the limit; nothing was written.
+//   - (false, err): the outcome could not be confirmed (KV transport error or
+//     CAS-retry exhaustion). Never (true, nil) for a spend that was not
+//     confirmed; the caller decides whether an unresolved spend is admitted.
+func casSpend(ctx context.Context, kv jetstream.KeyValue, name, bucketKey string, cost, limit int64) (bool, error) {
+	for attempt := 0; attempt < maxCASRetries; attempt++ {
+		entry, getErr := kv.Get(ctx, bucketKey)
 		switch {
 		case getErr == nil:
 			count, perr := strconv.ParseInt(string(entry.Value()), 10, 64)
 			if perr != nil {
-				return false, fmt.Errorf("eventbus: budget parse count for %q: %w", bucketKey, perr)
+				return false, fmt.Errorf("eventbus: %s parse count for %q: %w", name, bucketKey, perr)
 			}
 			if count+cost > limit {
 				return false, nil
 			}
 			next := []byte(strconv.FormatInt(count+cost, 10))
-			if _, uerr := b.budget.Update(ctx, bucketKey, next, entry.Revision()); uerr != nil {
+			if _, uerr := kv.Update(ctx, bucketKey, next, entry.Revision()); uerr != nil {
 				if isBudgetCASConflict(uerr) {
 					continue // lost the race; re-read and retry
 				}
-				return false, fmt.Errorf("eventbus: budget update %q: %w", bucketKey, uerr)
+				return false, fmt.Errorf("eventbus: %s update %q: %w", name, bucketKey, uerr)
 			}
 			return true, nil
 
@@ -113,23 +116,23 @@ func (b *Bus) BudgetAllow(key string, cost, limit int64, window time.Duration) (
 				return false, nil
 			}
 			next := []byte(strconv.FormatInt(cost, 10))
-			if _, cerr := b.budget.Create(ctx, bucketKey, next); cerr != nil {
+			if _, cerr := kv.Create(ctx, bucketKey, next); cerr != nil {
 				if isBudgetCASConflict(cerr) {
 					continue // another spender created it first; retry as Update
 				}
-				return false, fmt.Errorf("eventbus: budget create %q: %w", bucketKey, cerr)
+				return false, fmt.Errorf("eventbus: %s create %q: %w", name, bucketKey, cerr)
 			}
 			return true, nil
 
 		default:
-			return false, fmt.Errorf("eventbus: budget get %q: %w", bucketKey, getErr)
+			return false, fmt.Errorf("eventbus: %s get %q: %w", name, bucketKey, getErr)
 		}
 	}
 
 	// Every CAS attempt lost its race: the spend could not be confirmed. A
-	// limiter that cannot confirm a spend must fail closed, exactly like a KV
+	// counter that cannot confirm a spend must say so, exactly like a KV
 	// transport error.
-	return false, fmt.Errorf("eventbus: BudgetAllow: CAS retries exhausted for %q", bucketKey)
+	return false, fmt.Errorf("eventbus: %s: CAS retries exhausted for %q", name, bucketKey)
 }
 
 // isBudgetCASConflict reports whether err is a lost optimistic-concurrency race

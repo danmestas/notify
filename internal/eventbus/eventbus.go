@@ -398,36 +398,21 @@ func sanitizeKey(key string) string {
 }
 
 // ThrottleAllow reports whether an action under `key` is within `limit` per
-// `window`, incrementing the fixed-window counter. Best-effort (a small race
-// under high concurrency may admit a few extra — acceptable for rate-limiting).
+// `window`, incrementing the fixed-window counter. The increment is a
+// revision-CAS on the KV entry (see casSpend), so N concurrent callers
+// serialise on the key and exactly `limit` are admitted per window (#321).
+//
+// An unresolved outcome (KV error, CAS retries exhausted) returns
+// (false, err); the throttle step treats that as allow, because for an
+// alerting system over-delivering under a sick broker beats swallowing a
+// page. That is the caller's policy, not this function's.
 func (b *Bus) ThrottleAllow(key string, limit int, window time.Duration) (allowed bool, err error) {
+	if window <= 0 {
+		return false, fmt.Errorf("eventbus: ThrottleAllow: window must be positive, got %s", window)
+	}
 	bucketKey := sanitizeKey(key) + "." +
 		strconv.FormatInt(time.Now().UnixNano()/int64(window), 10)
-
-	ctx := context.Background()
-
-	var count int
-	entry, err := b.throttle.Get(ctx, bucketKey)
-	switch {
-	case err == nil:
-		count, err = strconv.Atoi(string(entry.Value()))
-		if err != nil {
-			return false, fmt.Errorf("eventbus: throttle parse count for %q: %w", bucketKey, err)
-		}
-	case errors.Is(err, jetstream.ErrKeyNotFound):
-		count = 0
-	default:
-		return false, fmt.Errorf("eventbus: throttle get %q: %w", bucketKey, err)
-	}
-
-	if count >= limit {
-		return false, nil
-	}
-
-	if _, err := b.throttle.Put(ctx, bucketKey, []byte(strconv.Itoa(count+1))); err != nil {
-		return false, fmt.Errorf("eventbus: throttle put %q: %w", bucketKey, err)
-	}
-	return true, nil
+	return casSpend(context.Background(), b.throttle, "throttle", bucketKey, 1, int64(limit))
 }
 
 // digestListKey returns the KV key holding the accumulated event list for key.

@@ -3,6 +3,7 @@ package eventbus
 import (
 	"context"
 	"encoding/base64"
+	"sync"
 	"testing"
 	"time"
 )
@@ -127,5 +128,56 @@ func TestBus_ThrottleAllow_WindowReset(t *testing.T) {
 
 	if allowed, err := bus.ThrottleAllow(key, 1, window); err != nil || !allowed {
 		t.Fatalf("ThrottleAllow after window: allowed=%v err=%v, want true", allowed, err)
+	}
+}
+
+// TestBus_ThrottleAllow_ConcurrentBurstAdmitsExactlyLimit is #321: N runs
+// hitting one key at once must admit exactly limit, not "limit plus however
+// many read the counter before the first write landed".
+func TestBus_ThrottleAllow_ConcurrentBurstAdmitsExactlyLimit(t *testing.T) {
+	natsURL := startSidecar(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	bus, err := Connect(ctx, natsURL)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer bus.Close()
+
+	const (
+		n     = 24
+		limit = 5
+	)
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		allowed int
+		errs    []error
+	)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			ok, err := bus.ThrottleAllow("burst-key", limit, time.Minute)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+				return
+			}
+			if ok {
+				allowed++
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if len(errs) != 0 {
+		t.Fatalf("ThrottleAllow errors under contention: %v", errs)
+	}
+	if allowed != limit {
+		t.Fatalf("burst of %d admitted %d, want exactly %d", n, allowed, limit)
 	}
 }
