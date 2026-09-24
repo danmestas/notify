@@ -207,6 +207,13 @@ type integrationDetailView struct {
 	// every other provider. Rendered read-only; the browser subscribes with
 	// it directly, so an operator needs to copy it out of the console.
 	WebPushPublicKey string
+	// WebPushSubject is the VAPID contact pushes are signed with, and
+	// WebPushSubjectDefault whether it is the server default. Empty subject
+	// means Web Push cannot send until one is set (#358).
+	WebPushSubject        string
+	WebPushSubjectDefault bool
+	// WebPushSubjectError echoes a refused subject back to the form.
+	WebPushSubjectError string
 }
 
 // integrationActivityRow is one row in the Activity tab of the detail drawer.
@@ -644,13 +651,19 @@ func (c *Console) serveFragmentIntegrationDetail(w http.ResponseWriter, r *http.
 	// secret — surface it read-only so an operator can copy it into a
 	// service worker. EnsureWebPushKeys is idempotent, so this just
 	// re-decrypts the already-minted row.
-	webPushPublicKey := ""
+	webPushPublicKey, webPushSubject, webPushSubjectDefault := "", "", false
 	if in.ProviderID == "webpush" && c.deps.Connectivity != nil {
 		pub, _, kerr := c.deps.Connectivity.EnsureWebPushKeys(r.Context(), scope)
 		if kerr != nil {
 			c.deps.Logger.Error("console: integration detail webpush key", "id", id, "err", kerr)
 		} else {
 			webPushPublicKey = pub
+		}
+		sub, isDefault, serr := c.deps.Connectivity.WebPushSubject(r.Context(), scope)
+		if serr != nil {
+			c.deps.Logger.Error("console: integration detail webpush subject", "id", id, "err", serr)
+		} else {
+			webPushSubject, webPushSubjectDefault = sub, isDefault
 		}
 	}
 
@@ -679,10 +692,13 @@ func (c *Console) serveFragmentIntegrationDetail(w http.ResponseWriter, r *http.
 		// the single-address Send every other provider uses); webpush.Client.Send
 		// always returns "not supported". Use a workflow trigger to a real
 		// subscriber instead.
-		CanTestSend:      c.deps.Connectivity != nil && !c.deps.ReadOnly && in.ProviderID != "webpush",
-		TestSendOK:       r.URL.Query().Get("testSendOK") == "1",
-		TestSendError:    r.URL.Query().Get("testSendError"),
-		WebPushPublicKey: webPushPublicKey,
+		CanTestSend:           c.deps.Connectivity != nil && !c.deps.ReadOnly && in.ProviderID != "webpush",
+		TestSendOK:            r.URL.Query().Get("testSendOK") == "1",
+		TestSendError:         r.URL.Query().Get("testSendError"),
+		WebPushPublicKey:      webPushPublicKey,
+		WebPushSubject:        webPushSubject,
+		WebPushSubjectDefault: webPushSubjectDefault,
+		WebPushSubjectError:   r.URL.Query().Get("subjectError"),
 	})
 	if err != nil {
 		c.deps.Logger.Error("console: render integration detail", "err", err)
@@ -1353,4 +1369,45 @@ func (c *Console) handleIntegrationToggleActive(w http.ResponseWriter, r *http.R
 	}
 
 	http.Redirect(w, r, "/console/integrations/"+id, http.StatusSeeOther)
+}
+
+// handleWebPushSubject handles POST /console/integrations/{id}/webpush-subject.
+// It sets (or, with an empty field, clears) the environment's VAPID subject
+// and redirects back to the integration. A refused subject comes back as
+// ?subjectError= so the form can say why.
+func (c *Console) handleWebPushSubject(w http.ResponseWriter, r *http.Request) {
+	if w == nil {
+		panic("handleWebPushSubject: w is nil")
+	}
+	if r == nil {
+		panic("handleWebPushSubject: r is nil")
+	}
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
+		panic("handleWebPushSubject: no scope in context")
+	}
+	if c.deps.ReadOnly {
+		http.Error(w, "console is read-only", http.StatusForbidden)
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	back := "/console/integrations/" + url.PathEscape(id)
+	if err := c.deps.Connectivity.SetWebPushSubject(r.Context(), scope, r.FormValue("subject")); err != nil {
+		if errors.Is(err, connectivity.ErrInvalidVAPIDSubject) {
+			http.Redirect(w, r, back+"?subjectError="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			return
+		}
+		c.deps.Logger.Error("console: set webpush subject", "id", id, "err", err)
+		http.Error(w, "save failed", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }

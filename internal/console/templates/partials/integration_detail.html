@@ -185,6 +185,26 @@
     <span class="console-muted">Unavailable.</span>
     {{end}}
   </div>
+  <div class="form-row" id="webpush-subject">
+    <span class="form-label">Sender contact (VAPID subject)</span>
+    {{if $.WebPushSubject}}
+    <code class="integration-cred-value">{{$.WebPushSubject}}</code>
+    {{if $.WebPushSubjectDefault}}<span class="form-hint">Server default, from the public base URL.</span>{{end}}
+    {{else}}
+    <span class="chip chip-danger">Not set: Web Push cannot send until a contact is set.</span>
+    {{end}}
+    {{if $.WebPushSubjectError}}<p class="console-alert console-alert-danger" role="alert">{{$.WebPushSubjectError}}</p>{{end}}
+    {{if not $.ReadOnly}}
+    <form method="POST" action="/console/integrations/{{$in.ID}}/webpush-subject">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <input class="console-input" type="text" name="subject" aria-label="VAPID subject"
+             placeholder="mailto:ops@example.com or https://example.com"
+             value="{{if not $.WebPushSubjectDefault}}{{$.WebPushSubject}}{{end}}">
+      <span class="form-hint">Apple rejects pushes without a real contact. Leave blank to use the server default.</span>
+      <button type="submit" class="btn btn-outline btn-sm">Save contact</button>
+    </form>
+    {{end}}
+  </div>
   {{end}}
 
   {{/* Edit form or read-only view */}}

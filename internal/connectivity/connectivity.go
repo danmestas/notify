@@ -290,6 +290,12 @@ type Service struct {
 	// deliveryHTTPClient: nil in production (SSRF-safe), overridable by tests
 	// that need to reach a local httptest.Server.
 	probeHTTPClient *http.Client
+
+	// defaultVAPIDSubject is the Web Push VAPID contact used when an
+	// environment has not set its own: https://<public host>. Empty when the
+	// server has no usable public URL, in which case Web Push refuses to
+	// send rather than sign with a contact Apple rejects (#358).
+	defaultVAPIDSubject string
 }
 
 // Option customises a Service at construction. Options exist for tests that
@@ -724,6 +730,9 @@ func (svc *Service) CreatePushWebhook(ctx context.Context, scope domain.Scope, i
 type WebPushConfig struct {
 	PublicKey  string `json:"public_key"`
 	PrivateKey string `json:"private_key"`
+	// Subject is this environment's VAPID contact (mailto: or https:). Empty
+	// means the server default derived from NOTIFY_PUBLIC_BASE_URL.
+	Subject string `json:"subject,omitempty"`
 }
 
 // webPushProviderID is the fixed ProviderID (and Identifier) of the single
@@ -891,7 +900,14 @@ func (svc *Service) PushProviderFromIntegration(ctx context.Context, in domain.I
 		if err := json.Unmarshal(plaintext, &cfg); err != nil {
 			return nil, fmt.Errorf("connectivity: unmarshal webpush config: %w", err)
 		}
-		return &webpushprovider.Client{PublicKey: cfg.PublicKey, PrivateKey: cfg.PrivateKey, HTTPClient: svc.deliveryClient()}, nil
+		subject := cfg.Subject
+		if subject == "" {
+			subject = svc.defaultVAPIDSubject
+		}
+		if subject == "" {
+			return nil, ErrNoVAPIDSubject
+		}
+		return &webpushprovider.Client{PublicKey: cfg.PublicKey, PrivateKey: cfg.PrivateKey, Subject: subject, HTTPClient: svc.deliveryClient()}, nil
 	default:
 		// Fail closed: an unknown push provider must not be silently decoded as
 		// another provider's config.

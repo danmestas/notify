@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -49,7 +50,7 @@ func startWebPushServerWithStore(t *testing.T) (*httptest.Server, string, domain
 	masterKey := bytes.Repeat([]byte{0x2a}, 32)
 	id := identity.New(st, masterKey)
 	aud := audience.New(st)
-	conn := connectivity.New(st, masterKey)
+	conn := connectivity.New(st, masterKey, connectivity.WithPublicBaseURL("https://notify.example.com"))
 	trg := trigger.New(aud, st, nil)
 	inbox := inboxapi.New(st)
 
@@ -322,5 +323,49 @@ func TestGetWebPushKey_ScopeIsolation(t *testing.T) {
 	}
 	if pubA.PublicKey == pubB.PublicKey {
 		t.Errorf("two orgs minted the same VAPID public key: %q", pubA.PublicKey)
+	}
+}
+
+// TestWebPushSubject_GetDefaultPutOverrideRefuseLocalhost is #358 over HTTP:
+// the key endpoint reports the subject pushes are signed with, PUT sets a
+// per-environment one, and a localhost contact is refused with 400.
+func TestWebPushSubject_GetDefaultPutOverrideRefuseLocalhost(t *testing.T) {
+	srv, authHeader, _, _ := startWebPushServer(t)
+
+	var key struct {
+		PublicKey      string `json:"publicKey"`
+		Subject        string `json:"subject"`
+		SubjectDefault bool   `json:"subjectDefault"`
+	}
+	status, body := doGet(t, srv.URL+"/v1/integrations/webpush/key", authHeader)
+	if status != http.StatusOK {
+		t.Fatalf("GET key = %d (%s)", status, body)
+	}
+	if err := json.Unmarshal([]byte(body), &key); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if key.Subject != "https://notify.example.com" || !key.SubjectDefault {
+		t.Fatalf("default subject = %+v", key)
+	}
+
+	status, body = doPut(t, srv.URL+"/v1/integrations/webpush/subject", authHeader, `{"subject":"mailto:ops@example.org"}`)
+	if status != http.StatusOK {
+		t.Fatalf("PUT subject = %d (%s)", status, body)
+	}
+	if err := json.Unmarshal([]byte(body), &key); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if key.Subject != "mailto:ops@example.org" || key.SubjectDefault || key.PublicKey == "" {
+		t.Fatalf("after PUT = %+v", key)
+	}
+
+	status, body = doPut(t, srv.URL+"/v1/integrations/webpush/subject", authHeader, `{"subject":"mailto:notify@localhost"}`)
+	if status != http.StatusBadRequest || !strings.Contains(body, "bad_request") {
+		t.Fatalf("localhost PUT = %d (%s), want 400 bad_request", status, body)
+	}
+
+	status, _ = doPut(t, srv.URL+"/v1/integrations/webpush/subject", "", `{"subject":"mailto:ops@example.org"}`)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated PUT = %d, want 401", status)
 	}
 }

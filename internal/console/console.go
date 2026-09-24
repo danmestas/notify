@@ -496,6 +496,7 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/integrations/{id}", c.handleIntegrationUpdate)
 		pr.Post("/console/integrations/{id}/delete", c.handleIntegrationDelete)
 		pr.Post("/console/integrations/{id}/active", c.handleIntegrationToggleActive)
+		pr.Post("/console/integrations/{id}/webpush-subject", c.handleWebPushSubject)
 		// W4 ADR-013 (#55): durable credential-verify action. Native form
 		// POST → 303; two-step inline confirm in the drawer (it performs a real
 		// provider handshake). Kicks an engine run that probes the credentials

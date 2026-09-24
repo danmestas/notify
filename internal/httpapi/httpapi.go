@@ -204,6 +204,7 @@ func New(d Deps) http.Handler {
 			// GET /v1/integrations/webpush/key mints the org's VAPID keypair on
 			// first use and returns the public half; rotation is delete-the-row.
 			pr.Get("/v1/integrations/webpush/key", getWebPushKey(conn))
+			pr.Put("/v1/integrations/webpush/subject", putWebPushSubject(conn))
 			// CRUD + unified create (Wave 2).
 			pr.Get("/v1/integrations", getIntegrations(conn))
 			pr.Post("/v1/integrations", postIntegration(conn))
@@ -439,6 +440,18 @@ func deleteSubscriberWebPushCredentials(aud *audience.Service) http.HandlerFunc 
 // webPushKeyResponse is the GET /v1/integrations/webpush/key response body.
 type webPushKeyResponse struct {
 	PublicKey string `json:"publicKey"`
+	// Subject is the VAPID contact pushes are signed with; SubjectDefault is
+	// true when it is the server default rather than one set for this
+	// environment. An empty subject means Web Push cannot send until one is
+	// set (PUT /v1/integrations/webpush/subject).
+	Subject        string `json:"subject"`
+	SubjectDefault bool   `json:"subjectDefault"`
+}
+
+// webPushSubjectRequest is the PUT /v1/integrations/webpush/subject body. An
+// empty subject clears the override so the server default applies.
+type webPushSubjectRequest struct {
+	Subject string `json:"subject"`
 }
 
 // getWebPushKey returns the scope's Web Push VAPID public key, minting a
@@ -452,7 +465,36 @@ func getWebPushKey(conn *connectivity.Service) http.HandlerFunc {
 			writeInternalError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, webPushKeyResponse{PublicKey: pub})
+		subject, isDefault, err := conn.WebPushSubject(r.Context(), scope)
+		if err != nil {
+			writeInternalError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, webPushKeyResponse{PublicKey: pub, Subject: subject, SubjectDefault: isDefault})
+	}
+}
+
+// putWebPushSubject sets the scope's VAPID subject, the contact Apple and
+// other push services require in the signed JWT (#358). A subject that names
+// no reachable contact is refused with 400 here rather than failing every
+// push to an Apple device later.
+func putWebPushSubject(conn *connectivity.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scope := identity.ScopeFrom(r.Context())
+		var req webPushSubjectRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+			return
+		}
+		if err := conn.SetWebPushSubject(r.Context(), scope, req.Subject); err != nil {
+			if errors.Is(err, connectivity.ErrInvalidVAPIDSubject) {
+				writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+				return
+			}
+			writeInternalError(w, r, err)
+			return
+		}
+		getWebPushKey(conn)(w, r)
 	}
 }
 

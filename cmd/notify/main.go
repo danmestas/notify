@@ -243,7 +243,9 @@ func runServe(args []string) error {
 	defer func() { _ = bus.Close() }()
 
 	prefs := preferences.New(st)
-	conn := connectivity.New(st, mk, connectivity.WithSendmailCommand(cfg.sendmailCommand))
+	conn := connectivity.New(st, mk,
+		connectivity.WithSendmailCommand(cfg.sendmailCommand),
+		connectivity.WithPublicBaseURL(cfg.publicBaseURL))
 	// step_outputs grows without bound otherwise: every http_request action
 	// writes a row holding the captured response body and nothing removed them.
 	startStepOutputPurge(ctx, st)

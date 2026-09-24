@@ -1880,3 +1880,48 @@ func TestIntegrations_ToggleActive_BlocksDeactivatingPrimary(t *testing.T) {
 		t.Errorf("deactivate primary error body must mention 'primary'; got: %s", body)
 	}
 }
+
+// TestIntegrations_WebPushSubject_SetFromConsole is #358 in the console: the
+// Web Push detail shows the sender contact, warns when there is none, saves
+// a real one, and refuses localhost with a visible reason.
+func TestIntegrations_WebPushSubject_SetFromConsole(t *testing.T) {
+	tc := newTestConsole(t) // no public base URL: no default subject
+	cookie, csrf := tc.login(t)
+	if _, _, err := tc.deps.Connectivity.EnsureWebPushKeys(testBackground(), tc.scope); err != nil {
+		t.Fatalf("EnsureWebPushKeys: %v", err)
+	}
+	in, err := tc.st.Integrations().GetByProviderID(testBackground(), tc.scope, "webpush")
+	if err != nil {
+		t.Fatalf("webpush row: %v", err)
+	}
+	detailURL := "/console/api/fragments/integration-detail?id=" + in.ID
+	if body := tc.get(t, detailURL, cookie).Body.String(); !strings.Contains(body, "Web Push cannot send until a contact is set") {
+		t.Fatalf("detail does not warn about a missing subject:\n%s", body)
+	}
+
+	action := "/console/integrations/" + in.ID + "/webpush-subject"
+	rr := tc.postForm(t, action, url.Values{"subject": {"mailto:notify@localhost"}, "csrf_token": {csrf}}, cookie)
+	if rr.Code != http.StatusSeeOther || !strings.Contains(rr.Header().Get("Location"), "subjectError=") {
+		t.Fatalf("localhost subject: status %d Location %q, want 303 with subjectError", rr.Code, rr.Header().Get("Location"))
+	}
+
+	rr = tc.postForm(t, action, url.Values{"subject": {"mailto:ops@example.org"}, "csrf_token": {csrf}}, cookie)
+	if rr.Code != http.StatusSeeOther || strings.Contains(rr.Header().Get("Location"), "subjectError") {
+		t.Fatalf("valid subject: status %d Location %q", rr.Code, rr.Header().Get("Location"))
+	}
+	if sub, isDefault, err := tc.deps.Connectivity.WebPushSubject(testBackground(), tc.scope); err != nil || sub != "mailto:ops@example.org" || isDefault {
+		t.Fatalf("stored subject = %q default=%v err=%v", sub, isDefault, err)
+	}
+	if body := tc.get(t, detailURL, cookie).Body.String(); !strings.Contains(body, "mailto:ops@example.org") || strings.Contains(body, "cannot send") {
+		t.Fatalf("detail after save:\n%s", body)
+	}
+}
+
+func TestIntegrations_WebPushSubject_ReadOnlyBlocked(t *testing.T) {
+	tc := newReadOnlyTestConsole(t)
+	cookie, _ := tc.login(t)
+	rr := tc.postForm(t, "/console/integrations/x/webpush-subject", url.Values{"subject": {"mailto:ops@example.org"}}, cookie)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("read-only subject save: status = %d, want 403", rr.Code)
+	}
+}

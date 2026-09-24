@@ -58,7 +58,7 @@ func TestHandlePush_WebPush_ReachableThroughRealConnectivityResolver(t *testing.
 	// production) so the test's httptest.Server, which is loopback-only, is
 	// reachable; this mirrors how the other connectivity provider tests that
 	// exercise a real HTTP round trip are set up.
-	conn := connectivity.New(s, testMasterKey(), connectivity.WithHTTPClient(http.DefaultClient))
+	conn := connectivity.New(s, testMasterKey(), connectivity.WithHTTPClient(http.DefaultClient), connectivity.WithPublicBaseURL("https://notify.example.com"))
 	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
 
 	// GET /v1/integrations/webpush/key: mint the org's VAPID keypair with no

@@ -137,7 +137,7 @@ func TestEnsureWebPushKeys_DoesNotShadowAnExistingPrimaryProvider(t *testing.T) 
 // keypair is minted — no manual PATCH .../active toggle required.
 func TestEnsureWebPushKeys_BecomesTheResolvedPushProviderWhenItIsTheOnlyOne(t *testing.T) {
 	ctx := context.Background()
-	svc := New(openTemp(t), testKey())
+	svc := New(openTemp(t), testKey(), WithPublicBaseURL("https://notify.example.com"))
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
 
 	if _, _, err := svc.EnsureWebPushKeys(ctx, scope); err != nil {
@@ -162,7 +162,7 @@ func TestEnsureWebPushKeys_BecomesTheResolvedPushProviderWhenItIsTheOnlyOne(t *t
 // resolved as the scope's active push provider.
 func TestPushProviderFromIntegration_Webpush(t *testing.T) {
 	ctx := context.Background()
-	svc := New(openTemp(t), testKey())
+	svc := New(openTemp(t), testKey(), WithPublicBaseURL("https://notify.example.com"))
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
 
 	pub, priv, err := svc.EnsureWebPushKeys(ctx, scope)

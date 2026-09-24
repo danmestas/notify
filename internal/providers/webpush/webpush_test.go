@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -75,7 +76,7 @@ func vapidKeys(t *testing.T) (priv, pub string) {
 func TestSend_Wire(t *testing.T) {
 	srv, got := stubServer(t, http.StatusCreated)
 	priv, pub := vapidKeys(t)
-	c := &Client{PublicKey: pub, PrivateKey: priv, HTTPClient: srv.Client()}
+	c := &Client{PublicKey: pub, PrivateKey: priv, Subject: testSubject, HTTPClient: srv.Client()}
 
 	_, err := c.SendToSubscription(context.Background(), testSubscription(t, srv.URL), providers.PushMessage{
 		Title: "Build failed",
@@ -108,7 +109,7 @@ func TestSend_Wire(t *testing.T) {
 func TestSend_CustomTTL(t *testing.T) {
 	srv, got := stubServer(t, http.StatusCreated)
 	priv, pub := vapidKeys(t)
-	c := &Client{PublicKey: pub, PrivateKey: priv, HTTPClient: srv.Client()}
+	c := &Client{PublicKey: pub, PrivateKey: priv, Subject: testSubject, HTTPClient: srv.Client()}
 
 	_, err := c.SendToSubscription(context.Background(), testSubscription(t, srv.URL), providers.PushMessage{
 		Title: "t", Body: "b",
@@ -126,7 +127,7 @@ func TestSend_CustomTTL(t *testing.T) {
 func TestSend_2xxIsSuccess(t *testing.T) {
 	srv, _ := stubServer(t, http.StatusOK)
 	priv, pub := vapidKeys(t)
-	c := &Client{PublicKey: pub, PrivateKey: priv, HTTPClient: srv.Client()}
+	c := &Client{PublicKey: pub, PrivateKey: priv, Subject: testSubject, HTTPClient: srv.Client()}
 
 	if _, err := c.SendToSubscription(context.Background(), testSubscription(t, srv.URL), providers.PushMessage{Title: "t", Body: "b"}); err != nil {
 		t.Fatalf("SendToSubscription: %v", err)
@@ -139,7 +140,7 @@ func TestSend_404And410AreSubscriptionGone(t *testing.T) {
 	for _, status := range []int{http.StatusNotFound, http.StatusGone} {
 		srv, _ := stubServer(t, status)
 		priv, pub := vapidKeys(t)
-		c := &Client{PublicKey: pub, PrivateKey: priv, HTTPClient: srv.Client()}
+		c := &Client{PublicKey: pub, PrivateKey: priv, Subject: testSubject, HTTPClient: srv.Client()}
 
 		_, err := c.SendToSubscription(context.Background(), testSubscription(t, srv.URL), providers.PushMessage{Title: "t", Body: "b"})
 		if err != ErrSubscriptionGone {
@@ -152,7 +153,7 @@ func TestSend_404And410AreSubscriptionGone(t *testing.T) {
 func TestSend_5xxIsTransient(t *testing.T) {
 	srv, _ := stubServer(t, http.StatusServiceUnavailable)
 	priv, pub := vapidKeys(t)
-	c := &Client{PublicKey: pub, PrivateKey: priv, HTTPClient: srv.Client()}
+	c := &Client{PublicKey: pub, PrivateKey: priv, Subject: testSubject, HTTPClient: srv.Client()}
 
 	_, err := c.SendToSubscription(context.Background(), testSubscription(t, srv.URL), providers.PushMessage{Title: "t", Body: "b"})
 	if err == nil {
@@ -169,7 +170,7 @@ func TestSend_5xxIsTransient(t *testing.T) {
 func TestSend_4xxOtherIsPermanent(t *testing.T) {
 	srv, _ := stubServer(t, http.StatusBadRequest)
 	priv, pub := vapidKeys(t)
-	c := &Client{PublicKey: pub, PrivateKey: priv, HTTPClient: srv.Client()}
+	c := &Client{PublicKey: pub, PrivateKey: priv, Subject: testSubject, HTTPClient: srv.Client()}
 
 	_, err := c.SendToSubscription(context.Background(), testSubscription(t, srv.URL), providers.PushMessage{Title: "t", Body: "b"})
 	if err == nil {
@@ -190,7 +191,7 @@ func TestSend_ErrorNeverLeaksPrivateKey(t *testing.T) {
 	priv, pub := vapidKeys(t)
 	for _, status := range []int{http.StatusBadRequest, http.StatusServiceUnavailable, http.StatusGone} {
 		srv, _ := stubServer(t, status)
-		c := &Client{PublicKey: pub, PrivateKey: priv, HTTPClient: srv.Client()}
+		c := &Client{PublicKey: pub, PrivateKey: priv, Subject: testSubject, HTTPClient: srv.Client()}
 		sub := testSubscription(t, srv.URL)
 
 		_, err := c.SendToSubscription(context.Background(), sub, providers.PushMessage{Title: "t", Body: "b"})
@@ -211,7 +212,7 @@ func TestSend_ErrorNeverLeaksPrivateKey(t *testing.T) {
 // (connection refused) is retry-safe, mirroring the ntfy client's convention.
 func TestSend_UnreachableEndpointIsTransient(t *testing.T) {
 	priv, pub := vapidKeys(t)
-	c := &Client{PublicKey: pub, PrivateKey: priv}
+	c := &Client{PublicKey: pub, PrivateKey: priv, Subject: testSubject}
 
 	_, err := c.SendToSubscription(context.Background(), testSubscription(t, "http://127.0.0.1:1"), providers.PushMessage{Title: "t", Body: "b"})
 	if err == nil {
@@ -228,4 +229,61 @@ func TestSend_UnreachableEndpointIsTransient(t *testing.T) {
 // always go through SendToSubscription.
 func TestClient_SatisfiesPushProvider(t *testing.T) {
 	var _ providers.PushProvider = (*Client)(nil)
+}
+
+// testSubject is a VAPID contact a push service would accept.
+const testSubject = "mailto:ops@example.com"
+
+// TestSend_SubjectIsSignedAndRequired: the configured subject is what the
+// VAPID JWT carries (Apple rejects a localhost one, #358), and a client with
+// no subject refuses to send rather than inventing one.
+func TestSend_SubjectIsSignedAndRequired(t *testing.T) {
+	priv, pub := vapidKeys(t)
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	c := &Client{PublicKey: pub, PrivateKey: priv, Subject: "https://notify.example.com", HTTPClient: srv.Client()}
+	if _, err := c.SendToSubscription(context.Background(), testSubscription(t, srv.URL), providers.PushMessage{Title: "t"}); err != nil {
+		t.Fatalf("SendToSubscription: %v", err)
+	}
+	if got := jwtSub(t, auth); got != "https://notify.example.com" {
+		t.Fatalf("JWT sub = %q, want the configured subject", got)
+	}
+
+	bare := &Client{PublicKey: pub, PrivateKey: priv, HTTPClient: srv.Client()}
+	if _, err := bare.SendToSubscription(context.Background(), testSubscription(t, srv.URL), providers.PushMessage{Title: "t"}); err == nil {
+		t.Fatal("a client with no subject sent anyway")
+	}
+}
+
+// jwtSub extracts the "sub" claim from a "vapid t=<jwt>, k=<key>" header.
+func jwtSub(t *testing.T, auth string) string {
+	t.Helper()
+	i := strings.Index(auth, "t=")
+	if i < 0 {
+		t.Fatalf("no VAPID token in Authorization %q", auth)
+	}
+	tok := auth[i+2:]
+	if j := strings.IndexByte(tok, ','); j >= 0 {
+		tok = tok[:j]
+	}
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		t.Fatalf("malformed JWT %q", tok)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decode JWT claims: %v", err)
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		t.Fatalf("unmarshal JWT claims: %v", err)
+	}
+	return claims.Sub
 }

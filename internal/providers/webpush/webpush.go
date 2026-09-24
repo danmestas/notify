@@ -30,10 +30,6 @@ import (
 // (msg.Data["ttl"], seconds) are absent or unparsable.
 const defaultTTL = 24 * time.Hour
 
-// defaultSubject is the VAPID JWT subject (RFC8292) used when the org has no
-// configured contact.
-const defaultSubject = "mailto:notify@localhost"
-
 // ErrSubscriptionGone marks a subscription the push service reports as
 // permanently dead (404 or 410): the caller must delete the
 // webpush_subscriptions row for it and stop retrying.
@@ -55,8 +51,9 @@ type Client struct {
 	PublicKey  string
 	PrivateKey string
 	// Subject identifies the sender in the VAPID JWT: a mailto: or https: URI
-	// the push service may use to contact the sender if it needs to. Empty
-	// defaults to "mailto:notify@localhost".
+	// the push service may use to contact the sender if it needs to. It is
+	// required: Apple rejects a missing or unroutable subject with 403
+	// BadJwtToken (#358), so an empty one fails the send instead of guessing.
 	Subject    string
 	HTTPClient *http.Client
 }
@@ -103,7 +100,7 @@ func (c *Client) SendToSubscription(ctx context.Context, sub Subscription, msg p
 
 	subject := c.Subject
 	if subject == "" {
-		subject = defaultSubject
+		return providers.Result{}, errors.New("webpush: no VAPID subject configured")
 	}
 	hc := c.HTTPClient
 	if hc == nil {
