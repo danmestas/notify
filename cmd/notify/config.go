@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -50,6 +51,10 @@ type config struct {
 	// off: notify becomes internet-facing on a protocol it was not previously
 	// hardened for, so the operator chooses it explicitly.
 	smtpAddr string
+	// smtpCert and smtpKey name the STARTTLS certificate and key files for
+	// the SMTP receiver. Both or neither; with neither it speaks plaintext.
+	smtpCert string
+	smtpKey  string
 
 	// Chat two-way loop (Telegram/Discord).
 	telegramBotToken  string
@@ -125,6 +130,8 @@ func loadConfig(args []string) (config, error) {
 	bridgeURL := fs.String("bridge-url", envOr("NOTIFY_BRIDGE_URL", "http://127.0.0.1:8080"), "worker bridge URL of the running dagnats sidecar")
 	sendmailCommand := fs.String("sendmail-command", envOr("NOTIFY_SENDMAIL_COMMAND", "/usr/sbin/sendmail -ti"), "command the \"sendmail\" email provider pipes messages to (split on whitespace, run without a shell)")
 	smtpAddr := fs.String("smtp", envOr("NOTIFY_SMTP_ADDR", ""), "address for the embedded SMTP receiver, e.g. 0.0.0.0:25 (empty = off); makes the inbound MX host notify itself")
+	smtpCert := fs.String("smtp-cert", envOr("NOTIFY_SMTP_CERT", ""), "PEM certificate file for the SMTP receiver's STARTTLS (with -smtp-key); reloaded when it changes")
+	smtpKey := fs.String("smtp-key", envOr("NOTIFY_SMTP_KEY", ""), "PEM private key file for the SMTP receiver's STARTTLS (with -smtp-cert)")
 	dbPath := fs.String("db", envOr("NOTIFY_DB", "notify.db"), "SQLite database path")
 	addr := fs.String("addr", envOr("NOTIFY_ADDR", "127.0.0.1:3000"), "HTTP listen address")
 	masterKeyHex := fs.String("master-key-hex", os.Getenv("NOTIFY_MASTER_KEY_HEX"), "32-byte AES master key as hex (required unless -dev)")
@@ -139,6 +146,9 @@ func loadConfig(args []string) (config, error) {
 	mk, err := masterKey(*masterKeyHex, *dev)
 	if err != nil {
 		return config{}, err
+	}
+	if (*smtpCert == "") != (*smtpKey == "") {
+		return config{}, errors.New("-smtp-cert and -smtp-key must be set together")
 	}
 
 	return config{
@@ -159,6 +169,8 @@ func loadConfig(args []string) (config, error) {
 
 		inboundSecret: os.Getenv("NOTIFY_INBOUND_SECRET"),
 		smtpAddr:      *smtpAddr,
+		smtpCert:      *smtpCert,
+		smtpKey:       *smtpKey,
 		inboundMXHost: os.Getenv("NOTIFY_INBOUND_MX_HOST"),
 
 		telegramBotToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),

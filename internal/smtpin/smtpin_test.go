@@ -52,7 +52,10 @@ type fixture struct {
 	mailbox   string // reply+<token>@mail.example.org
 }
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t *testing.T) *fixture { return newFixtureWith(t, nil) }
+
+// newFixtureWith is newFixture with STARTTLS offered from certs, when set.
+func newFixtureWith(t *testing.T, certs *CertSource) *fixture {
 	t.Helper()
 	ctx := context.Background()
 	st, err := corestore.Open(ctx, filepath.Join(t.TempDir(), "smtpin.db"))
@@ -99,6 +102,9 @@ func newFixture(t *testing.T) *fixture {
 	srvCtx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
 	server := New(svc, "mx.notify.test", slog.Default())
+	if certs != nil {
+		server.WithTLS(certs)
+	}
 	go func() { _ = server.Serve(srvCtx, ln) }()
 
 	return &fixture{addr: ln.Addr().String(), responder: responder, mailbox: "reply+" + token + "@mail.example.org"}

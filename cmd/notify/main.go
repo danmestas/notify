@@ -546,6 +546,15 @@ func runServe(args []string) error {
 			bannerHost, _ = os.Hostname()
 		}
 		receiver := smtpin.New(eml, bannerHost, slog.Default())
+		if cfg.smtpCert != "" {
+			// Asked-for TLS that cannot load is a refusal to start, not a
+			// receiver that quietly offers none.
+			certs, err := smtpin.LoadCertificate(cfg.smtpCert, cfg.smtpKey, slog.Default())
+			if err != nil {
+				return fmt.Errorf("smtp STARTTLS: %w", err)
+			}
+			receiver.WithTLS(certs)
+		}
 		go func() {
 			if err := receiver.ListenAndServe(ctx, cfg.smtpAddr); err != nil {
 				slog.Default().Error("smtpin: receiver stopped", "addr", cfg.smtpAddr, "err", err)

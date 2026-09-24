@@ -47,9 +47,8 @@ type Server struct {
 }
 
 // New builds a receiver announcing itself as domain in the banner (the MX
-// host name, or the machine's). It accepts plaintext only in this version:
-// a reply carries no secret beyond its single-thread, single-subscriber token,
-// and STARTTLS is the obvious next step once a certificate is in hand.
+// host name, or the machine's). It speaks plaintext unless WithTLS gives it a
+// certificate, in which case it offers STARTTLS.
 func New(inbound Inbound, domain string, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
@@ -67,6 +66,16 @@ func New(inbound Inbound, domain string, log *slog.Logger) *Server {
 	srv.WriteTimeout = commandTimeout
 	srv.ErrorLog = slogPrinter{log: log}
 	s.srv = srv
+	return s
+}
+
+// WithTLS makes the receiver advertise and accept STARTTLS with certificates
+// from cs (#362). Replies quote the notification they answer, which can carry
+// private content, so every sender that supports TLS should get it. TLS is
+// offered, not required: a sender that cannot upgrade still delivers, since
+// refusing it would bounce a real reply.
+func (s *Server) WithTLS(cs *CertSource) *Server {
+	s.srv.TLSConfig = cs.TLSConfig()
 	return s
 }
 

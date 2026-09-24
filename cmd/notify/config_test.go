@@ -90,3 +90,21 @@ func TestLoadConfig_MasterKeyRequiredUnlessDev(t *testing.T) {
 		}
 	})
 }
+
+// TestLoadConfig_SMTPCertAndKeyTogether: STARTTLS needs both files, so one
+// without the other is a configuration error, not a silently plaintext
+// receiver.
+func TestLoadConfig_SMTPCertAndKeyTogether(t *testing.T) {
+	for _, args := range [][]string{
+		{"-dev", "-smtp-cert", "/etc/ssl/mx.pem"},
+		{"-dev", "-smtp-key", "/etc/ssl/mx.key"},
+	} {
+		if _, err := loadConfig(args); err == nil {
+			t.Errorf("loadConfig(%v) = nil error, want one", args)
+		}
+	}
+	cfg, err := loadConfig([]string{"-dev", "-smtp-cert", "/etc/ssl/mx.pem", "-smtp-key", "/etc/ssl/mx.key"})
+	if err != nil || cfg.smtpCert != "/etc/ssl/mx.pem" || cfg.smtpKey != "/etc/ssl/mx.key" {
+		t.Fatalf("both set: cfg=%q/%q err=%v", cfg.smtpCert, cfg.smtpKey, err)
+	}
+}

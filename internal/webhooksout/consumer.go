@@ -308,17 +308,23 @@ func (c *Consumer) deliver(ctx context.Context, d store.WebhookDelivery) {
 	if !ok {
 		return
 	}
+	// From here the row is leased to this worker. Every write that settles
+	// it must land even if shutdown cancels ctx mid-attempt; otherwise the
+	// row stays leased and a restarted worker cannot touch it until the
+	// lease runs out.
+	settle := context.WithoutCancel(ctx)
+
 	scope := d.Scope()
 	ep, err := c.endpoints.GetByID(ctx, scope, d.EndpointID)
 	switch {
 	case errors.Is(err, store.ErrNotFound), err == nil && !ep.Active:
 		// The endpoint is gone or switched off: nothing wants this event.
-		c.drop(ctx, d.ID)
+		c.drop(settle, d.ID)
 		return
 	case err != nil:
-		// Transient store error: try again on the next tick, no attempt
-		// charged.
-		c.reschedule(ctx, d.ID, d.Attempts, now.Add(c.tick))
+		// Transient store error, or shutdown: try again on the next tick,
+		// no attempt charged.
+		c.reschedule(settle, d.ID, d.Attempts, now.Add(c.tick))
 		return
 	}
 	secret, ok := c.secretFor(ep)
@@ -329,14 +335,21 @@ func (c *Consumer) deliver(ctx context.Context, d store.WebhookDelivery) {
 		// process that can open it.
 		slog.Default().Error("webhooksout: cannot open endpoint signing secret",
 			"endpoint", ep.ID, "url", ep.URL)
-		c.fail(ctx, d, now)
+		c.fail(settle, d, now)
 		return
 	}
 	if c.post(ctx, ep.URL, secret, d.Payload) {
-		c.drop(ctx, d.ID)
+		c.drop(settle, d.ID)
 		return
 	}
-	c.fail(ctx, d, now)
+	if ctx.Err() != nil {
+		// Shutdown interrupted the POST. That says nothing about the
+		// endpoint, so release the row for the next worker without
+		// charging an attempt.
+		c.reschedule(settle, d.ID, d.Attempts, time.Now())
+		return
+	}
+	c.fail(settle, d, now)
 }
 
 // fail charges one attempt to d and either reschedules it with backoff or,
