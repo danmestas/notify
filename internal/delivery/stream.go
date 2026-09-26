@@ -149,11 +149,11 @@ func (h *StreamHandler) HandleStream(ctx context.Context, t engine.TaskPayload) 
 	// the send closed, observably, rather than reach PublishFeed (which
 	// re-validates too, but only as defense in depth — this is the primary
 	// gate).
-	topic := template.RenderI18n(env.Step.Topic, data, translate)
+	topic := template.RenderAs(template.Plain, env.Step.Topic, data, translate)
 	if err := domain.ValidateFeedTopic(topic); err != nil {
 		return h.persistStreamError(ctx, env, t, fmt.Errorf("stream: invalid topic after render: %w", err))
 	}
-	content := template.RenderI18n(env.Step.BodyTemplate, data, translate)
+	content := template.RenderAs(template.Plain, env.Step.BodyTemplate, data, translate)
 
 	// Per-step condition gate. When the step authored a filter condition, it is
 	// evaluated against the {subscriber, payload} context; a false (or

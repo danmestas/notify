@@ -186,8 +186,8 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 	}
 	scope := domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
 	translate := storeTranslator(ctx, h.store, scope, subMap)
-	subject := template.RenderI18n(env.Step.SubjectTemplate, data, translate)
-	content := template.RenderI18n(env.Step.BodyTemplate, data, translate)
+	subject := template.RenderAs(template.Plain, env.Step.SubjectTemplate, data, translate)
+	content := template.RenderAs(template.Plain, env.Step.BodyTemplate, data, translate)
 
 	// Recipient address: SMS goes to the subscriber's phone number (the
 	// subscriber model's phone field, mirroring email's per-subscriber address).

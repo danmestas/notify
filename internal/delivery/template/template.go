@@ -11,27 +11,15 @@ package template
 import "github.com/aymerick/raymond"
 
 // Render evaluates tmpl as a Handlebars template against data and returns the
-// result. A malformed template (e.g. an unterminated "{{") degrades to the
-// literal source rather than panicking or returning an empty string.
+// result, HTML-escaping every inserted value (Handlebars' default). A
+// malformed template (e.g. an unterminated "{{") degrades to the literal
+// source rather than panicking or returning an empty string.
+//
+// Delivery steps use RenderAs, which escapes for the destination. Render
+// remains for the HTTP request step, whose values land in a URL, headers,
+// and a body that each need their own escaping; that is tracked separately.
 func Render(tmpl string, data map[string]any) string {
 	out, err := raymond.Render(tmpl, data)
-	if err != nil {
-		return tmpl
-	}
-	return out
-}
-
-// RenderI18n evaluates tmpl like Render, but registers a {{t}} helper that
-// resolves a key to its localized string via translate. A template without
-// {{t}} renders identically to Render; a malformed template degrades to the
-// literal source.
-func RenderI18n(tmpl string, data map[string]any, translate func(key string) string) string {
-	tpl, err := raymond.Parse(tmpl)
-	if err != nil {
-		return tmpl
-	}
-	tpl.RegisterHelper("t", func(key string) string { return translate(key) })
-	out, err := tpl.Exec(data)
 	if err != nil {
 		return tmpl
 	}

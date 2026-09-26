@@ -11,6 +11,7 @@ import (
 	"github.com/aymerick/raymond"
 
 	"github.com/danmestas/notify/internal/delivery/filter"
+	tmpl "github.com/danmestas/notify/internal/delivery/template"
 )
 
 // workflow_step_conditions.go renders the step editor's CONDITIONS row
@@ -344,8 +345,9 @@ func (c *Console) serveFragmentStepPreview(w http.ResponseWriter, r *http.Reques
 //
 // so a body that renders {{payload.name}} in the preview renders the same
 // at send time. A passthrough {{t}} helper is registered to mirror
-// template.RenderI18n — an unseeded translate key renders verbatim, so a
-// template that uses {{t "key"}} previews without a spurious error.
+// template.RenderAs — an unseeded translate key renders verbatim, so a
+// template that uses {{t "key"}} previews without a spurious error. Values
+// are inserted as a plain-text send inserts them, not HTML-escaped (#364).
 // There is no subscriber at design time, so {{subscriber.*}} resolves to
 // "" (the same fail-soft behaviour the engine uses for an absent path).
 //
@@ -363,7 +365,7 @@ func renderStepPreview(tmplStr, payloadStr string) stepPreviewView {
 	if err != nil {
 		return stepPreviewView{IsError: true, Error: "Template error: " + err.Error()}
 	}
-	// Mirror template.RenderI18n: an unseeded key renders verbatim.
+	// Mirror template.RenderAs: an unseeded key renders verbatim.
 	tpl.RegisterHelper("t", func(key string) string { return key })
 
 	// Build the data context. payload is a JSON object; if it is empty or
@@ -380,7 +382,7 @@ func renderStepPreview(tmplStr, payloadStr string) stepPreviewView {
 		"subscriber": map[string]any{},
 	}
 
-	out, err := tpl.Exec(data)
+	out, err := tpl.Exec(tmpl.EscapeValues(data, tmpl.Plain))
 	if err != nil {
 		return stepPreviewView{IsError: true, Error: "Render error: " + err.Error()}
 	}

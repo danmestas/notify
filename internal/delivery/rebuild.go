@@ -242,7 +242,7 @@ func storeTranslator(ctx context.Context, s *store.Store, scope domain.Scope, su
 // a step without a configured layout renders exactly as before. The render
 // context is a shallow copy of data with "content" set, so the caller's map is
 // not mutated.
-func wrapLayout(ctx context.Context, s *store.Store, scope domain.Scope, layoutKey, content string, data map[string]any, translate func(key string) string) string {
+func wrapLayout(ctx context.Context, s *store.Store, scope domain.Scope, layoutKey, content string, data map[string]any, translate func(key string) string, esc template.Escaper) string {
 	if layoutKey == "" {
 		return content
 	}
@@ -254,6 +254,8 @@ func wrapLayout(ctx context.Context, s *store.Store, scope domain.Scope, layoutK
 	for k, v := range data {
 		wrapData[k] = v
 	}
-	wrapData["content"] = content
-	return template.RenderI18n(layout.Content, wrapData, translate)
+	// content is the body already rendered for this destination, so it goes
+	// in untouched; every other value is escaped like the body's were.
+	wrapData["content"] = template.Trusted(content)
+	return template.RenderAs(esc, layout.Content, wrapData, translate)
 }

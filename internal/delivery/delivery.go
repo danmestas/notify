@@ -151,9 +151,11 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 		data["digest"] = digestData(events)
 	}
 	translate := storeTranslator(ctx, h.store, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, subMap)
-	subject := template.RenderI18n(env.Step.SubjectTemplate, data, translate)
-	content := template.RenderI18n(env.Step.BodyTemplate, data, translate)
-	content = wrapLayout(ctx, h.store, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, env.Step.LayoutKey, content, data, translate)
+	// In-app text is data for the inbox to display, not markup: values go in
+	// as sent, and whatever renders the inbox must treat it as text (#364).
+	subject := template.RenderAs(template.Plain, env.Step.SubjectTemplate, data, translate)
+	content := template.RenderAs(template.Plain, env.Step.BodyTemplate, data, translate)
+	content = wrapLayout(ctx, h.store, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, env.Step.LayoutKey, content, data, translate, template.Plain)
 
 	// Per-step condition gate. When the step authored a filter condition, it is
 	// evaluated against the {subscriber, payload} context; a false (or
@@ -208,7 +210,7 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 		Archived:       false,
 		TransactionID:  env.TransactionID,
 		Extras: inAppExtras(env.Step, func(tmpl string) string {
-			return template.RenderI18n(tmpl, data, translate)
+			return template.RenderAs(template.Plain, tmpl, data, translate)
 		}),
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	}

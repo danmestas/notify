@@ -100,7 +100,7 @@ func TestRender(t *testing.T) {
 	}
 }
 
-func TestRenderI18n(t *testing.T) {
+func TestRenderAs_Translate(t *testing.T) {
 	translate := func(key string) string {
 		if key == "greeting" {
 			return "Hola"
@@ -108,15 +108,7 @@ func TestRenderI18n(t *testing.T) {
 		return key
 	}
 	data := map[string]any{"subscriber": map[string]any{"firstName": "Ada"}}
-
-	// {{t}} resolves through the helper; other paths render as usual.
-	if got := RenderI18n(`{{t "greeting"}} {{subscriber.firstName}}`, data, translate); got != "Hola Ada" {
-		t.Fatalf("RenderI18n with {{t}}: got %q want %q", got, "Hola Ada")
-	}
-
-	// A template without {{t}} renders identically to Render.
-	tmpl := "Hi {{subscriber.firstName}}"
-	if got, want := RenderI18n(tmpl, data, translate), Render(tmpl, data); got != want {
-		t.Fatalf("RenderI18n without {{t}}: got %q want %q (Render)", got, want)
+	if got := RenderAs(Plain, `{{t "greeting"}} {{subscriber.firstName}}`, data, translate); got != "Hola Ada" {
+		t.Fatalf("RenderAs with {{t}}: got %q want %q", got, "Hola Ada")
 	}
 }

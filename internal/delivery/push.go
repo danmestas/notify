@@ -199,8 +199,8 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	}
 	scope := domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
 	translate := storeTranslator(ctx, h.store, scope, subMap)
-	subject := template.RenderI18n(env.Step.SubjectTemplate, data, translate)
-	content := template.RenderI18n(env.Step.BodyTemplate, data, translate)
+	subject := template.RenderAs(template.Plain, env.Step.SubjectTemplate, data, translate)
+	content := template.RenderAs(template.Plain, env.Step.BodyTemplate, data, translate)
 	// Step.Data is authored in the same editor and the same {{path}} namespace
 	// as subject and body -- {"url":"{{payload.link}}"} is the common case, a
 	// per-notification deep link -- so it renders here, once, for every send
@@ -210,7 +210,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	// than the existing one mutated, so the authored templates in the envelope
 	// are never overwritten in place.
 	env.Step.Data = renderPushData(env.Step.Data, func(tmpl string) string {
-		return template.RenderI18n(tmpl, data, translate)
+		return template.RenderAs(template.Plain, tmpl, data, translate)
 	})
 
 	// Per-step condition gate. When the step authored a filter condition, it is

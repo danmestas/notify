@@ -211,8 +211,10 @@ func (h *ChatHandler) HandleChat(ctx context.Context, t engine.TaskPayload) (jso
 	}
 	scope := domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
 	translate := storeTranslator(ctx, h.store, scope, subMap)
-	subject := template.RenderI18n(env.Step.SubjectTemplate, data, translate)
-	content := template.RenderI18n(env.Step.BodyTemplate, data, translate)
+	// Rendered as plain text: this is what the message row shows. The wire
+	// text is rendered again below for providers that interpret markup.
+	subject := template.RenderAs(template.Plain, env.Step.SubjectTemplate, data, translate)
+	content := template.RenderAs(template.Plain, env.Step.BodyTemplate, data, translate)
 
 	// Per-step condition gate. When the step authored a filter condition, it is
 	// evaluated against the {subscriber, payload} context; a false (or
@@ -261,9 +263,16 @@ func (h *ChatHandler) HandleChat(ctx context.Context, t engine.TaskPayload) (jso
 		return h.persistChatError(ctx, env, t, providerID, integrationID, fmt.Errorf("chat: subscriber %q has no chat_id for provider %q", env.SubscriberID, providerID))
 	}
 
+	// Telegram (parse_mode HTML) and Slack (mrkdwn) read markup, so values
+	// are escaped for them on the wire while the template's own markup
+	// stays; everyone else gets the plain text (#364).
+	wire := content
+	if esc := chatMarkupEscaper(providerID); esc != nil {
+		wire = template.RenderAs(esc, env.Step.BodyTemplate, data, translate)
+	}
 	if _, err := provider.Send(ctx, providers.ChatMessage{
 		Address: address,
-		Content: content,
+		Content: wire,
 	}); err != nil {
 		if providers.IsTransient(err) {
 			// Transient (5xx/timeout): let the engine retry the task per its
@@ -420,4 +429,16 @@ func (h *ChatHandler) persistChatError(ctx context.Context, env runenv.InAppEnve
 	out, merr := json.Marshal(saved)
 	h.publishDelivery(env.Scope.EnvID, out)
 	return out, merr
+}
+
+// chatMarkupEscaper returns the escaper for a chat provider whose message
+// text is parsed as markup, or nil when it is shown as written.
+func chatMarkupEscaper(providerID string) template.Escaper {
+	switch providerID {
+	case "telegram":
+		return template.HTML
+	case "slack":
+		return template.Slack
+	}
+	return nil
 }

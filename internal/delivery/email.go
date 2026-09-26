@@ -198,12 +198,18 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 		data["digest"] = digestData(events)
 	}
 	translate := storeTranslator(ctx, h.store, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, subMap)
-	subject := template.RenderI18n(env.Step.SubjectTemplate, data, translate)
-	content := template.RenderI18n(env.Step.BodyTemplate, data, translate)
+	// A subject is never HTML, and neither is a text body: values go in as
+	// sent. Only an HTML body escapes them (#364).
+	bodyEsc := template.Plain
+	if env.Step.EditorType == "html" {
+		bodyEsc = template.HTML
+	}
+	subject := template.RenderAs(template.Plain, env.Step.SubjectTemplate, data, translate)
+	content := template.RenderAs(bodyEsc, env.Step.BodyTemplate, data, translate)
 	to, _ := subMap["email"].(string)
 
 	scope := domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
-	content = wrapLayout(ctx, h.store, scope, env.Step.LayoutKey, content, data, translate)
+	content = wrapLayout(ctx, h.store, scope, env.Step.LayoutKey, content, data, translate, bodyEsc)
 
 	// Per-step condition gate. When the step authored a filter condition, it is
 	// evaluated against the {subscriber, payload} context; a false (or
