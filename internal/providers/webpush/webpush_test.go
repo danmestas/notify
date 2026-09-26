@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -286,4 +287,41 @@ func jwtSub(t *testing.T, auth string) string {
 		t.Fatalf("unmarshal JWT claims: %v", err)
 	}
 	return claims.Sub
+}
+
+// TestSend_RefusalCarriesStatusAndReason: a 4xx refusal is a StatusError
+// with the push service's reason (Apple and Google send {"reason": ...}),
+// which the delivery layer records per device (#359).
+func TestSend_RefusalCarriesStatusAndReason(t *testing.T) {
+	priv, pub := vapidKeys(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"reason":"BadJwtToken"}`))
+	}))
+	defer srv.Close()
+	c := &Client{PublicKey: pub, PrivateKey: priv, Subject: testSubject, HTTPClient: srv.Client()}
+	_, err := c.SendToSubscription(context.Background(), testSubscription(t, srv.URL), providers.PushMessage{Title: "t"})
+	var se *StatusError
+	if !errors.As(err, &se) || se.Code != 403 || se.Reason != "BadJwtToken" {
+		t.Fatalf("err = %v, want StatusError 403 BadJwtToken", err)
+	}
+	if providers.IsTransient(err) {
+		t.Fatal("a 403 is not transient")
+	}
+	if !strings.Contains(err.Error(), "status 403") {
+		t.Fatalf("error text %q lost the status", err)
+	}
+}
+
+// TestSend_429IsTransient: rate limiting says nothing about the device, so
+// it is retried rather than counted against the subscription.
+func TestSend_429IsTransient(t *testing.T) {
+	srv, _ := stubServer(t, http.StatusTooManyRequests)
+	priv, pub := vapidKeys(t)
+	c := &Client{PublicKey: pub, PrivateKey: priv, Subject: testSubject, HTTPClient: srv.Client()}
+	_, err := c.SendToSubscription(context.Background(), testSubscription(t, srv.URL), providers.PushMessage{Title: "t"})
+	var se *StatusError
+	if !providers.IsTransient(err) || !errors.As(err, &se) || se.Code != 429 {
+		t.Fatalf("err = %v, want a transient StatusError 429", err)
+	}
 }

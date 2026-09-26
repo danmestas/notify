@@ -97,7 +97,7 @@ func businessTables(t *testing.T, s *Store) []string {
 func TestMigrate_0005_AppliesDigestKey(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 36 {
+	if n := migrationCount(t, s); n != 37 {
 		t.Fatalf("expected 35 recorded migrations, got %d", n)
 	}
 
@@ -138,7 +138,7 @@ func TestMigrate_0005_AppliesDigestKey(t *testing.T) {
 func TestMigrate_0028_AddsWorkflowVersionSnapshotColumns(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 36 {
+	if n := migrationCount(t, s); n != 37 {
 		t.Fatalf("expected 35 recorded migrations, got %d", n)
 	}
 

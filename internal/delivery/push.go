@@ -3,7 +3,6 @@ package delivery
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -58,11 +57,15 @@ type PushHandler struct {
 	pub      EventPublisher
 	throttle Throttler
 	digester Digester
+	// webPushRetryDelay is how long a Web Push send waits before its one
+	// retry of devices that failed transiently. A field so tests need not
+	// sleep for the production value.
+	webPushRetryDelay time.Duration
 }
 
 // NewPush constructs a PushHandler backed by s and resolver r.
 func NewPush(s *store.Store, r PushResolver) *PushHandler {
-	return &PushHandler{store: s, resolver: r}
+	return &PushHandler{store: s, resolver: r, webPushRetryDelay: webPushRetryDelay}
 }
 
 // WithPreferences attaches an optional channel-preference checker and returns
@@ -365,52 +368,34 @@ func (h *PushHandler) handleWebPushSend(ctx context.Context, env runenv.InAppEnv
 		Data:     env.Step.Data,
 	}
 
-	sent := 0
-	failed := 0
-	var lastErr error
-	for _, sub := range subs {
-		_, sendErr := sender.SendToSubscription(ctx, webpushprovider.Subscription{
-			Endpoint: sub.Endpoint,
-			P256dh:   sub.P256dh,
-			Auth:     sub.Auth,
-		}, msg)
-		if sendErr == nil {
-			sent++
-			continue
-		}
-		if errors.Is(sendErr, webpushprovider.ErrSubscriptionGone) {
-			// Best-effort prune: a delete failure here must not fail the send
-			// outcome for the devices that did succeed.
-			_ = h.store.WebPushSubscriptions().DeleteByEndpoint(ctx, scope, env.SubscriberID, sub.Endpoint)
-			continue
-		}
-		failed++
-		lastErr = sendErr
-	}
+	outcomes, sent, failed, lastErr := h.fanOutWebPush(ctx, scope, env.SubscriberID, sender, subs, msg)
 
 	if sent == 0 {
 		if lastErr == nil {
-			// Every subscription was gone (pruned above): nothing left to
-			// address, same outcome as no rows at all.
+			// Every subscription was gone (pruned): nothing left to address,
+			// same outcome as no rows at all.
 			return h.persistPushSkipped(ctx, env, t, scope, subject, content)
 		}
 		if providers.IsTransient(lastErr) {
 			// Every attempt failed transiently (5xx/timeout) and nothing was
 			// delivered: retry the whole step instead of recording a terminal
-			// failure, matching the single-address path's classification.
+			// failure, matching the single-address path's classification. A
+			// retry never re-sends to a device that already succeeded,
+			// because sent == 0 is required to take this branch.
 			return nil, engine.NewRetryableError(fmt.Errorf("webpush: 0/%d subscriptions delivered: %w", len(subs), lastErr))
 		}
 		return h.persistPushError(ctx, env, t, webPushProviderID, integrationID, fmt.Errorf("webpush: 0/%d subscriptions delivered: %w", len(subs), lastErr))
 	}
 
-	// At least one device delivered, so the message is "sent" — but a partial
-	// failure (some devices delivered, others failed permanently) must not be
-	// invisible: record the tally in ErrorText so the activity view surfaces
-	// it instead of showing a send that looks fully clean.
+	// At least one device delivered, so the message is "sent". A partial
+	// failure must not be invisible: the tally goes in ErrorText, and every
+	// device's outcome in extras.devices, so a client can show which device
+	// refused and why (#359).
 	var errorText string
 	if failed > 0 {
-		errorText = fmt.Sprintf("delivered %d/%d: %d permanent failure(s) (%s)", sent, sent+failed, failed, lastErr)
+		errorText = fmt.Sprintf("delivered %d/%d: %d failure(s) (%s)", sent, sent+failed, failed, lastErr)
 	}
+	extras, _ := json.Marshal(map[string]any{"devices": outcomes})
 
 	saved := domain.Message{
 		ID:             store.NewULID(),
@@ -433,6 +418,7 @@ func (h *PushHandler) handleWebPushSend(ctx context.Context, env runenv.InAppEnv
 		Archived:       false,
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+		Extras:         extras,
 	}
 	persisted, err := h.store.Messages().Create(ctx, scope, saved)
 	if err != nil {

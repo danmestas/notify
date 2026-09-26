@@ -11,7 +11,7 @@ import (
 func TestMigrate_0008_AppliesTranslations(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 36 {
+	if n := migrationCount(t, s); n != 37 {
 		t.Fatalf("expected 35 recorded migrations, got %d", n)
 	}
 
@@ -82,7 +82,7 @@ func TestTranslationRepo_UpsertMap(t *testing.T) {
 func TestMigrate_0015_AppliesTranslationSettings(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 36 {
+	if n := migrationCount(t, s); n != 37 {
 		t.Fatalf("expected 35 recorded migrations, got %d", n)
 	}
 

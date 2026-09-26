@@ -145,3 +145,30 @@ func TestWebPushSubscriptions_DeleteByEndpoint(t *testing.T) {
 		t.Fatalf("DeleteByEndpoint on already-deleted row: err = %v, want ErrNotFound", err)
 	}
 }
+
+// TestWebPushSubscriptionRepo_FailureCountIsScoped: the refusal count rises
+// per call, resets to zero, and one tenant cannot touch another's row.
+func TestWebPushSubscriptionRepo_FailureCountIsScoped(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	a := domain.Scope{OrgID: "oa", EnvID: "ea"}
+	b := domain.Scope{OrgID: "ob", EnvID: "eb"}
+	repo := s.WebPushSubscriptions()
+	if _, err := repo.UpsertByEndpoint(ctx, a, domain.WebPushSubscription{SubscriberID: "u", Endpoint: "https://push/x", P256dh: "p", Auth: "a"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	for want := 1; want <= 2; want++ {
+		if n, err := repo.RecordFailure(ctx, a, "u", "https://push/x"); err != nil || n != want {
+			t.Fatalf("RecordFailure = %d, %v; want %d", n, err, want)
+		}
+	}
+	if _, err := repo.RecordFailure(ctx, b, "u", "https://push/x"); err != ErrNotFound {
+		t.Fatalf("cross-tenant RecordFailure = %v, want ErrNotFound", err)
+	}
+	if err := repo.ResetFailures(ctx, a, "u", "https://push/x"); err != nil {
+		t.Fatalf("ResetFailures: %v", err)
+	}
+	if n, _ := repo.RecordFailure(ctx, a, "u", "https://push/x"); n != 1 {
+		t.Fatalf("after reset count = %d, want 1", n)
+	}
+}

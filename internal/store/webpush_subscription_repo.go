@@ -25,6 +25,11 @@ type WebPushSubscriptionRepo interface {
 	// DeleteByEndpoint removes one device subscription. Returns ErrNotFound
 	// when the row does not exist in this scope.
 	DeleteByEndpoint(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) error
+	// RecordFailure counts one more consecutive permanent refusal for the
+	// subscription and returns the new count. ErrNotFound when it is gone.
+	RecordFailure(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) (int, error)
+	// ResetFailures clears the refusal count after a successful delivery.
+	ResetFailures(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) error
 }
 
 type webPushSubscriptionRepo struct {
@@ -118,4 +123,31 @@ func (repo *webPushSubscriptionRepo) DeleteByEndpoint(ctx context.Context, scope
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (repo *webPushSubscriptionRepo) RecordFailure(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) (int, error) {
+	res, err := repo.w.ExecContext(ctx,
+		`UPDATE webpush_subscriptions SET failures = failures + 1
+		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND endpoint = ?`,
+		scope.OrgID, scope.EnvID, subscriberID, endpoint)
+	if err != nil {
+		return 0, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return 0, ErrNotFound
+	}
+	var failures int
+	err = repo.w.QueryRowContext(ctx,
+		`SELECT failures FROM webpush_subscriptions
+		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND endpoint = ?`,
+		scope.OrgID, scope.EnvID, subscriberID, endpoint).Scan(&failures)
+	return failures, err
+}
+
+func (repo *webPushSubscriptionRepo) ResetFailures(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) error {
+	_, err := repo.w.ExecContext(ctx,
+		`UPDATE webpush_subscriptions SET failures = 0
+		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND endpoint = ? AND failures > 0`,
+		scope.OrgID, scope.EnvID, subscriberID, endpoint)
+	return err
 }

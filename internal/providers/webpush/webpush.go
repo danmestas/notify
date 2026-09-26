@@ -35,6 +35,31 @@ const defaultTTL = 24 * time.Hour
 // webpush_subscriptions row for it and stop retrying.
 var ErrSubscriptionGone = errors.New("webpush: subscription gone")
 
+// StatusError is a push service's refusal: the HTTP status and the reason
+// it gave. Apple and Google send {"reason": "..."}; Reason is that value when
+// present, else the trimmed body. The delivery layer reads Code to decide
+// whether a refusal counts against the device (#360).
+type StatusError struct {
+	Code   int
+	Reason string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("webpush: status %d: %s", e.Code, e.Reason)
+}
+
+// statusError builds a StatusError from a push service response body.
+func statusError(code int, body []byte) *StatusError {
+	reason := strings.TrimSpace(string(body))
+	var parsed struct {
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal(body, &parsed) == nil && parsed.Reason != "" {
+		reason = parsed.Reason
+	}
+	return &StatusError{Code: code, Reason: reason}
+}
+
 // Subscription is one browser PushSubscription target: the endpoint URL and
 // the two keys from PushSubscription.getKey(). Mirrors
 // domain.WebPushSubscription without importing the domain package (this
@@ -134,13 +159,12 @@ func (c *Client) SendToSubscription(ctx context.Context, sub Subscription, msg p
 		return providers.Result{}, nil
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
 		return providers.Result{}, ErrSubscriptionGone
-	case resp.StatusCode >= 500:
-		return providers.Result{}, providers.NewTransientError(
-			fmt.Errorf("webpush: status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))),
-		)
+	case resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests:
+		// Server faults and rate limiting say nothing about the device.
+		return providers.Result{}, providers.NewTransientError(statusError(resp.StatusCode, respBody))
 	default:
-		// 4xx other than 404/410 (bad request, auth): permanent.
-		return providers.Result{}, fmt.Errorf("webpush: status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		// 4xx other than 404/410/429 (bad request, auth): permanent.
+		return providers.Result{}, statusError(resp.StatusCode, respBody)
 	}
 }
 
