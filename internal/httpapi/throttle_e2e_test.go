@@ -94,7 +94,7 @@ func TestCheckThrottle_StepHandler_SecondRunDropped(t *testing.T) {
 		Name:              "ThrottledWorkflow",
 		TriggerIdentifier: "throttle-step-flow",
 		Steps: []domain.Step{
-			{StepID: "T1", Type: "throttle", ControlValues: json.RawMessage(`{"limit":1,"windowSec":3600}`)},
+			{StepID: "T1", Type: "throttle", ControlValues: json.RawMessage(`{"limit":1,"windowSec":2592000}`)},
 			{StepID: "S1", Type: "in_app", ControlValues: json.RawMessage(`{"subject":"Hi","body":"throttle step e2e"}`)},
 		},
 	}); err != nil {
@@ -193,7 +193,7 @@ func TestCheckThrottle_StepHandler_SecondRunDropped(t *testing.T) {
 // per-channel embedded throttle path): a real dagnats sidecar, real temp
 // SQLite, and the real HTTP surface drive two triggers for the same subscriber
 // against an in_app workflow whose step configures throttle
-// {limit:1,windowSec:60}. Exactly one message is "sent" and the second is
+// {limit:1,windowSec:2592000}. Exactly one message is "sent" and the second is
 // "throttled". This exercises the OLD WithThrottle channel-level gate, NOT the
 // check.throttle step handler; see TestCheckThrottle_StepHandler_SecondRunDropped
 // for the step-level proof.
@@ -234,11 +234,12 @@ func TestThrottle_SecondSendThrottled(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	// windowSec is large so both sends fall in the same epoch-aligned fixed
-	// window; the eventbus counter buckets by UnixNano/window, so a 60s window
-	// is flaky when the two sends straddle a wall-clock minute boundary. The
-	// behavior under test is limit=1 -> exactly one send, not the window value.
-	controls := json.RawMessage(`{"subject":"Hi {{subscriber.firstName}}","body":"hello","throttle":{"limit":1,"windowSec":3600}}`)
+	// windowSec is 30 days so both sends fall in the same epoch-aligned fixed
+	// window: the eventbus counter buckets by UnixNano/window, so the two
+	// sends straddling a boundary lets both through. With a one-hour window
+	// that happened in CI, sends at 19:59:5x and 20:00:0x UTC. The behavior
+	// under test is limit=1 -> exactly one send, not the window value.
+	controls := json.RawMessage(`{"subject":"Hi {{subscriber.firstName}}","body":"hello","throttle":{"limit":1,"windowSec":2592000}}`)
 	if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
 		Name:              "Welcome",
 		TriggerIdentifier: "welcome-flow",

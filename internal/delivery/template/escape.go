@@ -1,6 +1,7 @@
 package template
 
 import (
+	"encoding/json"
 	"html"
 	"reflect"
 	"strings"
@@ -30,6 +31,18 @@ func Slack(s string) string {
 }
 
 var slackEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+// JSON escapes a value for the inside of a JSON string literal: quotes,
+// backslashes, and control characters, leaving <, > and & as they are. For
+// a template such as {"text": "{{payload.text}}"} (#365).
+func JSON(s string) string {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s) // a string always encodes
+	out := strings.TrimSuffix(b.String(), "\n")
+	return out[1 : len(out)-1]
+}
 
 // RenderAs evaluates tmpl as a Handlebars template against data, with every
 // inserted value passed through esc, and registers the {{t}} translation

@@ -93,17 +93,29 @@ func TestConsumer_AtLeastOnce_KillAndRestartMidStream(t *testing.T) {
 	}
 	defer func() { _ = stop2() }()
 
-	select {
-	case body := <-received:
-		var got domain.Message
-		if err := json.Unmarshal(body, &got); err != nil {
-			t.Fatalf("unmarshal e2: %v", err)
+	// Delivery is at-least-once: if stop1 cancelled e1's POST after the
+	// server read it but before the response came back, e1 is released and
+	// the new consumer sends it again. Receivers dedupe on the message id, so
+	// a repeat of e1 is allowed here. What must not happen is losing e2.
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case body := <-received:
+			var got domain.Message
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatalf("unmarshal after restart: %v", err)
+			}
+			switch got.Status {
+			case "e2":
+				return
+			case "e1":
+				continue
+			default:
+				t.Fatalf("unexpected event after restart: %+v", got)
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for e2 POST after restart: event published during downtime was lost")
 		}
-		if got.Status != "e2" {
-			t.Fatalf("expected e2 to survive the downtime gap, got %+v", got)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for e2 POST after restart: event published during downtime was lost")
 	}
 }
 

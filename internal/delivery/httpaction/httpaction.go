@@ -145,12 +145,27 @@ func (h *Handler) Handle(ctx context.Context, t engine.TaskPayload) (json.RawMes
 		"payload":    decodeObject(env.Payload),
 	}
 
-	rawURL := strings.TrimSpace(template.Render(cfg.URL, data))
+	// Each part escapes values for where they land (#365). The URL takes
+	// values as sent: a whole URL from the payload is the common case, and
+	// percent-encoding would break it. Headers are a JSON object, so values
+	// are JSON-escaped; a quote no longer drops every header. The body is
+	// JSON-escaped when it is JSON, and sent as written otherwise.
+	noTranslate := func(key string) string { return key }
+	rawURL := strings.TrimSpace(template.RenderAs(template.Plain, cfg.URL, data, noTranslate))
 	if rawURL == "" {
 		return h.onFailure(ctx, scope, t, cfg, fmt.Errorf("interpolated url is empty"))
 	}
-	bodyStr := template.Render(cfg.Body, data)
-	headers := parseHeaders(template.Render(cfg.Headers, data))
+	headers := parseHeaders(template.RenderAs(template.JSON, cfg.Headers, data, noTranslate))
+	for k, v := range headers {
+		if strings.ContainsAny(k+v, "\r\n") {
+			return h.onFailure(ctx, scope, t, cfg, fmt.Errorf("header %q contains a line break after interpolation", k))
+		}
+	}
+	bodyEsc := template.Plain
+	if bodyIsJSON(cfg.Body, headers) {
+		bodyEsc = template.JSON
+	}
+	bodyStr := template.RenderAs(bodyEsc, cfg.Body, data, noTranslate)
 
 	reqCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSec)*time.Second)
 	defer cancel()
@@ -276,6 +291,19 @@ func parseHeaders(s string) map[string]string {
 	}
 	_ = json.Unmarshal([]byte(s), &out)
 	return out
+}
+
+// bodyIsJSON reports whether the step's body is JSON: its Content-Type
+// header says so, or it sets none and the template is shaped like a JSON
+// object or array.
+func bodyIsJSON(bodyTmpl string, headers map[string]string) bool {
+	for k, v := range headers {
+		if strings.EqualFold(k, "Content-Type") {
+			return strings.Contains(strings.ToLower(v), "json")
+		}
+	}
+	b := strings.TrimSpace(bodyTmpl)
+	return strings.HasPrefix(b, "{") || strings.HasPrefix(b, "[")
 }
 
 // flattenHeaders reduces an http.Header to a string map carrying the first value

@@ -1,6 +1,10 @@
 package template
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 // raw is the issue's payload (#364): every character Handlebars escapes.
 const raw = `don't "quote" <tag> & more`
@@ -101,5 +105,25 @@ func TestRenderAs_DoesNotMutateCallerData(t *testing.T) {
 	}
 	if got := RenderAs(Plain, "{{payload.x}}", data, noTranslate); got != "a&b" {
 		t.Fatalf("second render got %q", got)
+	}
+}
+
+// TestJSON_EscapesForAStringLiteral: a value placed inside a JSON string
+// keeps the JSON valid and decodes back to itself, with <, > and & left
+// alone rather than turned into \u003c escapes.
+func TestJSON_EscapesForAStringLiteral(t *testing.T) {
+	in := "say \"hi\"\\ <b> & \n\ttab \u2028"
+	got := RenderAs(JSON, `{"text": "{{payload.x}}"}`, map[string]any{"payload": map[string]any{"x": in}}, noTranslate)
+	var out struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(got), &out); err != nil {
+		t.Fatalf("rendered %q is not JSON: %v", got, err)
+	}
+	if out.Text != in {
+		t.Fatalf("round trip = %q, want %q", out.Text, in)
+	}
+	if strings.Contains(got, `\u003c`) {
+		t.Fatalf("rendered %q escapes < as \\u003c", got)
 	}
 }

@@ -17,7 +17,9 @@ import (
 // inAppExtras: the authored string evaluated against the run payload.
 func payloadRender(payload map[string]any) func(string) string {
 	data := map[string]any{"payload": payload}
-	return func(tmpl string) string { return template.Render(tmpl, data) }
+	return func(tmpl string) string {
+		return template.RenderAs(template.Plain, tmpl, data, func(k string) string { return k })
+	}
 }
 
 // TestInAppExtras_RendersRichFields is the regression guard for #328: every

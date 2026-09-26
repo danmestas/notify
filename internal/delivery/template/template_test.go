@@ -93,8 +93,8 @@ func TestRender(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := Render(tt.tmpl, tt.data); got != tt.want {
-				t.Errorf("Render(%q) = %q, want %q", tt.tmpl, got, tt.want)
+			if got := RenderAs(Plain, tt.tmpl, tt.data, noTranslate); got != tt.want {
+				t.Errorf("RenderAs(%q) = %q, want %q", tt.tmpl, got, tt.want)
 			}
 		})
 	}
