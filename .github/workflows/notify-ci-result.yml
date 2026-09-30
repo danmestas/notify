@@ -24,9 +24,13 @@ jobs:
     # Report failures always; report successes only on main. Every green PR push
     # would otherwise page on every commit, and an alerting channel that cries
     # wolf gets muted — which defeats the point of running it for real.
+    # Only runs from this repository's own branches. workflow_run fires for
+    # fork PRs too, with this repo's secrets and on this self-hosted runner,
+    # and a fork chooses its own branch name.
     if: >-
-      github.event.workflow_run.conclusion != 'success'
-      || github.event.workflow_run.head_branch == 'main'
+      github.event.workflow_run.head_repository.full_name == github.repository
+      && (github.event.workflow_run.conclusion != 'success'
+          || github.event.workflow_run.head_branch == 'main')
 
     steps:
       - name: Trigger notify
@@ -44,8 +48,12 @@ jobs:
             echo "NOTIFY_API_KEY not set; skipping (fork PR or missing secret)"
             exit 0
           fi
-          body=$(printf '{"name":"ci-result","to":{"subscriberId":"dan"},"payload":{"status":"%s","branch":"%s","sha":"%s","url":"%s","workflow":"%s","repo":"%s"}}' \
-            "$STATUS" "$BRANCH" "${SHA:0:12}" "$URL" "$WF" "$REPO")
+          # jq encodes every value, so a quote or brace in a branch name is
+          # data, never JSON structure.
+          body=$(jq -nc --arg status "$STATUS" --arg branch "$BRANCH" \
+            --arg sha "${SHA:0:12}" --arg url "$URL" --arg wf "$WF" --arg repo "$REPO" \
+            '{name: "ci-result", to: {subscriberId: "dan"},
+              payload: {status: $status, branch: $branch, sha: $sha, url: $url, workflow: $wf, repo: $repo}}')
           code=$(curl -s -m 15 -o /tmp/notify-resp.json -w '%{http_code}' \
             -X POST -H "Authorization: ApiKey $NOTIFY_API_KEY" \
             -H 'Content-Type: application/json' \
