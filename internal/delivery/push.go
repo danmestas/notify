@@ -384,7 +384,8 @@ func (h *PushHandler) handleWebPushSend(ctx context.Context, env runenv.InAppEnv
 			// because sent == 0 is required to take this branch.
 			return nil, engine.NewRetryableError(fmt.Errorf("webpush: 0/%d subscriptions delivered: %w", len(subs), lastErr))
 		}
-		return h.persistPushError(ctx, env, t, webPushProviderID, integrationID, fmt.Errorf("webpush: 0/%d subscriptions delivered: %w", len(subs), lastErr))
+		extras, _ := json.Marshal(map[string]any{"devices": outcomes})
+		return h.persistPushErrorWithExtras(ctx, env, t, webPushProviderID, integrationID, fmt.Errorf("webpush: 0/%d subscriptions delivered: %w", len(subs), lastErr), extras)
 	}
 
 	// At least one device delivered, so the message is "sent". A partial
@@ -519,6 +520,14 @@ func (h *PushHandler) persistPushThrottled(ctx context.Context, env runenv.InApp
 // default before resolution. integrationID is empty on pre-resolve paths and
 // carries the actual value on post-resolve paths (BP-13b).
 func (h *PushHandler) persistPushError(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, providerID, integrationID string, cause error) (json.RawMessage, error) {
+	return h.persistPushErrorWithExtras(ctx, env, t, providerID, integrationID, cause, nil)
+}
+
+// persistPushErrorWithExtras is persistPushError with the message's extras
+// set: a Web Push send that reached no device still records each device's
+// outcome, since that is when a client most needs to know which refused
+// and why (#370).
+func (h *PushHandler) persistPushErrorWithExtras(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, providerID, integrationID string, cause error, extras json.RawMessage) (json.RawMessage, error) {
 	metrics.Delivery("push", metrics.OutcomeError)
 	msg := domain.Message{
 		ID:             store.NewULID(),
@@ -536,6 +545,7 @@ func (h *PushHandler) persistPushError(ctx context.Context, env runenv.InAppEnve
 		ErrorText:      cause.Error(),
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+		Extras:         extras,
 	}
 	saved, err := h.store.Messages().Create(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, msg)
 	if err != nil {

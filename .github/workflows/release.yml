@@ -13,6 +13,12 @@ on:
     tags: ['version-*']
 permissions:
   contents: write
+# GitHub occasionally delivers a tag push twice (version-0.1.10 got two runs
+# two seconds apart). One run per tag at a time, and the create step below
+# leaves an existing release alone, so the second run is a no-op, not red.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -75,6 +81,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists; leaving it as published"
+            exit 0
+          fi
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
             --notes "$(cat notes.md)" \

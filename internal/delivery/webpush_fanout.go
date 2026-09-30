@@ -2,6 +2,8 @@ package delivery
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/url"
@@ -26,6 +28,11 @@ const (
 // endpoint URL identifies the device and is not echoed.
 type webPushDevice struct {
 	SubscriptionID string `json:"subscriptionId"`
+	// EndpointSHA256 is the lowercase hex SHA-256 of the endpoint URL exactly
+	// as registered. The subscribing client holds the endpoint, so it can
+	// match an outcome to its own record of the device without notify
+	// echoing the endpoint itself (#370).
+	EndpointSHA256 string `json:"endpointSha256"`
 	Host           string `json:"host"`
 	// Outcome is "delivered"; "failed"; "retired", refused too many times
 	// in a row and deleted; or "gone", reported dead by the push service
@@ -52,7 +59,8 @@ func (h *PushHandler) fanOutWebPush(ctx context.Context, scope domain.Scope, sub
 	}
 	settle := func(i int, err error) {
 		sub := subs[i]
-		d := webPushDevice{SubscriptionID: sub.ID, Host: endpointHost(sub.Endpoint)}
+		sum := sha256.Sum256([]byte(sub.Endpoint))
+		d := webPushDevice{SubscriptionID: sub.ID, EndpointSHA256: hex.EncodeToString(sum[:]), Host: endpointHost(sub.Endpoint)}
 		switch {
 		case err == nil:
 			d.Outcome = "delivered"

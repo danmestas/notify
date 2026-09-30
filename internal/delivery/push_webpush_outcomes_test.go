@@ -2,6 +2,8 @@ package delivery
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -206,5 +208,57 @@ func TestWebPush_TimeoutThatPersistsIsRecordedNotRetired(t *testing.T) {
 	subs, _ := s.WebPushSubscriptions().ListBySubscriber(context.Background(), domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123")
 	if len(subs) != 2 {
 		t.Fatalf("subscriptions = %d, want 2: timeouts never retire a device", len(subs))
+	}
+}
+
+// TestWebPush_AllFailedStillRecordsEachDevice is #370's first gap: when no
+// device delivers, the error message still carries extras.devices, one entry
+// per subscription with its outcome and reason.
+func TestWebPush_AllFailedStillRecordsEachDevice(t *testing.T) {
+	s := newStore(t)
+	webPushSubscription(t, s, googleEP, "p", "a")
+	webPushSubscription(t, s, appleEP, "p", "a")
+	sender := newScripted(map[string][]error{
+		googleEP: {&webpushprovider.StatusError{Code: 401, Reason: "UnauthorizedRegistration"}},
+		appleEP:  {&webpushprovider.StatusError{Code: 403, Reason: "BadJwtToken"}},
+	})
+	h := NewPush(s, stubPushResolver{p: sender, id: "webpush"})
+
+	m := sendWebPush(t, h)
+	if m.Status != "error" {
+		t.Fatalf("Status = %q, want error", m.Status)
+	}
+	d := devicesOf(t, m)
+	if len(d) != 2 {
+		t.Fatalf("devices = %v, want one per subscription", d)
+	}
+	if g := d["fcm.googleapis.com"]; g.Outcome != "failed" || g.Status != 401 || g.Reason != "UnauthorizedRegistration" {
+		t.Errorf("google = %+v", g)
+	}
+	if a := d["web.push.apple.com"]; a.Outcome != "failed" || a.Status != 403 || a.Reason != "BadJwtToken" {
+		t.Errorf("apple = %+v", a)
+	}
+	msgs, err := s.Messages().List(context.Background(), domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "push")
+	if err != nil || len(msgs) != 1 || len(devicesOf(t, msgs[0])) != 2 {
+		t.Fatalf("persisted row lacks the devices: %v, %v", msgs, err)
+	}
+}
+
+// TestWebPush_OutcomeCarriesEndpointHash is #370's second gap: each outcome
+// carries the SHA-256 of the endpoint as registered, so the subscribing
+// client can match it to its own record of the device.
+func TestWebPush_OutcomeCarriesEndpointHash(t *testing.T) {
+	s := newStore(t)
+	webPushSubscription(t, s, googleEP, "p", "a")
+	webPushSubscription(t, s, appleEP, "p", "a")
+	sender := newScripted(map[string][]error{appleEP: {&webpushprovider.StatusError{Code: 403, Reason: "x"}}})
+	h := NewPush(s, stubPushResolver{p: sender, id: "webpush"})
+
+	d := devicesOf(t, sendWebPush(t, h))
+	for host, ep := range map[string]string{"fcm.googleapis.com": googleEP, "web.push.apple.com": appleEP} {
+		sum := sha256.Sum256([]byte(ep))
+		if got, want := d[host].EndpointSHA256, hex.EncodeToString(sum[:]); got != want {
+			t.Errorf("%s endpointSha256 = %q, want %q", host, got, want)
+		}
 	}
 }
