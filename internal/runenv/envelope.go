@@ -67,6 +67,10 @@ type StepControls struct {
 	// environment's webhook endpoints. Default off, so existing workflows are
 	// byte-identical.
 	Reply bool `json:"reply,omitempty"`
+	// HTMLBody is an email step's optional HTML body (#369). When set, Body
+	// is the plain-text part and the message goes out as
+	// multipart/alternative with both. Absent keeps today's single-part send.
+	HTMLBody string `json:"htmlBody,omitempty"`
 	// DataJSON is the raw JSON string stored under "data_json" in controlValues
 	// (written by push.ParseForm). Unmarshaled to map[string]string at
 	// envelope-build time and forwarded as runenv.Step.Data.
@@ -128,6 +132,9 @@ type Step struct {
 	// ReplyEnabled mirrors StepControls.Reply: the send handler arms a reply
 	// thread and overrides ReplyTo with the tokenized mailbox when set.
 	ReplyEnabled bool `json:"replyEnabled,omitempty"`
+	// HTMLBodyTemplate mirrors StepControls.HTMLBody: an email step's HTML
+	// part, sent alongside BodyTemplate as its text part (#369).
+	HTMLBodyTemplate string `json:"htmlBodyTemplate,omitempty"`
 	// In-app rich fields carried to the in_app send handler, which snapshots them
 	// onto the persisted message's extras blob (the reference platform field names). Non-in_app
 	// handlers ignore them. InAppData is named distinctly from the push Data map

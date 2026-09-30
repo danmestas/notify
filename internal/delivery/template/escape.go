@@ -60,11 +60,57 @@ func RenderAs(esc Escaper, tmpl string, data map[string]any, translate func(key 
 	tpl.RegisterHelper("t", func(key string) raymond.SafeString {
 		return raymond.SafeString(esc(translate(key)))
 	})
+	// {{raw "payload.html"}} inserts a value exactly as sent, skipping esc:
+	// the author's explicit statement that the field already is markup for
+	// this destination, such as HTML a caller rendered from markdown (#369).
+	// It takes the path as a string because every value Handlebars can see
+	// has already been escaped.
+	tpl.RegisterHelper("raw", func(path string) raymond.SafeString {
+		return raymond.SafeString(lookupString(data, path))
+	})
 	out, err := tpl.Exec(EscapeValues(data, esc))
 	if err != nil {
 		return tmpl
 	}
 	return out
+}
+
+// lookupString resolves a dotted path such as "payload.body.html" against
+// data and returns it as a string: "" when absent, and a non-string value in
+// its JSON form.
+func lookupString(data map[string]any, path string) string {
+	var cur any = data
+	for _, key := range strings.Split(path, ".") {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			rv := reflect.ValueOf(cur)
+			if rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
+				return ""
+			}
+			v := rv.MapIndex(reflect.ValueOf(key))
+			if !v.IsValid() {
+				return ""
+			}
+			cur = v.Interface()
+			continue
+		}
+		if cur, ok = m[key]; !ok {
+			return ""
+		}
+	}
+	switch v := cur.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case raymond.SafeString:
+		return string(v)
+	}
+	b, err := json.Marshal(cur)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // Trusted marks s as already rendered for its destination, so RenderAs

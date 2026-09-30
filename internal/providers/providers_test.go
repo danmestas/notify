@@ -102,7 +102,6 @@ func TestBuildMIME_HeadersAndBody(t *testing.T) {
 		From:    "from@x.com",
 		To:      "to@x.com",
 		Subject: "HTML",
-		Text:    "plain fallback",
 		HTML:    "<p>hi</p>",
 	})
 	htmlMIME := string(htmlRaw)

@@ -127,3 +127,18 @@ func TestJSON_EscapesForAStringLiteral(t *testing.T) {
 		t.Fatalf("rendered %q escapes < as \\u003c", got)
 	}
 }
+
+// TestRenderAs_RawInsertsAFieldUnescaped: {{raw "path"}} is the author's
+// explicit opt-out for a field that already is markup (#369); everything
+// else in the same template stays escaped.
+func TestRenderAs_RawInsertsAFieldUnescaped(t *testing.T) {
+	data := map[string]any{"payload": map[string]any{
+		"html": "<p>it's <b>bold</b></p>",
+		"name": "<script>",
+		"n":    3,
+	}}
+	got := RenderAs(HTML, `{{raw "payload.html"}}|{{payload.name}}|{{raw "payload.n"}}|{{raw "payload.missing"}}|{{raw "nope.deep.path"}}`, data, noTranslate)
+	if want := "<p>it's <b>bold</b></p>|&lt;script&gt;|3||"; got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}

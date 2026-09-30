@@ -187,3 +187,48 @@ func TestEscaping_ChatByProvider(t *testing.T) {
 		})
 	}
 }
+
+// TestEmail_TextAndHTMLBodiesBothSent is #369 at the handler: a step with a
+// text body and an HTML body fills both fields. The text part carries values
+// as sent, the HTML part escapes them except where {{raw}} asks otherwise,
+// and a layout wraps only the HTML part.
+func TestEmail_TextAndHTMLBodiesBothSent(t *testing.T) {
+	s := newStore(t)
+	scope := domain.Scope{OrgID: "org_1", EnvID: "env_1"}
+	if err := s.Layouts().Upsert(context.Background(), scope, "frame", "Frame", "<main>{{content}}</main>"); err != nil {
+		t.Fatalf("layout: %v", err)
+	}
+	capt := providers.NewCapture()
+	h := NewEmail(s, stubResolver{provider: capt, from: "noreply@example.org"})
+	env := emailEnvelope()
+	b, _ := json.Marshal(map[string]any{"text": rawText, "html": "<ul><li>it's</li></ul>"})
+	env.Payload = b
+	env.Step.LayoutKey = "frame"
+	env.Step.BodyTemplate = "said: {{payload.text}}"
+	env.Step.HTMLBodyTemplate = `<p>{{payload.text}}</p>{{raw "payload.html"}}`
+	run(t, env, h.HandleEmail)
+
+	sent := capt.Sent()[0]
+	if sent.Text != "said: "+rawText {
+		t.Errorf("Text = %q, want the text part verbatim and unwrapped", sent.Text)
+	}
+	want := "<main><p>don&#39;t &#34;quote&#34; &lt;tag&gt; &amp; more</p><ul><li>it's</li></ul></main>"
+	if sent.HTML != want {
+		t.Errorf("HTML = %q, want %q", sent.HTML, want)
+	}
+}
+
+// TestEmail_EditorTypeHTMLWithoutHTMLBodyIsUnchanged pins today's single
+// HTML body for a step that has not opted into a second part.
+func TestEmail_EditorTypeHTMLWithoutHTMLBodyIsUnchanged(t *testing.T) {
+	s := newStore(t)
+	capt := providers.NewCapture()
+	h := NewEmail(s, stubResolver{provider: capt, from: "noreply@example.org"})
+	env := emailEnvelope()
+	env.Step.EditorType = "html"
+	env.Step.BodyTemplate = "<p>hi</p>"
+	run(t, env, h.HandleEmail)
+	if sent := capt.Sent()[0]; sent.HTML != "<p>hi</p>" || sent.Text != "" {
+		t.Fatalf("sent = %+v, want HTML only", sent)
+	}
+}

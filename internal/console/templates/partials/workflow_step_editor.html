@@ -178,6 +178,12 @@
     </div>
     {{template "wf-step-fields-integration" .}}
     {{template "wf-preview-split" (dict "BodyLabel" "Body" "Rows" 6 "Body" (index .ControlMap "body"))}}
+    <div class="form-row">
+      <label class="form-label" for="cv-html-body">HTML body <span class="form-hint">(optional)</span></label>
+      <textarea class="console-input" id="cv-html-body" name="html_body" rows="6"
+                placeholder="<p>{{"{{"}}payload.text{{"}}"}}</p>">{{index .ControlMap "htmlBody"}}</textarea>
+      <span class="form-hint">When set, the email carries both: Body above as plain text, this as HTML. Values are HTML-escaped; use <code>{{"{{"}}raw "payload.field"{{"}}"}}</code> for a field that is already HTML.</span>
+    </div>
     {{end}}
 {{define "wf-step-fields-in_app"}}
     <div class="form-row">

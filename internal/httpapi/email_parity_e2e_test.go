@@ -80,7 +80,9 @@ func TestEmailParity_EndToEnd(t *testing.T) {
 	}
 
 	// Author + publish a 1-step email workflow via the service (not HTTP).
-	controls := json.RawMessage(`{"subject":"Hi {{subscriber.firstName}}","body":"You have {{payload.itemCount}} items"}`)
+	// htmlBody rides the real trigger path into the envelope (#369): the
+	// captured email must carry both parts.
+	controls := json.RawMessage(`{"subject":"Hi {{subscriber.firstName}}","body":"You have {{payload.itemCount}} items","htmlBody":"<p>You have <b>{{payload.itemCount}}</b> items</p>"}`)
 	if _, err := auth.Create(ctx, scope, authoring.WorkflowInput{
 		Name:              "Welcome Email",
 		TriggerIdentifier: "welcome-email",
@@ -194,6 +196,9 @@ func TestEmailParity_EndToEnd(t *testing.T) {
 	}
 	if em.Text != "You have 3 items" {
 		t.Errorf("captured Text = %q, want %q", em.Text, "You have 3 items")
+	}
+	if em.HTML != "<p>You have <b>3</b> items</p>" {
+		t.Errorf("captured HTML = %q, want the htmlBody part", em.HTML)
 	}
 }
 

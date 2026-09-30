@@ -102,12 +102,6 @@ func (s *SMTP) Send(_ context.Context, msg EmailMessage) (Result, error) {
 // and every pipe, while quoted-printable is safe in all of them and readable
 // by anything.
 func BuildMIME(msg EmailMessage) (mime []byte, messageID string) {
-	contentType := "text/plain; charset=\"utf-8\""
-	body := msg.Text
-	if msg.HTML != "" {
-		contentType = "text/html; charset=\"utf-8\""
-		body = msg.HTML
-	}
 	messageID = newMessageID(msg.From)
 
 	var b strings.Builder
@@ -126,14 +120,57 @@ func BuildMIME(msg EmailMessage) (mime []byte, messageID string) {
 	writeHeader("Date", time.Now().UTC().Format(time.RFC1123Z))
 	writeHeader("Message-ID", "<"+messageID+">")
 	writeHeader("MIME-Version", "1.0")
+
+	if msg.Text != "" && msg.HTML != "" {
+		// Both bodies: multipart/alternative, text first and HTML last, since
+		// RFC 2046 section 5.1.4 has the last part as the preferred one
+		// (#369). A client that will not render HTML shows the text part.
+		boundary := newBoundary()
+		writeHeader("Content-Type", "multipart/alternative; boundary=\""+boundary+"\"")
+		b.WriteString("\r\n")
+		for _, part := range []struct{ ctype, body string }{
+			{"text/plain; charset=\"utf-8\"", msg.Text},
+			{"text/html; charset=\"utf-8\"", msg.HTML},
+		} {
+			b.WriteString("--" + boundary + "\r\n")
+			writeHeader("Content-Type", part.ctype)
+			writeHeader("Content-Transfer-Encoding", "quoted-printable")
+			b.WriteString("\r\n")
+			writeQuotedPrintable(&b, part.body)
+			b.WriteString("\r\n")
+		}
+		b.WriteString("--" + boundary + "--\r\n")
+		return []byte(b.String()), messageID
+	}
+
+	contentType := "text/plain; charset=\"utf-8\""
+	body := msg.Text
+	if msg.HTML != "" {
+		contentType = "text/html; charset=\"utf-8\""
+		body = msg.HTML
+	}
 	writeHeader("Content-Type", contentType)
 	writeHeader("Content-Transfer-Encoding", "quoted-printable")
 	b.WriteString("\r\n")
-	// quotedprintable.Writer emits CRLF line endings and soft-wraps at 76.
-	qp := quotedprintable.NewWriter(&b)
+	writeQuotedPrintable(&b, body)
+	return []byte(b.String()), messageID
+}
+
+// writeQuotedPrintable encodes body onto b. quotedprintable.Writer emits CRLF
+// line endings and soft-wraps at 76.
+func writeQuotedPrintable(b *strings.Builder, body string) {
+	qp := quotedprintable.NewWriter(b)
 	_, _ = qp.Write([]byte(body))
 	_ = qp.Close()
-	return []byte(b.String()), messageID
+}
+
+// newBoundary returns a random multipart boundary. Quoted-printable output
+// never contains "--" followed by 32 hex digits and "_n", so the boundary
+// cannot collide with a body line.
+func newBoundary() string {
+	var buf [16]byte
+	_, _ = rand.Read(buf[:])
+	return "_n" + hex.EncodeToString(buf[:])
 }
 
 // newMessageID mints a globally unique Message-ID local part @ the sender's

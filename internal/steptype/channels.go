@@ -83,6 +83,11 @@ func (email) ParseForm(form url.Values) (json.RawMessage, error) {
 	if v := formField(form, "reply"); v == "on" || v == "true" {
 		m["reply"] = true
 	}
+	// Optional HTML part (#369): with it, "body" is the plain-text part and
+	// the email goes out as multipart/alternative. Omitted when empty.
+	if v := formField(form, "html_body"); v != "" {
+		m["htmlBody"] = v
+	}
 	return marshalControlValues(m)
 }
 

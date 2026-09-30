@@ -130,5 +130,11 @@
   </div>
 </div>
 
+    <div class="form-row">
+      <label class="form-label" for="cv-html-body">HTML body <span class="form-hint">(optional)</span></label>
+      <textarea class="console-input" id="cv-html-body" name="html_body" rows="6"
+                placeholder="<p>{{payload.text}}</p>"></textarea>
+      <span class="form-hint">When set, the email carries both: Body above as plain text, this as HTML. Values are HTML-escaped; use <code>{{raw "payload.field"}}</code> for a field that is already HTML.</span>
+    </div>
     
     

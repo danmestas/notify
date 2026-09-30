@@ -199,9 +199,12 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 	}
 	translate := storeTranslator(ctx, h.store, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, subMap)
 	// A subject is never HTML, and neither is a text body: values go in as
-	// sent. Only an HTML body escapes them (#364).
+	// sent. Only an HTML body escapes them (#364). A step with an HTML body
+	// alongside (#369) sends both: Body is then always the text part, and the
+	// layout, which is HTML, wraps only the HTML part.
+	multipart := env.Step.HTMLBodyTemplate != ""
 	bodyEsc := template.Plain
-	if env.Step.EditorType == "html" {
+	if env.Step.EditorType == "html" && !multipart {
 		bodyEsc = template.HTML
 	}
 	subject := template.RenderAs(template.Plain, env.Step.SubjectTemplate, data, translate)
@@ -209,7 +212,13 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 	to, _ := subMap["email"].(string)
 
 	scope := domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
-	content = wrapLayout(ctx, h.store, scope, env.Step.LayoutKey, content, data, translate, bodyEsc)
+	var htmlContent string
+	if multipart {
+		htmlContent = template.RenderAs(template.HTML, env.Step.HTMLBodyTemplate, data, translate)
+		htmlContent = wrapLayout(ctx, h.store, scope, env.Step.LayoutKey, htmlContent, data, translate, template.HTML)
+	} else {
+		content = wrapLayout(ctx, h.store, scope, env.Step.LayoutKey, content, data, translate, bodyEsc)
+	}
 
 	// Per-step condition gate. When the step authored a filter condition, it is
 	// evaluated against the {subscriber, payload} context; a false (or
@@ -251,11 +260,16 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 		effectiveFrom = env.Step.From
 	}
 
-	// EditorType selects the body field: "html" → HTML body, "" or "block" → Text body.
+	// With an HTML body alongside, both fields are set and the provider sends
+	// multipart/alternative. Otherwise EditorType selects the one field:
+	// "html" → HTML body, "" or "block" → Text body.
 	var msgHTML, msgText string
-	if env.Step.EditorType == "html" {
+	switch {
+	case multipart:
+		msgText, msgHTML = content, htmlContent
+	case env.Step.EditorType == "html":
 		msgHTML = content
-	} else {
+	default:
 		msgText = content
 	}
 
