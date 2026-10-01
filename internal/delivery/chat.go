@@ -237,7 +237,7 @@ func (h *ChatHandler) HandleChat(ctx context.Context, t engine.TaskPayload) (jso
 	}
 
 	// Optional preference filtering. A nil checker always sends. On a checker
-	// error we fail open (proceed to send), mirroring the reference default-enabled
+	// error we fail open (proceed to send), a default-enabled
 	// behaviour rather than dropping the notification on a transient lookup fault.
 	if h.prefs != nil {
 		enabled, perr := h.prefs.ChannelEnabled(ctx, scope, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical)

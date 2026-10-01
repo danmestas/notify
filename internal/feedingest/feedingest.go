@@ -12,10 +12,9 @@
 // JSON>}. Consumers distinguish the two by the "v" key.
 //
 // Request-shaped ingest only: this package holds no connections to upstream
-// systems, no upstream credentials, and no schedulers or background goroutines —
-// by design (see docs/plans/stream-source-integrations-memo.md §4/§8). Every
-// request is authenticated, limited, normalized, and published within the
-// handler; nothing outlives it.
+// systems, no upstream credentials, and no schedulers or background goroutines,
+// by design. Every request is authenticated, limited, normalized, and
+// published within the handler; nothing outlives it.
 package feedingest
 
 import (

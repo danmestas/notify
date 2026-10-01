@@ -1,8 +1,8 @@
 // Package webhook implements the generic-webhook delivery providers
 // (email-webhook, push-webhook, chat-webhook). Each typed client POSTs the
 // rendered message as a JSON body to a configured URL, optionally signing the
-// body with HMAC-SHA256. mirroring the reference email/push/chat webhook providers,
-// the signature is the HMAC-SHA256 of the exact JSON body bytes; it is sent as
+// body with HMAC-SHA256.
+// The signature is the HMAC-SHA256 of the exact JSON body bytes; it is sent as
 // the X-Notify-Signature header in the form "sha256=<hex>" only when an HMAC
 // secret is configured.
 //
@@ -192,8 +192,7 @@ func post(ctx context.Context, hc *http.Client, endpoint, hmacSecret string, pay
 }
 
 // sign returns the X-Notify-Signature value for body: "sha256=<hex>" where hex
-// is the HMAC-SHA256 of the exact body bytes keyed by secret. mirrors the reference
-// computeHmac (createHmac('sha256', secret).update(body).digest('hex')).
+// is the HMAC-SHA256 of the exact body bytes keyed by secret.
 func sign(secret string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)

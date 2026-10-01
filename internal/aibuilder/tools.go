@@ -2,9 +2,7 @@ package aibuilder
 
 import "encoding/json"
 
-// Tool names mirror the reference platform's AiWorkflowToolsEnum
-// (packages/shared/src/types/ai.ts) so the design stays in parity with the
-// upstream iterative builder.
+// Tool names for the iterative builder.
 const (
 	toolReasoning            = "reasoning"
 	toolSetWorkflowMetadata  = "setWorkflowMetadata"
@@ -20,7 +18,7 @@ const (
 // buildTools assembles the 9 mutation tools the model may call. The addStep and
 // addStepInBetween `type` enums are built dynamically from gatedTypes — the
 // provider-gated set of available step types — so the model is structurally
-// unable to add a step for an unconfigured channel (the reference platform's z.enum guard).
+// unable to add a step for an unconfigured channel.
 func buildTools(gatedTypes []string) []ToolDef {
 	typeEnum := make([]any, len(gatedTypes))
 	for i, t := range gatedTypes {
@@ -181,8 +179,8 @@ func operatorEnum() []any {
 	return out
 }
 
-// conditionOperators is the full filter operator vocabulary (contracts §3 / the
-// 16 the reference platform FieldOperatorEnum members). IS_NOT_DEFINED is expressed at runtime as
+// conditionOperators is the full filter operator vocabulary (contracts §3, 16
+// members). IS_NOT_DEFINED is expressed at runtime as
 // IS_DEFINED with negated=true, but is offered to the model as a distinct token.
 var conditionOperators = []string{
 	"EQUAL", "NOT_EQUAL",

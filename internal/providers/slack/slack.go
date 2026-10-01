@@ -1,6 +1,6 @@
 // Package slack implements providers.ChatProvider against the Slack Web API
-// (POST https://slack.com/api/chat.postMessage). mirroring the reference
-// slack.provider, it POSTs a JSON body {channel,text} with a Bearer bot token.
+// (POST https://slack.com/api/chat.postMessage). It POSTs a JSON body
+// {channel,text} with a Bearer bot token.
 //
 // Slack returns HTTP 200 even on logical failure, with a body of the form
 // {"ok":false,"error":"..."}. Send therefore parses the body and treats

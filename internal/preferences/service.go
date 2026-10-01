@@ -3,7 +3,7 @@
 // per-workflow — into an effective enabled-map. A channel is enabled unless a
 // level explicitly sets it false; per-workflow overrides global per channel.
 //
-// TODO(parity): the reference platform resolves four levels — workflow-critical override >
+// TODO(parity): resolve four levels — workflow-critical override >
 // subscriber per-workflow > subscriber global > workflow default. This service
 // implements the two subscriber levels plus the workflow-critical override
 // (ChannelEnabled's critical parameter); workflow-default is a documented

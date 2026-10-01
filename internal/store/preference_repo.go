@@ -13,7 +13,7 @@ import (
 // workflow_id). Two preference types exist: "subscriberGlobal" (workflow_id
 // empty) and "workflow" (per-workflow override).
 //
-// TODO(parity): the reference platform resolves preferences across four levels — workflow-critical
+// TODO(parity): resolve preferences across four levels — workflow-critical
 // override > subscriber per-workflow > subscriber global > workflow default.
 // This store implements the two subscriber levels; workflow-default and
 // workflow-critical resolution live above the store.

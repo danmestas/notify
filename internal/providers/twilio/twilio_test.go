@@ -39,11 +39,10 @@ func stubServer(t *testing.T, status int, respBody string) (*httptest.Server, *c
 	return srv, got
 }
 
-// TestClient_Send_Wire pins the exact Twilio wire (mirrors the reference
-// twilio.provider): POST {base}/2010-04-01/Accounts/{AccountSID}/Messages.json
-// with HTTP Basic auth (AccountSID:AuthToken), Content-Type
-// application/x-www-form-urlencoded, and a From/To/Body form body. The provider
-// message id is the response JSON "sid".
+// TestClient_Send_Wire pins the exact Twilio wire: POST
+// {base}/2010-04-01/Accounts/{AccountSID}/Messages.json with HTTP Basic auth
+// (AccountSID:AuthToken), Content-Type application/x-www-form-urlencoded, and a
+// From/To/Body form body. The provider message id is the response JSON "sid".
 func TestClient_Send_Wire(t *testing.T) {
 	srv, got := stubServer(t, http.StatusCreated, `{"sid":"SM1234567890","status":"queued"}`)
 

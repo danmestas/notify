@@ -14,7 +14,7 @@ import (
 // unchanged: callers with no Filters proceed exactly as before).
 //
 // When filters are present they are a JSON array of filter.Group (the top-level
-// array is OR'd, per the reference platform). On a malformed filters payload or an evaluation
+// array is OR'd). On a malformed filters payload or an evaluation
 // error we FAIL CLOSED: the step is SKIPPED, never sent. A broken condition must
 // never silently blast a send to every subscriber, so the safe default for a
 // condition we cannot evaluate is "do not send" rather than "send to everyone".

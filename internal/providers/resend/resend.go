@@ -1,10 +1,9 @@
 // Package resend implements providers.EmailProvider against the Resend email
-// API (POST https://api.resend.com/emails). mirroring the reference resend.provider,
-// it POSTs a JSON body {from,to,subject,html,text} with a Bearer apiKey and
-// reads the returned JSON "id" as the provider message id. 2xx is success;
-// 4xx is a permanent (plain) error; 5xx and transport faults are wrapped in
-// providers.TransientError so the delivery handler can ask the engine to retry
-// per 0001 §10.
+// API (POST https://api.resend.com/emails). It POSTs a JSON body
+// {from,to,subject,html,text} with a Bearer apiKey and reads the returned JSON
+// "id" as the provider message id. 2xx is success; 4xx is a permanent (plain)
+// error; 5xx and transport faults are wrapped in providers.TransientError so
+// the delivery handler can ask the engine to retry per 0001 §10.
 package resend
 
 import (
@@ -50,7 +49,7 @@ type emailPayload struct {
 }
 
 // Send POSTs a JSON body to {BaseURL}/emails with Bearer auth (APIKey),
-// mirroring the reference resend.provider. msg.From overrides the configured From when
+// msg.From overrides the configured From when
 // non-empty. An empty APIKey, recipient (msg.To), or resolved sender fails
 // closed (permanent). The provider message id is the "id" of Resend's JSON
 // acknowledgement.

@@ -29,8 +29,8 @@ var channelSteps = map[string]string{
 
 // builtinChannels are channels notify delivers WITHOUT any external provider.
 // The in-app inbox persists the message and publishes an inbox event directly
-// (delivery.HandleInApp never looks up an integration), so — like the reference platform's built-in
-// Inbox — in_app is always available regardless of configured integrations. The
+// (delivery.HandleInApp never looks up an integration), so in_app is always available
+// regardless of configured integrations. The
 // stream channel is likewise provider-less: it publishes to the tenant's durable
 // feed directly (delivery.HandleStream never looks up an integration), so it is
 // always available too. The external-provider channels (email/sms/chat/push)
@@ -43,7 +43,7 @@ var builtinChannels = map[string]bool{
 // AvailableStepTypes computes the step types the model may add: every action
 // step (no channel) plus every channel step whose channel has an Active
 // integration. Order follows the registry's registration order so the addStep
-// enum is stable. This is the z.enum guard the reference platform uses — an unconfigured channel
+// enum is stable. An unconfigured channel
 // can never appear in the tool schema, so the model cannot emit it.
 func AvailableStepTypes(reg *steptype.Registry, integrations []domain.Integration) []string {
 	active := make(map[string]bool, len(integrations))

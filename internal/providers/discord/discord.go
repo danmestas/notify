@@ -1,6 +1,6 @@
 // Package discord implements providers.ChatProvider against a Discord
 // incoming webhook (https://discord.com/api/webhooks/{id}/{token}). Mirroring
-// the reference platform's discord.provider, it POSTs a JSON body {"content": <text>} to the
+// It POSTs a JSON body {"content": <text>} to the
 // webhook URL with ?wait=true so Discord returns the created message object.
 // 2xx is success; 4xx is a permanent (plain) error; 5xx and transport faults
 // are wrapped in providers.TransientError so the delivery handler can ask the
@@ -47,7 +47,6 @@ func (c *Client) Send(ctx context.Context, msg providers.ChatMessage) (providers
 		return providers.Result{}, fmt.Errorf("discord: empty webhook url")
 	}
 	// Add ?wait=true so the webhook responds with the created message object,
-	// mirroring the reference discord.provider.
 	if u, err := url.Parse(endpoint); err == nil {
 		q := u.Query()
 		q.Set("wait", "true")

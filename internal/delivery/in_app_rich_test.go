@@ -46,7 +46,7 @@ type extrasShape struct {
 }
 
 // TestHandleInApp_PersistsRichFields proves the in_app handler snapshots the
-// authored rich fields onto the persisted message's Extras blob (the reference platform field names).
+// authored rich fields onto the persisted message's Extras blob.
 func TestHandleInApp_PersistsRichFields(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)

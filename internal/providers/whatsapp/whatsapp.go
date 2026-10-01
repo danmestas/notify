@@ -1,7 +1,7 @@
 // Package whatsapp implements providers.ChatProvider against the WhatsApp
 // Business (Meta Cloud) API
 // (POST https://graph.facebook.com/v22.0/<phone_number_id>/messages).
-// mirroring the reference whatsapp-business.provider, it POSTs a JSON body
+// It POSTs a JSON body
 // {messaging_product:"whatsapp", recipient_type:"individual", to:<MSISDN>,
 // type:"text", text:{preview_url:false, body:<content>}} with a Bearer access
 // token and reads the returned JSON messages[0].id as the provider message id.

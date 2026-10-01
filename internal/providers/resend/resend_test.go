@@ -39,10 +39,10 @@ func stubServer(t *testing.T, status int, respBody string) (*httptest.Server, *c
 	return srv, got
 }
 
-// TestClient_Send_Wire pins the exact Resend wire (mirrors the reference
-// resend.provider): POST {base}/emails with Authorization: Bearer <apiKey>,
-// Content-Type application/json, and a {from,to,subject,html,text} body. The
-// provider message id is the response JSON "id".
+// TestClient_Send_Wire pins the exact Resend wire: POST {base}/emails with
+// Authorization: Bearer <apiKey>, Content-Type application/json, and a
+// {from,to,subject,html,text} body. The provider message id is the response
+// JSON "id".
 func TestClient_Send_Wire(t *testing.T) {
 	srv, got := stubServer(t, http.StatusOK, `{"id":"re_12345"}`)
 

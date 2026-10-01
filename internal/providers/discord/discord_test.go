@@ -41,9 +41,9 @@ func stubServer(t *testing.T, status int, respBody string) (*httptest.Server, *c
 	return srv, got
 }
 
-// TestClient_Send_Wire pins the exact Discord webhook wire (mirrors the reference
-// discord.provider): POST {webhookURL}?wait=true with JSON {"content": <text>},
-// Content-Type application/json, and no auth header.
+// TestClient_Send_Wire pins the exact Discord webhook wire: POST
+// {webhookURL}?wait=true with JSON {"content": <text>}, Content-Type
+// application/json, and no auth header.
 func TestClient_Send_Wire(t *testing.T) {
 	srv, got := stubServer(t, http.StatusOK, `{"id":"disc-msg-1","timestamp":"2026-01-01T00:00:00Z"}`)
 

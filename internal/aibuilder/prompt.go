@@ -28,9 +28,8 @@ var stepControlFields = map[string]string{
 // step catalog and the provider-gated available types. It injects: the
 // available step catalog with per-type control fields, the gated channels, the
 // 16-operator condition vocabulary, the trigger-id rules, and the iterative
-// tool-use + final-summary instructions. Mirrors the section structure of
-// the reference platform's generate-managed-agent usecase (role, capability sections, catalog,
-// closing instruction) adapted to an iterative mutation-tool loop.
+// tool-use + final-summary instructions. Sections: role, capability sections, catalog,
+// closing instruction, adapted to an iterative mutation-tool loop.
 func systemPrompt(catalog []steptype.StepEntry, gatedTypes []string) string {
 	gated := make(map[string]bool, len(gatedTypes))
 	for _, t := range gatedTypes {

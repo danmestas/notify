@@ -96,7 +96,7 @@ type TriggerRequest struct {
 	TransactionID string          `json:"transactionId"`
 }
 
-// TriggerResponse mirrors the reference trigger-event-response DTO (parity Oracle 1):
+// TriggerResponse is the trigger-event response DTO:
 // Error and activityFeedLink are omitted on success; TransactionID echoes the
 // client value or the server-minted id.
 type TriggerResponse struct {
@@ -106,7 +106,7 @@ type TriggerResponse struct {
 	Error         []string `json:"error,omitempty"`
 }
 
-// wireSubscriber is the handlebars context object for {{subscriber.*}} — the reference platform
+// wireSubscriber is the handlebars context object for {{subscriber.*}} — camelCase
 // namespace keys, NOT Go field names, so templates resolve. It is marshaled
 // into the envelope's Subscriber raw JSON.
 type wireSubscriber struct {
@@ -157,7 +157,7 @@ func buildDigestKey(base, value string) string {
 
 // Ingest processes one trigger end-to-end. On an unknown workflow it returns a
 // non-error response with Acknowledged=false / Status="error" (documented
-// choice: trigger ingestion is best-effort acknowledgement, mirroring the reference
+// choice: trigger ingestion is best-effort acknowledgement, with the
 // response DTO carrying an error array rather than a transport error).
 // An inactive workflow is silently skipped: Acknowledged=false, Status="error",
 // no engine run, no notification row. This matches the activate-toggle contract

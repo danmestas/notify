@@ -1,7 +1,7 @@
 // Package delivery implements channel send handlers registered with the engine.
 // HandleInApp is the send.in_app task handler: it renders the authored subject
 // and body templates against the run envelope and persists the resulting in-app
-// message. mirrors the reference behaviour of recording a failed message (status
+// message. A failed message is recorded (status
 // "error") rather than crashing the run when the envelope is unusable.
 package delivery
 
@@ -182,7 +182,7 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	}
 
 	// Optional preference filtering. A nil checker always sends. On a checker
-	// error we fail open (proceed to send), mirroring the reference default-enabled
+	// error we fail open (proceed to send), a default-enabled
 	// behaviour rather than dropping the notification on a transient lookup fault.
 	if h.prefs != nil {
 		enabled, perr := h.prefs.ChannelEnabled(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical)
@@ -359,7 +359,7 @@ func (h *Handler) publishDelivery(envID string, data []byte) {
 }
 
 // inAppExtras snapshots the in_app rich fields authored on the step into the
-// message extras blob, using the reference platform's inAppOutputSchema field names so the inbox
+// message extras blob, using the in-app output schema field names so the inbox
 // API output is wire-compatible. Absent fields are omitted; a step with no rich
 // fields yields "{}". Only the sent path snapshots extras — skipped/throttled/
 // errored messages leave Extras nil and the repo coerces it to "{}".

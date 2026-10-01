@@ -89,8 +89,8 @@ func (repo *subscriberRepo) Upsert(ctx context.Context, scope domain.Scope, sub 
 	}
 	// On conflict of the (environment_id, subscriber_id) dedup key, MERGE the
 	// mutable profile in place: each column takes the incoming value only when
-	// it is non-empty, otherwise it keeps the stored value. This mirrors the reference
-	// subscriber patch-upsert — a partial re-upsert (e.g. a trigger carrying
+	// it is non-empty, otherwise it keeps the stored value. This is a
+	// subscriber patch-upsert: a partial re-upsert (e.g. a trigger carrying
 	// only `to.subscriberId`) must not blank out a profile populated by an
 	// earlier full upsert. id stays the original row's id.
 	_, err := repo.w.ExecContext(

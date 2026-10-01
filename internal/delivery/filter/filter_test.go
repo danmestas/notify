@@ -76,9 +76,7 @@ func newOpsCtx() EvalContext {
 	}}
 }
 
-// TestNewOperators covers the parity operators ported from the reference platform's json-logic
-// query-parser (libs/application-generic/src/services/query-parser/
-// query-parser.service.ts). Each operator has true + false cases plus a
+// TestNewOperators covers the json-logic style operators. Each operator has true + false cases plus a
 // type-edge case proving non-matching shapes evaluate to false (no panic).
 func TestNewOperators(t *testing.T) {
 	tests := []struct {
@@ -124,8 +122,8 @@ func TestNewOperators(t *testing.T) {
 		{"any_in empty value-list", Condition{On: "payload", Field: "tags", Operator: OpAnyIn, Value: []any{}}, false},
 		{"any_in non-array field", Condition{On: "payload", Field: "name", Operator: OpAnyIn, Value: []any{"widget"}}, false},
 
-		// ALL_IN: every element of the field array is in the value-list. (the reference platform has
-		// no runtime ALL_IN; semantics per task spec — documented in filter.go.)
+		// ALL_IN: every element of the field array is in the value-list. (Semantics
+		// per task spec — documented in filter.go.)
 		{"all_in subset", Condition{On: "payload", Field: "roles", Operator: OpAllIn, Value: []any{"admin", "user"}}, true},
 		{"all_in full match", Condition{On: "payload", Field: "tags", Operator: OpAllIn, Value: []any{"a", "b", "c", "d"}}, true},
 		{"all_in not subset", Condition{On: "payload", Field: "tags", Operator: OpAllIn, Value: []any{"a", "b"}}, false},

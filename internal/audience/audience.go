@@ -1,7 +1,7 @@
 // Package audience manages subscribers — the recipients of notifications.
 // It maps external subscriber input onto domain.Subscriber and persists it
 // through the Scope-first store, deduping by external subscriberId within an
-// environment (mirrors the reference subscriber-job-bound upsert).
+// environment (subscriber-job-bound upsert).
 package audience
 
 import (
@@ -196,7 +196,7 @@ func (svc *Service) Get(ctx context.Context, scope domain.Scope, subscriberID st
 
 // SetCredentials records per-provider channel addressing for the subscriber
 // (e.g. the ntfy push topic), upserting the subscriber_channels row keyed by
-// (environment, subscriber, provider). mirrors the reference
+// (environment, subscriber, provider), backing
 // PUT /subscribers/:id/credentials.
 func (svc *Service) SetCredentials(ctx context.Context, scope domain.Scope, subscriberID, providerID, channelType string, credentials json.RawMessage) (domain.SubscriberChannel, error) {
 	return svc.store.SubscriberChannels().Upsert(ctx, scope, domain.SubscriberChannel{

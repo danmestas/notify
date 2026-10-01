@@ -22,7 +22,7 @@ import (
 // are valid constants but unimplemented, so accepting them would mint an agent
 // that dead-letters every turn (#113 tightens this from ValidRuntime). The list
 // is derived from SupportedRuntimes so it never drifts; an empty enum list in a
-// 422 is a misdiagnosis trap .
+// 422 is a misdiagnosis trap.
 var runtimeErrMsg = "runtime must be one of: " + strings.Join(agentdomain.SupportedRuntimes, ", ")
 
 // Service exposes agent management over HTTP.

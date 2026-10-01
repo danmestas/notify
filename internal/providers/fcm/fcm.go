@@ -1,9 +1,8 @@
 // Package fcm implements providers.PushProvider against Firebase Cloud
 // Messaging's HTTP v1 API
-// (POST https://fcm.googleapis.com/v1/projects/{projectId}/messages:send,
-// mirrors the reference fcm.provider which uses firebase-admin). the reference platform relies on the
-// Admin SDK; we replicate the same end state — an OAuth2-bearer-authenticated
-// v1 send — directly:
+// (POST https://fcm.googleapis.com/v1/projects/{projectId}/messages:send).
+// Rather than the Admin SDK, it performs the equivalent end state — an
+// OAuth2-bearer-authenticated v1 send — directly:
 //
 //   - the OAuth2 access token is minted from the service-account JSON via a
 //     JWT-bearer grant (scope https://www.googleapis.com/auth/firebase.messaging),

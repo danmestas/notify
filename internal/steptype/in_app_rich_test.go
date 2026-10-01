@@ -75,8 +75,8 @@ func TestInAppParseForm_RichFields(t *testing.T) {
 }
 
 // TestInAppParseForm_RedirectOmittedWhenURLBlank proves a redirect sub-object is
-// dropped entirely when its url is blank, even if a target is supplied (the reference platform
-// redirectSchema requires url). Applies to both top-level and per-action redirects.
+// dropped entirely when its url is blank, even if a target is supplied (a
+// redirect requires url). Applies to both top-level and per-action redirects.
 func TestInAppParseForm_RedirectOmittedWhenURLBlank(t *testing.T) {
 	form := url.Values{
 		"subject":                        {"Hi"},

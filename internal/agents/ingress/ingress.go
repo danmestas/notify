@@ -29,7 +29,7 @@ import (
 // Task("agent.turn.<runtime>")).
 const TaskMesh = "agent.turn.mesh"
 
-// historyWindow bounds the transcript carried into each turn (the reference platform parity,
+// historyWindow bounds the transcript carried into each turn,
 // RFC 0002 §4: last N=20, oldest first).
 const historyWindow = 20
 

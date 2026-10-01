@@ -318,7 +318,8 @@ func TestFragment_IntegrationProviderForm_WebhookCredFields(t *testing.T) {
 	}
 }
 
-// TestFragment_IntegrationProviderForm_ChannelTabs verifies the // drawer renders the channel-tab bar that filters the provider list
+// TestFragment_IntegrationProviderForm_ChannelTabs verifies the
+// drawer renders the channel-tab bar that filters the provider list
 // client-side: the four channel tab labels plus the $connectChannel signal
 // that drives their active state and per-row visibility.
 func TestFragment_IntegrationProviderForm_ChannelTabs(t *testing.T) {

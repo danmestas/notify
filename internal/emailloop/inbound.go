@@ -4,8 +4,7 @@ import (
 	"strings"
 )
 
-// InboundEmailAttachment mirrors the reference InboundEmailAttachment
-// (packages/shared/src/types/inbound-email.ts): a parsed attachment reference.
+// InboundEmailAttachment is a parsed attachment reference.
 // notify does not persist attachment bodies yet; the metadata is accepted and
 // carried so the wire shape matches and a future consumer can fetch by url.
 type InboundEmailAttachment struct {
@@ -16,8 +15,8 @@ type InboundEmailAttachment struct {
 	StoragePath string `json:"storagePath,omitempty"`
 }
 
-// InboundEmail is the parsed-email webhook payload, mirroring the reference
-// inbound-email shape (the augmented mailparser output): from/to/subject/
+// InboundEmail is the parsed-email webhook payload (the augmented
+// mailparser output): from/to/subject/
 // text/html/headers/attachments plus the envelope and threading headers a mail
 // forwarder (Cloudflare Email Worker, Resend inbound) POSTs to
 // /v1/inbound/email.
@@ -35,11 +34,11 @@ type InboundEmail struct {
 	// EnvelopeTo is the SMTP RCPT TO address. When present it is preferred over
 	// the header To for token extraction, because header To can be rewritten by
 	// forwarders while the envelope recipient is the address mail was actually
-	// delivered to. the reference platform reads the token from the envelope recipient for the
-	// same reason (apps/inbound-mail getAddressTo uses envelopeTo[0]).
+	// delivered to. The token is read from the envelope recipient for the
+	// same reason.
 	EnvelopeTo string `json:"envelopeTo,omitempty"`
 
-	// Threading headers, normalized as in the reference platform's finalizeMessage.
+	// Threading headers, normalized.
 	InReplyTo  string            `json:"inReplyTo,omitempty"`
 	References []string          `json:"references,omitempty"`
 	Headers    map[string]string `json:"headers,omitempty"`

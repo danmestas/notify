@@ -8,7 +8,7 @@
 //     a tokenized Reply-To (reply+<token>@<inbound-domain>) is set so a reply
 //     can be correlated back to the conversation.
 //  2. Inbound parse — POST /v1/inbound/email accepts a parsed-email webhook
-//     (the reference platform inbound-email shape), extracts and verifies the token from the
+//     (inbound-email shape), extracts and verifies the token from the
 //     recipient address, resolves the conversation, appends the inbound body as
 //     a turn, and dispatches the responder.
 //  3. Close — the responder (agent) reply is mailed back out with the same

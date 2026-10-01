@@ -1,5 +1,5 @@
 // Package aibuilder is the engine core of notify's AI workflow builder. It
-// mirrors the reference iterative mutation-tool design: a language model drives a
+// uses an iterative mutation-tool design: a language model drives a
 // conversation, calling typed tools (addStep, editStepContent, ...) that mutate
 // an in-memory WorkflowDraft one step at a time, until it stops calling tools
 // and the draft is validated by compiling it through the pure authoring path.

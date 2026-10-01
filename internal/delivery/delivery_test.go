@@ -95,7 +95,7 @@ func TestHandleInApp_PersistsSentMessage(t *testing.T) {
 // TestHandleInApp_MalformedEnvelope: a malformed envelope yields no decoded
 // scope/subscriber, so the handler records a status:"error" message under the
 // empty scope ("","") with an empty subscriber id and returns a nil error
-// (the reference platform records a failed message, not a crashed run).
+// (a failed message is recorded, not a crashed run).
 func TestHandleInApp_MalformedEnvelope(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)

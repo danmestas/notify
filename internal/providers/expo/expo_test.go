@@ -41,7 +41,7 @@ func stubServer(t *testing.T, status int, respBody string) (*httptest.Server, *c
 	return srv, got
 }
 
-// TestClient_Send_Wire pins the exact Expo wire (mirrors the reference expo.provider):
+// TestClient_Send_Wire pins the exact Expo wire:
 // POST {base} with a JSON array of one {to,title,body} message, Authorization
 // Bearer when an access token is configured, and the provider message id taken
 // from the status:"ok" ticket id.

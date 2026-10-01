@@ -1,5 +1,5 @@
 // Package inboxapi serves the in-app message feed: listing a subscriber's
-// messages (mirroring the reference messages.controller GET “ endpoint) and marking
+// messages (the GET endpoint) and marking
 // them seen/read/archived, all scoped to the tenant carried on the request
 // context.
 package inboxapi
@@ -59,7 +59,7 @@ const (
 // max 200), before (a message id boundary — only messages older than this
 // id are returned), archived (true|false|all; default excludes archived
 // messages from the feed and from unreadCount/unseenCount, mirroring
-// the reference platform's inbox — an archived message is "done", not merely hidden). "next"
+// the inbox — an archived message is "done", not merely hidden). "next"
 // is the id to pass as the following page's "before", omitted (empty) once
 // the feed is exhausted.
 //
@@ -280,7 +280,7 @@ type markSpec struct {
 
 // singleMarkActions maps the {action} path segment of
 // POST /v1/messages/{id}/{action} to the flag it sets. There is no "unseen"
-// action: once seen, a message stays seen, mirroring the reference platform.
+// action: once seen, a message stays seen.
 var singleMarkActions = map[string]markSpec{
 	"seen":      {"seen", true},
 	"read":      {"read", true},

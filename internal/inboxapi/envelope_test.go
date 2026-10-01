@@ -217,7 +217,7 @@ func TestCountMessages_TotalWithNoFlags(t *testing.T) {
 
 // TestListMessages_Envelope_ArchivedExcludedFromFeedAndCounts verifies that
 // archiving a message removes it from the default feed and drops it out of
-// unreadCount/unseenCount, matching the reference platform's inbox semantics where "archive"
+// unreadCount/unseenCount, where "archive"
 // is the done action (issue #300).
 func TestListMessages_Envelope_ArchivedExcludedFromFeedAndCounts(t *testing.T) {
 	s := newTestStore(t)

@@ -1,7 +1,7 @@
 // Package twilio implements providers.SMSProvider against the Twilio
 // Programmable Messaging REST API
 // (POST https://api.twilio.com/2010-04-01/Accounts/{AccountSID}/Messages.json).
-// mirroring the reference twilio.provider, it sends an x-www-form-urlencoded body
+// It sends an x-www-form-urlencoded body
 // From=<from>&To=<to>&Body=<text> with HTTP Basic auth (AccountSID:AuthToken)
 // and reads the returned JSON "sid" as the provider message id. 2xx is success;
 // 4xx is a permanent (plain) error; 5xx and transport faults are wrapped in
@@ -42,7 +42,7 @@ type Client struct {
 
 // Send POSTs an x-www-form-urlencoded body (From, To, Body) to
 // {BaseURL}/2010-04-01/Accounts/{AccountSID}/Messages.json with HTTP Basic auth
-// (AccountSID:AuthToken), mirroring the reference twilio.provider. msg.From overrides
+// (AccountSID:AuthToken). msg.From overrides
 // the configured From when non-empty. An empty AccountSID, AuthToken, or
 // recipient (msg.To) fails closed (permanent). The provider message id is the
 // "sid" of Twilio's JSON acknowledgement.

@@ -155,7 +155,7 @@ var listValueOperators = map[filter.Operator]bool{
 // evaluator's expected wire shape for the given operator. For the list/range
 // operators it splits on "," into a []any (each piece trimmed); BETWEEN/
 // NOT_BETWEEN coerce each bound to a number when possible so the wire value is
-// a numeric [min,max] (matching the reference platform's between [min,max] number array), while
+// a numeric [min,max] (a between [min,max] number array), while
 // IN-family keep string elements. All other operators keep the raw string.
 func conditionValueForOperator(op filter.Operator, raw string) any {
 	if !listValueOperators[op] {

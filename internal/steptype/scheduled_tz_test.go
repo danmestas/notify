@@ -8,8 +8,8 @@ import (
 )
 
 // Scheduled delays computed their firing instant in UTC only, so "09:00" meant
-// 09:00 UTC for every subscriber regardless of where they are. the reference platform schedules in
-// the subscriber's timezone, and "send at 9am" almost always means their 9am.
+// 09:00 UTC for every subscriber regardless of where they are. They now
+// schedule in the subscriber's timezone: "send at 9am" means their 9am.
 //
 // The fallback behaviour is the load-bearing part: the subscriber timezone
 // column has always existed and defaults to empty, so an absent or unparseable

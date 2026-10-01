@@ -1,5 +1,5 @@
 // Package expo implements providers.PushProvider against Expo's push service
-// (https://exp.host/--/api/v2/push/send, mirrors the reference expo.provider): POST a
+// (https://exp.host/--/api/v2/push/send): POST a
 // JSON array of one message {to, title, body, data} and read back a
 // {"data":[{status,id,message}]} envelope. A per-ticket status of "ok" is a
 // successful send; "error" is a permanent fault carrying the Expo message

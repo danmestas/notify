@@ -1,7 +1,7 @@
 -- 0009_layouts: reusable content wrappers keyed by (environment, key). A
 -- channel step may reference a layoutKey; at render time the step's rendered
 -- body is injected as {{content}} into the layout's content template, then the
--- layout is rendered. Mirrors the reference platform layouts.
+-- layout is rendered.
 
 CREATE TABLE layouts (
     id              TEXT PRIMARY KEY,

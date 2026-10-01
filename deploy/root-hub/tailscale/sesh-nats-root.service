@@ -5,7 +5,7 @@
 #
 # Reads /etc/nats/sesh-root.conf (committed, secret-free) and
 #       /etc/nats/sesh-root.env  (NOT committed — holds SESH_LEAF_LISTEN and
-#                                 SESH_LEAF_PASSWORD; chmod 640; see README.md).
+#                                 SESH_LEAF_PASSWORD; chmod 640).
 #
 # The leafnode listener is bound to the Tailscale IP, so the unit waits on
 # tailscaled coming up before it starts (After=…tailscaled.service) — otherwise

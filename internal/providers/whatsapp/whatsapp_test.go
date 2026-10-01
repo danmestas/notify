@@ -39,9 +39,9 @@ func stubServer(t *testing.T, status int, respBody string) (*httptest.Server, *c
 	return srv, got
 }
 
-// TestClient_Send_Wire pins the exact WhatsApp wire (mirrors the reference
-// whatsapp-business.provider): POST {base}/{phone_number_id}/messages with
-// Authorization: Bearer <accessToken>, Content-Type application/json, and a
+// TestClient_Send_Wire pins the exact WhatsApp wire: POST
+// {base}/{phone_number_id}/messages with Authorization: Bearer <accessToken>,
+// Content-Type application/json, and a
 // {messaging_product,recipient_type,to,type,text:{preview_url,body}} body. The
 // provider message id is response messages[0].id.
 func TestClient_Send_Wire(t *testing.T) {

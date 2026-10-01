@@ -1,6 +1,5 @@
 // Package telegram implements providers.ChatProvider against the Telegram Bot
-// API (https://api.telegram.org/bot<token>/sendMessage). mirroring the reference
-// telegram.provider, it POSTs a JSON body
+// API (https://api.telegram.org/bot<token>/sendMessage). It POSTs a JSON body
 // {chat_id, text, parse_mode:"HTML", disable_web_page_preview:true}.
 // The bot token is the integration credential; the chat_id is the
 // per-subscriber address (ChatMessage.Address). 2xx is success; 4xx is a
@@ -40,7 +39,7 @@ type Client struct {
 }
 
 // Send POSTs {chat_id, text, parse_mode:"HTML", disable_web_page_preview:true}
-// to {BaseURL}/bot{BotToken}/sendMessage (mirrors the reference telegram.provider).
+// to {BaseURL}/bot{BotToken}/sendMessage.
 // chat_id comes from msg.Address; an empty address or bot token fails closed
 // (permanent). The provider message id is the result.message_id of Telegram's
 // JSON acknowledgement (best-effort).

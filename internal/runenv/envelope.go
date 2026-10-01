@@ -14,7 +14,7 @@ type Scope struct {
 }
 
 // InAppRedirect is the navigation target of an in-app CTA or of the message
-// itself (the reference platform inAppOutputSchema redirect: {url, target?}). Target is an
+// itself (redirect: {url, target?}). Target is an
 // optional anchor target (_self/_blank/_parent/_top); url is required when the
 // redirect is present at all.
 type InAppRedirect struct {
@@ -22,7 +22,7 @@ type InAppRedirect struct {
 	Target string `json:"target,omitempty"`
 }
 
-// InAppAction is an in-app CTA button (the reference platform primaryAction / secondaryAction:
+// InAppAction is an in-app CTA button (primaryAction / secondaryAction:
 // {label, redirect?}). Redirect is omitted when the action has no navigation.
 type InAppAction struct {
 	Label    string         `json:"label"`
@@ -75,7 +75,7 @@ type StepControls struct {
 	// (written by push.ParseForm). Unmarshaled to map[string]string at
 	// envelope-build time and forwarded as runenv.Step.Data.
 	DataJSON string `json:"data_json,omitempty"`
-	// In-app rich fields (the reference platform inAppOutputSchema parity). Authored in the in_app
+	// In-app rich fields . Authored in the in_app
 	// editor; snapshotted onto the persisted message's extras blob at send time.
 	// Absent on every other channel.
 	Avatar          string          `json:"avatar,omitempty"`
@@ -136,7 +136,7 @@ type Step struct {
 	// part, sent alongside BodyTemplate as its text part (#369).
 	HTMLBodyTemplate string `json:"htmlBodyTemplate,omitempty"`
 	// In-app rich fields carried to the in_app send handler, which snapshots them
-	// onto the persisted message's extras blob (the reference platform field names). Non-in_app
+	// onto the persisted message's extras blob. Non-in_app
 	// handlers ignore them. InAppData is named distinctly from the push Data map
 	// above to avoid the field collision while keeping a free-form JSON object.
 	Avatar          string          `json:"avatar,omitempty"`

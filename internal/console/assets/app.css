@@ -1702,7 +1702,7 @@ a.activity-item-run { color: var(--accent); }
   border-radius: 8px;
   /* Brand logos are multi-hued (and some are near-black: Resend, Expo), so they
      sit on a constant light tile in BOTH themes — the standard treatment for
-     brand marks (the reference platform does the same). The tile reads as an intentional "app
+     brand marks. The tile reads as an intentional "app
      icon" via a soft border + shadow rather than a bare white square. */
   background: #FFFFFF;
   border: 1px solid rgba(0, 0, 0, 0.08);

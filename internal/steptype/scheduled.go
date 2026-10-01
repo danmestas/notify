@@ -7,8 +7,8 @@ import (
 )
 
 // weekdayTokens maps the 3-letter calendar token used in a scheduled delay's
-// weekDays list to a time.Weekday. The tokens mirror the reference platform's ITimedConfig
-// weekDays values so the persisted shape stays parity-aligned.
+// weekDays list to a time.Weekday. The tokens are the persisted
+// weekDays values.
 var weekdayTokens = map[string]time.Weekday{
 	"SUN": time.Sunday,
 	"MON": time.Monday,

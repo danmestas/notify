@@ -39,10 +39,10 @@ func stubServer(t *testing.T, status int, respBody string) (*httptest.Server, *c
 	return srv, got
 }
 
-// TestClient_Send_Wire pins the exact Slack wire (mirrors the reference
-// slack.provider): POST {base}/chat.postMessage with Authorization: Bearer
-// <botToken>, Content-Type application/json, and a {channel,text} body. On
-// ok=true the provider message id is the response JSON "ts".
+// TestClient_Send_Wire pins the exact Slack wire: POST {base}/chat.postMessage
+// with Authorization: Bearer <botToken>, Content-Type application/json, and a
+// {channel,text} body. On ok=true the provider message id is the response JSON
+// "ts".
 func TestClient_Send_Wire(t *testing.T) {
 	srv, got := stubServer(t, http.StatusOK, `{"ok":true,"ts":"1503435956.000247"}`)
 

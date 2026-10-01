@@ -38,9 +38,9 @@ func stubServer(t *testing.T, status int, respBody string) (*httptest.Server, *c
 	return srv, got
 }
 
-// TestClient_Send_Wire pins the exact Telegram Bot API wire (mirrors the reference
-// telegram.provider): POST {base}/bot{token}/sendMessage with JSON
-// {chat_id, text, parse_mode:"HTML", disable_web_page_preview:true}.
+// TestClient_Send_Wire pins the exact Telegram Bot API wire: POST
+// {base}/bot{token}/sendMessage with JSON {chat_id, text, parse_mode:"HTML",
+// disable_web_page_preview:true}.
 func TestClient_Send_Wire(t *testing.T) {
 	srv, got := stubServer(t, http.StatusOK, `{"ok":true,"result":{"message_id":4242,"date":1700000000}}`)
 

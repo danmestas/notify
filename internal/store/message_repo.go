@@ -52,8 +52,7 @@ type MessageRepo interface {
 	// false it counts every message matching subscriberID/channel that also
 	// passes the archived filter.
 	//
-	// archived is a tri-state filter, matching the reference platform's inbox semantics of
-	// excluding archived messages from the default feed and its counts:
+	// archived is a tri-state filter, excluding archived messages from the default feed and its counts:
 	// "" or "false" excludes archived rows, "true" counts only archived
 	// rows, and "all" counts both. Passing "" here (not "all") is what
 	// keeps unreadCount/unseenCount from drifting after a message is

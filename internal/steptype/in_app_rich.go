@@ -8,7 +8,7 @@ import (
 )
 
 // in_app rich-field unpacking (ParseForm) and pre-fill flattening (ControlMap).
-// The controlValues JSON mirrors the reference inAppOutputSchema field names so the
+// The controlValues JSON uses the in-app output schema field names so the
 // persisted message extras blob — and therefore the inbox API output — is
 // wire-compatible at the field level:
 //
@@ -21,7 +21,7 @@ import (
 // ParseForm builds the in_app controlValues from the editor form. Subject and
 // body are always written; each rich field is added only when present so a step
 // with no rich fields keeps a compact blob. A redirect sub-object is dropped
-// entirely when its url is blank (the reference platform redirectSchema requires url), and a CTA is
+// entirely when its url is blank (a redirect requires url), and a CTA is
 // dropped when its label is blank.
 func (inApp) ParseForm(form url.Values) (json.RawMessage, error) {
 	m := map[string]any{

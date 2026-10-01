@@ -55,8 +55,8 @@ func stubServer(t *testing.T, status int, respBody string) (*httptest.Server, *c
 	return srv, got
 }
 
-// TestClient_Send_Wire pins the FCM HTTP v1 wire (the end state the reference platform's
-// firebase-admin-based provider produces): POST
+// TestClient_Send_Wire pins the FCM HTTP v1 wire (the end state of the
+// firebase-admin-based provider): POST
 // /v1/projects/{projectId}/messages:send, Authorization Bearer <oauth2 token>,
 // body {"message":{token,notification:{title,body}}}, provider message id from
 // the response "name".
