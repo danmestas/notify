@@ -604,3 +604,44 @@ func TestPostWorkflow_422OnInvalidDelayStep(t *testing.T) {
 		t.Fatalf("invalid create leaked a workflow row: GET returned %d (body=%s), want 404", getStatus, getResp)
 	}
 }
+
+// TestPutWorkflow_CriticalIsKeptAndApplied is issue 2 over HTTP: critical is
+// accepted on POST and PUT, a PUT that omits it keeps the stored value, and a
+// PUT that changes only critical is applied.
+func TestPutWorkflow_CriticalIsKeptAndApplied(t *testing.T) {
+	srv, authHeader, _, _, _ := setupWorkflowSuite(t)
+	critical := func() bool {
+		t.Helper()
+		_, resp := doGet(t, srv.URL+"/v1/workflows/crit-wf", authHeader)
+		var dto struct {
+			Critical bool `json:"critical"`
+		}
+		if err := json.Unmarshal([]byte(resp), &dto); err != nil {
+			t.Fatalf("decode: %v (%s)", err, resp)
+		}
+		return dto.Critical
+	}
+	put := func(body string, want int) {
+		t.Helper()
+		if status, resp := doPut(t, srv.URL+"/v1/workflows/crit-wf", authHeader, body); status != want {
+			t.Fatalf("PUT %s: status %d, want %d (%s)", body, status, want, resp)
+		}
+	}
+
+	if status, resp := doPost(t, srv.URL+"/v1/workflows", authHeader,
+		`{"name":"C","triggerIdentifier":"crit-wf","critical":true,"steps":[{"stepId":"S1","type":"in_app","controlValues":{"body":"v1"}}]}`); status != http.StatusCreated {
+		t.Fatalf("POST: %d (%s)", status, resp)
+	}
+	if !critical() {
+		t.Fatal("POST with critical:true created a non-critical workflow")
+	}
+
+	put(`{"name":"C","steps":[{"stepId":"S1","type":"in_app","controlValues":{"body":"v2"}}]}`, http.StatusOK)
+	if !critical() {
+		t.Fatal("a PUT without critical cleared it")
+	}
+	put(`{"name":"C","critical":false,"steps":[{"stepId":"S1","type":"in_app","controlValues":{"body":"v2"}}]}`, http.StatusOK)
+	if critical() {
+		t.Fatal("a critical-only PUT was not applied")
+	}
+}

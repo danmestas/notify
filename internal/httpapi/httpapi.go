@@ -1123,6 +1123,9 @@ type workflowRequest struct {
 	Name              string                `json:"name"`
 	TriggerIdentifier string                `json:"triggerIdentifier"`
 	Steps             []workflowStepRequest `json:"steps"`
+	// Critical marks the workflow no-opt-out: subscriber preferences cannot
+	// suppress its delivery. Optional, default false.
+	Critical bool `json:"critical,omitempty"`
 }
 
 // postWorkflow creates and publishes a workflow within the request Scope,
@@ -1167,6 +1170,7 @@ func postWorkflow(au *authoring.Service) http.HandlerFunc {
 			Name:              req.Name,
 			TriggerIdentifier: req.TriggerIdentifier,
 			Steps:             steps,
+			Critical:          req.Critical,
 		})
 		if err != nil {
 			if errors.Is(err, store.ErrConflict) {
@@ -1285,6 +1289,9 @@ type workflowUpdateRequest struct {
 	Name          string                `json:"name"`
 	Steps         []workflowStepRequest `json:"steps"`
 	PayloadSchema json.RawMessage       `json:"payloadSchema,omitempty"`
+	// Critical is optional: absent keeps the workflow's current value, so a
+	// caller that does not manage it cannot clear it.
+	Critical *bool `json:"critical,omitempty"`
 }
 
 // putWorkflow ensures a workflow exists matching the submitted definition --
@@ -1351,6 +1358,7 @@ func putWorkflow(au *authoring.Service) http.HandlerFunc {
 			TriggerIdentifier: slug,
 			Steps:             steps,
 			PayloadSchema:     req.PayloadSchema,
+			Critical:          req.Critical,
 		}, onConflict)
 		if err != nil {
 			var conflictErr *authoring.ErrDefinitionConflict
