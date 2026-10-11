@@ -51,6 +51,11 @@ func StartSidecar(t *testing.T) (natsURL, httpURL string) {
 			"DAGNATS_HTTP_ADDR="+httpAddr,
 			fmt.Sprintf("DAGNATS_NATS_PORT=%d", natsPort),
 			"XDG_CONFIG_HOME="+filepath.Join(dataDir, "xdg"),
+			// An unset store budget is half the free disk (dagnats #687), and
+			// dagnats' own streams reserve 8 GiB of it, so below ~20 GB free
+			// notify's streams are refused. Pin dagnats' 10 GiB ceiling, as
+			// v0.0.14 had. JetStream still needs that much real free space.
+			"DAGNATS_MAX_STORE_BYTES=10737418240",
 		)
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
