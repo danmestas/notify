@@ -37,7 +37,7 @@ jobs:
         run: go build ./...
       - name: build dagnats sidecar
         run: |
-          # danmestas/dagnats v0.0.14 (9b79475), 2026-09-08. Pinned to the
+          # danmestas/dagnats v0.0.24 (18921a9), 2026-10-02. Pinned to the
           # release tag rather than a bare SHA so the version being run is
           # legible; the SHA is recorded here for traceability.
           #
@@ -51,7 +51,7 @@ jobs:
           #        compiles to so its window can be resolved per subscriber from
           #        the run input (#336)
           # Bump here and in Dockerfile's DAGNATS_VERSION together.
-          GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@v0.0.14
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@v0.0.24
           echo "DAGNATS_BIN=$RUNNER_TEMP/bin/dagnats" >> "$GITHUB_ENV"
       - name: test (race + coverage)
         # Explicit -timeout for the same reason as lefthook.yml: Go's 10m
@@ -67,49 +67,11 @@ jobs:
           go test -tags duckdb -race -run TestAnalytics_DeliveriesByChannel_DuckDB ./internal/httpapi/
 
   docker:
-    # Mirrors the ci job: pushes and same-repo PRs run on the mac-mini, PRs
-    # from forks stay on a GitHub-hosted runner. Deliberately NOT
-    # unconditionally self-hosted -- the mini runs production (notify, dagnats,
-    # the cloudflared tunnel) and four runners' credentials, so executing
-    # fork-PR code there as dmestas would be a full production compromise.
-    # The head-repo check is the precise expression of that: a same-repo branch
-    # could only be pushed by someone who already has write access, so it is
-    # exactly as trusted as a push to main, whereas a fork PR is arbitrary code
-    # from anyone.
-    runs-on: >-
-      ${{ (github.event_name == 'push'
-           || github.event.pull_request.head.repo.full_name == github.repository)
-          && fromJSON('["self-hosted","macOS","ARM64","mac-mini"]')
-          || 'ubuntu-latest' }}
-    # Four self-hosted runners share ONE colima docker daemon on that box, and
-    # this job publishes a fixed host port and does a project-scoped `down -v`.
-    # A global (not per-ref) group serializes smokes so they cannot bind the
-    # same port or tear down each other's volumes. cancel-in-progress stays
-    # false: killing a run mid-compose leaves containers behind.
-    concurrency:
-      group: docker-smoke-shared-daemon
-      cancel-in-progress: false
-    env:
-      # Isolate from any hand-run `notify` stack on the shared daemon.
-      COMPOSE_PROJECT_NAME: notify-ci
-      # 3000 is taken on the mini (agent.py). compose.yml and smoke.sh both
-      # read this; the container side stays 3000.
-      NOTIFY_HOST_PORT: "13000"
-      # Likewise for dagnats' console port: 8081 is free on the mini today, but
-      # this box hosts four runners and assorted services, so pin CI to a port
-      # nothing else claims rather than depending on that staying true.
-      DAGNATS_CONSOLE_HOST_PORT: "18081"
+    # Always GitHub-hosted: the image is what other people run, so it is
+    # built and smoked on a stock Linux Docker host. The mini deploys notify
+    # natively and keeps no container runtime.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: docker preflight + clear stale stack
-        if: runner.environment == 'self-hosted'
-        run: |
-          # macOS has no timeout(1); a wedged daemon makes `docker info` hang forever.
-          perl -e 'alarm 25; exec @ARGV' docker info >/dev/null 2>&1 \
-            || { echo "::error::docker daemon unreachable on the runner. Check: brew services info colima"; exit 1; }
-          docker compose down -v --remove-orphans || true
       - name: container stack smoke (compose up + health + bootstrap + auth API)
         run: bash docker/smoke.sh
-      - name: cleanup (runs even if the job is cancelled)
-        if: always() && runner.environment == 'self-hosted'
-        run: docker compose down -v --remove-orphans || true
