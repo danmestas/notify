@@ -1005,3 +1005,47 @@ func TestAgentRepo_DeleteCascade_RecreateNoOrphans(t *testing.T) {
 		t.Fatalf("orphan conversations bound to old agent id: got %d", len(convs))
 	}
 }
+
+// TestActivityRepo_ClientMessageIDIsUniquePerConversation backs issue 3: a
+// composed message's idempotency key is unique within a conversation, found
+// again by lookup, free to repeat in another conversation, and absent keys
+// never collide.
+func TestActivityRepo_ClientMessageIDIsUniquePerConversation(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Activities()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	msg := func(conv, key string) agentdomain.Activity {
+		return agentdomain.Activity{ConversationID: conv, Role: "user", Content: json.RawMessage(`{"parts":[{"text":"hi"}]}`), ClientMessageID: key}
+	}
+
+	first, err := repo.Append(ctx, scope, msg("conv-1", "k1"))
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if _, err := repo.Append(ctx, scope, msg("conv-1", "k1")); !errors.Is(err, corestore.ErrConflict) {
+		t.Fatalf("duplicate key in the same conversation: err = %v, want ErrConflict", err)
+	}
+	if _, err := repo.Append(ctx, scope, msg("conv-2", "k1")); err != nil {
+		t.Fatalf("same key in another conversation: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := repo.Append(ctx, scope, msg("conv-1", "")); err != nil {
+			t.Fatalf("keyless append %d: %v", i, err)
+		}
+	}
+
+	got, err := repo.GetByClientMessageID(ctx, scope, "conv-1", "k1")
+	if err != nil || got.ID != first.ID || got.ClientMessageID != "k1" || got.RunID != "" {
+		t.Fatalf("lookup = %+v, %v", got, err)
+	}
+	if err := repo.SetRunID(ctx, scope, first.ID, "run-1"); err != nil {
+		t.Fatalf("SetRunID: %v", err)
+	}
+	if got, _ := repo.GetByClientMessageID(ctx, scope, "conv-1", "k1"); got.RunID != "run-1" {
+		t.Fatalf("run id after SetRunID = %q", got.RunID)
+	}
+	if _, err := repo.GetByClientMessageID(ctx, domain.Scope{OrgID: "o2", EnvID: "e2"}, "conv-1", "k1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("lookup from another tenant: %v, want ErrNotFound", err)
+	}
+}

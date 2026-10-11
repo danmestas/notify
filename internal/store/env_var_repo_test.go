@@ -10,7 +10,7 @@ import (
 func TestMigrate_0013_AppliesEnvVars(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 37 {
+	if n := migrationCount(t, s); n != 38 {
 		t.Fatalf("expected 35 recorded migrations, got %d", n)
 	}
 

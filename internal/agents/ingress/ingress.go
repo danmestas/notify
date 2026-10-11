@@ -8,6 +8,8 @@ package ingress
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -170,8 +172,19 @@ func (s *Service) compose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := s.ComposeMessage(r.Context(), scope, chi.URLParam(r, "agentIdentifier"),
-		req.ConversationID, req.SubscriberID, req.Text)
+	key := r.Header.Get("Idempotency-Key")
+	if key != "" && !validIdempotencyKey(key) {
+		http.Error(w, "Idempotency-Key must be 1-64 characters of A-Z, a-z, 0-9, _ or -", http.StatusUnprocessableEntity)
+		return
+	}
+
+	res, err := s.Compose(r.Context(), scope, ComposeInput{
+		AgentIdentifier: chi.URLParam(r, "agentIdentifier"),
+		ConversationID:  req.ConversationID,
+		SubscriberID:    req.SubscriberID,
+		Text:            req.Text,
+		IdempotencyKey:  key,
+	})
 	if err != nil {
 		writeComposeError(w, err)
 		return
@@ -204,14 +217,44 @@ func (s *Service) ComposeMessage(
 	ctx context.Context, scope domain.Scope,
 	agentIdentifier, conversationID, subscriberID, text string,
 ) (ComposeResult, error) {
-	if text == "" {
+	return s.Compose(ctx, scope, ComposeInput{
+		AgentIdentifier: agentIdentifier,
+		ConversationID:  conversationID,
+		SubscriberID:    subscriberID,
+		Text:            text,
+	})
+}
+
+// ComposeInput is one composed message. IdempotencyKey is optional: when
+// set, a message already composed with the same key in the same
+// conversation is returned as it was, instead of being appended and run a
+// second time (danmestas/notify#3).
+type ComposeInput struct {
+	AgentIdentifier string
+	ConversationID  string
+	SubscriberID    string
+	Text            string
+	IdempotencyKey  string
+}
+
+// ErrIdempotencyConflict reports a key reused for a different message: a
+// client bug, answered 409 rather than by returning the first message.
+var ErrIdempotencyConflict = errors.New("idempotency key already used for a different message")
+
+// Compose appends the message to the conversation and starts the agent's
+// turn, or with an IdempotencyKey replays an earlier compose of the same
+// message. A replay returns the original conversation, activity and run; it
+// starts the turn only if the original never recorded one (it failed between
+// the append and the run).
+func (s *Service) Compose(ctx context.Context, scope domain.Scope, in ComposeInput) (ComposeResult, error) {
+	if in.Text == "" {
 		return ComposeResult{}, fmt.Errorf("text is required")
 	}
-	if subscriberID == "" {
+	if in.SubscriberID == "" {
 		return ComposeResult{}, fmt.Errorf("subscriberId is required")
 	}
 
-	agent, err := s.agents.Agents().GetByIdentifier(ctx, scope, agentIdentifier)
+	agent, err := s.agents.Agents().GetByIdentifier(ctx, scope, in.AgentIdentifier)
 	if err != nil {
 		return ComposeResult{}, err
 	}
@@ -222,29 +265,48 @@ func (s *Service) ComposeMessage(
 	// Inbox adapter contract (RFC 0002 §6): integration_id is empty (no
 	// channel integration) and platform_thread_id is the inbox conversation
 	// id — client-supplied for thread continuity, minted for a new thread.
-	threadID := conversationID
-	if threadID == "" {
+	threadID := in.ConversationID
+	switch {
+	case threadID != "":
+	case in.IdempotencyKey != "":
+		// A new thread composed with a key gets an id derived from it, so a
+		// retry of the opening message lands in the same thread and replays
+		// instead of opening a second one.
+		threadID = keyedThreadID(agent.ID, in.SubscriberID, in.IdempotencyKey)
+	default:
 		threadID = corestore.NewULID()
 	}
 	conv, err := s.agents.Conversations().Upsert(ctx, scope, agentdomain.Conversation{
 		AgentID:          agent.ID,
 		IntegrationID:    "",
 		PlatformThreadID: threadID,
-		SubscriberID:     subscriberID,
+		SubscriberID:     in.SubscriberID,
 	})
 	if err != nil {
 		return ComposeResult{}, err
 	}
 
-	content, err := json.Marshal(map[string][]agentdomain.Part{"parts": {{Text: text}}})
+	content, err := json.Marshal(map[string][]agentdomain.Part{"parts": {{Text: in.Text}}})
 	if err != nil {
 		return ComposeResult{}, err
 	}
+
 	act, err := s.agents.Activities().Append(ctx, scope, agentdomain.Activity{
-		ConversationID: conv.ID,
-		Role:           "user",
-		Content:        content,
+		ConversationID:  conv.ID,
+		Role:            "user",
+		Content:         content,
+		ClientMessageID: in.IdempotencyKey,
 	})
+	if errors.Is(err, corestore.ErrConflict) && in.IdempotencyKey != "" {
+		// The key was already used in this conversation: by an earlier
+		// compose this is a retry of, or by one racing it. The unique index
+		// decides which row is the message; answer as that one did.
+		prior, gerr := s.agents.Activities().GetByClientMessageID(ctx, scope, conv.ID, in.IdempotencyKey)
+		if gerr != nil {
+			return ComposeResult{}, gerr
+		}
+		return s.replay(ctx, scope, agent, conv, prior, content)
+	}
 	if err != nil {
 		return ComposeResult{}, err
 	}
@@ -253,12 +315,66 @@ func (s *Service) ComposeMessage(
 	if err != nil {
 		return ComposeResult{}, err
 	}
+	if in.IdempotencyKey != "" {
+		if err := s.agents.Activities().SetRunID(ctx, scope, act.ID, runID); err != nil {
+			return ComposeResult{}, err
+		}
+	}
 
 	return ComposeResult{
 		ConversationID: conv.PlatformThreadID,
 		ActivityID:     act.ID,
 		RunID:          runID,
 	}, nil
+}
+
+// replay answers a compose whose key was already used in this conversation.
+// The same text is the same message; different text is a client bug.
+func (s *Service) replay(ctx context.Context, scope domain.Scope, agent agentdomain.Agent, conv agentdomain.Conversation, prior agentdomain.Activity, content json.RawMessage) (ComposeResult, error) {
+	if string(prior.Content) != string(content) {
+		return ComposeResult{}, ErrIdempotencyConflict
+	}
+	runID := prior.RunID
+	if runID == "" {
+		// The original appended the message but has not recorded its run:
+		// it failed in between, or is still between the two. startTurn keys
+		// the run on the activity id, so a run that did start is returned
+		// again rather than duplicated.
+		var err error
+		if runID, err = s.startTurn(ctx, scope, agent, conv.ID, prior.ID); err != nil {
+			return ComposeResult{}, err
+		}
+		if err := s.agents.Activities().SetRunID(ctx, scope, prior.ID, runID); err != nil {
+			return ComposeResult{}, err
+		}
+	}
+	return ComposeResult{
+		ConversationID: conv.PlatformThreadID,
+		ActivityID:     prior.ID,
+		RunID:          runID,
+	}, nil
+}
+
+// keyedThreadID derives a new thread's id from the agent, subscriber and
+// idempotency key, so the same opening message always names the same thread.
+func keyedThreadID(agentID, subscriberID, key string) string {
+	sum := sha256.Sum256([]byte(agentID + "\x00" + subscriberID + "\x00" + key))
+	return "k" + hex.EncodeToString(sum[:])[:31]
+}
+
+// validIdempotencyKey accepts 1-64 characters of [A-Za-z0-9_-].
+func validIdempotencyKey(k string) bool {
+	if len(k) == 0 || len(k) > 64 {
+		return false
+	}
+	for _, r := range k {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // writeComposeError maps a ComposeMessage error to its HTTP status. Store
@@ -269,6 +385,8 @@ func writeComposeError(w http.ResponseWriter, err error) {
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, ErrUnknownRuntime):
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+	case errors.Is(err, ErrIdempotencyConflict):
+		http.Error(w, err.Error(), http.StatusConflict)
 	default:
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

@@ -126,6 +126,9 @@ type Activity struct {
 	Content        json.RawMessage `db:"content"`
 	RunID          string          `db:"run_id"` // dagnats turn run, when role=agent
 	CreatedAt      string          `db:"created_at"`
+	// ClientMessageID is the caller's idempotency key for a composed user
+	// message, unique within the conversation. Empty for every other row.
+	ClientMessageID string `db:"client_message_id" json:"-"`
 }
 
 // Part is one content fragment of a reply: text now, attachments later.
