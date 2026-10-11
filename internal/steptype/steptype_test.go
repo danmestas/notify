@@ -20,9 +20,10 @@ import (
 // surface's ordering stable; only the new type joins the tail of the list.
 // Updated: stream appended after http_request — intentional, matches PR adding the
 // stream (10th, built-in) channel step type.
+// Updated: agent_message appended after stream, the agent action step (#4).
 func TestNames_CanonicalOrder(t *testing.T) {
 	got := steptype.Default().Names()
-	want := []string{"in_app", "email", "push", "chat", "sms", "delay", "digest", "throttle", "http_request", "stream"}
+	want := []string{"in_app", "email", "push", "chat", "sms", "delay", "digest", "throttle", "http_request", "stream", "agent_message"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Names() = %v, want %v", got, want)
 	}
