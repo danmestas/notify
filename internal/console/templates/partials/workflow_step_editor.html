@@ -442,6 +442,33 @@
       <p class="form-hint">A non-2xx response is always captured; this governs a connection error or timeout. Fail closed stops the run; continue records a zero-value response and proceeds.</p>
     </div>
     {{end}}
+{{define "wf-step-fields-agent_message"}}
+    <div class="form-row">
+      <label class="form-label" for="cv-agent">Agent</label>
+      <input class="console-input console-input-mono" type="text" id="cv-agent" name="agent"
+             placeholder="support-agent" value="{{index .ControlMap "agent"}}">
+      <p class="form-hint">Identifier of the agent that receives the message. The recipient is the trigger's subscriber.</p>
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-agent-text">Message</label>
+      <textarea class="console-input" id="cv-agent-text" name="text" rows="4"
+                placeholder="New email from {{"{{payload.from}}"}}: {{"{{payload.subject}}"}}">{{index .ControlMap "text"}}</textarea>
+      <p class="form-hint">The message the agent sees. <code>{{"{{payload.*}}"}}</code>, <code>{{"{{subscriber.*}}"}}</code> and <code>{{"{{transactionId}}"}}</code> are inserted as plain text.</p>
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="cv-agent-conversation">Conversation</label>
+      <input class="console-input console-input-mono" type="text" id="cv-agent-conversation" name="conversation"
+             placeholder="{{"{{payload.threadId}}"}}" value="{{index .ControlMap "conversation"}}">
+      <p class="form-hint">Optional thread handle. Events that resolve to the same value continue one conversation; leave empty for a new conversation per run.</p>
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="agent-failurePolicy-trigger">On failure</label>
+      {{template "ui-select" (uiSelectForm "agent-failurePolicy" "failurePolicy" "agentFailurePolicy"
+        (uiSelectOptions "fail_closed" "Fail the run (fail closed)" "continue" "Continue with an empty result")
+        "On failure" "" false (index .ControlMap "failurePolicy") true)}}
+      <p class="form-hint">Governs an unknown or inactive agent, or an empty message. Fail closed stops the run; continue records an empty result and proceeds.</p>
+    </div>
+    {{end}}
 {{define "wf-step-fields-default"}}
     <div class="form-row">
       <label class="form-label">Control values (JSON)</label>

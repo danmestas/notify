@@ -138,6 +138,7 @@ func Default() *Registry {
 	r.Register(throttle{})
 	r.Register(httpRequest{})
 	r.Register(stream{})
+	r.Register(agentMessage{})
 	return r
 }
 

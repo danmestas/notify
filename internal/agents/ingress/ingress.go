@@ -208,6 +208,9 @@ type ComposeResult struct {
 // Callers map it to 422 (the turn cannot be dispatched on this server).
 var ErrUnknownRuntime = errors.New("agent runtime is not executable on this server")
 
+// ErrAgentInactive marks a compose with RequireActive to an inactive agent.
+var ErrAgentInactive = errors.New("agent is inactive")
+
 // ComposeMessage resolves the agent, upserts the conversation, appends the
 // user activity, and starts the turn run. It is the in-process entry point the
 // HTTP compose handler and the console conversation view both call — the turn
@@ -235,6 +238,10 @@ type ComposeInput struct {
 	SubscriberID    string
 	Text            string
 	IdempotencyKey  string
+	// RequireActive refuses an agent marked inactive with ErrAgentInactive.
+	// Set by workflow steps, which wake an agent with no person watching;
+	// the inbox and reply loops leave it off and keep today's behaviour.
+	RequireActive bool
 }
 
 // ErrIdempotencyConflict reports a key reused for a different message: a
@@ -257,6 +264,9 @@ func (s *Service) Compose(ctx context.Context, scope domain.Scope, in ComposeInp
 	agent, err := s.agents.Agents().GetByIdentifier(ctx, scope, in.AgentIdentifier)
 	if err != nil {
 		return ComposeResult{}, err
+	}
+	if in.RequireActive && !agent.Active {
+		return ComposeResult{}, fmt.Errorf("%w: %q", ErrAgentInactive, agent.Identifier)
 	}
 	if _, ok := s.runtimes[agent.Runtime]; !ok {
 		return ComposeResult{}, fmt.Errorf("%w: %q", ErrUnknownRuntime, agent.Runtime)

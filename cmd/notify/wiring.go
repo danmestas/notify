@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/danmestas/notify/internal/agents/agentstep"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/delivery/httpaction"
@@ -86,6 +87,9 @@ type stepTaskDeps struct {
 	// reply-to-notification (#345). nil is allowed (tests, or a deployment
 	// with no email loop): the step's opt-in is then logged and ignored.
 	replyArmer delivery.ReplyArmer
+	// composer posts agent_message steps into agent conversations: the
+	// ingress service, the same path the inbox and reply loops use.
+	composer agentstep.Composer
 }
 
 // registerStepTaskHandlers registers a handler for every engine task type a
@@ -119,4 +123,8 @@ func registerStepTaskHandlers(eng taskRegistrar, d stepTaskDeps) {
 	// http_request: outbound HTTP action step. Makes the interpolated call, then
 	// captures statusCode/body/headers into step_outputs for downstream steps.
 	eng.Handle("http_request", httpaction.New(d.store, httpaction.WithSecretBox(d.secrets)).Handle)
+
+	// agent_message: post the rendered text to an agent conversation and
+	// start the agent's turn, in process (#4).
+	eng.Handle("agent_message", agentstep.New(d.store, d.composer).Handle)
 }
