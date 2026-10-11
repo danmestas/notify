@@ -581,16 +581,17 @@ func (s *Service) Update(ctx context.Context, scope domain.Scope, slug string, i
 }
 
 // EnsureInput is Ensure's desired-state request: the full PUT body plus the
-// slug it targets. Unlike UpdateInput it carries no Critical field, mirroring
-// workflowUpdateRequest (the PUT /v1/workflows/{slug} body), which has never
-// accepted one -- Ensure's create-when-absent and update-when-different paths
-// both leave Critical at its zero value, exactly as Create and Update already
-// do for their respective HTTP callers.
+// slug it targets.
 type EnsureInput struct {
 	Name              string
 	TriggerIdentifier string
 	Steps             []domain.Step
 	PayloadSchema     json.RawMessage
+	// Critical, when set, is part of the desired state: a different value is
+	// a change, and an update writes it. Nil keeps whatever the workflow
+	// already has, so a caller that never sends it cannot clear a flag set
+	// elsewhere (danmestas/notify#2).
+	Critical *bool
 }
 
 // EnsureOutcome reports what Ensure actually did, so the HTTP handler can
@@ -669,6 +670,7 @@ func (s *Service) Ensure(ctx context.Context, scope domain.Scope, slug string, i
 			TriggerIdentifier: in.TriggerIdentifier,
 			Steps:             in.Steps,
 			PayloadSchema:     in.PayloadSchema,
+			Critical:          in.Critical != nil && *in.Critical,
 		})
 		switch {
 		case cErr == nil:
@@ -697,10 +699,15 @@ func (s *Service) Ensure(ctx context.Context, scope domain.Scope, slug string, i
 	if onConflict == OnConflictKeep {
 		return domain.Workflow{}, 0, &ErrDefinitionConflict{Existing: existing}
 	}
+	critical := existing.Critical
+	if in.Critical != nil {
+		critical = *in.Critical
+	}
 	wf, err := s.Update(ctx, scope, slug, UpdateInput{
 		Name:          in.Name,
 		Steps:         in.Steps,
 		PayloadSchema: in.PayloadSchema,
+		Critical:      critical,
 	})
 	if err != nil {
 		return domain.Workflow{}, 0, err
@@ -725,6 +732,9 @@ func (s *Service) Ensure(ctx context.Context, scope domain.Scope, slug string, i
 // genuinely changed one.
 func (s *Service) definitionEqual(existing domain.Workflow, in EnsureInput) (bool, error) {
 	if existing.Name != in.Name {
+		return false, nil
+	}
+	if in.Critical != nil && *in.Critical != existing.Critical {
 		return false, nil
 	}
 	existingSteps, err := unmarshalSteps(existing.Steps)

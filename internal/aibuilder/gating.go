@@ -16,7 +16,7 @@ type IntegrationLister interface {
 
 // channelSteps maps the registry's channel step types to the integration
 // channel that must be active for them to be offered. Action steps (delay,
-// digest, throttle, http_request) are absent here: they require no provider and
+// digest, throttle, http_request, agent_message) are absent here: they require no provider and
 // are always available. The channel name equals the step name (contracts §4).
 var channelSteps = map[string]string{
 	"in_app": "in_app",

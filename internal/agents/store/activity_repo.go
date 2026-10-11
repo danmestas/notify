@@ -3,6 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
+	"strings"
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	"github.com/danmestas/notify/internal/domain"
@@ -20,6 +23,11 @@ const (
 // Scope-first.
 type ActivityRepo interface {
 	Append(ctx context.Context, scope domain.Scope, a agentdomain.Activity) (agentdomain.Activity, error)
+	// GetByClientMessageID finds a composed message by its caller-supplied
+	// idempotency key within a conversation. ErrNotFound when absent.
+	GetByClientMessageID(ctx context.Context, scope domain.Scope, conversationID, clientMessageID string) (agentdomain.Activity, error)
+	// SetRunID records the turn run a composed message started.
+	SetRunID(ctx context.Context, scope domain.Scope, id, runID string) error
 	// History returns the last n activities of the conversation oldest-first
 	// (the Turn.History window). n <= 0 returns the full transcript.
 	History(ctx context.Context, scope domain.Scope, conversationID string, n int) ([]agentdomain.Activity, error)
@@ -68,16 +76,55 @@ func (repo *activityRepo) Append(ctx context.Context, scope domain.Scope, a agen
 	a.OrgID = scope.OrgID
 	a.EnvID = scope.EnvID
 	a.CreatedAt = timestamp.Now()
+	var clientID any
+	if a.ClientMessageID != "" {
+		clientID = a.ClientMessageID
+	}
 	_, err := repo.w.ExecContext(
 		ctx,
-		`INSERT INTO conversation_activities (id, org_id, environment_id, conversation_id, role, content, run_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.ID, a.OrgID, a.EnvID, a.ConversationID, a.Role, string(a.Content), a.RunID, a.CreatedAt,
+		`INSERT INTO conversation_activities (id, org_id, environment_id, conversation_id, role, content, run_id, client_message_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.OrgID, a.EnvID, a.ConversationID, a.Role, string(a.Content), a.RunID, clientID, a.CreatedAt,
 	)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return agentdomain.Activity{}, corestore.ErrConflict
+		}
 		return agentdomain.Activity{}, err
 	}
 	return a, nil
+}
+
+// GetByClientMessageID returns the activity a caller composed with
+// clientMessageID in the conversation, or ErrNotFound.
+func (repo *activityRepo) GetByClientMessageID(ctx context.Context, scope domain.Scope, conversationID, clientMessageID string) (agentdomain.Activity, error) {
+	var a agentdomain.Activity
+	var content string
+	var runID sql.NullString
+	err := repo.r.QueryRowContext(
+		ctx,
+		`SELECT id, org_id, environment_id, conversation_id, role, content, run_id, client_message_id, created_at
+		 FROM conversation_activities
+		 WHERE org_id = ? AND environment_id = ? AND conversation_id = ? AND client_message_id = ?`,
+		scope.OrgID, scope.EnvID, conversationID, clientMessageID,
+	).Scan(&a.ID, &a.OrgID, &a.EnvID, &a.ConversationID, &a.Role, &content, &runID, &a.ClientMessageID, &a.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return agentdomain.Activity{}, ErrNotFound
+	}
+	if err != nil {
+		return agentdomain.Activity{}, err
+	}
+	a.Content = json.RawMessage(content)
+	a.RunID = runID.String
+	return a, nil
+}
+
+// SetRunID records the turn run a composed message started.
+func (repo *activityRepo) SetRunID(ctx context.Context, scope domain.Scope, id, runID string) error {
+	_, err := repo.w.ExecContext(ctx,
+		`UPDATE conversation_activities SET run_id = ? WHERE org_id = ? AND environment_id = ? AND id = ?`,
+		runID, scope.OrgID, scope.EnvID, id)
+	return err
 }
 
 // Page returns a cursor-bounded page of activities oldest-first. See the
