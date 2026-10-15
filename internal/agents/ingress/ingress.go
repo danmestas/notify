@@ -21,6 +21,7 @@ import (
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
+	"github.com/danmestas/notify/internal/agents/wire"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/identity"
@@ -459,8 +460,8 @@ func (s *Service) ensureWorkflow(ctx context.Context, agent agentdomain.Agent) (
 // transcriptResponse is the GET /v1/inbox/conversations/{agentIdentifier}
 // body: the conversation row plus its full activity log oldest-first.
 type transcriptResponse struct {
-	Conversation agentdomain.Conversation `json:"conversation"`
-	Activities   []agentdomain.Activity   `json:"activities"`
+	Conversation wire.Conversation `json:"conversation"`
+	Activities   []wire.Activity   `json:"activities"`
 }
 
 // transcript serves the conversation read (RFC 0002 §7):
@@ -510,11 +511,11 @@ func (s *Service) transcript(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if acts == nil {
-		acts = []agentdomain.Activity{}
-	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(transcriptResponse{Conversation: conv, Activities: acts})
+	_ = json.NewEncoder(w).Encode(transcriptResponse{
+		Conversation: wire.FromConversation(conv),
+		Activities:   wire.Activities(acts),
+	})
 }
 
 // parseActivityLimit converts the raw limit query param to an int. Zero or
