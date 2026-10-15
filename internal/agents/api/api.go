@@ -1,6 +1,6 @@
 // Package api serves the agents management surface: CRUD on /v1/agents plus
-// channel links on /v1/agents/{identifier}/integrations. It returns store
-// types directly (no response re-shaping) and expects to run behind
+// channel links on /v1/agents/{identifier}/integrations. Responses use the
+// agent API's JSON format (package wire). It expects to run behind
 // identity.Middleware so the request context carries a tenancy Scope.
 package api
 
@@ -14,6 +14,7 @@ import (
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
+	"github.com/danmestas/notify/internal/agents/wire"
 	"github.com/danmestas/notify/internal/identity"
 )
 
@@ -129,7 +130,7 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusCreated, agent)
+	writeJSON(w, http.StatusCreated, wire.FromAgent(agent))
 }
 
 // listAgents returns every agent in the request Scope.
@@ -140,10 +141,7 @@ func (svc *Service) listAgents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if agents == nil {
-		agents = []agentdomain.Agent{}
-	}
-	writeJSON(w, http.StatusOK, agents)
+	writeJSON(w, http.StatusOK, wire.Agents(agents))
 }
 
 // getAgent returns the agent addressed by {identifier} or 404.
@@ -154,7 +152,7 @@ func (svc *Service) getAgent(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, agent)
+	writeJSON(w, http.StatusOK, wire.FromAgent(agent))
 }
 
 // agentPatch is the PATCH /v1/agents/{identifier} body. Pointer fields
@@ -223,7 +221,7 @@ func (svc *Service) patchAgent(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, updated)
+	writeJSON(w, http.StatusOK, wire.FromAgent(updated))
 }
 
 // deleteAgent removes the agent addressed by {identifier}, answering 204 on
@@ -271,7 +269,7 @@ func (svc *Service) linkIntegration(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusCreated, link)
+	writeJSON(w, http.StatusCreated, wire.FromLink(link))
 }
 
 // listIntegrations returns the agent's channel links.
@@ -287,10 +285,7 @@ func (svc *Service) listIntegrations(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if links == nil {
-		links = []agentdomain.AgentLink{}
-	}
-	writeJSON(w, http.StatusOK, links)
+	writeJSON(w, http.StatusOK, wire.Links(links))
 }
 
 // unlinkIntegration removes the link between the agent addressed by
@@ -331,7 +326,7 @@ func (svc *Service) listConversations(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, convs)
+	writeJSON(w, http.StatusOK, wire.Conversations(convs))
 }
 
 // parseLimit converts a raw query string to an int. Returns fallback on any
@@ -421,7 +416,7 @@ func (svc *Service) listGlobalConversations(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"items": items,
+		"items": wire.ConversationSummaries(items),
 		"next":  next,
 	})
 }
