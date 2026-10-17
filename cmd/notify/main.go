@@ -270,6 +270,8 @@ func runServe(args []string) error {
 	}
 	defer meshClient.Close()
 	ags := agentstore.New(st)
+	// agent_drafts would otherwise keep every draft no one fetched.
+	startDraftPurge(ctx, ags)
 	ing := ingress.New(ags, st, eng, bus).WithRuntime(agentdomain.RuntimeMesh, meshClient)
 
 	// Email two-way loop: inbound email replies route back to the agent and the

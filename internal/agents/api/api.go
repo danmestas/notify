@@ -7,8 +7,11 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -61,6 +64,8 @@ func (svc *Service) Routes(r chi.Router) {
 	r.Get("/v1/agents/{identifier}/channels/{integrationID}/setup", svc.channelSetup)
 	// Wave 4: global cross-agent conversations (GAP-AF-07).
 	r.Get("/v1/inbox/conversations", svc.listGlobalConversations)
+	// Agent replies to email awaiting the mailbox owner's review.
+	r.Get("/v1/inbox/drafts", svc.listDrafts)
 }
 
 // agentRequest is the POST /v1/agents body.
@@ -419,6 +424,73 @@ func (svc *Service) listGlobalConversations(w http.ResponseWriter, r *http.Reque
 		"items": wire.ConversationSummaries(items),
 		"next":  next,
 	})
+}
+
+// listDrafts serves GET /v1/inbox/drafts?subscriberId=&mailbox=…&after=&limit=:
+// a subscriber's drafts in the named mailboxes, oldest first, after the
+// cursor. mailbox repeats; a caller names exactly the mailboxes it may see.
+func (svc *Service) listDrafts(w http.ResponseWriter, r *http.Request) {
+	scope := identity.ScopeFrom(r.Context())
+	q := r.URL.Query()
+	subscriberID := q.Get("subscriberId")
+	mailboxes := q["mailbox"]
+	if subscriberID == "" || len(mailboxes) == 0 {
+		http.Error(w, "subscriberId and at least one mailbox are required", http.StatusBadRequest)
+		return
+	}
+	after := q.Get("after")
+	afterSeq, afterAt, err := decodeDraftCursor(after)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	limit := parseLimit(q.Get("limit"), 50)
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	drafts, err := svc.store.Drafts().List(r.Context(), scope, subscriberID, mailboxes, afterSeq, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	cursor := after
+	if n := len(drafts); n > 0 {
+		cursor = encodeDraftCursor(drafts[n-1])
+	}
+	writeJSON(w, http.StatusOK, wire.DraftList{
+		Drafts: wire.Drafts(drafts),
+		Cursor: cursor,
+		// A cursor older than the retention window means drafts created
+		// after it may have been purged before this caller fetched them.
+		Gap: after != "" && afterAt.Before(time.Now().Add(-agentstore.DraftRetention)),
+	})
+}
+
+// encodeDraftCursor names a draft's position: its sequence and its creation
+// time in milliseconds. Callers treat it as opaque.
+func encodeDraftCursor(d agentdomain.Draft) string {
+	ms := int64(0)
+	if t, err := time.Parse(time.RFC3339Nano, d.CreatedAt); err == nil {
+		ms = t.UnixMilli()
+	}
+	return strconv.FormatInt(d.Seq, 10) + "." + strconv.FormatInt(ms, 10)
+}
+
+// decodeDraftCursor reads a cursor; an empty one starts from the oldest draft.
+func decodeDraftCursor(c string) (int64, time.Time, error) {
+	if c == "" {
+		return 0, time.Time{}, nil
+	}
+	seqPart, msPart, ok := strings.Cut(c, ".")
+	seq, err1 := strconv.ParseInt(seqPart, 10, 64)
+	ms, err2 := strconv.ParseInt(msPart, 10, 64)
+	if !ok || err1 != nil || err2 != nil || seq < 0 {
+		return 0, time.Time{}, fmt.Errorf("invalid cursor %q", c)
+	}
+	return seq, time.UnixMilli(ms), nil
 }
 
 // writeStoreError maps a repository error onto its HTTP status: ErrNotFound

@@ -136,6 +136,29 @@ type Part struct {
 	Text string `json:"text"`
 }
 
+// Draft is an agent's reply to an email, held for the mailbox owner to review
+// and send. notify never sends it. To, Subject, InReplyTo and References are
+// advisory: the mailbox owner recomputes recipients and threading itself.
+type Draft struct {
+	Seq             int64
+	ID              string
+	OrgID           string
+	EnvID           string
+	SubscriberID    string
+	Mailbox         string
+	AgentIdentifier string
+	AgentName       string
+	ConversationID  string // the conversation's platform thread handle
+	ActivityID      string // the agent activity the draft came from
+	SourceMessageID string // the mailbox's own id for the message answered
+	InReplyTo       string
+	References      []string
+	Subject         string
+	To              []string
+	Text            string
+	CreatedAt       string
+}
+
 // SuggestedAction is an optional button a capable channel renders alongside a
 // reply; clicking it feeds Value back as the next user message.
 type SuggestedAction struct {

@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"time"
 
+	agentstore "github.com/danmestas/notify/internal/agents/store"
+
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -108,6 +110,41 @@ func startDelayDeadlinePurge(ctx context.Context, st *store.Store) {
 	go func() {
 		purge()
 		t := time.NewTicker(delayDeadlinePurgeInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				purge()
+			}
+		}
+	}()
+}
+
+// draftPurgeInterval is how often expired agent drafts are deleted. Hourly is
+// ample against a 30-day retention.
+const draftPurgeInterval = time.Hour
+
+// startDraftPurge deletes agent drafts older than agentstore.DraftRetention,
+// once at boot and then on an interval, in the same shape as the purges above.
+// A reader whose cursor predates the window is told so by the endpoint (gap),
+// so nothing expires unannounced.
+func startDraftPurge(ctx context.Context, ags *agentstore.Store) {
+	purge := func() {
+		cutoff := time.Now().Add(-agentstore.DraftRetention)
+		n, err := ags.Drafts().PurgeOlderThan(ctx, cutoff)
+		switch {
+		case err != nil:
+			slog.Default().Error("retention: agent_drafts purge failed", "err", err, "cutoff", cutoff)
+		case n > 0:
+			slog.Default().Info("retention: purged agent_drafts", "rows", n, "olderThan", agentstore.DraftRetention.String())
+		}
+	}
+
+	go func() {
+		purge()
+		t := time.NewTicker(draftPurgeInterval)
 		defer t.Stop()
 		for {
 			select {

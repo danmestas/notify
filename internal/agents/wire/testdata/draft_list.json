@@ -1,0 +1,28 @@
+{
+  "drafts": [
+    {
+      "type": "agent.draft.proposed",
+      "draftId": "01JDRAFT00000000000000000A",
+      "agentIdentifier": "support",
+      "agentName": "Support",
+      "conversationId": "th-1",
+      "activityId": "x1",
+      "subscriberId": "s1",
+      "mailbox": "acct-1",
+      "sourceMessageId": "msg-7",
+      "inReplyTo": "\u003corig@example.com\u003e",
+      "references": [
+        "\u003croot@example.com\u003e",
+        "\u003corig@example.com\u003e"
+      ],
+      "subject": "Re: Invoice",
+      "to": [
+        "ann@example.com"
+      ],
+      "text": "Thanks, **paid** today.",
+      "createdAt": "2026-10-17T12:00:00.000Z"
+    }
+  ],
+  "cursor": "42.1792280000000",
+  "gap": false
+}
