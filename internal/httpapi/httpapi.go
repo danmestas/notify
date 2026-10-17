@@ -340,12 +340,14 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 
 // subscriberRequest is the POST /v1/subscribers body.
 type subscriberRequest struct {
-	SubscriberID string `json:"subscriberId"`
-	Email        string `json:"email"`
-	FirstName    string `json:"firstName"`
-	LastName     string `json:"lastName"`
-	Phone        string `json:"phone"`
-	Locale       string `json:"locale"`
+	SubscriberID string          `json:"subscriberId"`
+	Email        string          `json:"email"`
+	FirstName    string          `json:"firstName"`
+	LastName     string          `json:"lastName"`
+	Phone        string          `json:"phone"`
+	Locale       string          `json:"locale"`
+	Timezone     string          `json:"timezone"`
+	Data         json.RawMessage `json:"data"`
 }
 
 // postSubscriber upserts a subscriber within the request Scope and returns the
@@ -365,6 +367,8 @@ func postSubscriber(aud *audience.Service) http.HandlerFunc {
 			LastName:     req.LastName,
 			Phone:        req.Phone,
 			Locale:       req.Locale,
+			Timezone:     req.Timezone,
+			Data:         req.Data,
 		})
 		if err != nil {
 			// A *audience.ValidationError is a caller error (malformed
