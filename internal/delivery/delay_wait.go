@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -171,7 +170,7 @@ func resolveDynamicDuration(payload json.RawMessage, dynamicKey, dynamicKind str
 	if dynamicKind == "" {
 		return 0, fmt.Errorf("step declares no dynamicKind; republish the workflow to record whether %q is an instant or a relative duration", dynamicKey)
 	}
-	node, err := navigatePayload(payload, dynamicKey)
+	node, err := steptype.PayloadValue(payload, dynamicKey)
 	if err != nil {
 		return 0, err
 	}
@@ -194,53 +193,14 @@ func resolveDynamicDuration(payload json.RawMessage, dynamicKey, dynamicKind str
 		return 0, nil
 
 	case steptype.DynamicKindRelative:
-		var obj struct {
-			Amount int64  `json:"amount"`
-			Unit   string `json:"unit"`
-		}
-		if uErr := json.Unmarshal(node, &obj); uErr != nil {
-			return 0, fmt.Errorf("value at %q must be an {amount,unit} object (step declares dynamicKind=%q)", dynamicKey, steptype.DynamicKindRelative)
-		}
-		if obj.Amount <= 0 {
-			return 0, fmt.Errorf("value at %q has non-positive amount %d", dynamicKey, obj.Amount)
-		}
-		unit, uErr := steptype.UnitDuration(obj.Unit)
-		if uErr != nil {
-			return 0, uErr
-		}
 		// This is a DURATION relative to now, not a wall-clock instant: it is
 		// only safe to call once, at first dispatch. resolveDynamicFireAt is
 		// the caller that enforces that by persisting the resulting instant
-		// and reusing it on every requeue (#273) — this function has no store
-		// access and cannot enforce it itself.
-		return time.Duration(obj.Amount) * unit, nil
-
+		// and reusing it on every requeue (#273).
+		return steptype.RelativeDuration(node, dynamicKey)
 	default:
 		return 0, fmt.Errorf("unknown dynamicKind %q", dynamicKind)
 	}
-}
-
-// navigatePayload walks a "payload.a.b" dot-path against the trigger payload and
-// returns the raw JSON value at the leaf. The first segment must be "payload";
-// a missing/non-object intermediate or leaf is an error.
-func navigatePayload(payload json.RawMessage, dynamicKey string) (json.RawMessage, error) {
-	parts := strings.Split(dynamicKey, ".")
-	if len(parts) < 2 || parts[0] != "payload" {
-		return nil, fmt.Errorf("dynamicKey %q must be a payload dot-path (e.g. payload.sendAt)", dynamicKey)
-	}
-	cur := payload
-	for _, p := range parts[1:] {
-		var m map[string]json.RawMessage
-		if err := json.Unmarshal(cur, &m); err != nil {
-			return nil, fmt.Errorf("dynamicKey %q: %q is not inside an object", dynamicKey, p)
-		}
-		next, ok := m[p]
-		if !ok {
-			return nil, fmt.Errorf("dynamicKey %q: missing %q in payload", dynamicKey, p)
-		}
-		cur = next
-	}
-	return cur, nil
 }
 
 // stepInputs loads a delay step's controlValues, the run's trigger payload,

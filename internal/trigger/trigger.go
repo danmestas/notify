@@ -391,6 +391,7 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 		// genuine retry of the same (transaction, recipient) pair.
 		IdempotencyKey: req.TransactionID + ":" + base64.RawURLEncoding.EncodeToString([]byte(subscriberID)),
 		DigestDeadline: digestDeadline,
+		Delays:         dynamicDelays(steps, req.Payload, wf),
 		Step: runenv.Step{
 			StepID:            step.StepID,
 			Channel:           step.Type,
@@ -450,6 +451,31 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 		return "", err
 	}
 	return runID, nil
+}
+
+// dynamicDelays resolves every dynamic delay step that compiles to a native
+// sleep into the value that sleep reads at delays.<stepID>. A payload value
+// that does not match the step's declared kind is left out and logged: the
+// sleep then fails the run at that step, as the delay worker did before (#258).
+func dynamicDelays(steps []domain.Step, payload json.RawMessage, wf domain.Workflow) map[string]json.RawMessage {
+	var out map[string]json.RawMessage
+	for _, step := range steps {
+		key, kind, ok := steptype.NativeDynamicDelay(step)
+		if !ok {
+			continue
+		}
+		v, err := steptype.DynamicDelayInput(payload, key, kind)
+		if err != nil {
+			slog.Default().Warn("trigger: dynamic delay value unusable, the run will fail at this step",
+				"step_id", step.StepID, "workflow_id", wf.ID, "trigger_identifier", wf.TriggerIdentifier, "err", err)
+			continue
+		}
+		if out == nil {
+			out = make(map[string]json.RawMessage)
+		}
+		out[step.StepID] = v
+	}
+	return out
 }
 
 // resolveDigestDeadline returns the RFC3339 instant a regular digest window

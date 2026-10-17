@@ -67,8 +67,10 @@ func TestCompile_DelayScheduled(t *testing.T) {
 	}
 }
 
-// TestCompile_DelayDynamic proves a dynamic delay compiles to a normal
-// delay.dynamic task with a retry policy and no static Config.
+// TestCompile_DelayDynamic proves a dynamic delay with no declared kind (a
+// step stored before dynamicKind existed) still compiles to the delay.dynamic
+// task with a retry policy and no static Config: it cannot be resolved at
+// trigger time, so it keeps the worker path that fails it at dispatch.
 func TestCompile_DelayDynamic(t *testing.T) {
 	def, err := steptype.Default().Get("delay").Compile(domain.Step{
 		StepID: "d", Type: "delay", ControlValues: json.RawMessage(`{"type":"dynamic","dynamicKey":"payload.sendAt"}`),
