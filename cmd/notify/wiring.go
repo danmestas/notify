@@ -90,6 +90,8 @@ type stepTaskDeps struct {
 	// composer posts agent_message steps into agent conversations: the
 	// ingress service, the same path the inbox and reply loops use.
 	composer agentstep.Composer
+	// drafts records review-mode draft requests for agent_message steps.
+	drafts agentstep.DraftRequester
 }
 
 // registerStepTaskHandlers registers a handler for every engine task type a
@@ -126,5 +128,5 @@ func registerStepTaskHandlers(eng taskRegistrar, d stepTaskDeps) {
 
 	// agent_message: post the rendered text to an agent conversation and
 	// start the agent's turn, in process (#4).
-	eng.Handle("agent_message", agentstep.New(d.store, d.composer).Handle)
+	eng.Handle("agent_message", agentstep.New(d.store, d.composer, d.drafts).Handle)
 }

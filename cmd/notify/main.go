@@ -299,7 +299,7 @@ func runServe(args []string) error {
 	// dispatches a task, and StartWorkers is later still.
 	registerStepTaskHandlers(eng, stepTaskDeps{
 		store: st, conn: conn, prefs: prefs, bus: bus, secrets: secrets, replyArmer: eml,
-		composer: ing,
+		composer: ing, drafts: ags.Drafts(),
 	})
 
 	// Chat two-way loop: inbound Telegram (getUpdates long-poll) and Discord

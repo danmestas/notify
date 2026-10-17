@@ -11,9 +11,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
+	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	"github.com/danmestas/notify/internal/agents/ingress"
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/delivery/template"
@@ -28,15 +30,23 @@ type Composer interface {
 	Compose(ctx context.Context, scope domain.Scope, in ingress.ComposeInput) (ingress.ComposeResult, error)
 }
 
+// DraftRequester records that the reply to a composed message must become a
+// draft; *agentstore.Store's Drafts() is one.
+type DraftRequester interface {
+	Request(ctx context.Context, scope domain.Scope, clientMessageID string, d agentdomain.Draft) error
+}
+
 // Handler executes agent_message steps.
 type Handler struct {
 	store    *store.Store
 	composer Composer
+	drafts   DraftRequester
 }
 
-// New returns a Handler reading runs from s and composing through c.
-func New(s *store.Store, c Composer) *Handler {
-	return &Handler{store: s, composer: c}
+// New returns a Handler reading runs from s, composing through c, and
+// recording review-mode draft requests in d.
+func New(s *store.Store, c Composer, d DraftRequester) *Handler {
+	return &Handler{store: s, composer: c, drafts: d}
 }
 
 // output is the step's result in step_outputs.
@@ -77,12 +87,20 @@ func (h *Handler) Handle(ctx context.Context, t engine.TaskPayload) (json.RawMes
 	text := template.RenderAs(template.Plain, cfg.Text, data, noTranslate)
 	conversation := strings.TrimSpace(template.RenderAs(template.Plain, cfg.Conversation, data, noTranslate))
 
+	key := composeKey(env.TransactionID, env.SubscriberID, t.StepID)
+	if cfg.ReviewDraft {
+		// Recorded before composing, so the turn always finds it: an agent
+		// can answer before Compose returns.
+		if err := h.requestDraft(ctx, scope, key, env.SubscriberID, env.Payload); err != nil && cfg.FailurePolicy != "continue" {
+			return nil, engine.NewNonRetryableError(fmt.Errorf("agent_message: %w", err))
+		}
+	}
 	res, err := h.composer.Compose(ctx, scope, ingress.ComposeInput{
 		AgentIdentifier: cfg.Agent,
 		ConversationID:  conversation,
 		SubscriberID:    env.SubscriberID,
 		Text:            text,
-		IdempotencyKey:  composeKey(env.TransactionID, env.SubscriberID, t.StepID),
+		IdempotencyKey:  key,
 		RequireActive:   true,
 	})
 	if err != nil {
@@ -104,6 +122,58 @@ func (h *Handler) Handle(ctx context.Context, t engine.TaskPayload) (json.RawMes
 		return nil, engine.NewNonRetryableError(fmt.Errorf("agent_message: save output: %w", err))
 	}
 	return out, nil
+}
+
+// mailEvent is the inbound-mail trigger payload a review-mode step reads:
+// the mailbox the message arrived in, the mailbox's own id for it, and its
+// threading headers.
+type mailEvent struct {
+	Mailbox      string   `json:"mailbox"`
+	MessageID    string   `json:"messageId"`
+	RFCMessageID string   `json:"rfcMessageId"`
+	References   []string `json:"references"`
+	Subject      string   `json:"subject"`
+	From         string   `json:"from"`
+}
+
+// requestDraft records the draft the agent's reply becomes. Recipients,
+// subject and threading are advisory: the mailbox owner recomputes them.
+func (h *Handler) requestDraft(ctx context.Context, scope domain.Scope, key, subscriberID string, payload json.RawMessage) error {
+	if h.drafts == nil {
+		return errors.New("review drafts are not available on this server")
+	}
+	var ev mailEvent
+	if err := json.Unmarshal(payload, &ev); err != nil || ev.Mailbox == "" || ev.MessageID == "" {
+		return errors.New("reviewDraft needs an inbound-mail payload with mailbox and messageId")
+	}
+	refs := ev.References
+	if ev.RFCMessageID != "" && (len(refs) == 0 || refs[len(refs)-1] != ev.RFCMessageID) {
+		refs = append(refs, ev.RFCMessageID)
+	}
+	var to []string
+	if ev.From != "" {
+		to = []string{ev.From}
+	}
+	return h.drafts.Request(ctx, scope, key, agentdomain.Draft{
+		SubscriberID:    subscriberID,
+		Mailbox:         ev.Mailbox,
+		SourceMessageID: ev.MessageID,
+		InReplyTo:       ev.RFCMessageID,
+		References:      refs,
+		Subject:         replySubject(ev.Subject),
+		To:              to,
+	})
+}
+
+// replySubject prefixes "Re: " unless the subject already has one.
+func replySubject(s string) string {
+	if t := strings.TrimLeft(s, " \t"); len(t) >= 3 && strings.EqualFold(t[:3], "re:") {
+		return s
+	}
+	if s == "" {
+		return ""
+	}
+	return "Re: " + s
 }
 
 // composeKey derives the compose idempotency key from the run's transaction,

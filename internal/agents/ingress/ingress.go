@@ -578,13 +578,36 @@ func (s *Service) HandleTurn(ctx context.Context, t engine.TaskPayload) (json.Ra
 		return nil, engine.NewRetryableError(err)
 	}
 
-	out, err := s.deliverReply(ctx, scope, conv, t.RunID, reply)
+	out, replyAct, err := s.deliverReply(ctx, scope, conv, t.RunID, reply)
 	if err != nil {
 		// The reply exists but persisting it failed; retrying re-runs the
 		// whole turn, which beats silently dropping the answer.
 		return nil, engine.NewRetryableError(err)
 	}
+	// A message composed by an agent_message step in review mode asks for
+	// the reply to become a draft for the mailbox owner (#4). Produce is a
+	// no-op for every other message, and for a retried turn.
+	if msg.ClientMessageID != "" {
+		if _, _, err := s.agents.Drafts().Produce(ctx, scope, msg.ClientMessageID, agentdomain.Draft{
+			AgentIdentifier: agent.Identifier,
+			AgentName:       agent.Name,
+			ConversationID:  conv.PlatformThreadID,
+			ActivityID:      replyAct.ID,
+			Text:            replyText(reply),
+		}); err != nil {
+			return nil, engine.NewRetryableError(fmt.Errorf("produce draft: %w", err))
+		}
+	}
 	return out, nil
+}
+
+// replyText joins a reply's text parts.
+func replyText(reply agentdomain.Reply) string {
+	var text string
+	for _, p := range reply.Parts {
+		text += p.Text
+	}
+	return text
 }
 
 // loadTurnContext fetches the bounded history window and splits out the
@@ -634,24 +657,22 @@ func splitMessage(acts []agentdomain.Activity, activityID string) ([]agentdomain
 // and publishes the realtime inbox event (the same write+publish path the
 // send.in_app handler uses). Returns the persisted message JSON as the task
 // output.
-func (s *Service) deliverReply(ctx context.Context, scope domain.Scope, conv agentdomain.Conversation, runID string, reply agentdomain.Reply) (json.RawMessage, error) {
+func (s *Service) deliverReply(ctx context.Context, scope domain.Scope, conv agentdomain.Conversation, runID string, reply agentdomain.Reply) (json.RawMessage, agentdomain.Activity, error) {
 	content, err := json.Marshal(map[string]any{"parts": reply.Parts})
 	if err != nil {
-		return nil, fmt.Errorf("marshal reply content: %w", err)
+		return nil, agentdomain.Activity{}, fmt.Errorf("marshal reply content: %w", err)
 	}
-	if _, err := s.agents.Activities().Append(ctx, scope, agentdomain.Activity{
+	act, err := s.agents.Activities().Append(ctx, scope, agentdomain.Activity{
 		ConversationID: conv.ID,
 		Role:           "agent",
 		Content:        content,
 		RunID:          runID,
-	}); err != nil {
-		return nil, fmt.Errorf("append agent activity: %w", err)
+	})
+	if err != nil {
+		return nil, agentdomain.Activity{}, fmt.Errorf("append agent activity: %w", err)
 	}
 
-	var text string
-	for _, p := range reply.Parts {
-		text += p.Text
-	}
+	text := replyText(reply)
 	saved, err := s.core.Messages().Create(ctx, scope, domain.Message{
 		ID:           corestore.NewULID(),
 		OrgID:        scope.OrgID,
@@ -664,11 +685,11 @@ func (s *Service) deliverReply(ctx context.Context, scope domain.Scope, conv age
 		CreatedAt:    time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("persist reply message: %w", err)
+		return nil, agentdomain.Activity{}, fmt.Errorf("persist reply message: %w", err)
 	}
 	out, err := json.Marshal(saved)
 	if err != nil {
-		return nil, err
+		return nil, agentdomain.Activity{}, err
 	}
 	// Best-effort live publish: the message is already persisted, so a
 	// publish failure must not fail (and re-run) the turn.
@@ -682,7 +703,7 @@ func (s *Service) deliverReply(ctx context.Context, scope domain.Scope, conv age
 	if s.replyHook != nil {
 		s.replyHook(ctx, scope, conv, text)
 	}
-	return out, nil
+	return out, act, nil
 }
 
 // classifyStoreError maps a not-found row to a permanent failure (replaying

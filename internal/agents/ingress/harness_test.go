@@ -110,7 +110,7 @@ func newHarness(t *testing.T) *harness {
 		WithRuntime(agentdomain.RuntimeMesh, meshClient).
 		WithRetry(retry)
 	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
-	eng.Handle("agent_message", agentstep.New(st, ing).Handle)
+	eng.Handle("agent_message", agentstep.New(st, ing, ags.Drafts()).Handle)
 	eng.StartWorkers(ctx)
 
 	agent, err := ags.Agents().Create(ctx, testScope, agentdomain.Agent{

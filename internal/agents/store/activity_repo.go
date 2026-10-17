@@ -247,8 +247,8 @@ func (repo *activityRepo) History(ctx context.Context, scope domain.Scope, conve
 	}
 	rows, err := repo.r.QueryContext(
 		ctx,
-		`SELECT id, org_id, environment_id, conversation_id, role, content, run_id, created_at FROM (
-		   SELECT id, org_id, environment_id, conversation_id, role, content, run_id, created_at
+		`SELECT id, org_id, environment_id, conversation_id, role, content, run_id, COALESCE(client_message_id, ''), created_at FROM (
+		   SELECT id, org_id, environment_id, conversation_id, role, content, run_id, client_message_id, created_at
 		   FROM conversation_activities
 		   WHERE org_id = ? AND environment_id = ? AND conversation_id = ?
 		   ORDER BY created_at DESC, id DESC LIMIT ?
@@ -266,7 +266,7 @@ func (repo *activityRepo) History(ctx context.Context, scope domain.Scope, conve
 			a       agentdomain.Activity
 			content string
 		)
-		if err := rows.Scan(&a.ID, &a.OrgID, &a.EnvID, &a.ConversationID, &a.Role, &content, &a.RunID, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.OrgID, &a.EnvID, &a.ConversationID, &a.Role, &content, &a.RunID, &a.ClientMessageID, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		a.Content = []byte(content)
