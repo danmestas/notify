@@ -110,6 +110,26 @@ type Deps struct {
 // grouped behind d.Identity.Middleware, so each handler resolves its Scope via
 // identity.ScopeFrom. Optional dependencies gate their routes as documented on
 // Deps.
+// ContractHeader names the response header carrying the API contract version,
+// and ContractVersion is its value. A /v1 route only ever changes additively;
+// a change that breaks a client moves to a new major path and a new value, so
+// a client can refuse a server whose contract it does not understand.
+const (
+	ContractHeader  = "Notify-Contract"
+	ContractVersion = "1"
+)
+
+// contractHeader stamps every /v1 response, errors included, with the contract
+// version, so a client can check it before reading anything else.
+func contractHeader(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/") {
+			w.Header().Set(ContractHeader, ContractVersion)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func New(d Deps) http.Handler {
 	id, aud, trg, inbox, rt, feed, inb, an, ag, ing, conn, st, ev, eml, src, au, prf := d.Identity, d.Audience, d.Trigger, d.Inbox, d.Realtime, d.Feed, d.Inbound, d.Analytics, d.Agents, d.Ingress, d.Connectivity, d.Store, d.EnvVars, d.EmailLoop, d.SourceIngest, d.Authoring, d.Preferences
 	// Wire a webhook management service when a store is present.
@@ -128,6 +148,7 @@ func New(d Deps) http.Handler {
 		inboundDomainSvc = inbounddomains.New(st, d.InboundMXHost)
 	}
 	r := chi.NewRouter()
+	r.Use(contractHeader)
 	// Liveness probe, mounted outside the auth group so container/orchestrator
 	// health checks need no API key.
 	r.Get("/healthz", healthz)
