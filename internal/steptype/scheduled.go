@@ -2,6 +2,8 @@ package steptype
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -142,4 +144,46 @@ func (ps parsedSchedule) matchDay(t time.Time) bool {
 		return false
 	}
 	return true
+}
+
+// SubscriberTimezoneInputPath is where the run input carries the recipient's
+// timezone; a scheduled delay's native cron sleep resolves in it.
+const SubscriberTimezoneInputPath = "subscriber.timezone"
+
+// ScheduledCron returns the cron expression equivalent to cfg, and false when
+// there is none. A schedule that names both week days and month days fires
+// only on days matching both, while cron fires on days matching either, so
+// that one combination keeps the delay.scheduled task.
+func ScheduledCron(cfg ScheduledConfig) (string, bool) {
+	ps, err := ParseScheduled(cfg)
+	if err != nil || (len(ps.weekdays) > 0 && len(ps.monthdays) > 0) {
+		return "", false
+	}
+	dom, dow := "*", "*"
+	if len(ps.monthdays) > 0 {
+		days := make([]int, 0, len(ps.monthdays))
+		for d := range ps.monthdays {
+			days = append(days, d)
+		}
+		dom = joinInts(days)
+	}
+	if len(ps.weekdays) > 0 {
+		days := make([]int, 0, len(ps.weekdays))
+		for d := range ps.weekdays {
+			days = append(days, int(d))
+		}
+		dow = joinInts(days)
+	}
+	return fmt.Sprintf("%d %d %s * %s", ps.minute, ps.hour, dom, dow), true
+}
+
+// joinInts renders ints sorted and comma-separated, so the same schedule
+// always compiles to the same expression.
+func joinInts(v []int) string {
+	sort.Ints(v)
+	parts := make([]string, len(v))
+	for i, n := range v {
+		parts[i] = strconv.Itoa(n)
+	}
+	return strings.Join(parts, ",")
 }

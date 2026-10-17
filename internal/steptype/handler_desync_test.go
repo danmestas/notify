@@ -62,7 +62,7 @@ func TestHandlerDesyncGuard(t *testing.T) {
 		},
 		{
 			StepID: "s", Type: "delay",
-			ControlValues: json.RawMessage(`{"type":"scheduled","atTime":"09:00","weekDays":["MON"]}`),
+			ControlValues: json.RawMessage(`{"type":"scheduled","atTime":"09:00","weekDays":["MON"],"monthDays":[1]}`),
 		},
 		{
 			StepID: "s", Type: "delay",
