@@ -20,7 +20,7 @@ func (agentMessage) Name() string        { return "agent_message" }
 func (agentMessage) DisplayName() string { return "Agent Message" }
 
 func (agentMessage) DefaultControlValues() json.RawMessage {
-	return json.RawMessage(`{"agent":"","text":"","conversation":"","failurePolicy":"fail_closed"}`)
+	return json.RawMessage(`{"agent":"","text":"","conversation":"","failurePolicy":"fail_closed","reviewDraft":false}`)
 }
 
 func (agentMessage) ControlMap(cv json.RawMessage) map[string]string {
@@ -39,6 +39,7 @@ func (agentMessage) ParseForm(form url.Values) (json.RawMessage, error) {
 		"text":          formField(form, "text"),
 		"conversation":  formField(form, "conversation"),
 		"failurePolicy": failurePolicy,
+		"reviewDraft":   formField(form, "reviewDraft") == "on" || formField(form, "reviewDraft") == "true",
 	})
 }
 
@@ -63,6 +64,10 @@ type AgentMessageCfg struct {
 	Text          string `json:"text"`
 	Conversation  string `json:"conversation"`
 	FailurePolicy string `json:"failurePolicy"`
+	// ReviewDraft makes the agent's reply a draft for the mailbox owner to
+	// review and send, instead of a plain reply. The trigger payload must be
+	// an inbound-mail event (mailbox, messageId, and the threading fields).
+	ReviewDraft bool `json:"reviewDraft"`
 }
 
 // AgentMessageConfig parses and validates an agent_message step's control

@@ -134,7 +134,7 @@ func TestAgentMessageStep_TriggerPostsToAgent(t *testing.T) {
 	// The engine running the step again (a retry after a partial failure)
 	// returns the message already posted.
 	ing := ingress.New(h.agents, h.store, h.eng, h.bus).WithRuntime(agentdomain.RuntimeMesh, h.mesh)
-	again, err := agentstep.New(h.store, ing).Handle(context.Background(), engine.TaskPayload{RunID: snap.RunID, StepID: "a1"})
+	again, err := agentstep.New(h.store, ing, h.agents.Drafts()).Handle(context.Background(), engine.TaskPayload{RunID: snap.RunID, StepID: "a1"})
 	if err != nil {
 		t.Fatalf("step re-run: %v", err)
 	}
@@ -204,5 +204,104 @@ func TestAgentMessageStep_FailurePolicy(t *testing.T) {
 		case !c.wantOK && saved:
 			t.Errorf("%s: output %v saved for a failed step", c.name, out)
 		}
+	}
+}
+
+// waitDrafts polls until the subscriber's mailbox holds want drafts.
+func (h *harness) waitDrafts(t *testing.T, mailbox string, want int) []agentdomain.Draft {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		ds, err := h.agents.Drafts().List(context.Background(), testScope, subscriber, []string{mailbox}, 0, 50)
+		if err != nil {
+			t.Fatalf("list drafts: %v", err)
+		}
+		if len(ds) >= want || time.Now().After(deadline) {
+			return ds
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// TestAgentMessageStep_ReviewDraft: in review mode, the agent's reply to an
+// inbound mail is held as one draft carrying the mail context, the mailbox
+// owner's to send; re-running the step adds no second draft.
+func TestAgentMessageStep_ReviewDraft(t *testing.T) {
+	h := newHarness(t)
+	h.startStub(t)
+	trg := h.publishAgentWorkflow(t, "mail-review", `{"agent":"stub","text":"{{payload.subject}}","conversation":"{{payload.mailbox}}-{{payload.messageId}}","reviewDraft":true}`)
+
+	payload := `{"mailbox":"acct-1","messageId":"m-9","rfcMessageId":"<orig@x>","references":["<root@x>"],"subject":"Invoice 7","from":"Ann <ann@x>"}`
+	snap, _ := h.fire(t, trg, "mail-review", "tx-review", payload)
+	if !snap.Succeeded() {
+		t.Fatalf("run status %q", snap.Status)
+	}
+	ds := h.waitDrafts(t, "acct-1", 1)
+	if len(ds) != 1 {
+		t.Fatalf("drafts = %d, want 1", len(ds))
+	}
+	d := ds[0]
+	switch {
+	case d.Mailbox != "acct-1" || d.SourceMessageID != "m-9" || d.SubscriberID != subscriber:
+		t.Fatalf("mail context = %+v", d)
+	case d.InReplyTo != "<orig@x>" || len(d.References) != 2 || d.References[1] != "<orig@x>":
+		t.Fatalf("threading = %q %v", d.InReplyTo, d.References)
+	case d.Subject != "Re: Invoice 7" || len(d.To) != 1 || d.To[0] != "Ann <ann@x>":
+		t.Fatalf("subject/to = %q %v", d.Subject, d.To)
+	case d.Text != "ECHO::Invoice 7" || d.AgentIdentifier != "stub" || d.ActivityID == "" || d.ConversationID != "acct-1-m-9":
+		t.Fatalf("reply = %+v", d)
+	}
+
+	// The same transaction again, and the step run again: still one draft.
+	h.fire(t, trg, "mail-review", "tx-review", payload)
+	ing := ingress.New(h.agents, h.store, h.eng, h.bus).WithRuntime(agentdomain.RuntimeMesh, h.mesh)
+	if _, err := agentstep.New(h.store, ing, h.agents.Drafts()).Handle(context.Background(), engine.TaskPayload{RunID: snap.RunID, StepID: "a1"}); err != nil {
+		t.Fatalf("step re-run: %v", err)
+	}
+	time.Sleep(time.Second)
+	if ds := h.waitDrafts(t, "acct-1", 2); len(ds) != 1 {
+		t.Fatalf("drafts after repeats = %d, want 1", len(ds))
+	}
+}
+
+// TestAgentMessageStep_ReviewDraftNeedsAMailEvent: without mailbox and
+// messageId a review-mode step fails under fail_closed, and under continue
+// composes normally with no draft.
+func TestAgentMessageStep_ReviewDraftNeedsAMailEvent(t *testing.T) {
+	h := newHarness(t)
+	h.startStub(t)
+	closed := h.publishAgentWorkflow(t, "review-closed", `{"agent":"stub","text":"hi","reviewDraft":true}`)
+	if snap, _ := h.fire(t, closed, "review-closed", "tx-closed", `{"subject":"no mailbox"}`); snap.Succeeded() {
+		t.Fatal("fail_closed review step without a mail event succeeded")
+	}
+	open := h.publishAgentWorkflow(t, "review-open", `{"agent":"stub","text":"hi","reviewDraft":true,"failurePolicy":"continue"}`)
+	snap, outs := h.fire(t, open, "review-open", "tx-open", `{"subject":"no mailbox"}`)
+	if !snap.Succeeded() || outs["a1"]["activityId"] == "" {
+		t.Fatalf("continue: status %q output %v, want a normal compose", snap.Status, outs["a1"])
+	}
+}
+
+// TestDrafts_ProduceOncePerRequest: a turn retried after its draft was made
+// produces no second one, and a message with no request produces none.
+func TestDrafts_ProduceOncePerRequest(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	drafts := h.agents.Drafts()
+	if err := drafts.Request(ctx, testScope, "k1", agentdomain.Draft{SubscriberID: subscriber, Mailbox: "acct-1", SourceMessageID: "m-1"}); err != nil {
+		t.Fatal(err)
+	}
+	reply := agentdomain.Draft{AgentIdentifier: "stub", ConversationID: "c", ActivityID: "act-1", Text: "one"}
+	if _, ok, err := drafts.Produce(ctx, testScope, "k1", reply); err != nil || !ok {
+		t.Fatalf("first produce: %v %v", ok, err)
+	}
+	reply.ActivityID, reply.Text = "act-2", "retry"
+	if _, ok, err := drafts.Produce(ctx, testScope, "k1", reply); err != nil || ok {
+		t.Fatalf("retried produce: ok=%v %v, want no second draft", ok, err)
+	}
+	if _, ok, err := drafts.Produce(ctx, testScope, "no-request", reply); err != nil || ok {
+		t.Fatalf("produce without a request: ok=%v %v", ok, err)
+	}
+	if ds, _ := drafts.List(ctx, testScope, subscriber, []string{"acct-1"}, 0, 50); len(ds) != 1 || ds[0].Text != "one" {
+		t.Fatalf("drafts = %+v", ds)
 	}
 }

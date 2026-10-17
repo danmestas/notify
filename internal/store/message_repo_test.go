@@ -49,7 +49,7 @@ func seedMessage(t *testing.T, s *Store, m domain.Message) domain.Message {
 func TestMigrate_0017_AppliesIntegrationID(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 39 {
+	if n := migrationCount(t, s); n != 40 {
 		t.Fatalf("expected 35 recorded migrations, got %d", n)
 	}
 

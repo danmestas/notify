@@ -462,6 +462,13 @@
       <p class="form-hint">Optional thread handle. Events that resolve to the same value continue one conversation; leave empty for a new conversation per run.</p>
     </div>
     <div class="form-row">
+      <label class="form-label" for="cv-agent-review">
+        <input type="checkbox" id="cv-agent-review" name="reviewDraft" value="on"{{if eq (index .ControlMap "reviewDraft") "true"}} checked{{end}}>
+        Reply as a draft for review
+      </label>
+      <span class="form-hint">For inbound-mail events: the agent's reply is held as a draft for the mailbox owner to review and send, instead of being sent. The payload must carry <code>mailbox</code> and <code>messageId</code>.</span>
+    </div>
+    <div class="form-row">
       <label class="form-label" for="agent-failurePolicy-trigger">On failure</label>
       {{template "ui-select" (uiSelectForm "agent-failurePolicy" "failurePolicy" "agentFailurePolicy"
         (uiSelectOptions "fail_closed" "Fail the run (fail closed)" "continue" "Continue with an empty result")
