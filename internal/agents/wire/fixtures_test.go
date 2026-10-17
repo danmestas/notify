@@ -42,6 +42,13 @@ var fixtures = []struct {
 		ConversationID: "c1", AgentIdentifier: "support", AgentName: "Support", SubscriberID: "s1",
 		PlatformThreadID: "th-1", Status: "open", LastMessageAt: "2026-10-02T00:00:00Z", LastActivityID: "x1",
 	})},
+	{"draft", reflect.TypeOf(wire.Draft{}), sampleDraft()},
+	{"draft_list", reflect.TypeOf(wire.DraftList{}), wire.DraftList{
+		Drafts: []wire.Draft{sampleDraft()}, Cursor: "42.1792280000000",
+	}},
+	{"draft_list_gap", reflect.TypeOf(wire.DraftList{}), wire.DraftList{
+		Drafts: []wire.Draft{sampleDraft()}, Cursor: "42.1792280000000", Gap: true,
+	}},
 	{"activity", reflect.TypeOf(wire.Activity{}), wire.FromActivity(agentdomain.Activity{
 		ID: "x1", ConversationID: "c1", Role: "agent", RunID: "r1", CreatedAt: "2026-10-02T00:00:00Z",
 		Content: json.RawMessage(`{"parts":[{"text":"Shall I reply?"}],"action":{"label":"Yes","value":"yes"}}`),
@@ -126,4 +133,13 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func sampleDraft() wire.Draft {
+	return wire.FromDraft(agentdomain.Draft{
+		Seq: 42, ID: "01JDRAFT00000000000000000A", SubscriberID: "s1", Mailbox: "acct-1",
+		AgentIdentifier: "support", AgentName: "Support", ConversationID: "th-1", ActivityID: "x1",
+		SourceMessageID: "msg-7", InReplyTo: "<orig@example.com>", References: []string{"<root@example.com>", "<orig@example.com>"},
+		Subject: "Re: Invoice", To: []string{"ann@example.com"}, Text: "Thanks, **paid** today.", CreatedAt: "2026-10-17T12:00:00.000Z",
+	})
 }

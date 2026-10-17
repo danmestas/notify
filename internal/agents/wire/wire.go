@@ -211,3 +211,67 @@ func mapAll[T, U any](in []T, f func(T) U) []U {
 	}
 	return out
 }
+
+// DraftType is the type of a draft, as a draft webhook event would carry it.
+const DraftType = "agent.draft.proposed"
+
+// Draft is an agent's reply to an email, awaiting the mailbox owner's review.
+// To, Subject, InReplyTo and References are advisory: the mailbox owner
+// recomputes recipients and threading. Text may be Markdown.
+type Draft struct {
+	Type            string   `json:"type"`
+	DraftID         string   `json:"draftId"`
+	AgentIdentifier string   `json:"agentIdentifier"`
+	AgentName       string   `json:"agentName"`
+	ConversationID  string   `json:"conversationId"`
+	ActivityID      string   `json:"activityId"`
+	SubscriberID    string   `json:"subscriberId"`
+	Mailbox         string   `json:"mailbox"`
+	SourceMessageID string   `json:"sourceMessageId"`
+	InReplyTo       string   `json:"inReplyTo"`
+	References      []string `json:"references"`
+	Subject         string   `json:"subject"`
+	To              []string `json:"to"`
+	Text            string   `json:"text"`
+	CreatedAt       string   `json:"createdAt"`
+}
+
+// FromDraft maps a stored draft.
+func FromDraft(d agentdomain.Draft) Draft {
+	return Draft{
+		Type:            DraftType,
+		DraftID:         d.ID,
+		AgentIdentifier: d.AgentIdentifier,
+		AgentName:       d.AgentName,
+		ConversationID:  d.ConversationID,
+		ActivityID:      d.ActivityID,
+		SubscriberID:    d.SubscriberID,
+		Mailbox:         d.Mailbox,
+		SourceMessageID: d.SourceMessageID,
+		InReplyTo:       d.InReplyTo,
+		References:      orEmpty(d.References),
+		Subject:         d.Subject,
+		To:              orEmpty(d.To),
+		Text:            d.Text,
+		CreatedAt:       d.CreatedAt,
+	}
+}
+
+// Drafts maps stored drafts; nil becomes an empty list.
+func Drafts(in []agentdomain.Draft) []Draft { return mapAll(in, FromDraft) }
+
+// DraftList is one page of GET /v1/inbox/drafts. Cursor is opaque: pass it
+// back as after. Gap is true when after predates the retention window, so
+// drafts may have expired before they were fetched.
+type DraftList struct {
+	Drafts []Draft `json:"drafts"`
+	Cursor string  `json:"cursor"`
+	Gap    bool    `json:"gap"`
+}
+
+func orEmpty(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
