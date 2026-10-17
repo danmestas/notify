@@ -193,4 +193,9 @@ type InAppEnvelope struct {
 	// different cadences (#336). trigger.go fills it with
 	// now + (subscriber override, else the step's authored window).
 	DigestDeadline string `json:"digestDeadline,omitempty"`
+	// Delays carries each dynamic delay step's resolved deadline, keyed by step
+	// id: an RFC3339 instant or whole milliseconds. The trigger fills it from
+	// the payload against the step's declared kind, and the step's native sleep
+	// reads delays.<stepID> back at dispatch (steptype.DelayInputPath).
+	Delays map[string]json.RawMessage `json:"delays,omitempty"`
 }

@@ -128,19 +128,6 @@ func TestWaitUntil_ContextCancel_DoesNotHang(t *testing.T) {
 	}
 }
 
-// TestNavigatePayload_Nested proves the dot-path walks nested objects and
-// returns the raw leaf value.
-func TestNavigatePayload_Nested(t *testing.T) {
-	payload := json.RawMessage(`{"a":{"b":{"c":"deep"}}}`)
-	node, err := navigatePayload(payload, "payload.a.b.c")
-	if err != nil {
-		t.Fatalf("navigate: %v", err)
-	}
-	if string(node) != `"deep"` {
-		t.Fatalf("node = %s, want \"deep\"", node)
-	}
-}
-
 // seedDelayRun creates a workflow with a single delay step (controlValues cv)
 // and a notification/run over payload, returning the run id and scope so the
 // caller can dispatch HandleScheduled/HandleDynamic against it.

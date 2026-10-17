@@ -221,8 +221,8 @@ const (
 	// DynamicKindInstant: the value is an RFC3339 timestamp; wait until it.
 	DynamicKindInstant = "instant"
 	// DynamicKindRelative: the value is {amount,unit}; wait that long. Uses
-	// notify's own unit vocabulary (including "months"), which is why this form
-	// stays consumer-side rather than compiling to a native sleep.
+	// notify's own unit vocabulary (including "months"); the trigger converts
+	// it to milliseconds for the engine's native sleep.
 	DynamicKindRelative = "relative"
 )
 
@@ -412,6 +412,18 @@ func (delay) Compile(step domain.Step) (engine.StepDef, error) {
 	case "dynamic":
 		if dcv.DynamicKey == "" {
 			return engine.StepDef{}, fmt.Errorf("dynamic delay requires a dynamicKey")
+		}
+		if _, _, ok := NativeDynamicDelay(step); ok {
+			// The engine sleeps until the value the trigger resolved into
+			// delays.<stepID>, so no notify worker is held for the wait and a
+			// restart loses nothing.
+			cfg, err := json.Marshal(struct {
+				UntilInputPath string `json:"until_input_path"`
+			}{UntilInputPath: DelayInputPath + "." + step.StepID})
+			if err != nil {
+				return engine.StepDef{}, fmt.Errorf("marshal dynamic delay sleep config: %w", err)
+			}
+			return engine.StepDef{ID: step.StepID, Type: "sleep", Config: cfg}, nil
 		}
 		return engine.StepDef{ID: step.StepID, Type: "normal", Task: "delay.dynamic", Retry: delayRetryPolicy()}, nil
 	default:
