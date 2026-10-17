@@ -1,0 +1,19 @@
+{
+  "id": "x1",
+  "conversationId": "c1",
+  "role": "agent",
+  "content": {
+    "parts": [
+      {
+        "type": "text",
+        "text": "Shall I reply?"
+      }
+    ],
+    "action": {
+      "label": "Yes",
+      "value": "yes"
+    }
+  },
+  "runId": "r1",
+  "createdAt": "2026-10-02T00:00:00Z"
+}

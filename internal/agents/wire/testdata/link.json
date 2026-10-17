@@ -1,0 +1,9 @@
+{
+  "id": "l1",
+  "agentId": "a1",
+  "integrationId": "i1",
+  "connectedAt": "2026-10-01T00:00:00Z",
+  "config": {
+    "chatId": "7"
+  }
+}

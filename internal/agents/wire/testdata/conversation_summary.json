@@ -1,0 +1,10 @@
+{
+  "conversationId": "c1",
+  "agentIdentifier": "support",
+  "agentName": "Support",
+  "subscriberId": "s1",
+  "platformThreadId": "th-1",
+  "status": "open",
+  "lastMessageAt": "2026-10-02T00:00:00Z",
+  "lastActivityId": "x1"
+}
