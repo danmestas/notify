@@ -1,0 +1,10 @@
+{
+  "id": "c1",
+  "agentId": "a1",
+  "integrationId": "i1",
+  "platformThreadId": "th-1",
+  "subscriberId": "s1",
+  "status": "open",
+  "createdAt": "2026-10-01T00:00:00Z",
+  "lastActivityAt": "2026-10-02T00:00:00Z"
+}
