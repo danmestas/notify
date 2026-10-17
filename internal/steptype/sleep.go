@@ -408,6 +408,18 @@ func (delay) Compile(step domain.Step) (engine.StepDef, error) {
 		if _, perr := ParseScheduled(ScheduledConfig{AtTime: dcv.AtTime, WeekDays: dcv.WeekDays, MonthDays: dcv.MonthDays}); perr != nil {
 			return engine.StepDef{}, fmt.Errorf("invalid scheduled delay: %w", perr)
 		}
+		if expr, ok := ScheduledCron(ScheduledConfig{AtTime: dcv.AtTime, WeekDays: dcv.WeekDays, MonthDays: dcv.MonthDays}); ok {
+			// The engine sleeps until the next occurrence in the recipient's
+			// timezone (UTC when they have none), holding no notify worker.
+			cfg, err := json.Marshal(struct {
+				Cron         string `json:"cron"`
+				TimezonePath string `json:"cron_timezone_input_path"`
+			}{expr, SubscriberTimezoneInputPath})
+			if err != nil {
+				return engine.StepDef{}, fmt.Errorf("marshal scheduled delay sleep config: %w", err)
+			}
+			return engine.StepDef{ID: step.StepID, Type: "sleep", Config: cfg}, nil
+		}
 		return engine.StepDef{ID: step.StepID, Type: "normal", Task: "delay.scheduled", Retry: delayRetryPolicy()}, nil
 	case "dynamic":
 		if dcv.DynamicKey == "" {

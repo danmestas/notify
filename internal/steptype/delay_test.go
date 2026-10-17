@@ -46,12 +46,12 @@ func TestCompile_DelayMonths(t *testing.T) {
 	}
 }
 
-// TestCompile_DelayScheduled proves a scheduled delay compiles to a normal
-// delay.scheduled task with a retry policy and no static Config (the wait is
-// computed per-run by the handler).
+// TestCompile_DelayScheduled proves a scheduled delay naming both week days and
+// month days compiles to a normal delay.scheduled task with a retry policy and
+// no static Config: cron cannot say "both", so the handler computes the wait.
 func TestCompile_DelayScheduled(t *testing.T) {
 	def, err := steptype.Default().Get("delay").Compile(domain.Step{
-		StepID: "d", Type: "delay", ControlValues: json.RawMessage(`{"type":"scheduled","atTime":"09:00","weekDays":["MON","FRI"]}`),
+		StepID: "d", Type: "delay", ControlValues: json.RawMessage(`{"type":"scheduled","atTime":"09:00","weekDays":["MON","FRI"],"monthDays":[1]}`),
 	})
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -96,7 +96,7 @@ func TestCompile_DelayDynamic(t *testing.T) {
 // must be >= 100 (production target: 1000).
 func TestDelayRetryPolicy_SurvivesRestarts(t *testing.T) {
 	for _, cv := range []string{
-		`{"type":"scheduled","atTime":"09:00","weekDays":["MON"]}`,
+		`{"type":"scheduled","atTime":"09:00","weekDays":["MON"],"monthDays":[1]}`,
 		`{"type":"dynamic","dynamicKey":"payload.sendAt"}`,
 	} {
 		def, err := steptype.Default().Get("delay").Compile(domain.Step{
