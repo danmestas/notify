@@ -80,6 +80,7 @@ func ParseMessage(raw []byte) (InboundEmail, error) {
 	if err := walkPart(textproto.MIMEHeader(msg.Header), msg.Body, &out, 0); err != nil {
 		return InboundEmail{}, err
 	}
+	out.Raw = raw
 	return out, nil
 }
 

@@ -7,9 +7,13 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/danmestas/notify/internal/blobstore"
 
 	"github.com/go-chi/chi/v5"
 
@@ -104,6 +108,9 @@ type Deps struct {
 	// cmd/notify). Empty falls back to the package default inside
 	// inbounddomains.New.
 	InboundMXHost string
+	// Blobs holds the original bytes of accepted inbound mail. Nil leaves the
+	// inbound message read routes unmounted.
+	Blobs blobstore.Store
 }
 
 // New builds the notify HTTP handler from d. All authenticated routes are
@@ -291,6 +298,11 @@ func New(d Deps) http.Handler {
 			pr.Post("/v1/env-vars", postEnvVar(ev))
 			pr.Put("/v1/env-vars/{key}", putEnvVar(ev))
 			pr.Delete("/v1/env-vars/{key}", deleteEnvVar(ev))
+		}
+		// Accepted inbound mail, with its original bytes.
+		if d.Blobs != nil && st != nil {
+			pr.Get("/v1/inbound/messages", getInboundMessages(st))
+			pr.Get("/v1/inbound/messages/{id}/raw", getInboundMessageRaw(st, d.Blobs))
 		}
 		// W4-D1 inbound domain management (#53).
 		if inboundDomainSvc != nil {
@@ -1523,6 +1535,85 @@ type duplicateRequest struct {
 // inherits the source steps and payload schema, and publishes the new DAG.
 // Returns 404 when the source workflow does not exist in this scope.
 // Returns 409 when the desired TriggerIdentifier is already taken.
+// inboundMessageDTO is one accepted inbound email.
+type inboundMessageDTO struct {
+	ID         string `json:"id"`
+	SHA256     string `json:"sha256"`
+	Size       int64  `json:"size"`
+	Recipient  string `json:"recipient"`
+	From       string `json:"from"`
+	Subject    string `json:"subject"`
+	MessageID  string `json:"messageId"`
+	ReceivedAt string `json:"receivedAt"`
+}
+
+// getInboundMessages lists accepted inbound mail oldest first:
+// GET /v1/inbound/messages?after=<cursor>&limit=<n>. The cursor is opaque;
+// pass back the one returned. An empty page returns the cursor sent.
+func getInboundMessages(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		after := r.URL.Query().Get("after")
+		var afterSeq int64
+		if after != "" {
+			n, err := strconv.ParseInt(after, 10, 64)
+			if err != nil || n < 0 {
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid cursor")
+				return
+			}
+			afterSeq = n
+		}
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		if limit <= 0 {
+			limit = 50
+		}
+		msgs, err := st.InboundMessages().List(r.Context(), identity.ScopeFrom(r.Context()), afterSeq, limit)
+		if err != nil {
+			writeInternalError(w, r, err)
+			return
+		}
+		out := make([]inboundMessageDTO, 0, len(msgs))
+		cursor := after
+		for _, m := range msgs {
+			out = append(out, inboundMessageDTO{
+				ID: m.ID, SHA256: m.SHA256, Size: m.Size, Recipient: m.Recipient,
+				From: m.Sender, Subject: m.Subject, MessageID: m.MessageID, ReceivedAt: m.ReceivedAt,
+			})
+			cursor = strconv.FormatInt(m.Seq, 10)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"messages": out, "cursor": cursor})
+	}
+}
+
+// getInboundMessageRaw streams an accepted email's original bytes, exactly as
+// received, as message/rfc822: GET /v1/inbound/messages/{id}/raw.
+func getInboundMessageRaw(st *store.Store, blobs blobstore.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		m, err := st.InboundMessages().Get(r.Context(), identity.ScopeFrom(r.Context()), chi.URLParam(r, "id"))
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSONError(w, http.StatusNotFound, "not_found", "no inbound message with that id")
+			return
+		}
+		if err != nil {
+			writeInternalError(w, r, err)
+			return
+		}
+		rc, err := blobs.Get(r.Context(), m.SHA256)
+		if errors.Is(err, blobstore.ErrNotFound) {
+			writeJSONError(w, http.StatusNotFound, "not_found", "the message's bytes are no longer stored")
+			return
+		}
+		if err != nil {
+			writeInternalError(w, r, err)
+			return
+		}
+		defer func() { _ = rc.Close() }()
+		w.Header().Set("Content-Type", "message/rfc822")
+		w.Header().Set("Content-Length", strconv.FormatInt(m.Size, 10))
+		w.Header().Set("X-Content-SHA256", m.SHA256)
+		_, _ = io.Copy(w, rc)
+	}
+}
+
 // workflowTemplateDTO is one entry of GET /v1/workflow-templates.
 type workflowTemplateDTO struct {
 	Name              string          `json:"name"`

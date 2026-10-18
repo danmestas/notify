@@ -1,13 +1,17 @@
 package emailloop
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/danmestas/notify/internal/blobstore"
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
@@ -41,6 +45,40 @@ type Service struct {
 	// events carries webhook-kind replies (reply.go). nil until
 	// WithEventPublisher; an agent-only deployment never needs it.
 	events EventPublisher
+	// blobs keeps each accepted message's original bytes. nil keeps none.
+	blobs blobstore.Store
+}
+
+// WithBlobStore keeps the raw bytes of every accepted message in b, recorded
+// in the store's inbound_messages.
+func (s *Service) WithBlobStore(b blobstore.Store) *Service {
+	s.blobs = b
+	return s
+}
+
+// keepRaw stores an accepted message's original bytes and records them. It
+// runs before the message is routed, so mail is never accepted without its
+// bytes: a failure is returned for the transport to ask the sender to retry,
+// and the retry stores nothing twice.
+func (s *Service) keepRaw(ctx context.Context, rcpt Recipient, payload InboundEmail) error {
+	if s.blobs == nil || len(payload.Raw) == 0 {
+		return nil
+	}
+	ref, err := s.blobs.Put(ctx, bytes.NewReader(payload.Raw))
+	if err != nil {
+		return fmt.Errorf("emailloop: keep raw message: %w", err)
+	}
+	msgID := payload.Headers["Message-Id"]
+	if msgID == "" {
+		msgID = payload.Headers["Message-ID"]
+	}
+	if _, err := s.core.InboundMessages().Record(ctx, rcpt.Scope, corestore.InboundMessage{
+		SHA256: ref.SHA256, Size: ref.Size, Recipient: payload.recipient(),
+		Sender: payload.From, Subject: payload.Subject, MessageID: msgID,
+	}); err != nil {
+		return fmt.Errorf("emailloop: record raw message: %w", err)
+	}
+	return nil
 }
 
 // New builds the Service. secret is the shared secret the inbound mail
@@ -290,6 +328,10 @@ func (s *Service) Accept(ctx context.Context, payload InboundEmail) (AcceptStatu
 	rcpt, status := s.CheckRecipient(ctx, payload.recipient())
 	if status != "" {
 		return status, nil
+	}
+	if err := s.keepRaw(ctx, rcpt, payload); err != nil {
+		s.log.Error("emailloop: raw message not kept", "err", err)
+		return "", err
 	}
 
 	body := bestBody(payload)

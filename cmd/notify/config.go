@@ -7,7 +7,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/danmestas/notify/internal/blobstore"
 
 	"github.com/danmestas/notify/internal/agents/runtime/mesh"
 )
@@ -42,6 +45,13 @@ type config struct {
 	// Comma-separated exact hosts exempted from the outbound SSRF guard.
 	// Empty -- the default -- blocks every internal range, as before.
 	ssrfAllowedHosts string
+
+	// Raw inbound mail storage. blobDriver is "" (off, the default), "fs" or
+	// "s3". Keeping every accepted email is a retention choice, so the
+	// operator makes it explicitly.
+	blobDriver string
+	blobDir    string
+	blobS3     blobstore.S3Config
 
 	// Inbound email loop.
 	inboundSecret string
@@ -167,6 +177,18 @@ func loadConfig(args []string) (config, error) {
 
 		ssrfAllowedHosts: *ssrfAllow,
 
+		blobDriver: os.Getenv("NOTIFY_BLOB_DRIVER"),
+		blobDir:    envOr("NOTIFY_BLOB_DIR", filepath.Join(filepath.Dir(*dbPath), "blobs")),
+		blobS3: blobstore.S3Config{
+			Endpoint:  os.Getenv("NOTIFY_BLOB_S3_ENDPOINT"),
+			Region:    os.Getenv("NOTIFY_BLOB_S3_REGION"),
+			Bucket:    os.Getenv("NOTIFY_BLOB_S3_BUCKET"),
+			Prefix:    os.Getenv("NOTIFY_BLOB_S3_PREFIX"),
+			AccessKey: os.Getenv("NOTIFY_BLOB_S3_ACCESS_KEY"),
+			SecretKey: os.Getenv("NOTIFY_BLOB_S3_SECRET_KEY"),
+			UseTLS:    envBool("NOTIFY_BLOB_S3_TLS"),
+		},
+
 		inboundSecret: os.Getenv("NOTIFY_INBOUND_SECRET"),
 		smtpAddr:      *smtpAddr,
 		smtpCert:      *smtpCert,
@@ -200,4 +222,18 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// openBlobStore builds the configured raw-mail store, or nil when it is off.
+func openBlobStore(cfg config) (blobstore.Store, error) {
+	switch cfg.blobDriver {
+	case "":
+		return nil, nil
+	case "fs":
+		return blobstore.NewFS(cfg.blobDir)
+	case "s3":
+		return blobstore.NewS3(cfg.blobS3)
+	default:
+		return nil, fmt.Errorf("NOTIFY_BLOB_DRIVER %q is not one of fs, s3 (or empty for off)", cfg.blobDriver)
+	}
 }

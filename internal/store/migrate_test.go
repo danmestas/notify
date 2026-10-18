@@ -49,7 +49,7 @@ func TestStore_Migrate_IsIdempotent(t *testing.T) {
 	want := []string{
 		"agent_draft_requests", "agent_drafts", "agent_links", "agents", "analytics_deliveries", "api_keys", "builder_checkpoints", "builder_messages", "builder_sessions", "chat_threads", "contexts", "conversation_activities", "conversations",
 		"delay_deadlines", "email_threads", "env_var_values", "env_vars",
-		"environments", "inbound_domains", "integrations", "layouts", "messages", "notifications",
+		"environments", "inbound_domains", "inbound_messages", "integrations", "layouts", "messages", "notifications",
 		"organizations", "preferences", "step_outputs", "stream_sources", "subscriber_channels", "subscribers", "topic_subscribers", "topic_triggers", "topics", "translations", "webhook_deliveries", "webhook_endpoints", "webpush_subscriptions", "workflow_versions", "workflows",
 	}
 	got := businessTables(t, s2)
@@ -97,7 +97,7 @@ func businessTables(t *testing.T, s *Store) []string {
 func TestMigrate_0005_AppliesDigestKey(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 41 {
+	if n := migrationCount(t, s); n != 42 {
 		t.Fatalf("expected 35 recorded migrations, got %d", n)
 	}
 
@@ -138,7 +138,7 @@ func TestMigrate_0005_AppliesDigestKey(t *testing.T) {
 func TestMigrate_0028_AddsWorkflowVersionSnapshotColumns(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 41 {
+	if n := migrationCount(t, s); n != 42 {
 		t.Fatalf("expected 35 recorded migrations, got %d", n)
 	}
 
