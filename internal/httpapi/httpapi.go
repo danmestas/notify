@@ -242,6 +242,8 @@ func New(d Deps) http.Handler {
 			pr.Delete("/v1/workflows/{slug}", deleteWorkflow(au))
 			pr.Patch("/v1/workflows/{slug}/activate", patchWorkflowActivate(au))
 			pr.Post("/v1/workflows/{slug}/duplicate", postWorkflowDuplicate(au))
+			pr.Get("/v1/workflow-templates", getWorkflowTemplates)
+			pr.Post("/v1/workflow-templates/{name}", postWorkflowTemplate(au))
 		}
 		if st != nil {
 			pr.Get("/v1/notifications", getNotifications(st))
@@ -1521,6 +1523,57 @@ type duplicateRequest struct {
 // inherits the source steps and payload schema, and publishes the new DAG.
 // Returns 404 when the source workflow does not exist in this scope.
 // Returns 409 when the desired TriggerIdentifier is already taken.
+// workflowTemplateDTO is one entry of GET /v1/workflow-templates.
+type workflowTemplateDTO struct {
+	Name              string          `json:"name"`
+	Description       string          `json:"description"`
+	TriggerIdentifier string          `json:"triggerIdentifier"`
+	Steps             json.RawMessage `json:"steps"`
+}
+
+// getWorkflowTemplates lists the workflows notify ships ready to use.
+func getWorkflowTemplates(w http.ResponseWriter, _ *http.Request) {
+	out := []workflowTemplateDTO{}
+	for _, t := range authoring.Templates() {
+		steps, err := json.Marshal(t.Workflow.Steps)
+		if err != nil {
+			continue
+		}
+		out = append(out, workflowTemplateDTO{
+			Name: t.Name, Description: t.Description,
+			TriggerIdentifier: t.Workflow.TriggerIdentifier, Steps: steps,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// postWorkflowTemplate creates the named template's workflow in the caller's
+// environment: 201 when it creates it, 200 with the existing workflow, left
+// untouched, when one already has that trigger identifier.
+func postWorkflowTemplate(au *authoring.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scope := identity.ScopeFrom(r.Context())
+		wf, created, err := au.ApplyTemplate(r.Context(), scope, chi.URLParam(r, "name"))
+		if errors.Is(err, authoring.ErrUnknownTemplate) {
+			writeJSONError(w, http.StatusNotFound, "not_found", "no workflow template by that name")
+			return
+		}
+		if err != nil {
+			writeInternalError(w, r, err)
+			return
+		}
+		status, outcome := http.StatusOK, "unchanged"
+		if created {
+			status, outcome = http.StatusCreated, "created"
+		}
+		writeJSON(w, status, workflowDetailDTO{
+			ID: wf.ID, Name: wf.Name, TriggerIdentifier: wf.TriggerIdentifier, Active: wf.Active,
+			Origin: wf.Origin, Critical: wf.Critical, Steps: wf.Steps, PayloadSchema: wf.PayloadSchema,
+			Outcome: outcome,
+		})
+	}
+}
+
 func postWorkflowDuplicate(au *authoring.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		srcSlug := chi.URLParam(r, "slug")

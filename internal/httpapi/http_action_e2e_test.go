@@ -88,7 +88,7 @@ func newHTTPActionHarness(t *testing.T) *httpActionHarness {
 	}
 
 	h := &httpActionHarness{authHeader: "ApiKey " + key}
-	h.srv = httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox}))
+	h.srv = httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Authoring: auth}))
 	t.Cleanup(h.srv.Close)
 	h.ctx = ctx
 	h.auth = auth
