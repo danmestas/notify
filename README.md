@@ -45,7 +45,7 @@ A Docker Compose file that runs notify with its sidecar is in `compose.yml` (`do
 
 The documentation is a Hugo site in [`docs/site`](docs/site), published from this repository. It covers getting started, concepts, workflows and every step type, triggers, channels and providers, the inbox and agents, inbound email and the blob archive, the console, the full API reference, every flag and environment variable, and operations (deploy, the dagnats sidecar, blob storage with Garage, backups).
 
-To read it locally you need Hugo extended (0.160 or newer; `brew install hugo`) and Go:
+To read it locally you need Hugo extended (0.168.0 or newer; `brew install hugo`) and Go:
 
 ```bash
 cd docs/site
