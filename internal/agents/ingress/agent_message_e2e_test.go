@@ -3,6 +3,7 @@ package ingress_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -330,5 +331,42 @@ func TestAgentMessageStep_AgentFromTheEvent(t *testing.T) {
 	blank := h.publishAgentWorkflow(t, "blank-agent", `{"agent":"","text":"hello"}`)
 	if snap, _ := h.fire(t, blank, "blank-agent", "tx-blank", `{}`); snap.Succeeded() {
 		t.Fatal("a step with no agent succeeded")
+	}
+}
+
+// TestInboundMailTemplate_DraftsFromTheMailboxAgent: the shipped inbound-mail
+// template, applied as is, turns a mail event naming an agent into one draft
+// written from the message body; an event naming no agent drafts nothing;
+// applying the template again leaves the workflow alone.
+func TestInboundMailTemplate_DraftsFromTheMailboxAgent(t *testing.T) {
+	h := newHarness(t)
+	h.startStub(t)
+	ctx := context.Background()
+	auth := authoring.New(h.store, h.eng)
+	wf, created, err := auth.ApplyTemplate(ctx, testScope, "inbound-mail")
+	if err != nil || !created || wf.TriggerIdentifier != "inbound-mail" {
+		t.Fatalf("apply: %+v %v %v", wf, created, err)
+	}
+	if again, created, err := auth.ApplyTemplate(ctx, testScope, "inbound-mail"); err != nil || created || again.ID != wf.ID {
+		t.Fatalf("second apply: %+v %v %v, want the same workflow untouched", again, created, err)
+	}
+	trg := trigger.New(audience.New(h.store), h.store, h.eng)
+
+	payload := `{"agent":"stub","mailbox":"acct-1","messageId":"m-1","rfcMessageId":"<a@x>","references":[],"subject":"Lunch?","from":"Bo <bo@x>","text":"Are you free Friday?"}`
+	if snap, _ := h.fire(t, trg, "inbound-mail", "tx-tmpl-1", payload); !snap.Succeeded() {
+		t.Fatalf("run status %q", snap.Status)
+	}
+	ds := h.waitDrafts(t, "acct-1", 1)
+	if len(ds) != 1 || !strings.Contains(ds[0].Text, "Are you free Friday?") || ds[0].Subject != "Re: Lunch?" || ds[0].SourceMessageID != "m-1" {
+		t.Fatalf("drafts = %+v", ds)
+	}
+
+	optOut := `{"agent":"","mailbox":"acct-2","messageId":"m-2","subject":"x","from":"c@x"}`
+	if snap, _ := h.fire(t, trg, "inbound-mail", "tx-tmpl-2", optOut); !snap.Succeeded() {
+		t.Fatalf("opt-out run status %q", snap.Status)
+	}
+	time.Sleep(time.Second)
+	if ds := h.waitDrafts(t, "acct-2", 1); len(ds) != 0 {
+		t.Fatalf("a mailbox with no agent got drafts: %+v", ds)
 	}
 }
