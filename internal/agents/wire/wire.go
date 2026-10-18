@@ -41,7 +41,7 @@ func FromAgent(a agentdomain.Agent) Agent {
 		Active:         a.Active,
 		MeshSubject:    a.MeshSubject,
 		BridgeURL:      a.BridgeURL,
-		Managed:        a.Managed,
+		Managed:        hideAPIKey(a.Managed),
 		WelcomeMessage: a.WelcomeMessage,
 		Labels:         orEmptyLabels(a.Labels),
 		CreatedAt:      a.CreatedAt,
@@ -283,4 +283,25 @@ func orEmptyLabels(l map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	return l
+}
+
+// hideAPIKey replaces a managed agent's API key with "apiKeySet": true. The
+// key never leaves notify once stored.
+func hideAPIKey(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil
+	}
+	if k, ok := m["apiKey"].(string); ok {
+		delete(m, "apiKey")
+		m["apiKeySet"] = k != ""
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	return out
 }

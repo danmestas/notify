@@ -3,11 +3,11 @@ package domain
 import "testing"
 
 // SupportedRuntimes must list only runtimes that have a registered executor in
-// cmd/notify/main.go (currently mesh). bridge/managed are defined constants but
-// have no WithRuntime registration, so they must NOT be supported.
-func TestSupportedRuntimes_OnlyMesh(t *testing.T) {
-	if len(SupportedRuntimes) != 1 || SupportedRuntimes[0] != RuntimeMesh {
-		t.Fatalf("SupportedRuntimes = %v, want [%q]", SupportedRuntimes, RuntimeMesh)
+// cmd/notify/main.go (mesh and managed). bridge is a defined constant with no
+// WithRuntime registration, so it must NOT be supported.
+func TestSupportedRuntimes_MeshAndManaged(t *testing.T) {
+	if len(SupportedRuntimes) != 2 || SupportedRuntimes[0] != RuntimeMesh || SupportedRuntimes[1] != RuntimeManaged {
+		t.Fatalf("SupportedRuntimes = %v, want [%q %q]", SupportedRuntimes, RuntimeMesh, RuntimeManaged)
 	}
 }
 
@@ -18,7 +18,7 @@ func TestIsSupportedRuntime(t *testing.T) {
 	}{
 		{RuntimeMesh, true},
 		{RuntimeBridge, false},
-		{RuntimeManaged, false},
+		{RuntimeManaged, true},
 		{"bogus", false},
 		{"", false},
 	}

@@ -20,6 +20,7 @@ import (
 	agentsapi "github.com/danmestas/notify/internal/agents/api"
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	"github.com/danmestas/notify/internal/agents/ingress"
+	"github.com/danmestas/notify/internal/agents/runtime/managed"
 	"github.com/danmestas/notify/internal/agents/runtime/mesh"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/aibuilder"
@@ -272,7 +273,9 @@ func runServe(args []string) error {
 	ags := agentstore.New(st)
 	// agent_drafts would otherwise keep every draft no one fetched.
 	startDraftPurge(ctx, ags)
-	ing := ingress.New(ags, st, eng, bus).WithRuntime(agentdomain.RuntimeMesh, meshClient)
+	ing := ingress.New(ags, st, eng, bus).
+		WithRuntime(agentdomain.RuntimeMesh, meshClient).
+		WithRuntime(agentdomain.RuntimeManaged, managed.New(secrets, managed.DefaultClient))
 
 	// Email two-way loop: inbound email replies route back to the agent and the
 	// agent's reply mails back out. The responder defaults to the conversation's
@@ -357,6 +360,7 @@ func runServe(args []string) error {
 	// never fails the turn or blocks the other.
 	ing = ing.WithReplyHook(replyhook.Combine(slog.Default(), eml.ReplyHook, chat.ReplyHook))
 	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
+	eng.Handle(ingress.TaskManaged, ing.HandleTurn)
 
 	// B3: durable AI workflow-builder loop, hosted as a dagnats agent-loop
 	// handler alongside the synchronous console path (console.Builder.Run).
@@ -433,7 +437,7 @@ func runServe(args []string) error {
 	srcSvc := streamsource.New(st, mk)
 	srcIngest := feedingest.New(srcSvc, bus)
 	inb := inbound.New(trg)
-	ag := agentsapi.New(ags)
+	ag := agentsapi.New(ags).WithSecretBox(secrets)
 
 	ev, err := envvars.New(st, mk)
 	if err != nil {

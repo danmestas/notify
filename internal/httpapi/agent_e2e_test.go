@@ -182,7 +182,7 @@ func TestAgents_CRUDLifecycle(t *testing.T) {
 func TestAgents_RuntimeEnumMessage(t *testing.T) {
 	srv, authHeader := startAgentServer(t)
 
-	const wantMsg = "runtime must be one of: mesh"
+	const wantMsg = "runtime must be one of: mesh, managed"
 
 	status, body := doPost(t, srv.URL+"/v1/agents", authHeader, `{"identifier":"bad-bot","runtime":"warp"}`)
 	if status != http.StatusUnprocessableEntity {
@@ -198,9 +198,9 @@ func TestAgents_RuntimeEnumMessage(t *testing.T) {
 		t.Fatalf("POST without runtime: status=%d body=%q, want 422 %q", status, strings.TrimSpace(body), wantMsg)
 	}
 
-	// bridge and managed are defined-but-unimplemented: the API must refuse to
-	// mint a dead agent and persist nothing (#113 Part A).
-	for _, rt := range []string{"bridge", "managed"} {
+	// bridge is defined-but-unimplemented: the API must refuse to mint a dead
+	// agent and persist nothing (#113 Part A).
+	for _, rt := range []string{"bridge"} {
 		status, body = doPost(t, srv.URL+"/v1/agents", authHeader, `{"identifier":"dead-`+rt+`","runtime":"`+rt+`"}`)
 		if status != http.StatusUnprocessableEntity || strings.TrimSpace(body) != wantMsg {
 			t.Fatalf("POST runtime=%s: status=%d body=%q, want 422 %q", rt, status, strings.TrimSpace(body), wantMsg)
@@ -214,7 +214,7 @@ func TestAgents_RuntimeEnumMessage(t *testing.T) {
 		t.Fatalf("POST valid agent: status=%d body=%s", status, body)
 	}
 	// Switching an existing agent's runtime to an unsupported value is rejected.
-	for _, rt := range []string{"warp", "bridge", "managed"} {
+	for _, rt := range []string{"warp", "bridge"} {
 		status, body = doPatch(t, srv.URL+"/v1/agents/good-bot", authHeader, `{"runtime":"`+rt+`"}`)
 		if status != http.StatusUnprocessableEntity {
 			t.Fatalf("PATCH runtime=%s: status=%d body=%s, want 422", rt, status, body)
