@@ -15,18 +15,19 @@ import (
 
 // Agent is an agent as the API returns it.
 type Agent struct {
-	ID             string          `json:"id"`
-	Identifier     string          `json:"identifier"`
-	Name           string          `json:"name"`
-	Description    string          `json:"description"`
-	Runtime        string          `json:"runtime"`
-	Active         bool            `json:"active"`
-	MeshSubject    string          `json:"meshSubject"`
-	BridgeURL      string          `json:"bridgeUrl"`
-	Managed        json.RawMessage `json:"managed,omitempty"`
-	WelcomeMessage string          `json:"welcomeMessage"`
-	CreatedAt      string          `json:"createdAt"`
-	UpdatedAt      string          `json:"updatedAt"`
+	ID             string            `json:"id"`
+	Identifier     string            `json:"identifier"`
+	Name           string            `json:"name"`
+	Description    string            `json:"description"`
+	Runtime        string            `json:"runtime"`
+	Active         bool              `json:"active"`
+	MeshSubject    string            `json:"meshSubject"`
+	BridgeURL      string            `json:"bridgeUrl"`
+	Managed        json.RawMessage   `json:"managed,omitempty"`
+	WelcomeMessage string            `json:"welcomeMessage"`
+	Labels         map[string]string `json:"labels"`
+	CreatedAt      string            `json:"createdAt"`
+	UpdatedAt      string            `json:"updatedAt"`
 }
 
 // FromAgent maps a stored agent.
@@ -42,6 +43,7 @@ func FromAgent(a agentdomain.Agent) Agent {
 		BridgeURL:      a.BridgeURL,
 		Managed:        a.Managed,
 		WelcomeMessage: a.WelcomeMessage,
+		Labels:         orEmptyLabels(a.Labels),
 		CreatedAt:      a.CreatedAt,
 		UpdatedAt:      a.UpdatedAt,
 	}
@@ -274,4 +276,11 @@ func orEmpty(s []string) []string {
 		return []string{}
 	}
 	return s
+}
+
+func orEmptyLabels(l map[string]string) map[string]string {
+	if l == nil {
+		return map[string]string{}
+	}
+	return l
 }

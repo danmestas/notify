@@ -29,7 +29,7 @@ var fixtures = []struct {
 	{"agent", reflect.TypeOf(wire.Agent{}), wire.FromAgent(agentdomain.Agent{
 		ID: "a1", Identifier: "support", Name: "Support", Description: "Answers support mail",
 		Runtime: "managed", Active: true, MeshSubject: "agents.support", BridgeURL: "https://bridge.example",
-		Managed: json.RawMessage(`{"integrationId":"i1"}`), WelcomeMessage: "Hi", CreatedAt: "2026-10-01T00:00:00Z", UpdatedAt: "2026-10-02T00:00:00Z",
+		Managed: json.RawMessage(`{"integrationId":"i1"}`), WelcomeMessage: "Hi", Labels: map[string]string{"owner": "lou"}, CreatedAt: "2026-10-01T00:00:00Z", UpdatedAt: "2026-10-02T00:00:00Z",
 	})},
 	{"link", reflect.TypeOf(wire.Link{}), wire.FromLink(agentdomain.AgentLink{
 		ID: "l1", AgentID: "a1", IntegrationID: "i1", ConnectedAt: "2026-10-01T00:00:00Z", Config: json.RawMessage(`{"chatId":"7"}`),

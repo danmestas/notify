@@ -83,8 +83,11 @@ type Agent struct {
 	BridgeURL      string          `db:"bridge_url"`   // runtime=bridge
 	Managed        json.RawMessage `db:"managed"`      // runtime=managed: {integration_id, system_prompt, tools[], mcp_servers[], skills[]}
 	WelcomeMessage string          `db:"welcome_message"`
-	CreatedAt      string          `db:"created_at"`
-	UpdatedAt      string          `db:"updated_at"`
+	// Labels are free-form key/value tags, e.g. {"owner":"lou"}, a client uses
+	// to scope which agents a user may pick. notify gives none a meaning.
+	Labels    map[string]string `db:"labels"`
+	CreatedAt string            `db:"created_at"`
+	UpdatedAt string            `db:"updated_at"`
 }
 
 // AgentLink connects an agent to a channel integration, keyed by
