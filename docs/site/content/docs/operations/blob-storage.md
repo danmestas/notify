@@ -42,20 +42,62 @@ Any store that speaks the S3 API works: [Garage](https://garagehq.deuxfleurs.fr/
 
 ### With Garage
 
-Garage is a good fit for a self-hosted, single-node or small-cluster store. Roughly:
+Garage is a good fit for a self-hosted, single-node or small-cluster store. These steps set up one node next to notify, and were verified with Garage 2.4.1.
 
-1. Run Garage and set up its layout, following its quick start.
-2. Create a bucket and an access key, and allow the key to read and write the bucket:
+1. Write a config. A single node keeps one copy of each object and listens on loopback only; generate the secrets on the host and keep the file readable by its owner only (`chmod 600`):
 
-   ```bash
-   garage bucket create notify-mail
-   garage key create notify
-   garage bucket allow --read --write --owner notify-mail --key notify
+   ```toml
+   metadata_dir = "/var/lib/garage/meta"
+   data_dir = "/var/lib/garage/data"
+   db_engine = "lmdb"
+   metadata_auto_snapshot_interval = "6h"
+   replication_factor = 1
+
+   rpc_bind_addr = "127.0.0.1:3901"
+   rpc_public_addr = "127.0.0.1:3901"
+   rpc_secret = "<openssl rand -hex 32>"
+
+   [s3_api]
+   s3_region = "garage"
+   api_bind_addr = "127.0.0.1:3900"
+   root_domain = ".s3.garage.localhost"
+
+   [admin]
+   api_bind_addr = "127.0.0.1:3903"
+   admin_token = "<openssl rand -base64 32>"
+   metrics_token = "<openssl rand -base64 32>"
    ```
 
-3. Point notify at Garage's S3 API port (3900 by default) with the key it printed, and use the region from Garage's `s3_region` setting (`garage` is its default).
+2. Run `garage -c garage.toml server` under your service manager, then give the node a role. The capacity weights how data is placed; it is not a quota:
 
-Garage listens on plain HTTP unless you terminate TLS in front of it, so leave `NOTIFY_BLOB_S3_TLS` off for a loopback or private-network endpoint, and turn it on if it is behind HTTPS. Check the Garage commands against your version's documentation.
+   ```bash
+   garage -c garage.toml status                       # note the node id
+   garage -c garage.toml layout assign -z dc1 -c 20G <node-id>
+   garage -c garage.toml layout apply --version 1
+   ```
+
+3. Create a bucket and a key, and allow the key to read and write it:
+
+   ```bash
+   garage -c garage.toml bucket create notify-mail
+   garage -c garage.toml key create notify            # prints the key id and secret once
+   garage -c garage.toml bucket allow --read --write --owner notify-mail --key notify
+   ```
+
+4. Point notify at port 3900 with that key, region `garage`, and `NOTIFY_BLOB_S3_TLS` off, then restart notify.
+
+`GET http://127.0.0.1:3903/health` answers `200` while the node can serve reads and writes; watch it from your monitoring. To add nodes later, bind `rpc_bind_addr` and `rpc_public_addr` to an address the other nodes can reach, raise `replication_factor`, and assign each node a zone in the layout.
+
+### Moving from fs to s3
+
+Both adapters use the same `ab/cd/<sha256>` layout (with `NOTIFY_BLOB_S3_PREFIX` unset), so moving is a copy of each file to the same key:
+
+1. Copy every file under the `fs` directory into the bucket under its relative path, with any S3 client (`aws s3 sync`, `rclone`, or `curl --aws-sigv4 "aws:amz:garage:s3"`).
+2. Switch `NOTIFY_BLOB_DRIVER` to `s3` and restart notify.
+3. Copy again, to catch mail accepted onto disk before the restart. Re-copying an object is harmless.
+4. Check that the bucket's object count is at least `SELECT count(DISTINCT sha256) FROM inbound_messages`, and fetch a few messages through `/v1/inbound/messages/{id}/raw`, before removing the `fs` directory.
+
+Garage listens on plain HTTP unless you terminate TLS in front of it, so leave `NOTIFY_BLOB_S3_TLS` off for a loopback or private-network endpoint, and turn it on if it is behind HTTPS.
 
 ## Failure behaviour
 
