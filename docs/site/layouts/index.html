@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ .Site.Title }}: self-hosted notifications and durable communications</title>
+<meta name="description" content="{{ .Site.Params.landing.description }}">
+{{- /* Follow the docs' theme toggle (Hextra keeps it in localStorage). */}}
+<script>
+try {
+  var t = localStorage.getItem("color-theme");
+  if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+} catch (e) {}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+{{- with resources.Get "css/landing.css" | minify | fingerprint }}
+<link rel="stylesheet" href="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}">
+{{- end }}
+<style>:root { --signal-light: {{ .Site.Params.landing.signal | safeCSS }}; --signal-dark: {{ .Site.Params.landing.signalDark | safeCSS }}; }</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="mark" href="{{ "/" | relURL }}"><i aria-hidden="true"></i>notify</a>
+  <nav class="nav" aria-label="Primary">
+    <a href="{{ "docs/" | relURL }}">Docs</a>
+    <a href="{{ "docs/api/" | relURL }}">API</a>
+    <a href="{{ "docs/operations/" | relURL }}">Self-hosting</a>
+    <a href="https://github.com/danmestas/notify">GitHub</a>
+  </nav>
+</div></header>
+
+<main>
+<div class="hero"><div class="wrap">
+  <div>
+    <p class="eyebrow">Self-hosted · Go · MIT · v{{ .Site.Params.version }}</p>
+    <h1>Every message <em>on time</em>, from your own servers</h1>
+    <p class="lede">notify delivers your product's notifications in-app, by email, SMS, push and chat. It holds them for digests and schedules, answers inbound email with agent drafts, and keeps every original. Each run is durable and survives a restart.</p>
+    <div class="ctas">
+      <a class="btn primary" href="{{ "docs/get-started/" | relURL }}">Get started</a>
+      <a class="btn" href="https://github.com/danmestas/notify">View on GitHub</a>
+    </div>
+    <p class="install">One binary and a dagnats sidecar. <code>notify serve</code></p>
+  </div>
+
+  <div class="board" role="figure" aria-label="Example delivery board for one invoice-paid event">
+    <div class="board-head">
+      <span class="board-title">Departures</span>
+      <span class="board-meta">invoice-paid → dan · tx 01M58ER6</span>
+    </div>
+    <div class="board-scroll">
+      <table>
+        <thead><tr><th>Time</th><th>Step</th><th>Status</th><th>Detail</th></tr></thead>
+        <tbody>
+          <tr><td class="t">09:14:02.118</td><td class="step">trigger</td><td><span class="status ok">Accepted</span></td><td class="note2">workflow v7</td></tr>
+          <tr><td class="t">09:14:02.132</td><td class="step">in_app</td><td><span class="status ok">Delivered</span></td><td class="note2">+14 ms · 2 devices</td></tr>
+          <tr><td class="t">09:14:03.040</td><td class="step">email</td><td><span class="status ok">Sent</span></td><td class="note2">reply-to armed</td></tr>
+          <tr><td class="t">09:14:03.041</td><td class="step">throttle</td><td><span class="status ok">Passed</span></td><td class="note2">1 of 3 this hour</td></tr>
+          <tr><td class="t">09:14:03.042</td><td class="step">digest</td><td><span class="status held">Held</span></td><td class="note2">weekly-billing</td></tr>
+          <tr><td class="t">Mon 09:00</td><td class="step">push</td><td><span class="status held">Scheduled</span></td><td class="note2">America/Chicago</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="board-foot">Example run. Held steps wait on the engine, so a restart does not lose them.</p>
+  </div>
+</div></div>
+
+<section id="how"><div class="wrap">
+  <h2>One event in, every channel out</h2>
+  <p class="sub">Your app sends one event. The workflow decides who hears about it, where, and when.</p>
+  <div class="flow">
+    <div>
+<pre><span class="c"># your app, once</span>
+curl -X POST https://notify.example.com/v1/events/trigger \
+  -H <span class="s">"Authorization: ApiKey $KEY"</span> \
+  -d <span class="s">'{
+    "name": "invoice-paid",
+    "to": { "subscriberId": "dan" },
+    "payload": { "amount": "$480.00", "invoice": "INV-2291" }
+  }'</span>
+
+<span class="c"># every /v1 response carries</span>
+<span class="k">Notify-Contract:</span> 1</pre>
+      <p class="caption">The API only grows: /v1 changes are additive.</p>
+    </div>
+    <ol class="steps">
+      <li><b>Deliver in the app</b><span>The subscriber's inbox and live feed update first. <code>in_app</code></span></li>
+      <li><b>Send the email</b><span>With a tokenized reply address, so an answer threads back. <code>email</code></span></li>
+      <li><b>Keep it polite</b><span>A throttle caps how often one person hears from you. <code>throttle</code></span></li>
+      <li><b>Roll it up</b><span>Similar events wait and go out together on the subscriber's schedule. <code>digest</code></span></li>
+      <li><b>Wait for the right hour</b><span>Delays run in the subscriber's own timezone. <code>delay</code></span></li>
+    </ol>
+  </div>
+</div></section>
+
+<section id="what"><div class="wrap">
+  <h2>What it handles</h2>
+  <p class="sub">The parts every product rebuilds, in one service you run yourself.</p>
+  <dl class="ledger">
+    <dt>Channels</dt>
+    <dd><b>In-app, email, SMS, push and chat</b>, with per-subscriber preferences, templates, layouts and translations. Provider adapters are optional, so you can start with your own SMTP.</dd>
+    <dt>Timing</dt>
+    <dd><b>Delays, digests, throttles and schedules</b> that the engine holds durably, in each subscriber's timezone.</dd>
+    <dt>Inbox and agents</dt>
+    <dd><b>A subscriber inbox and conversations with agents.</b> A managed agent runs on its owner's model, from any provider, with a key that is sealed and never returned.</dd>
+    <dt>Inbound mail</dt>
+    <dd><b>Replies come back in.</b> notify receives mail over SMTP or a webhook, drafts answers for review, and keeps every original byte for byte.</dd>
+    <dt>Operations</dt>
+    <dd><b>One Go binary, SQLite, and blobs on disk or any S3 store</b> such as Garage. A console for workflows, subscribers and deliveries.</dd>
+  </dl>
+</div></section>
+
+<section id="stack"><div class="wrap">
+  <h2>Runs on</h2>
+  <p class="sub">No hosted dependency in the delivery path.</p>
+  <ul class="stack">
+    <li>dagnats <span>durable workflow engine</span></li>
+    <li>NATS <span>messaging</span></li>
+    <li>SQLite <span>records</span></li>
+    <li>Garage or any S3 <span>original mail</span></li>
+  </ul>
+</div></section>
+
+</main>
+
+<footer><div class="wrap">
+  <span>notify · MIT licensed</span>
+  <span>Built on dagnats and NATS</span>
+</div></footer>
+</body>
+</html>
