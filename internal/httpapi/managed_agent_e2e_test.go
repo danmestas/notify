@@ -111,3 +111,33 @@ func TestManagedAgent_KeyIsSealedAndNeverReturned(t *testing.T) {
 		t.Fatalf("no master key: %d %s, want 422", status, resp)
 	}
 }
+
+// TestManagedAgent_SettingsAreCheckedOnSave: settings a managed agent could
+// not run with are refused when saved, not discovered on its first turn; any
+// named provider with a known endpoint, or with its own baseUrl, is accepted.
+func TestManagedAgent_SettingsAreCheckedOnSave(t *testing.T) {
+	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32))
+	srv, auth, _, _ := startManagedServer(t, box)
+	post := func(id, managed string) int {
+		s, _ := doPost(t, srv.URL+"/v1/agents", auth, `{"identifier":"`+id+`","runtime":"managed","managed":`+managed+`}`)
+		return s
+	}
+	for id, m := range map[string]string{
+		"no-model":         `{"provider":"openrouter"}`,
+		"unknown-provider": `{"provider":"bard","model":"m"}`,
+		"too-many-tokens":  `{"provider":"groq","model":"m","maxTokens":100000}`,
+	} {
+		if s := post(id, m); s != http.StatusUnprocessableEntity {
+			t.Errorf("%s: status %d, want 422", id, s)
+		}
+	}
+	for id, m := range map[string]string{
+		"openrouter":  `{"provider":"openrouter","model":"anthropic/claude-sonnet-4.5"}`,
+		"own-vllm":    `{"provider":"my-vllm","baseUrl":"http://10.0.0.5:8000/v1","model":"m"}`,
+		"unset-later": `null`,
+	} {
+		if s := post(id, m); s != http.StatusCreated {
+			t.Errorf("%s: status %d, want 201", id, s)
+		}
+	}
+}

@@ -17,13 +17,32 @@ import (
 	"github.com/danmestas/notify/internal/secretbox"
 )
 
-// The providers a managed agent can use. openai is any OpenAI-compatible
-// chat endpoint, which includes models hosted locally (Ollama, vLLM,
-// llama.cpp's server) as well as hosted services.
+// A managed agent can use any provider. anthropic speaks Anthropic's own
+// API; every other provider is reached over the OpenAI-compatible chat API,
+// which almost every hosted service and every local model server speaks.
 const (
 	ProviderOpenAI    = "openai"
 	ProviderAnthropic = "anthropic"
 )
+
+// providerBaseURLs are the OpenAI-compatible endpoints of providers people
+// commonly name, so naming one is enough. Any other provider needs a baseUrl,
+// and a baseUrl always wins over the preset. A preset is used only when the
+// owner names its provider: nothing is sent to a hosted service by omission.
+var providerBaseURLs = map[string]string{
+	ProviderOpenAI: "https://api.openai.com/v1",
+	"openrouter":   "https://openrouter.ai/api/v1",
+	"groq":         "https://api.groq.com/openai/v1",
+	"together":     "https://api.together.xyz/v1",
+	"mistral":      "https://api.mistral.ai/v1",
+	"deepseek":     "https://api.deepseek.com/v1",
+	"xai":          "https://api.x.ai/v1",
+	"gemini":       "https://generativelanguage.googleapis.com/v1beta/openai",
+	"fireworks":    "https://api.fireworks.ai/inference/v1",
+	"perplexity":   "https://api.perplexity.ai",
+	"ollama":       "http://localhost:11434/v1",
+	"lmstudio":     "http://localhost:1234/v1",
+}
 
 // Output limits for one reply.
 const (
@@ -51,18 +70,20 @@ func ParseConfig(raw json.RawMessage) (Config, error) {
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return c, fmt.Errorf("managed agent settings are not valid JSON: %w", err)
 	}
-	switch c.Provider {
-	case ProviderOpenAI, ProviderAnthropic:
-	default:
-		return c, fmt.Errorf("managed agent provider %q is not one of %s, %s", c.Provider, ProviderOpenAI, ProviderAnthropic)
+	c.Provider = strings.ToLower(strings.TrimSpace(c.Provider))
+	c.BaseURL = strings.TrimSpace(c.BaseURL)
+	if c.Provider == "" {
+		return c, errors.New("managed agent needs a provider, e.g. openrouter, openai, anthropic or ollama")
 	}
 	if strings.TrimSpace(c.Model) == "" {
 		return c, errors.New("managed agent needs a model")
 	}
-	// No default endpoint: an agent's mail goes only where its owner points
-	// it, never to a hosted service by omission.
-	if c.Provider == ProviderOpenAI && strings.TrimSpace(c.BaseURL) == "" {
-		return c, errors.New("managed agent with provider openai needs a baseUrl, e.g. http://localhost:11434/v1 for a local Ollama")
+	if c.Provider != ProviderAnthropic && c.BaseURL == "" {
+		preset, ok := providerBaseURLs[c.Provider]
+		if !ok {
+			return c, fmt.Errorf("managed agent provider %q needs a baseUrl: the address of its OpenAI-compatible API", c.Provider)
+		}
+		c.BaseURL = preset
 	}
 	if c.MaxTokens < 0 || c.MaxTokens > maxMaxTokens {
 		return c, fmt.Errorf("managed agent maxTokens must be 0-%d", maxMaxTokens)

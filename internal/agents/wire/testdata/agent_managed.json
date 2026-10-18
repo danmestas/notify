@@ -1,0 +1,22 @@
+{
+  "id": "a2",
+  "identifier": "ember",
+  "name": "Ember",
+  "description": "",
+  "runtime": "managed",
+  "active": true,
+  "meshSubject": "",
+  "bridgeUrl": "",
+  "managed": {
+    "apiKeySet": true,
+    "model": "anthropic/claude-sonnet-4.5",
+    "provider": "openrouter",
+    "systemPrompt": "Draft replies."
+  },
+  "welcomeMessage": "",
+  "labels": {
+    "owner": "owner"
+  },
+  "createdAt": "2026-10-18T00:00:00Z",
+  "updatedAt": "2026-10-18T00:00:00Z"
+}

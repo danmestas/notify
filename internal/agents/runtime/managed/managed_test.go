@@ -84,7 +84,7 @@ func TestDispatch_BadSettingsArePermanent(t *testing.T) {
 	turn := func(cfg string) agentdomain.Turn {
 		return agentdomain.Turn{Agent: agentdomain.Agent{Managed: json.RawMessage(cfg)}, Message: act("user", "hi")}
 	}
-	for _, cfg := range []string{``, `{"provider":"openai"}`, `{"provider":"bard","model":"x"}`, `{"provider":"openai","model":"x"}`, `{"provider":"openai","baseUrl":"http://h/v1","model":"x","maxTokens":99999}`, `{"provider":"openai","baseUrl":"http://h/v1","model":"x","apiKey":"enc:1:garbage"}`} {
+	for _, cfg := range []string{``, `{"provider":"openai"}`, `{"model":"x"}`, `{"provider":"bard","model":"x"}`, `{"provider":"openai","baseUrl":"http://h/v1","model":"x","maxTokens":99999}`, `{"provider":"openai","baseUrl":"http://h/v1","model":"x","apiKey":"enc:1:garbage"}`} {
 		if _, err := exec.Dispatch(context.Background(), turn(cfg)); !agentdomain.IsPermanent(err) {
 			t.Errorf("config %s: err %v, want permanent", cfg, err)
 		}
@@ -96,5 +96,32 @@ func TestDispatch_BadSettingsArePermanent(t *testing.T) {
 	f.err, f.resp = nil, aibuilder.MessageResponse{Text: "   "}
 	if _, err := exec.Dispatch(context.Background(), turn(`{"provider":"openai","baseUrl":"http://h/v1","model":"x"}`)); err == nil {
 		t.Fatal("empty model reply accepted")
+	}
+}
+
+// TestParseConfig_AnyProvider: anthropic speaks its own API; any other
+// provider is OpenAI-compatible, with known providers' endpoints filled in
+// and any other provider needing its baseUrl. An explicit baseUrl wins.
+func TestParseConfig_AnyProvider(t *testing.T) {
+	cases := []struct{ cfg, wantProvider, wantURL string }{
+		{`{"provider":"OpenRouter","model":"m"}`, "openrouter", "https://openrouter.ai/api/v1"},
+		{`{"provider":"groq","model":"m"}`, "groq", "https://api.groq.com/openai/v1"},
+		{`{"provider":"ollama","model":"m"}`, "ollama", "http://localhost:11434/v1"},
+		{`{"provider":"openai","model":"m"}`, "openai", "https://api.openai.com/v1"},
+		{`{"provider":"openrouter","baseUrl":"https://proxy.example/v1","model":"m"}`, "openrouter", "https://proxy.example/v1"},
+		{`{"provider":"my-vllm","baseUrl":"http://10.0.0.5:8000/v1","model":"m"}`, "my-vllm", "http://10.0.0.5:8000/v1"},
+		{`{"provider":"anthropic","model":"m"}`, "anthropic", ""},
+	}
+	for _, c := range cases {
+		got, err := ParseConfig(json.RawMessage(c.cfg))
+		if err != nil {
+			t.Fatalf("%s: %v", c.cfg, err)
+		}
+		if got.Provider != c.wantProvider || got.BaseURL != c.wantURL {
+			t.Fatalf("%s: provider %q url %q, want %q %q", c.cfg, got.Provider, got.BaseURL, c.wantProvider, c.wantURL)
+		}
+	}
+	if _, err := ParseConfig(json.RawMessage(`{"provider":"bard","model":"m"}`)); err == nil {
+		t.Fatal("an unknown provider with no baseUrl was accepted")
 	}
 }

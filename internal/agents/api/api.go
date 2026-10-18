@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
+	"github.com/danmestas/notify/internal/agents/runtime/managed"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/agents/wire"
 	"github.com/danmestas/notify/internal/identity"
@@ -123,6 +124,10 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	if err := checkManaged(req.Runtime, req.Managed); err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
 	managed, err := svc.sealManagedKey(req.Managed, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
@@ -184,6 +189,18 @@ func (svc *Service) listAgents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, wire.Agents(matched))
+}
+
+// checkManaged refuses managed settings a managed agent could not run with,
+// so a mistake is a 422 now rather than a failed turn later. Settings left
+// out entirely are allowed: an agent can be created first and configured
+// after.
+func checkManaged(runtime string, raw json.RawMessage) error {
+	if runtime != agentdomain.RuntimeManaged || len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	_, err := managed.ParseConfig(raw)
+	return err
 }
 
 // sealManagedKey seals a plaintext apiKey in a managed agent's settings. When
@@ -344,6 +361,10 @@ func (svc *Service) patchAgent(w http.ResponseWriter, r *http.Request) {
 		agent.BridgeURL = *req.BridgeURL
 	}
 	if req.Managed != nil {
+		if err := checkManaged(agent.Runtime, *req.Managed); err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
 		managed, err := svc.sealManagedKey(*req.Managed, agent.Managed)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
