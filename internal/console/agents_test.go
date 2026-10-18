@@ -197,8 +197,8 @@ func TestAgents_ListPage_CreateFormRuntimeOptions(t *testing.T) {
 	if strings.Contains(body, `data-value="bridge"`) {
 		t.Errorf("list page slide-over must NOT offer unimplemented bridge runtime")
 	}
-	if strings.Contains(body, `data-value="managed"`) {
-		t.Errorf("list page slide-over must NOT offer unimplemented managed runtime")
+	if !strings.Contains(body, `data-value="managed"`) {
+		t.Errorf("list page slide-over must offer the managed runtime")
 	}
 }
 
@@ -222,16 +222,16 @@ func TestAgents_CreateFormRuntimeOptions_OnlySupported(t *testing.T) {
 	if strings.Contains(body, `data-value="bridge"`) {
 		t.Errorf("create form must NOT offer unimplemented bridge runtime")
 	}
-	if strings.Contains(body, `data-value="managed"`) {
-		t.Errorf("create form must NOT offer unimplemented managed runtime")
+	if !strings.Contains(body, `data-value="managed"`) {
+		t.Errorf("create form must offer the managed runtime")
 	}
 }
 
 // TestAgents_Create_UnsupportedRuntimeRejected asserts a direct POST with a
-// defined-but-unimplemented runtime (bridge/managed) is rejected with an inline
+// defined-but-unimplemented runtime (bridge) is rejected with an inline
 // error and persists nothing — defense in depth behind the form (#103).
 func TestAgents_Create_UnsupportedRuntimeRejected(t *testing.T) {
-	for _, runtime := range []string{"bridge", "managed"} {
+	for _, runtime := range []string{"bridge"} {
 		t.Run(runtime, func(t *testing.T) {
 			tc := newTestConsole(t)
 			cookie, csrf := tc.login(t)
@@ -364,7 +364,7 @@ func TestAgents_Save_SwitchToUnsupportedRuntimeRejected(t *testing.T) {
 	form := url.Values{
 		"csrf_token": {csrf},
 		"name":       {"Renamed"},
-		"runtime":    {agentdomain.RuntimeManaged},
+		"runtime":    {agentdomain.RuntimeBridge},
 	}
 	rr := tc.postForm(t, "/console/agents/mesh-bot/save", form, cookie)
 	if rr.Code != http.StatusSeeOther {

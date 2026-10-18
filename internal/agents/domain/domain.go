@@ -37,7 +37,7 @@ func ValidRuntime(r string) bool {
 // RuntimeManaged) before its executor does, so offering it in the UI would
 // silently dead-letter every turn (see issue #103). Add an entry here only when
 // the matching WithRuntime registration lands.
-var SupportedRuntimes = []string{RuntimeMesh}
+var SupportedRuntimes = []string{RuntimeMesh, RuntimeManaged}
 
 // IsSupportedRuntime reports whether r has a registered executor (i.e. appears
 // in SupportedRuntimes). Unlike ValidRuntime, it rejects runtimes that are

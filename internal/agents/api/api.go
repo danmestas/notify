@@ -19,6 +19,7 @@ import (
 	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/agents/wire"
 	"github.com/danmestas/notify/internal/identity"
+	"github.com/danmestas/notify/internal/secretbox"
 )
 
 // runtimeErrMsg enumerates the runtimes a caller may actually create — those
@@ -33,6 +34,15 @@ var runtimeErrMsg = "runtime must be one of: " + strings.Join(agentdomain.Suppor
 type Service struct {
 	store   *agentstore.Store
 	baseURL string // optional; used by channelSetup to assemble inbound webhook URLs
+	// box seals a managed agent's API key before it is stored. Without one,
+	// an agent that sends a key is refused rather than stored in plaintext.
+	box *secretbox.Box
+}
+
+// WithSecretBox seals managed agents' API keys with box.
+func (svc *Service) WithSecretBox(box *secretbox.Box) *Service {
+	svc.box = box
+	return svc
 }
 
 // New builds a Service backed by the given agents store.
@@ -113,6 +123,12 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	managed, err := svc.sealManagedKey(req.Managed, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	req.Managed = managed
 	active := true
 	if req.Active != nil {
 		active = *req.Active
@@ -168,6 +184,45 @@ func (svc *Service) listAgents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, wire.Agents(matched))
+}
+
+// sealManagedKey seals a plaintext apiKey in a managed agent's settings. When
+// next carries no apiKey, the one in prev (already sealed) is kept, so
+// changing a prompt does not mean sending the key again; an explicit empty
+// apiKey clears it. A key cannot be stored without a secret box.
+func (svc *Service) sealManagedKey(next, prev json.RawMessage) (json.RawMessage, error) {
+	if len(next) == 0 {
+		return next, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(next, &m); err != nil {
+		return nil, fmt.Errorf("managed must be a JSON object: %w", err)
+	}
+	key, sent := m["apiKey"].(string)
+	if !sent {
+		var old map[string]any
+		if len(prev) > 0 && json.Unmarshal(prev, &old) == nil {
+			if k, ok := old["apiKey"].(string); ok && k != "" {
+				m["apiKey"] = k
+			}
+		}
+		return json.Marshal(m)
+	}
+	if key == "" || secretbox.IsSealed(key) {
+		if key == "" {
+			delete(m, "apiKey")
+		}
+		return json.Marshal(m)
+	}
+	if svc.box == nil {
+		return nil, errors.New("this server has no master key, so it cannot store an agent API key")
+	}
+	sealed, err := svc.box.Seal(key)
+	if err != nil {
+		return nil, fmt.Errorf("seal agent API key: %w", err)
+	}
+	m["apiKey"] = sealed
+	return json.Marshal(m)
 }
 
 // labelKeyChar reports whether c may appear in a label key.
@@ -289,7 +344,12 @@ func (svc *Service) patchAgent(w http.ResponseWriter, r *http.Request) {
 		agent.BridgeURL = *req.BridgeURL
 	}
 	if req.Managed != nil {
-		agent.Managed = *req.Managed
+		managed, err := svc.sealManagedKey(*req.Managed, agent.Managed)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		agent.Managed = managed
 	}
 	if req.WelcomeMessage != nil {
 		agent.WelcomeMessage = *req.WelcomeMessage
