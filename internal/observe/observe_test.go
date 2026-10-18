@@ -246,3 +246,38 @@ func TestInjectNATSHeaderCarriesTraceparent(t *testing.T) {
 		t.Fatalf("traceparent %q does not match W3C format", got)
 	}
 }
+
+// TestSetupExportsToTheTracesPath: the endpoint is OTLP's base URL, as
+// OTEL_EXPORTER_OTLP_ENDPOINT defines it, so spans go to <base>/v1/traces. A
+// collector answers 404 at the bare base, which dropped every span.
+func TestSetupExportsToTheTracesPath(t *testing.T) {
+	for _, tc := range []struct{ suffix, want string }{
+		{"", "/v1/traces"},
+		{"/", "/v1/traces"},
+		{"/otlp", "/otlp/v1/traces"},
+	} {
+		paths := make(chan string, 4)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			paths <- r.URL.Path
+			w.WriteHeader(http.StatusOK)
+		}))
+		shutdown, err := observe.Setup(context.Background(), srv.URL+tc.suffix, "notify", "test")
+		if err != nil {
+			t.Fatalf("Setup(%q): %v", tc.suffix, err)
+		}
+		_, span := observe.Tracer().Start(context.Background(), "notify.test")
+		span.End()
+		if err := shutdown(context.Background()); err != nil {
+			t.Fatalf("shutdown: %v", err)
+		}
+		srv.Close()
+		select {
+		case got := <-paths:
+			if got != tc.want {
+				t.Errorf("endpoint %q exported to %q, want %q", srv.URL+tc.suffix, got, tc.want)
+			}
+		default:
+			t.Errorf("endpoint %q: no export request", srv.URL+tc.suffix)
+		}
+	}
+}

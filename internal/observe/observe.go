@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
@@ -41,6 +42,9 @@ var wire = propagation.TraceContext{}
 // noop tracer and log output stays byte-identical. The returned shutdown is a
 // no-op.
 //
+// endpoint is a base URL, as OTEL_EXPORTER_OTLP_ENDPOINT defines it: spans
+// are sent to <endpoint>/v1/traces.
+//
 // Only the endpoint, service name, and version passed here are honored. The
 // broader OTEL_* autoconfiguration environment (samplers, headers, protocol
 // selection, resource attributes) is deliberately NOT read — cmd/notify is the
@@ -53,7 +57,9 @@ func Setup(ctx context.Context, endpoint, serviceName, version string) (func(con
 		return func(context.Context) error { return nil }, nil
 	}
 
-	exp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(endpoint))
+	// endpoint is OTLP's base URL (OTEL_EXPORTER_OTLP_ENDPOINT), to which the
+	// traces signal path is appended; WithEndpointURL takes a full URL as is.
+	exp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(strings.TrimSuffix(endpoint, "/")+"/v1/traces"))
 	if err != nil {
 		return nil, fmt.Errorf("otlp trace exporter: %w", err)
 	}
