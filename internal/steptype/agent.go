@@ -57,8 +57,9 @@ func (agentMessage) Compile(step domain.Step) (engine.StepDef, error) {
 
 func (agentMessage) TaskTypes() []string { return []string{"agent_message"} }
 
-// AgentMessageCfg is an agent_message step's control values. Text and
-// Conversation are templates rendered against the run at send time.
+// AgentMessageCfg is an agent_message step's control values. Agent, Text and
+// Conversation are templates rendered against the run at send time, so an
+// event can name its own agent ({{payload.agent}}).
 type AgentMessageCfg struct {
 	Agent         string `json:"agent"`
 	Text          string `json:"text"`

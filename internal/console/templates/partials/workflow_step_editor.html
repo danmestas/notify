@@ -447,7 +447,7 @@
       <label class="form-label" for="cv-agent">Agent</label>
       <input class="console-input console-input-mono" type="text" id="cv-agent" name="agent"
              placeholder="support-agent" value="{{index .ControlMap "agent"}}">
-      <p class="form-hint">Identifier of the agent that receives the message. The recipient is the trigger's subscriber.</p>
+      <p class="form-hint">Identifier of the agent that receives the message, or a template such as <code>{{"{{payload.agent}}"}}</code> so each event names its own. An event whose template renders empty is skipped. The recipient is the trigger's subscriber.</p>
     </div>
     <div class="form-row">
       <label class="form-label" for="cv-agent-text">Message</label>
