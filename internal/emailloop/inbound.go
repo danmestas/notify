@@ -44,6 +44,11 @@ type InboundEmail struct {
 	Headers    map[string]string `json:"headers,omitempty"`
 
 	Attachments []InboundEmailAttachment `json:"attachments,omitempty"`
+
+	// Raw is the message exactly as received (RFC 5322 bytes, base64 in
+	// JSON). The SMTP receiver always has it; a forwarder may send it. When
+	// present and a blob store is configured, it is kept byte for byte.
+	Raw []byte `json:"raw,omitempty"`
 }
 
 // recipient returns the address the token should be extracted from: the

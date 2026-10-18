@@ -289,11 +289,16 @@ func runServe(args []string) error {
 		}
 		return res.ConversationID, nil
 	}
+	blobs, err := openBlobStore(cfg)
+	if err != nil {
+		return err
+	}
 	eml := emailloop.New(
 		st, ags, emailloop.NewMinter(mk), conn,
 		emailloop.NewAgentResponder(emlCompose),
 		cfg.inboundSecret, slog.Default(),
-	).WithEventPublisher(bus) // webhook-kind replies ride the delivery stream (#345)
+	).WithEventPublisher(bus). // webhook-kind replies ride the delivery stream (#345)
+					WithBlobStore(blobs)
 
 	// All step-task handlers register in one place so the set can be compared
 	// mechanically against steptype.Registry.TaskTypes() -- see the coverage
@@ -455,7 +460,7 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = anStop() }()
 
-	handler := httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Realtime: rt, Feed: feed, Inbound: inb, Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, Store: st, EnvVars: ev, EmailLoop: eml, SourceIngest: srcIngest, Authoring: au, Preferences: prefs, InboundMXHost: cfg.inboundMXHost, Secrets: secrets})
+	handler := httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trg, Inbox: inbox, Realtime: rt, Feed: feed, Inbound: inb, Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, Store: st, EnvVars: ev, EmailLoop: eml, SourceIngest: srcIngest, Authoring: au, Preferences: prefs, InboundMXHost: cfg.inboundMXHost, Secrets: secrets, Blobs: blobs})
 
 	// Operator console: same listener, mounted at /console ahead of the
 	// public API. All console reads go through the same Scope-carrying

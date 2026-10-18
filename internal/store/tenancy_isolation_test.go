@@ -58,6 +58,7 @@ func tenantCases() []tenantCase {
 		{name: "Contexts", check: checkContexts},
 		{name: "EnvVars", check: checkEnvVars},
 		{name: "InboundDomains", check: checkInboundDomains},
+		{name: "InboundMessages", check: checkInboundMessages},
 		{name: "StreamSources", check: checkStreamSources},
 		{name: "EmailThreads", check: checkEmailThreads},
 		{
@@ -718,6 +719,38 @@ func checkInboundDomains(t *testing.T, ctx context.Context, s *Store, a, b domai
 
 	_, err = repo.Get(ctx, b, "a.example")
 	mustNotFound(t, "InboundDomains.Get", err)
+}
+
+func checkInboundMessages(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
+	repo := s.InboundMessages()
+	// The same message to the same address in both tenants: Record's
+	// dedupe must stay within a tenant, never hand B the row A recorded.
+	same := InboundMessage{SHA256: "abc", Size: 3, Recipient: "r@x"}
+	ma, err := repo.Record(ctx, a, same)
+	if err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+	mb, err := repo.Record(ctx, b, same)
+	if err != nil {
+		t.Fatalf("seed B: %v", err)
+	}
+	if mb.ID == ma.ID {
+		t.Fatal("InboundMessages.Record returned tenant A's row to tenant B")
+	}
+
+	items, err := repo.List(ctx, b, 0, 0)
+	if err != nil {
+		t.Fatalf("List(b): %v", err)
+	}
+	var ids []string
+	for _, m := range items {
+		ids = append(ids, m.ID)
+	}
+	forbidID(t, "InboundMessages.List", ma.ID, ids)
+	requireID(t, "InboundMessages.List", mb.ID, ids)
+
+	_, err = repo.Get(ctx, b, ma.ID)
+	mustNotFound(t, "InboundMessages.Get", err)
 }
 
 func checkStreamSources(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
