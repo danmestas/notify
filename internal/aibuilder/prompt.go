@@ -22,7 +22,7 @@ var stepControlFields = map[string]string{
 	"digest":        "type (\"regular\"|\"scheduled\", default regular). regular: amount (int>0), unit. scheduled: cron (valid expression). digestKey (optional dot-path grouping key).",
 	"throttle":      "limit (int>0), windowSec (int>0).",
 	"http_request":  "url (string), method (GET|POST|PUT|PATCH|DELETE, default GET), headers (a STRING containing a JSON-encoded object), body (string), timeoutSec (int, default 30), failurePolicy (fail_closed|continue, default fail_closed).",
-	"agent_message": "agent (required, identifier of an agent in scope), text (required, Handlebars, inserted as plain text), conversation (optional thread handle template; empty starts a new conversation per run), failurePolicy (fail_closed|continue, default fail_closed), reviewDraft (bool, default false: for inbound-mail payloads, hold the reply as a draft for review). Built-in: posts to the agent and starts its turn, no provider needed.",
+	"agent_message": "agent (required: an agent identifier in scope, or a template such as {{payload.agent}}; a template that renders empty skips the event), text (required, Handlebars, inserted as plain text), conversation (optional thread handle template; empty starts a new conversation per run), failurePolicy (fail_closed|continue, default fail_closed), reviewDraft (bool, default false: for inbound-mail payloads, hold the reply as a draft for review). Built-in: posts to the agent and starts its turn, no provider needed.",
 }
 
 // systemPrompt builds the builder's system prompt as a pure function of the

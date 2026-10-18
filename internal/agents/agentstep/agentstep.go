@@ -86,6 +86,14 @@ func (h *Handler) Handle(ctx context.Context, t engine.TaskPayload) (json.RawMes
 	noTranslate := func(key string) string { return key }
 	text := template.RenderAs(template.Plain, cfg.Text, data, noTranslate)
 	conversation := strings.TrimSpace(template.RenderAs(template.Plain, cfg.Conversation, data, noTranslate))
+	// agent may be a template, e.g. {{payload.agent}}, so the event names the
+	// agent. One that renders empty is a deliberate opt-out for this event:
+	// the step composes nothing and succeeds. An agent left blank in the step
+	// itself is still a misconfiguration and fails below.
+	agent := strings.TrimSpace(template.RenderAs(template.Plain, cfg.Agent, data, noTranslate))
+	if agent == "" && strings.TrimSpace(cfg.Agent) != "" {
+		return h.saveOutput(ctx, scope, t, ingress.ComposeResult{})
+	}
 
 	key := composeKey(env.TransactionID, env.SubscriberID, t.StepID)
 	if cfg.ReviewDraft {
@@ -96,7 +104,7 @@ func (h *Handler) Handle(ctx context.Context, t engine.TaskPayload) (json.RawMes
 		}
 	}
 	res, err := h.composer.Compose(ctx, scope, ingress.ComposeInput{
-		AgentIdentifier: cfg.Agent,
+		AgentIdentifier: agent,
 		ConversationID:  conversation,
 		SubscriberID:    env.SubscriberID,
 		Text:            text,
@@ -110,6 +118,11 @@ func (h *Handler) Handle(ctx context.Context, t engine.TaskPayload) (json.RawMes
 		res = ingress.ComposeResult{}
 	}
 
+	return h.saveOutput(ctx, scope, t, res)
+}
+
+// saveOutput records the step's result in step_outputs and returns it.
+func (h *Handler) saveOutput(ctx context.Context, scope domain.Scope, t engine.TaskPayload, res ingress.ComposeResult) (json.RawMessage, error) {
 	out, err := json.Marshal(output{
 		ConversationID: res.ConversationID,
 		ActivityID:     res.ActivityID,

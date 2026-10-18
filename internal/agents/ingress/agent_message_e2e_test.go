@@ -305,3 +305,30 @@ func TestDrafts_ProduceOncePerRequest(t *testing.T) {
 		t.Fatalf("drafts = %+v", ds)
 	}
 }
+
+// TestAgentMessageStep_AgentFromTheEvent: the agent can be a template, so one
+// workflow serves every mailbox; an event naming no agent is skipped, while a
+// step with no agent at all is still a failure.
+func TestAgentMessageStep_AgentFromTheEvent(t *testing.T) {
+	h := newHarness(t)
+	h.startStub(t)
+	trg := h.publishAgentWorkflow(t, "any-agent", `{"agent":"{{payload.agent}}","text":"hello"}`)
+
+	snap, outs := h.fire(t, trg, "any-agent", "tx-named", `{"agent":"stub"}`)
+	if !snap.Succeeded() || outs["a1"]["activityId"] == "" {
+		t.Fatalf("named agent: status %q output %v", snap.Status, outs["a1"])
+	}
+	snap, outs = h.fire(t, trg, "any-agent", "tx-none", `{"agent":""}`)
+	if !snap.Succeeded() || outs["a1"]["activityId"] != "" {
+		t.Fatalf("no agent: status %q output %v, want success with nothing composed", snap.Status, outs["a1"])
+	}
+	convs, err := h.agents.Conversations().ListByAgent(context.Background(), testScope, h.agent.ID, 0, "")
+	if err != nil || len(convs) != 1 {
+		t.Fatalf("conversations = %d %v, want only the named event's", len(convs), err)
+	}
+
+	blank := h.publishAgentWorkflow(t, "blank-agent", `{"agent":"","text":"hello"}`)
+	if snap, _ := h.fire(t, blank, "blank-agent", "tx-blank", `{}`); snap.Succeeded() {
+		t.Fatal("a step with no agent succeeded")
+	}
+}
