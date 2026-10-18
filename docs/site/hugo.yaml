@@ -31,6 +31,13 @@ menu:
         icon: github
 
 params:
+  # Home page (layouts/index.html). signal is the project's color on light
+  # ground; signalDark is used on dark ground and on the delivery board.
+  landing:
+    signal: "#2546d6"
+    signalDark: "#7f9bff"
+    description: "notify delivers your product's notifications in-app, by email, SMS, push and chat, from your own servers."
+
   # Default version for local dev; the Cloudflare build replaces this with the
   # latest release tag via scripts/sync-version.sh before Hugo runs.
   version: "0.0.0"
