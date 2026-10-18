@@ -31,7 +31,7 @@ func TestFormat_Golden(t *testing.T) {
 				ID: "a1", OrgID: "org", EnvID: "env", Identifier: "support", Name: "Support",
 				Runtime: "mesh", Active: true, MeshSubject: "agents.support", CreatedAt: "t0", UpdatedAt: "t1",
 			}),
-			`{"id":"a1","identifier":"support","name":"Support","description":"","runtime":"mesh","active":true,"meshSubject":"agents.support","bridgeUrl":"","welcomeMessage":"","createdAt":"t0","updatedAt":"t1"}`,
+			`{"id":"a1","identifier":"support","name":"Support","description":"","runtime":"mesh","active":true,"meshSubject":"agents.support","bridgeUrl":"","welcomeMessage":"","labels":{},"createdAt":"t0","updatedAt":"t1"}`,
 		},
 		{
 			"link",

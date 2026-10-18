@@ -70,15 +70,16 @@ func (svc *Service) Routes(r chi.Router) {
 
 // agentRequest is the POST /v1/agents body.
 type agentRequest struct {
-	Identifier     string          `json:"identifier"`
-	Name           string          `json:"name"`
-	Description    string          `json:"description"`
-	Runtime        string          `json:"runtime"`
-	Active         *bool           `json:"active"`
-	MeshSubject    string          `json:"meshSubject"`
-	BridgeURL      string          `json:"bridgeUrl"`
-	Managed        json.RawMessage `json:"managed"`
-	WelcomeMessage string          `json:"welcomeMessage"`
+	Identifier     string            `json:"identifier"`
+	Name           string            `json:"name"`
+	Description    string            `json:"description"`
+	Runtime        string            `json:"runtime"`
+	Active         *bool             `json:"active"`
+	MeshSubject    string            `json:"meshSubject"`
+	BridgeURL      string            `json:"bridgeUrl"`
+	Managed        json.RawMessage   `json:"managed"`
+	WelcomeMessage string            `json:"welcomeMessage"`
+	Labels         map[string]string `json:"labels"`
 }
 
 // createAgent persists a new agent within the request Scope and returns the
@@ -108,12 +109,17 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, runtimeErrMsg, http.StatusUnprocessableEntity)
 		return
 	}
+	if err := validateLabels(req.Labels); err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
 	active := true
 	if req.Active != nil {
 		active = *req.Active
 	}
 	scope := identity.ScopeFrom(r.Context())
 	agent, err := svc.store.Agents().Create(r.Context(), scope, agentdomain.Agent{
+		Labels:         req.Labels,
 		Identifier:     req.Identifier,
 		Name:           req.Name,
 		Description:    req.Description,
@@ -141,12 +147,77 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 // listAgents returns every agent in the request Scope.
 func (svc *Service) listAgents(w http.ResponseWriter, r *http.Request) {
 	scope := identity.ScopeFrom(r.Context())
+	want := map[string]string{}
+	for _, l := range r.URL.Query()["label"] {
+		k, v, ok := strings.Cut(l, ":")
+		if !ok || k == "" {
+			http.Error(w, "label must be key:value", http.StatusBadRequest)
+			return
+		}
+		want[k] = v
+	}
 	agents, err := svc.store.Agents().List(r.Context(), scope)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, wire.Agents(agents))
+	matched := agents[:0]
+	for _, a := range agents {
+		if hasLabels(a.Labels, want) {
+			matched = append(matched, a)
+		}
+	}
+	writeJSON(w, http.StatusOK, wire.Agents(matched))
+}
+
+// labelKeyChar reports whether c may appear in a label key.
+func labelKeyChar(c rune) bool {
+	return c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-'
+}
+
+// hasLabels reports whether have carries every key and value in want.
+func hasLabels(have, want map[string]string) bool {
+	for k, v := range want {
+		if got, ok := have[k]; !ok || got != v {
+			return false
+		}
+	}
+	return true
+}
+
+// Label limits: few enough to stay a tag set, short enough to sit in a URL.
+const (
+	maxLabels        = 16
+	maxLabelKeyLen   = 63
+	maxLabelValueLen = 128
+)
+
+// validateLabels accepts at most maxLabels labels whose keys are lowercase
+// letters, digits, '.', '_' or '-' and whose values hold no control
+// characters. A key cannot contain ':' because the list filter splits on it.
+func validateLabels(l map[string]string) error {
+	if len(l) > maxLabels {
+		return fmt.Errorf("at most %d labels", maxLabels)
+	}
+	for k, v := range l {
+		if k == "" || len(k) > maxLabelKeyLen {
+			return fmt.Errorf("label key %q must be 1-%d characters", k, maxLabelKeyLen)
+		}
+		for _, c := range k {
+			if !labelKeyChar(c) {
+				return fmt.Errorf("label key %q may only contain lowercase letters, digits, '.', '_' and '-'", k)
+			}
+		}
+		if len(v) > maxLabelValueLen {
+			return fmt.Errorf("label %q value is longer than %d characters", k, maxLabelValueLen)
+		}
+		for _, c := range v {
+			if c < 0x20 || c == 0x7f {
+				return fmt.Errorf("label %q value contains a control character", k)
+			}
+		}
+	}
+	return nil
 }
 
 // getAgent returns the agent addressed by {identifier} or 404.
@@ -172,6 +243,8 @@ type agentPatch struct {
 	BridgeURL      *string          `json:"bridgeUrl"`
 	Managed        *json.RawMessage `json:"managed"`
 	WelcomeMessage *string          `json:"welcomeMessage"`
+	// Labels, when present, replaces the agent's labels; {} clears them.
+	Labels *map[string]string `json:"labels"`
 }
 
 // patchAgent applies a partial update to the agent addressed by {identifier}
@@ -220,6 +293,13 @@ func (svc *Service) patchAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.WelcomeMessage != nil {
 		agent.WelcomeMessage = *req.WelcomeMessage
+	}
+	if req.Labels != nil {
+		if err := validateLabels(*req.Labels); err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		agent.Labels = *req.Labels
 	}
 	updated, err := svc.store.Agents().Update(r.Context(), scope, agent)
 	if err != nil {

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
@@ -27,7 +28,7 @@ type agentRepo struct {
 }
 
 const agentColumns = `id, org_id, environment_id, identifier, name, description, runtime,
- active, mesh_subject, bridge_url, COALESCE(managed, ''), welcome_message, created_at, updated_at`
+ active, mesh_subject, bridge_url, COALESCE(managed, ''), welcome_message, labels, created_at, updated_at`
 
 // Create mints a ULID id and timestamps, inserts the row, and returns the
 // persisted agent. A duplicate (environment_id, identifier) surfaces the
@@ -41,10 +42,10 @@ func (repo *agentRepo) Create(ctx context.Context, scope domain.Scope, a agentdo
 	_, err := repo.w.ExecContext(
 		ctx,
 		`INSERT INTO agents (id, org_id, environment_id, identifier, name, description, runtime,
-		   active, mesh_subject, bridge_url, managed, welcome_message, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   active, mesh_subject, bridge_url, managed, welcome_message, labels, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.OrgID, a.EnvID, a.Identifier, a.Name, a.Description, a.Runtime,
-		a.Active, a.MeshSubject, a.BridgeURL, string(a.Managed), a.WelcomeMessage, a.CreatedAt, a.UpdatedAt,
+		a.Active, a.MeshSubject, a.BridgeURL, string(a.Managed), a.WelcomeMessage, labelsJSON(a.Labels), a.CreatedAt, a.UpdatedAt,
 	)
 	if err != nil {
 		return agentdomain.Agent{}, err
@@ -97,10 +98,10 @@ func (repo *agentRepo) Update(ctx context.Context, scope domain.Scope, a agentdo
 	res, err := repo.w.ExecContext(
 		ctx,
 		`UPDATE agents SET name = ?, description = ?, runtime = ?, active = ?,
-		   mesh_subject = ?, bridge_url = ?, managed = ?, welcome_message = ?, updated_at = ?
+		   mesh_subject = ?, bridge_url = ?, managed = ?, welcome_message = ?, labels = ?, updated_at = ?
 		 WHERE org_id = ? AND environment_id = ? AND identifier = ?`,
 		a.Name, a.Description, a.Runtime, a.Active,
-		a.MeshSubject, a.BridgeURL, string(a.Managed), a.WelcomeMessage,
+		a.MeshSubject, a.BridgeURL, string(a.Managed), a.WelcomeMessage, labelsJSON(a.Labels),
 		timestamp.Now(),
 		scope.OrgID, scope.EnvID, a.Identifier,
 	)
@@ -215,16 +216,30 @@ func scanAgent(row rowScanner) (agentdomain.Agent, error) {
 	var (
 		a       agentdomain.Agent
 		managed string
+		labels  string
 	)
 	err := row.Scan(
 		&a.ID, &a.OrgID, &a.EnvID, &a.Identifier, &a.Name, &a.Description, &a.Runtime,
-		&a.Active, &a.MeshSubject, &a.BridgeURL, &managed, &a.WelcomeMessage, &a.CreatedAt, &a.UpdatedAt,
+		&a.Active, &a.MeshSubject, &a.BridgeURL, &managed, &a.WelcomeMessage, &labels, &a.CreatedAt, &a.UpdatedAt,
 	)
 	if err != nil {
 		return agentdomain.Agent{}, err
 	}
+	_ = json.Unmarshal([]byte(labels), &a.Labels)
 	if managed != "" {
 		a.Managed = []byte(managed)
 	}
 	return a, nil
+}
+
+// labelsJSON stores labels as a JSON object; none is "{}".
+func labelsJSON(l map[string]string) string {
+	if len(l) == 0 {
+		return "{}"
+	}
+	b, err := json.Marshal(l)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
