@@ -5,10 +5,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
+	"net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -301,6 +304,7 @@ func New(d Deps) http.Handler {
 		}
 		// Accepted inbound mail, with its original bytes.
 		if d.Blobs != nil && st != nil {
+			pr.Post("/v1/inbound/messages", postInboundMessage(st, d.Blobs))
 			pr.Get("/v1/inbound/messages", getInboundMessages(st))
 			pr.Get("/v1/inbound/messages/{id}/raw", getInboundMessageRaw(st, d.Blobs))
 		}
@@ -1582,6 +1586,76 @@ func getInboundMessages(st *store.Store) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"messages": out, "cursor": cursor})
 	}
+}
+
+// maxArchivedMessageBytes bounds one archived message. Mail services accept
+// up to 25 MiB of message, which base64 attachments already account for;
+// the headroom covers relays that allow a little more.
+const maxArchivedMessageBytes = 40 << 20
+
+// postInboundMessage archives one email a mail client or forwarder already
+// received: POST /v1/inbound/messages?recipient=<address> with the message
+// itself (RFC 5322 bytes) as the body. It is storage only -- the message is
+// not routed anywhere -- and idempotent: the same bytes for the same
+// recipient return the record already kept. 200 with the record.
+func postInboundMessage(st *store.Store, blobs blobstore.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		recipient := strings.TrimSpace(r.URL.Query().Get("recipient"))
+		if recipient == "" {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "recipient is required: the address the message was delivered to")
+			return
+		}
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxArchivedMessageBytes))
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "too_large", "message is over 40 MiB")
+			return
+		}
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "could not read the message")
+			return
+		}
+		if len(raw) == 0 {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "the body must be the message")
+			return
+		}
+		ref, err := blobs.Put(r.Context(), bytes.NewReader(raw))
+		if err != nil {
+			writeInternalError(w, r, err)
+			return
+		}
+		from, subject, msgID := messageHeaders(raw)
+		m, err := st.InboundMessages().Record(r.Context(), identity.ScopeFrom(r.Context()), store.InboundMessage{
+			SHA256: ref.SHA256, Size: ref.Size, Recipient: recipient,
+			Sender: from, Subject: subject, MessageID: msgID,
+		})
+		if err != nil {
+			writeInternalError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, inboundMessageDTO{
+			ID: m.ID, SHA256: m.SHA256, Size: m.Size, Recipient: m.Recipient,
+			From: m.Sender, Subject: m.Subject, MessageID: m.MessageID, ReceivedAt: m.ReceivedAt,
+		})
+	}
+}
+
+// messageHeaders reads the From, Subject and Message-ID a listing shows. A
+// message whose headers do not parse is still kept, with them empty: the
+// archive keeps what arrived, and the bytes are there to inspect.
+func messageHeaders(raw []byte) (from, subject, msgID string) {
+	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		return "", "", ""
+	}
+	dec := mime.WordDecoder{}
+	decode := func(v string) string {
+		if out, err := dec.DecodeHeader(v); err == nil {
+			return out
+		}
+		return v
+	}
+	return decode(msg.Header.Get("From")), decode(msg.Header.Get("Subject")), strings.TrimSpace(msg.Header.Get("Message-Id"))
 }
 
 // getInboundMessageRaw streams an accepted email's original bytes, exactly as
