@@ -21,7 +21,7 @@ A binary stamped by the release script reports its version. A binary built witho
 
 ### From source
 
-The module requires Go 1.26.3 or newer.
+The module requires Go 1.27.3 or newer.
 
 ```bash
 go build -trimpath -o notify ./cmd/notify

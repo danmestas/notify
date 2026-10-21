@@ -10,7 +10,7 @@
 # built here; the default image stays pure-Go and statically linked.
 
 # ---- notify builder ------------------------------------------------------
-FROM golang:1.26.3 AS notify-builder
+FROM golang:1.27.3 AS notify-builder
 WORKDIR /src
 COPY . .
 ARG VERSION=dev
@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -o /out/notify ./cmd/notify
 
 # ---- dagnats builder -----------------------------------------------------
-FROM golang:1.27.1 AS dagnats-builder
+FROM golang:1.27.3 AS dagnats-builder
 # dagnats v0.0.24 requires go >= 1.27.1.
 # Matches the CI sidecar pin. Do not build against a moving branch ref: it makes
 # Docker smoke non-reproducible and can fail transiently at module verification.

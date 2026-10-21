@@ -1,6 +1,6 @@
 [tools]
 actionlint = "1.7.12"
 gofumpt = "0.10.0"
-golangci-lint = "2.13.1"
+golangci-lint = "2.15.0"
 hk = "1.47.0"
 lefthook = "2.1.9"
