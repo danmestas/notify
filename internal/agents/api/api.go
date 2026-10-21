@@ -203,10 +203,12 @@ func checkManaged(runtime string, raw json.RawMessage) error {
 	return err
 }
 
-// sealManagedKey seals a plaintext apiKey in a managed agent's settings. When
-// next carries no apiKey, the one in prev (already sealed) is kept, so
-// changing a prompt does not mean sending the key again; an explicit empty
-// apiKey clears it. A key cannot be stored without a secret box.
+// sealManagedKey seals the plaintext secrets in a managed agent's settings:
+// the apiKey and each mcpServers entry's authSecret. When next carries no
+// secret, the one in prev (already sealed) is kept, so changing a prompt does
+// not mean sending the key again; a server's secret is kept for the server of
+// the same name. An explicit empty secret clears it. A secret cannot be
+// stored without a secret box.
 func (svc *Service) sealManagedKey(next, prev json.RawMessage) (json.RawMessage, error) {
 	if len(next) == 0 {
 		return next, nil
@@ -215,31 +217,67 @@ func (svc *Service) sealManagedKey(next, prev json.RawMessage) (json.RawMessage,
 	if err := json.Unmarshal(next, &m); err != nil {
 		return nil, fmt.Errorf("managed must be a JSON object: %w", err)
 	}
-	key, sent := m["apiKey"].(string)
-	if !sent {
-		var old map[string]any
-		if len(prev) > 0 && json.Unmarshal(prev, &old) == nil {
-			if k, ok := old["apiKey"].(string); ok && k != "" {
-				m["apiKey"] = k
+	if m == nil {
+		return next, nil
+	}
+	var old map[string]any
+	if len(prev) > 0 {
+		_ = json.Unmarshal(prev, &old)
+	}
+	if err := svc.sealSecret(m, old, "apiKey", "agent API key"); err != nil {
+		return nil, err
+	}
+	oldServers := map[string]map[string]any{}
+	if list, ok := old["mcpServers"].([]any); ok {
+		for _, s := range list {
+			if sm, ok := s.(map[string]any); ok {
+				if name, ok := sm["name"].(string); ok {
+					oldServers[name] = sm
+				}
 			}
 		}
-		return json.Marshal(m)
 	}
-	if key == "" || secretbox.IsSealed(key) {
-		if key == "" {
-			delete(m, "apiKey")
+	if list, ok := m["mcpServers"].([]any); ok {
+		for _, s := range list {
+			sm, ok := s.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := sm["name"].(string)
+			if err := svc.sealSecret(sm, oldServers[name], "authSecret", "MCP server secret"); err != nil {
+				return nil, err
+			}
 		}
-		return json.Marshal(m)
+	}
+	return json.Marshal(m)
+}
+
+// sealSecret seals m[key], keeps old[key] when m has none, and clears it
+// when it is empty.
+func (svc *Service) sealSecret(m, old map[string]any, key, what string) error {
+	secret, sent := m[key].(string)
+	if !sent {
+		if k, ok := old[key].(string); ok && k != "" {
+			m[key] = k
+		}
+		return nil
+	}
+	if secret == "" {
+		delete(m, key)
+		return nil
+	}
+	if secretbox.IsSealed(secret) {
+		return nil
 	}
 	if svc.box == nil {
-		return nil, errors.New("this server has no master key, so it cannot store an agent API key")
+		return fmt.Errorf("this server has no master key, so it cannot store an %s", what)
 	}
-	sealed, err := svc.box.Seal(key)
+	sealed, err := svc.box.Seal(secret)
 	if err != nil {
-		return nil, fmt.Errorf("seal agent API key: %w", err)
+		return fmt.Errorf("seal %s: %w", what, err)
 	}
-	m["apiKey"] = sealed
-	return json.Marshal(m)
+	m[key] = sealed
+	return nil
 }
 
 // labelKeyChar reports whether c may appear in a label key.

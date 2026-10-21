@@ -285,8 +285,9 @@ func orEmptyLabels(l map[string]string) map[string]string {
 	return l
 }
 
-// hideAPIKey replaces a managed agent's API key with "apiKeySet": true. The
-// key never leaves notify once stored.
+// hideAPIKey replaces a managed agent's API key with "apiKeySet": true, and
+// each MCP server's authSecret with "authSecretSet": true. A secret never
+// leaves notify once stored.
 func hideAPIKey(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return raw
@@ -298,6 +299,16 @@ func hideAPIKey(raw json.RawMessage) json.RawMessage {
 	if k, ok := m["apiKey"].(string); ok {
 		delete(m, "apiKey")
 		m["apiKeySet"] = k != ""
+	}
+	if servers, ok := m["mcpServers"].([]any); ok {
+		for _, s := range servers {
+			if sm, ok := s.(map[string]any); ok {
+				if k, ok := sm["authSecret"].(string); ok {
+					delete(sm, "authSecret")
+					sm["authSecretSet"] = k != ""
+				}
+			}
+		}
 	}
 	out, err := json.Marshal(m)
 	if err != nil {

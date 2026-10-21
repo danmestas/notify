@@ -1,8 +1,10 @@
 // Package managed runs agents notify hosts itself: a model, a system prompt
 // and the conversation so far, with no code of the agent owner's. Each agent
 // brings its own model settings and API key, kept on the agent with the key
-// sealed at rest. A turn is one model call; the turn already runs as a durable
-// engine step, so a failed call is retried and a restart resumes it.
+// sealed at rest. A turn is one model call, or a short loop of model calls and
+// MCP tool calls when the agent names mcpServers (see tools.go). The turn
+// already runs as a durable engine step, so a failed model call is retried and
+// a restart reruns the turn from its start.
 package managed
 
 import (
@@ -10,9 +12,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"strings"
+	"time"
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
+	"github.com/danmestas/notify/internal/agents/runtime/managed/mcp"
 	"github.com/danmestas/notify/internal/aibuilder"
 	"github.com/danmestas/notify/internal/secretbox"
 )
@@ -59,6 +65,18 @@ type Config struct {
 	SystemPrompt string `json:"systemPrompt,omitempty"`
 	MaxTokens    int    `json:"maxTokens,omitempty"`
 	APIKey       string `json:"apiKey,omitempty"`
+	// MCPServers are the tool servers a turn may call. AuthSecret is sealed
+	// by the API before it is stored, like APIKey.
+	MCPServers []MCPServer `json:"mcpServers,omitempty"`
+}
+
+// MCPServer is one Streamable HTTP MCP server. Its tools are offered to the
+// model as <name>__<tool>; AuthSecret is sent as the value of AuthHeader.
+type MCPServer struct {
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	AuthHeader string `json:"authHeader,omitempty"`
+	AuthSecret string `json:"authSecret,omitempty"`
 }
 
 // ParseConfig reads and checks a managed agent's settings.
@@ -88,6 +106,9 @@ func ParseConfig(raw json.RawMessage) (Config, error) {
 	if c.MaxTokens < 0 || c.MaxTokens > maxMaxTokens {
 		return c, fmt.Errorf("managed agent maxTokens must be 0-%d", maxMaxTokens)
 	}
+	if err := checkMCPServers(raw, c.MCPServers); err != nil {
+		return c, err
+	}
 	return c, nil
 }
 
@@ -106,28 +127,47 @@ func DefaultClient(c Config, apiKey string) aibuilder.Client {
 type Executor struct {
 	box       *secretbox.Box
 	newClient NewClient
+	// mcpHTTP carries every MCP request: SSRF-guarded, no redirects.
+	mcpHTTP     *http.Client
+	toolTimeout time.Duration
+	log         *slog.Logger
 }
 
 // New returns an executor that opens sealed keys with box and calls models
 // through newClient.
 func New(box *secretbox.Box, newClient NewClient) *Executor {
-	return &Executor{box: box, newClient: newClient}
+	return &Executor{
+		box:         box,
+		newClient:   newClient,
+		mcpHTTP:     mcp.NewHTTPClient(false),
+		toolTimeout: toolCallTimeout,
+		log:         slog.Default(),
+	}
 }
 
-// Dispatch answers one turn with one model call.
+// WithMCP sets whether MCP servers on loopback may be reached, over plain
+// http too. Development and tests only.
+func (e *Executor) WithMCP(allowLoopbackHTTP bool) *Executor {
+	e.mcpHTTP = mcp.NewHTTPClient(allowLoopbackHTTP)
+	return e
+}
+
+// WithLogger sets where tool calls are logged.
+func (e *Executor) WithLogger(l *slog.Logger) *Executor {
+	e.log = l
+	return e
+}
+
+// Dispatch answers one turn: one model call, or a bounded loop of model and
+// tool calls when the agent has MCP servers.
 func (e *Executor) Dispatch(ctx context.Context, t agentdomain.Turn) (agentdomain.Reply, error) {
 	cfg, err := ParseConfig(t.Agent.Managed)
 	if err != nil {
 		return agentdomain.Reply{}, agentdomain.NewPermanentError(err)
 	}
-	apiKey := cfg.APIKey
-	if secretbox.IsSealed(apiKey) {
-		if e.box == nil {
-			return agentdomain.Reply{}, agentdomain.NewPermanentError(errors.New("managed agent key is sealed but this server has no master key"))
-		}
-		if apiKey, err = e.box.Open(apiKey); err != nil {
-			return agentdomain.Reply{}, agentdomain.NewPermanentError(fmt.Errorf("open managed agent key: %w", err))
-		}
+	apiKey, err := e.open(cfg.APIKey, "managed agent key")
+	if err != nil {
+		return agentdomain.Reply{}, agentdomain.NewPermanentError(err)
 	}
 	maxTokens := cfg.MaxTokens
 	if maxTokens == 0 {
@@ -137,20 +177,48 @@ func (e *Executor) Dispatch(ctx context.Context, t agentdomain.Turn) (agentdomai
 	if len(msgs) == 0 {
 		return agentdomain.Reply{}, agentdomain.NewPermanentError(errors.New("managed agent turn has no message to answer"))
 	}
-	resp, err := e.newClient(cfg, apiKey).Message(ctx, aibuilder.MessageRequest{
+	tools, err := e.openTools(ctx, cfg, t)
+	if err != nil {
+		return agentdomain.Reply{}, agentdomain.NewPermanentError(err)
+	}
+	resp, err := e.run(ctx, e.newClient(cfg, apiKey), aibuilder.MessageRequest{
 		Model:     cfg.Model,
 		System:    cfg.SystemPrompt,
 		Messages:  msgs,
 		MaxTokens: maxTokens,
-	})
+	}, tools)
 	if err != nil {
-		return agentdomain.Reply{}, fmt.Errorf("managed agent model call: %w", err) // transient: the engine retries
+		return agentdomain.Reply{}, err // transient: the engine retries
 	}
 	text := strings.TrimSpace(resp.Text)
 	if text == "" {
 		return agentdomain.Reply{}, errors.New("managed agent model returned no text")
 	}
 	return agentdomain.Reply{Parts: []agentdomain.Part{{Text: text}}}, nil
+}
+
+// open returns a secret in the clear, opening it when it is sealed.
+func (e *Executor) open(secret, what string) (string, error) {
+	if !secretbox.IsSealed(secret) {
+		return secret, nil
+	}
+	if e.box == nil {
+		return "", fmt.Errorf("%s is sealed but this server has no master key", what)
+	}
+	opened, err := e.box.Open(secret)
+	if err != nil {
+		return "", fmt.Errorf("open %s: %w", what, err)
+	}
+	return opened, nil
+}
+
+// callModel is the one place a turn calls its model.
+func (e *Executor) callModel(ctx context.Context, c aibuilder.Client, req aibuilder.MessageRequest) (aibuilder.MessageResponse, error) {
+	resp, err := c.Message(ctx, req)
+	if err != nil {
+		return resp, fmt.Errorf("managed agent model call: %w", err)
+	}
+	return resp, nil
 }
 
 // conversation turns the transcript and the new message into model messages:

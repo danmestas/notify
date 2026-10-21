@@ -37,6 +37,12 @@ var fixtures = []struct {
 		Labels:    map[string]string{"owner": "owner"},
 		CreatedAt: "2026-10-18T00:00:00Z", UpdatedAt: "2026-10-18T00:00:00Z",
 	})},
+	{"agent_managed_mcp", reflect.TypeOf(wire.Agent{}), wire.FromAgent(agentdomain.Agent{
+		ID: "a3", Identifier: "vault-agent", Name: "Vault", Runtime: "managed", Active: true,
+		Managed:   json.RawMessage(`{"provider":"openrouter","model":"anthropic/claude-sonnet-4.5","apiKey":"enc:1:sealed","mcpServers":[{"name":"vault","url":"https://relay.example/mcp","authHeader":"Authorization","authSecret":"enc:1:sealed"}]}`),
+		Labels:    map[string]string{"owner": "owner"},
+		CreatedAt: "2026-10-21T00:00:00Z", UpdatedAt: "2026-10-21T00:00:00Z",
+	})},
 	{"link", reflect.TypeOf(wire.Link{}), wire.FromLink(agentdomain.AgentLink{
 		ID: "l1", AgentID: "a1", IntegrationID: "i1", ConnectedAt: "2026-10-01T00:00:00Z", Config: json.RawMessage(`{"chatId":"7"}`),
 	})},

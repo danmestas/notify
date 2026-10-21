@@ -141,3 +141,84 @@ func TestManagedAgent_SettingsAreCheckedOnSave(t *testing.T) {
 		}
 	}
 }
+
+// TestManagedAgent_MCPServerSecretsAreSealed: each MCP server's auth secret
+// is sealed like the API key and shown only as authSecretSet; a patch that
+// omits it keeps the stored one for the same server name, an empty one clears
+// it, and a server with no master key refuses one.
+func TestManagedAgent_MCPServerSecretsAreSealed(t *testing.T) {
+	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32))
+	srv, auth, ags, scope := startManagedServer(t, box)
+	body := `{"identifier":"vaulted","runtime":"managed","managed":{"provider":"openrouter","model":"m","mcpServers":[{"name":"vault","url":"https://vault.example/mcp","authSecret":"Bearer vault-secret"},{"name":"open","url":"https://open.example/mcp"}]}}`
+	status, resp := doPost(t, srv.URL+"/v1/agents", auth, body)
+	if status != http.StatusCreated || strings.Contains(resp, "vault-secret") || strings.Contains(resp, `"authSecret"`) ||
+		!strings.Contains(resp, `{"authSecretSet":true,"name":"vault","url":"https://vault.example/mcp"}`) ||
+		!strings.Contains(resp, `{"name":"open","url":"https://open.example/mcp"}`) {
+		t.Fatalf("create: %d %s", status, resp)
+	}
+	secret := func() (string, bool) {
+		a, err := ags.Agents().GetByIdentifier(context.Background(), scope, "vaulted")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m struct {
+			MCPServers []map[string]any `json:"mcpServers"`
+		}
+		_ = json.Unmarshal(a.Managed, &m)
+		s, ok := m.MCPServers[0]["authSecret"].(string)
+		return s, ok
+	}
+	sealed, _ := secret()
+	if opened, err := box.Open(sealed); !secretbox.IsSealed(sealed) || err != nil || opened != "Bearer vault-secret" {
+		t.Fatalf("stored secret %q opens to %q, %v", sealed, opened, err)
+	}
+	patch := func(b string) (int, string) {
+		req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/v1/agents/vaulted", strings.NewReader(b))
+		req.Header.Set("Authorization", auth)
+		r, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = r.Body.Close() }()
+		var buf bytes.Buffer
+		_, _ = buf.ReadFrom(r.Body)
+		return r.StatusCode, buf.String()
+	}
+	if s, resp := patch(`{"managed":{"provider":"openrouter","model":"m2","mcpServers":[{"name":"vault","url":"https://vault.example/v2"}]}}`); s != http.StatusOK || !strings.Contains(resp, `"authSecretSet":true`) {
+		t.Fatalf("patch without secret: %d %s", s, resp)
+	}
+	if kept, _ := secret(); kept != sealed {
+		t.Fatal("a patch that omitted the secret changed it")
+	}
+	if s, resp := patch(`{"managed":{"provider":"openrouter","model":"m2","mcpServers":[{"name":"vault","url":"https://vault.example/v2","authSecret":""}]}}`); s != http.StatusOK || strings.Contains(resp, "authSecretSet") {
+		t.Fatalf("clearing the secret: %d %s", s, resp)
+	}
+	if _, has := secret(); has {
+		t.Fatal("an empty secret did not clear the stored one")
+	}
+
+	noBox, auth2, _, _ := startManagedServer(t, nil)
+	if status, resp := doPost(t, noBox.URL+"/v1/agents", auth2, body); status != http.StatusUnprocessableEntity {
+		t.Fatalf("no master key: %d %s, want 422", status, resp)
+	}
+}
+
+// TestManagedAgent_MCPServersAreCheckedOnSave: a server address notify must
+// not call, or a name that would make tool names ambiguous, is a 422.
+func TestManagedAgent_MCPServersAreCheckedOnSave(t *testing.T) {
+	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32))
+	srv, auth, _, _ := startManagedServer(t, box)
+	for id, servers := range map[string]string{
+		"bad-url":    `[{"name":"v","url":"::not a url"}]`,
+		"plain-http": `[{"name":"v","url":"http://vault.example/mcp"}]`,
+		"private-ip": `[{"name":"v","url":"https://192.168.1.10/mcp"}]`,
+		"duplicate":  `[{"name":"v","url":"https://a.example"},{"name":"v","url":"https://b.example"}]`,
+		"bad-name":   `[{"name":"my__vault","url":"https://a.example"}]`,
+		"snake-case": `null,"mcp_servers":[{"name":"v","url":"https://a.example"}]`,
+	} {
+		s, resp := doPost(t, srv.URL+"/v1/agents", auth, `{"identifier":"`+id+`","runtime":"managed","managed":{"provider":"groq","model":"m","mcpServers":`+servers+`}}`)
+		if s != http.StatusUnprocessableEntity {
+			t.Errorf("%s: %d %s, want 422", id, s, resp)
+		}
+	}
+}

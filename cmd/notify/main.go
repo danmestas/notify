@@ -275,7 +275,8 @@ func runServe(args []string) error {
 	startDraftPurge(ctx, ags)
 	ing := ingress.New(ags, st, eng, bus).
 		WithRuntime(agentdomain.RuntimeMesh, meshClient).
-		WithRuntime(agentdomain.RuntimeManaged, managed.New(secrets, managed.DefaultClient))
+		// Dev mode lets managed agents reach MCP servers on loopback over http.
+		WithRuntime(agentdomain.RuntimeManaged, managed.New(secrets, managed.DefaultClient).WithMCP(cfg.dev))
 
 	// Email two-way loop: inbound email replies route back to the agent and the
 	// agent's reply mails back out. The responder defaults to the conversation's

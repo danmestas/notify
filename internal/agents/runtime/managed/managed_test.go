@@ -58,7 +58,7 @@ func TestDispatch_OneModelCallFromTheConversation(t *testing.T) {
 	if len(reply.Parts) != 1 || reply.Parts[0].Text != "Sure, Friday works." {
 		t.Fatalf("reply = %+v", reply)
 	}
-	if f.key != "sk-live" || f.got.Model != "llama3" || f.got.System != "Draft replies." || f.got.MaxTokens != defaultMaxTokens {
+	if f.key != "sk-live" || f.got.Model != "llama3" || f.got.System != "Draft replies." || f.got.MaxTokens != defaultMaxTokens || f.got.Tools != nil || f.got.ToolChoice != "" {
 		t.Fatalf("request = %+v key=%q", f.got, f.key)
 	}
 	want := []aibuilder.Message{
