@@ -99,9 +99,14 @@ func (c *openaiClient) Message(ctx context.Context, req MessageRequest) (Message
 		completionParams.Tools = tools
 	}
 
-	// "auto" is the only ToolChoice the loop uses today; map it to the SDK's
-	// union type. An empty ToolChoice with tools present also defaults to auto.
-	if req.ToolChoice == "auto" || (req.ToolChoice == "" && len(req.Tools) > 0) {
+	// Map ToolChoice to the SDK's union type. An empty ToolChoice with tools
+	// present defaults to auto.
+	switch {
+	case req.ToolChoice == "none":
+		completionParams.ToolChoice = openai.ChatCompletionToolChoiceOptionUnionParam{
+			OfAuto: openai.String("none"),
+		}
+	case req.ToolChoice == "auto" || (req.ToolChoice == "" && len(req.Tools) > 0):
 		completionParams.ToolChoice = openai.ChatCompletionToolChoiceOptionUnionParam{
 			OfAuto: openai.String("auto"),
 		}

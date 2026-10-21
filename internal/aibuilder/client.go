@@ -78,7 +78,7 @@ type MessageRequest struct {
 	System     string
 	Messages   []Message
 	Tools      []ToolDef
-	ToolChoice string // "auto" (default), reserved: "any", "none"
+	ToolChoice string // "auto" (default) or "none"; reserved: "any"
 	MaxTokens  int
 }
 
@@ -163,8 +163,11 @@ func (c *anthropicClient) Message(ctx context.Context, req MessageRequest) (Mess
 		params.System = []anthropic.TextBlockParam{{Text: req.System}}
 	}
 	// tool_choice defaults to "auto" when tools are present and the field is
-	// omitted, which is exactly the loop's intent; only non-auto choices would
-	// need an explicit ToolChoice (reserved for later).
+	// omitted. "none" keeps the tools defined, which a transcript holding
+	// tool_use blocks requires, while forbidding new calls.
+	if req.ToolChoice == "none" {
+		params.ToolChoice = anthropic.ToolChoiceUnionParam{OfNone: &anthropic.ToolChoiceNoneParam{}}
+	}
 
 	msg, err := c.sdk.Messages.New(ctx, params)
 	if err != nil {

@@ -38,6 +38,15 @@ type Service struct {
 	// box seals a managed agent's API key before it is stored. Without one,
 	// an agent that sends a key is refused rather than stored in plaintext.
 	box *secretbox.Box
+	// loopbackMCP admits managed agents' MCP servers on loopback, over http
+	// too. Development only.
+	loopbackMCP bool
+}
+
+// WithLoopbackMCP admits MCP servers on loopback when allow is set.
+func (svc *Service) WithLoopbackMCP(allow bool) *Service {
+	svc.loopbackMCP = allow
+	return svc
 }
 
 // WithSecretBox seals managed agents' API keys with box.
@@ -124,7 +133,7 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	if err := checkManaged(req.Runtime, req.Managed); err != nil {
+	if err := svc.checkManaged(req.Runtime, req.Managed); err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
@@ -195,18 +204,23 @@ func (svc *Service) listAgents(w http.ResponseWriter, r *http.Request) {
 // so a mistake is a 422 now rather than a failed turn later. Settings left
 // out entirely are allowed: an agent can be created first and configured
 // after.
-func checkManaged(runtime string, raw json.RawMessage) error {
+func (svc *Service) checkManaged(runtime string, raw json.RawMessage) error {
 	if runtime != agentdomain.RuntimeManaged || len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
-	_, err := managed.ParseConfig(raw)
+	_, err := managed.ParseConfig(raw, svc.loopbackMCP)
 	return err
 }
 
-// sealManagedKey seals a plaintext apiKey in a managed agent's settings. When
-// next carries no apiKey, the one in prev (already sealed) is kept, so
-// changing a prompt does not mean sending the key again; an explicit empty
-// apiKey clears it. A key cannot be stored without a secret box.
+// sealManagedKey seals the plaintext secrets in a managed agent's settings:
+// the apiKey and each mcpServers entry's authSecret. When next carries no
+// secret, the one in prev (already sealed) is kept, so changing a prompt does
+// not mean sending the key again. A secret is kept only while it goes to the
+// same place: the apiKey while provider and baseUrl are unchanged, a server's
+// secret while the server of the same name keeps its url and authHeader.
+// Otherwise the secret must be sent again, so an edit cannot redirect a
+// stored secret. An explicit empty secret clears it. A secret cannot be
+// stored without a secret box.
 func (svc *Service) sealManagedKey(next, prev json.RawMessage) (json.RawMessage, error) {
 	if len(next) == 0 {
 		return next, nil
@@ -215,31 +229,89 @@ func (svc *Service) sealManagedKey(next, prev json.RawMessage) (json.RawMessage,
 	if err := json.Unmarshal(next, &m); err != nil {
 		return nil, fmt.Errorf("managed must be a JSON object: %w", err)
 	}
-	key, sent := m["apiKey"].(string)
-	if !sent {
-		var old map[string]any
-		if len(prev) > 0 && json.Unmarshal(prev, &old) == nil {
-			if k, ok := old["apiKey"].(string); ok && k != "" {
-				m["apiKey"] = k
+	if m == nil {
+		return next, nil
+	}
+	var old map[string]any
+	if len(prev) > 0 {
+		_ = json.Unmarshal(prev, &old)
+	}
+	sameModel := strings.EqualFold(field(m, "provider"), field(old, "provider")) && field(m, "baseUrl") == field(old, "baseUrl")
+	if err := svc.sealSecret(m, old, sameModel, "apiKey", "agent API key"); err != nil {
+		return nil, err
+	}
+	oldServers := map[string]map[string]any{}
+	if list, ok := old["mcpServers"].([]any); ok {
+		for _, s := range list {
+			if sm, ok := s.(map[string]any); ok {
+				if name, ok := sm["name"].(string); ok {
+					oldServers[name] = sm
+				}
 			}
 		}
-		return json.Marshal(m)
 	}
-	if key == "" || secretbox.IsSealed(key) {
-		if key == "" {
-			delete(m, "apiKey")
+	if list, ok := m["mcpServers"].([]any); ok {
+		for _, s := range list {
+			sm, ok := s.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := sm["name"].(string)
+			o := oldServers[name]
+			same := field(sm, "url") == field(o, "url") && strings.EqualFold(authHeader(sm), authHeader(o))
+			if err := svc.sealSecret(sm, o, same, "authSecret", "MCP server secret"); err != nil {
+				return nil, err
+			}
 		}
-		return json.Marshal(m)
+	}
+	return json.Marshal(m)
+}
+
+// field is m[key] as a trimmed string, "" when absent.
+func field(m map[string]any, key string) string {
+	s, _ := m[key].(string)
+	return strings.TrimSpace(s)
+}
+
+func authHeader(server map[string]any) string {
+	if h := field(server, "authHeader"); h != "" {
+		return h
+	}
+	return "Authorization"
+}
+
+// sealSecret seals m[key], keeps old[key] when m has none and same says it
+// still goes to the same place, and clears it when it is empty. A stored
+// secret whose destination changed must be sent again.
+func (svc *Service) sealSecret(m, old map[string]any, same bool, key, what string) error {
+	secret, sent := m[key].(string)
+	if !sent {
+		k, ok := old[key].(string)
+		if !ok || k == "" {
+			return nil
+		}
+		if !same {
+			return fmt.Errorf("the %s was stored for another address; send %s again to use it here", what, key)
+		}
+		m[key] = k
+		return nil
+	}
+	if secret == "" {
+		delete(m, key)
+		return nil
+	}
+	if secretbox.IsSealed(secret) {
+		return nil
 	}
 	if svc.box == nil {
-		return nil, errors.New("this server has no master key, so it cannot store an agent API key")
+		return fmt.Errorf("this server has no master key, so it cannot store an %s", what)
 	}
-	sealed, err := svc.box.Seal(key)
+	sealed, err := svc.box.Seal(secret)
 	if err != nil {
-		return nil, fmt.Errorf("seal agent API key: %w", err)
+		return fmt.Errorf("seal %s: %w", what, err)
 	}
-	m["apiKey"] = sealed
-	return json.Marshal(m)
+	m[key] = sealed
+	return nil
 }
 
 // labelKeyChar reports whether c may appear in a label key.
@@ -361,7 +433,7 @@ func (svc *Service) patchAgent(w http.ResponseWriter, r *http.Request) {
 		agent.BridgeURL = *req.BridgeURL
 	}
 	if req.Managed != nil {
-		if err := checkManaged(agent.Runtime, *req.Managed); err != nil {
+		if err := svc.checkManaged(agent.Runtime, *req.Managed); err != nil {
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}

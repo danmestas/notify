@@ -93,3 +93,14 @@ func TestContent_KeepsAStoredPartType(t *testing.T) {
 		t.Fatalf("parts = %+v, want one image part", c.Parts)
 	}
 }
+
+// TestFromAgent_HidesAuthSecretsAtAnyDepth: an authSecret is replaced by
+// authSecretSet wherever it sits in the managed settings.
+func TestFromAgent_HidesAuthSecretsAtAnyDepth(t *testing.T) {
+	a := wire.FromAgent(agentdomain.Agent{Managed: json.RawMessage(`{"authSecret":"S1","mcpServers":[{"name":"v","authSecret":"S2","nested":{"authSecret":"S3","list":[{"authSecret":""}]}}]}`)})
+	got := mustJSON(t, a.Managed)
+	want := `{"authSecretSet":true,"mcpServers":[{"authSecretSet":true,"name":"v","nested":{"authSecretSet":true,"list":[{"authSecretSet":false}]}}]}`
+	if got != want {
+		t.Fatalf("managed = %s, want %s", got, want)
+	}
+}

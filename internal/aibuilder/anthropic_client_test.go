@@ -60,3 +60,36 @@ func TestAnthropicClientMessage_ParsesUsage(t *testing.T) {
 		t.Errorf("Text = %q, want hello", resp.Text)
 	}
 }
+
+// TestAnthropicClientMessage_ToolChoiceNone: "none" keeps the tools defined
+// (a transcript holding tool_use blocks needs them) but forbids new calls.
+func TestAnthropicClientMessage_ToolChoiceNone(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "msg_test", "type": "message", "role": "assistant", "model": "claude-test",
+			"content":     []any{map[string]any{"type": "text", "text": "done"}},
+			"stop_reason": "end_turn", "usage": map[string]any{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer srv.Close()
+	c := &anthropicClient{sdk: anthropic.NewClient(option.WithAPIKey("sk-test"), option.WithBaseURL(srv.URL))}
+	_, err := c.Message(context.Background(), MessageRequest{
+		Model:      "claude-test",
+		Messages:   []Message{{Role: RoleUser, Text: "hi"}},
+		Tools:      []ToolDef{{Name: "t", Description: "d", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+		ToolChoice: "none",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc, _ := body["tool_choice"].(map[string]any)
+	if tc["type"] != "none" {
+		t.Fatalf("tool_choice = %v, want {\"type\":\"none\"}", body["tool_choice"])
+	}
+	if tools, _ := body["tools"].([]any); len(tools) != 1 {
+		t.Fatalf("tools = %v, want the one tool kept", body["tools"])
+	}
+}

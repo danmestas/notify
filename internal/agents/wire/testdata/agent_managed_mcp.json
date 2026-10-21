@@ -1,0 +1,29 @@
+{
+  "id": "a3",
+  "identifier": "vault-agent",
+  "name": "Vault",
+  "description": "",
+  "runtime": "managed",
+  "active": true,
+  "meshSubject": "",
+  "bridgeUrl": "",
+  "managed": {
+    "apiKeySet": true,
+    "mcpServers": [
+      {
+        "authHeader": "Authorization",
+        "authSecretSet": true,
+        "name": "vault",
+        "url": "https://relay.example/mcp"
+      }
+    ],
+    "model": "anthropic/claude-sonnet-4.5",
+    "provider": "openrouter"
+  },
+  "welcomeMessage": "",
+  "labels": {
+    "owner": "owner"
+  },
+  "createdAt": "2026-10-21T00:00:00Z",
+  "updatedAt": "2026-10-21T00:00:00Z"
+}

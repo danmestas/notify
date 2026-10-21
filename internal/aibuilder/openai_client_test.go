@@ -393,3 +393,27 @@ func TestOpenAIClientMessage_UsesConfiguredModel(t *testing.T) {
 		t.Fatalf("wire model = %q, want the CONFIGURED model %q (req.Model must be ignored)", body["model"], "moonshotai/kimi-k2.6")
 	}
 }
+
+// TestOpenAIClientMessage_ToolChoiceNone: "none" is sent as the literal string.
+func TestOpenAIClientMessage_ToolChoiceNone(t *testing.T) {
+	var captured []byte
+	srv := openAITestServer(t, &captured, func() map[string]any { return chatCompletionFixture("stop", "ok", nil) })
+	defer srv.Close()
+	c := NewOpenAIClient("sk-test", srv.URL, "test-model")
+	_, err := c.Message(context.Background(), MessageRequest{
+		Model:      "test-model",
+		Messages:   []Message{{Role: RoleUser, Text: "hi"}},
+		Tools:      []ToolDef{{Name: "t", Description: "d", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+		ToolChoice: "none",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(captured, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["tool_choice"] != "none" {
+		t.Fatalf("tool_choice = %v, want \"none\"", body["tool_choice"])
+	}
+}
