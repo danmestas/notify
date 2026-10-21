@@ -79,8 +79,9 @@ type MCPServer struct {
 	AuthSecret string `json:"authSecret,omitempty"`
 }
 
-// ParseConfig reads and checks a managed agent's settings.
-func ParseConfig(raw json.RawMessage) (Config, error) {
+// ParseConfig reads and checks a managed agent's settings. allowLoopbackMCP
+// admits MCP servers on loopback, over http too: development only.
+func ParseConfig(raw json.RawMessage, allowLoopbackMCP bool) (Config, error) {
 	var c Config
 	if len(raw) == 0 {
 		return c, errors.New("managed agent has no settings: set provider and model")
@@ -106,7 +107,7 @@ func ParseConfig(raw json.RawMessage) (Config, error) {
 	if c.MaxTokens < 0 || c.MaxTokens > maxMaxTokens {
 		return c, fmt.Errorf("managed agent maxTokens must be 0-%d", maxMaxTokens)
 	}
-	if err := checkMCPServers(raw, c.MCPServers); err != nil {
+	if err := checkMCPServers(raw, c.MCPServers, allowLoopbackMCP); err != nil {
 		return c, err
 	}
 	return c, nil
@@ -128,9 +129,10 @@ type Executor struct {
 	box       *secretbox.Box
 	newClient NewClient
 	// mcpHTTP carries every MCP request: SSRF-guarded, no redirects.
-	mcpHTTP     *http.Client
-	toolTimeout time.Duration
-	log         *slog.Logger
+	mcpHTTP       *http.Client
+	allowLoopback bool
+	toolTimeout   time.Duration
+	log           *slog.Logger
 }
 
 // New returns an executor that opens sealed keys with box and calls models
@@ -149,6 +151,7 @@ func New(box *secretbox.Box, newClient NewClient) *Executor {
 // http too. Development and tests only.
 func (e *Executor) WithMCP(allowLoopbackHTTP bool) *Executor {
 	e.mcpHTTP = mcp.NewHTTPClient(allowLoopbackHTTP)
+	e.allowLoopback = allowLoopbackHTTP
 	return e
 }
 
@@ -161,7 +164,7 @@ func (e *Executor) WithLogger(l *slog.Logger) *Executor {
 // Dispatch answers one turn: one model call, or a bounded loop of model and
 // tool calls when the agent has MCP servers.
 func (e *Executor) Dispatch(ctx context.Context, t agentdomain.Turn) (agentdomain.Reply, error) {
-	cfg, err := ParseConfig(t.Agent.Managed)
+	cfg, err := ParseConfig(t.Agent.Managed, e.allowLoopback)
 	if err != nil {
 		return agentdomain.Reply{}, agentdomain.NewPermanentError(err)
 	}

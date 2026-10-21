@@ -91,7 +91,7 @@ func ClassOf(err error) Class {
 func CheckURL(raw string, allowLoopback bool) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("mcp server url is not a URL: %w", err)
+		return errors.New("mcp server url is not a URL")
 	}
 	host := u.Hostname()
 	if host == "" {
@@ -214,15 +214,15 @@ func (c *Client) Initialize(ctx context.Context) error {
 	return err
 }
 
-// maxToolPages bounds tools/list paging against a server whose cursor never
+// MaxToolPages bounds tools/list paging against a server whose cursor never
 // ends.
-const maxToolPages = 20
+const MaxToolPages = 10
 
 // ListTools lists every tool, following nextCursor.
 func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 	var tools []Tool
 	cursor := ""
-	for page := 0; page < maxToolPages; page++ {
+	for page := 0; page < MaxToolPages; page++ {
 		params := map[string]any{}
 		if cursor != "" {
 			params["cursor"] = cursor

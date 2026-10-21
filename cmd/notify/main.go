@@ -443,7 +443,7 @@ func runServe(args []string) error {
 	srcSvc := streamsource.New(st, mk)
 	srcIngest := feedingest.New(srcSvc, bus)
 	inb := inbound.New(trg)
-	ag := agentsapi.New(ags).WithSecretBox(secrets)
+	ag := agentsapi.New(ags).WithSecretBox(secrets).WithLoopbackMCP(cfg.dev)
 
 	ev, err := envvars.New(st, mk)
 	if err != nil {

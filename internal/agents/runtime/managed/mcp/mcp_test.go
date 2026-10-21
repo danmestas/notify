@@ -221,6 +221,39 @@ func TestClient_HTTPFailures(t *testing.T) {
 	}
 }
 
+// TestClient_ListToolsPageCap: a cursor that never ends stops after
+// MaxToolPages requests.
+func TestClient_ListToolsPageCap(t *testing.T) {
+	var pages int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.ID == nil {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		result := map[string]any{"protocolVersion": ProtocolVersion}
+		if req.Method == "tools/list" {
+			pages++
+			result = map[string]any{"tools": []any{map[string]any{"name": fmt.Sprintf("t%d", pages)}}, "nextCursor": "more"}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+	}))
+	defer srv.Close()
+	c := New(NewHTTPClient(true), srv.URL, nil)
+	if err := c.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	tools, err := c.ListTools(context.Background())
+	if err != nil || pages != MaxToolPages || len(tools) != MaxToolPages {
+		t.Fatalf("pages %d tools %d err %v, want %d", pages, len(tools), err, MaxToolPages)
+	}
+}
+
 func TestCheckURL(t *testing.T) {
 	ok := []string{"https://vault.example/mcp", "https://relay.example:8443/a/b"}
 	devOnly := []string{"http://127.0.0.1:9000/mcp", "http://localhost/mcp", "http://[::1]:8080/", "https://127.0.0.1/mcp"}

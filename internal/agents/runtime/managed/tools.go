@@ -3,6 +3,8 @@ package managed
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -31,7 +34,18 @@ const (
 	// minResultBytes is the least budget worth handing a result; below it the
 	// call is answered too_large.
 	minResultBytes = 1 << 10
+
+	// Limits on what is offered to the model. A definition's size is its
+	// name, description and input schema together.
+	maxToolsPerServer = 64
+	maxToolsPerTurn   = 128
+	maxToolDefBytes   = 32 << 10
+	maxToolDefsBytes  = 256 << 10
 )
+
+// fallbackReply answers a turn whose last, tool-less round still produced no
+// text, so the turn completes instead of rerunning forever.
+const fallbackReply = "I couldn't finish looking that up. Please try again."
 
 // Correlation headers name who a call is for. They carry no authority: the
 // server grants access from the auth header alone.
@@ -44,17 +58,37 @@ const (
 // ends the server name.
 var (
 	serverNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
-	headerNamePattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
+	// headerNamePattern is an RFC 9110 token.
+	headerNamePattern = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$")
 	// toolNamePattern is the name rule both model APIs accept.
 	toolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	toolNameUnsafe  = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 	recordIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,128}$`)
 )
 
-// reservedHeaders are headers the auth header may not replace.
+// reservedHeaders are headers the auth header may not be: hop-by-hop,
+// routing and framing headers, the protocol's own, and the correlation
+// headers. Lower case.
 var reservedHeaders = map[string]bool{
-	"Accept": true, "Content-Type": true, "Content-Length": true, "Host": true,
-	"Mcp-Session-Id": true, "Mcp-Protocol-Version": true,
-	headerAgentID: true, headerSubscriberID: true,
+	"host": true, "connection": true, "keep-alive": true, "te": true, "trailer": true,
+	"transfer-encoding": true, "upgrade": true, "content-length": true, "content-type": true,
+	"accept": true, "mcp-session-id": true, "mcp-protocol-version": true, "forwarded": true,
+	strings.ToLower(headerAgentID): true, strings.ToLower(headerSubscriberID): true,
+}
+
+var reservedHeaderPrefixes = []string{"proxy-", "x-forwarded-"}
+
+func reservedHeader(h string) bool {
+	h = strings.ToLower(h)
+	if reservedHeaders[h] {
+		return true
+	}
+	for _, p := range reservedHeaderPrefixes {
+		if strings.HasPrefix(h, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // recordIDKeys are the argument keys whose values the log may record.
@@ -62,10 +96,15 @@ var recordIDKeys = map[string]bool{
 	"id": true, "ids": true, "recordId": true, "recordIds": true, "record_id": true, "record_ids": true,
 }
 
-const maxLoggedRecordIDs = 32
+const (
+	maxLoggedRecordIDs = 32
+	maxLoggedCallID    = 64
+)
 
 // checkMCPServers validates the servers and fills in the default auth header.
-func checkMCPServers(raw json.RawMessage, servers []MCPServer) error {
+// allowLoopback admits loopback addresses, over http too (development only).
+// No error quotes a secret.
+func checkMCPServers(raw json.RawMessage, servers []MCPServer, allowLoopback bool) error {
 	var probe map[string]json.RawMessage
 	if json.Unmarshal(raw, &probe) == nil {
 		if _, ok := probe["mcp_servers"]; ok {
@@ -79,20 +118,20 @@ func checkMCPServers(raw json.RawMessage, servers []MCPServer) error {
 	for i := range servers {
 		s := &servers[i]
 		if !serverNamePattern.MatchString(s.Name) {
-			return fmt.Errorf("mcpServers name %q must be 1-32 lowercase letters, digits or hyphens, starting with a letter or digit", s.Name)
+			return errors.New("mcpServers name must be 1-32 lowercase letters, digits or hyphens, starting with a letter or digit")
 		}
 		if seen[s.Name] {
 			return fmt.Errorf("mcpServers name %q is used twice", s.Name)
 		}
 		seen[s.Name] = true
-		if err := mcp.CheckURL(s.URL, true); err != nil {
+		if err := mcp.CheckURL(s.URL, allowLoopback); err != nil {
 			return fmt.Errorf("mcpServers %q: %w", s.Name, err)
 		}
 		if s.AuthHeader == "" {
 			s.AuthHeader = "Authorization"
 		}
-		if !headerNamePattern.MatchString(s.AuthHeader) || reservedHeaders[http.CanonicalHeaderKey(s.AuthHeader)] {
-			return fmt.Errorf("mcpServers %q: authHeader %q is not a header notify can send a secret in", s.Name, s.AuthHeader)
+		if !headerNamePattern.MatchString(s.AuthHeader) || reservedHeader(s.AuthHeader) {
+			return fmt.Errorf("mcpServers %q: authHeader is not a header notify can send a secret in", s.Name)
 		}
 	}
 	return nil
@@ -113,15 +152,41 @@ type route struct {
 	client *mcp.Client
 }
 
-// openTools connects to the agent's servers and lists their tools. A server
-// that cannot be listed is skipped: the turn goes on without its tools. Only
-// a secret that cannot be opened fails the turn, since no retry fixes it.
+// toolAlias is the name a tool is offered under: <server>__<tool> when that
+// meets the model APIs' name rule, otherwise a sanitized prefix of it and a
+// short hash of the original, so it is deterministic and at most 64 bytes.
+func toolAlias(server, tool string) string {
+	full := server + "__" + tool
+	if toolNamePattern.MatchString(full) {
+		return full
+	}
+	sum := sha256.Sum256([]byte(full))
+	hash := hex.EncodeToString(sum[:4])
+	prefix := toolNameUnsafe.ReplaceAllString(full, "_")
+	if limit := 64 - 1 - len(hash); len(prefix) > limit {
+		prefix = prefix[:limit]
+	}
+	return prefix + "_" + hash
+}
+
+// listing is one server's tools, or why there are none.
+type listing struct {
+	client *mcp.Client
+	tools  []mcp.Tool
+	err    error
+}
+
+// openTools connects to the agent's servers and lists their tools, all at
+// once, each within the per-call timeout. A server that cannot be listed is
+// skipped: the turn goes on without its tools. Only a secret that cannot be
+// opened fails the turn, since no retry fixes it. Tools are offered in
+// configured server order, up to the count and size limits.
 func (e *Executor) openTools(ctx context.Context, cfg Config, t agentdomain.Turn) (*toolSet, error) {
 	if len(cfg.MCPServers) == 0 {
 		return nil, nil
 	}
-	ts := &toolSet{routes: map[string]route{}, turn: t}
-	for _, s := range cfg.MCPServers {
+	clients := make([]*mcp.Client, len(cfg.MCPServers))
+	for i, s := range cfg.MCPServers {
 		secret, err := e.open(s.AuthSecret, fmt.Sprintf("mcpServers %q secret", s.Name))
 		if err != nil {
 			return nil, err
@@ -134,29 +199,64 @@ func (e *Executor) openTools(ctx context.Context, cfg Config, t agentdomain.Turn
 		if t.Conversation.SubscriberID != "" {
 			h.Set(headerSubscriberID, t.Conversation.SubscriberID)
 		}
-		client := mcp.New(e.mcpHTTP, s.URL, h)
-		lctx, cancel := context.WithTimeout(ctx, e.toolTimeout)
-		tools, err := listTools(lctx, client)
-		cancel()
-		if err != nil {
+		clients[i] = mcp.New(e.mcpHTTP, s.URL, h)
+	}
+	lists := make([]listing, len(clients))
+	var wg sync.WaitGroup
+	for i, c := range clients {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lctx, cancel := context.WithTimeout(ctx, e.toolTimeout)
+			defer cancel()
+			tools, err := listTools(lctx, c)
+			lists[i] = listing{client: c, tools: tools, err: err}
+		}()
+	}
+	wg.Wait()
+
+	ts := &toolSet{routes: map[string]route{}, turn: t}
+	defBytes := 0
+	for i, s := range cfg.MCPServers {
+		l := lists[i]
+		if l.err != nil {
 			e.log.LogAttrs(ctx, slog.LevelWarn, "managed agent tool server unavailable",
 				slog.String("agent_id", t.Agent.ID), slog.String("server", s.Name),
-				slog.String("error_class", string(mcp.ClassOf(err))))
+				slog.String("error_class", string(mcp.ClassOf(l.err))))
 			continue
 		}
-		for _, tool := range tools {
-			name := s.Name + "__" + tool.Name
-			if !toolNamePattern.MatchString(name) {
-				continue
-			}
-			if _, dup := ts.routes[name]; dup {
-				continue
-			}
+		offered := 0
+		for _, tool := range l.tools {
+			name := toolAlias(s.Name, tool.Name)
 			schema := tool.InputSchema
 			if len(bytes.TrimSpace(schema)) == 0 || string(schema) == "null" {
 				schema = json.RawMessage(`{"type":"object"}`)
 			}
-			ts.routes[name] = route{server: s.Name, tool: tool.Name, client: client}
+			size := len(name) + len(tool.Description) + len(schema)
+			reason := ""
+			switch {
+			case tool.Name == "":
+				reason = "no name"
+			case offered >= maxToolsPerServer:
+				reason = "server tool limit"
+			case len(ts.defs) >= maxToolsPerTurn:
+				reason = "turn tool limit"
+			case size > maxToolDefBytes:
+				reason = "definition too large"
+			case defBytes+size > maxToolDefsBytes:
+				reason = "turn definition size limit"
+			case ts.routes[name].client != nil:
+				reason = "name collision"
+			}
+			if reason != "" {
+				e.log.LogAttrs(ctx, slog.LevelWarn, "managed agent tool skipped",
+					slog.String("agent_id", t.Agent.ID), slog.String("server", s.Name),
+					slog.String("tool", name), slog.String("reason", reason))
+				continue
+			}
+			offered++
+			defBytes += size
+			ts.routes[name] = route{server: s.Name, tool: tool.Name, client: l.client}
 			ts.defs = append(ts.defs, aibuilder.ToolDef{Name: name, Description: tool.Description, InputSchema: schema})
 		}
 	}
@@ -183,8 +283,17 @@ func (e *Executor) run(ctx context.Context, c aibuilder.Client, req aibuilder.Me
 			req.ToolChoice = "none"
 		}
 		resp, err := e.callModel(ctx, c, req)
-		if err != nil || len(resp.ToolCalls) == 0 || round == maxModelRounds {
+		if err != nil {
 			return resp, err
+		}
+		if round == maxModelRounds {
+			if strings.TrimSpace(resp.Text) == "" {
+				resp.Text = fallbackReply
+			}
+			return resp, nil
+		}
+		if len(resp.ToolCalls) == 0 {
+			return resp, nil
 		}
 		results := make([]aibuilder.ToolResult, len(resp.ToolCalls))
 		for i, call := range resp.ToolCalls {
@@ -249,8 +358,8 @@ func (e *Executor) callTool(ctx context.Context, ts *toolSet, call aibuilder.Too
 		slog.String("agent_id", ts.turn.Agent.ID),
 		slog.String("conversation_id", ts.turn.Conversation.ID),
 		slog.String("server", r.server),
-		slog.String("tool", call.Name),
-		slog.String("call_id", call.ID),
+		slog.String("tool", loggedToolName(ts, call.Name)),
+		slog.String("call_id", boundCallID(call.ID)),
 		slog.Any("record_ids", recordIDs(args)),
 		slog.Int("request_bytes", st.RequestBytes),
 		slog.Int("response_bytes", st.ResponseBytes),
@@ -271,6 +380,23 @@ func toolError(id string, c mcp.Class, msg string) (string, aibuilder.ToolResult
 	}
 	body, _ := json.Marshal(map[string]any{"error": map[string]string{"class": string(c), "message": msg}})
 	return string(c), aibuilder.ToolResult{ToolCallID: id, Content: string(body), IsError: true}
+}
+
+// loggedToolName is the tool name as logged: only names that were offered,
+// since the model may invent anything.
+func loggedToolName(ts *toolSet, name string) string {
+	if _, ok := ts.routes[name]; ok {
+		return name
+	}
+	return "unknown"
+}
+
+// boundCallID cuts a model-chosen call id to maxLoggedCallID bytes.
+func boundCallID(id string) string {
+	if len(id) > maxLoggedCallID {
+		id = strings.ToValidUTF8(id[:maxLoggedCallID], "")
+	}
+	return id
 }
 
 func isObject(raw []byte) bool {

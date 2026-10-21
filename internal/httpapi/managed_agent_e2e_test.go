@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -22,7 +24,7 @@ import (
 	"github.com/danmestas/notify/internal/trigger"
 )
 
-func startManagedServer(t *testing.T, box *secretbox.Box) (*httptest.Server, string, *agentstore.Store, domain.Scope) {
+func startManagedServer(t *testing.T, box *secretbox.Box, opts ...func(*agentsapi.Service) *agentsapi.Service) (*httptest.Server, string, *agentstore.Store, domain.Scope) {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "notify.db"))
@@ -40,6 +42,9 @@ func startManagedServer(t *testing.T, box *secretbox.Box) (*httptest.Server, str
 	ag := agentsapi.New(ags)
 	if box != nil {
 		ag = ag.WithSecretBox(box)
+	}
+	for _, o := range opts {
+		ag = o(ag)
 	}
 	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: aud, Trigger: trigger.New(aud, st, nil), Inbox: inboxapi.New(st), Agents: ag}))
 	t.Cleanup(srv.Close)
@@ -184,11 +189,30 @@ func TestManagedAgent_MCPServerSecretsAreSealed(t *testing.T) {
 		_, _ = buf.ReadFrom(r.Body)
 		return r.StatusCode, buf.String()
 	}
-	if s, resp := patch(`{"managed":{"provider":"openrouter","model":"m2","mcpServers":[{"name":"vault","url":"https://vault.example/v2"}]}}`); s != http.StatusOK || !strings.Contains(resp, `"authSecretSet":true`) {
+	// Same url and header: the stored secret is kept.
+	if s, resp := patch(`{"managed":{"provider":"openrouter","model":"m2","mcpServers":[{"name":"vault","url":"https://vault.example/mcp"}]}}`); s != http.StatusOK || !strings.Contains(resp, `"authSecretSet":true`) {
 		t.Fatalf("patch without secret: %d %s", s, resp)
 	}
 	if kept, _ := secret(); kept != sealed {
 		t.Fatal("a patch that omitted the secret changed it")
+	}
+	// A new destination must not inherit the secret: send it again.
+	for name, servers := range map[string]string{
+		"url":    `[{"name":"vault","url":"https://attacker.example/mcp"}]`,
+		"header": `[{"name":"vault","url":"https://vault.example/mcp","authHeader":"X-Api-Key"}]`,
+	} {
+		if s, resp := patch(`{"managed":{"provider":"openrouter","model":"m2","mcpServers":` + servers + `}}`); s != http.StatusUnprocessableEntity || !strings.Contains(resp, "authSecret") {
+			t.Fatalf("changed %s without secret: %d %s, want 422", name, s, resp)
+		}
+	}
+	if kept, _ := secret(); kept != sealed {
+		t.Fatal("a refused patch changed the secret")
+	}
+	if s, resp := patch(`{"managed":{"provider":"openrouter","model":"m2","mcpServers":[{"name":"vault","url":"https://vault.example/v2","authSecret":"Bearer v2"}]}}`); s != http.StatusOK || !strings.Contains(resp, `"authSecretSet":true`) {
+		t.Fatalf("changed url with secret: %d %s", s, resp)
+	}
+	if moved, _ := secret(); moved == sealed {
+		t.Fatal("the new secret was not stored")
 	}
 	if s, resp := patch(`{"managed":{"provider":"openrouter","model":"m2","mcpServers":[{"name":"vault","url":"https://vault.example/v2","authSecret":""}]}}`); s != http.StatusOK || strings.Contains(resp, "authSecretSet") {
 		t.Fatalf("clearing the secret: %d %s", s, resp)
@@ -220,5 +244,71 @@ func TestManagedAgent_MCPServersAreCheckedOnSave(t *testing.T) {
 		if s != http.StatusUnprocessableEntity {
 			t.Errorf("%s: %d %s, want 422", id, s, resp)
 		}
+	}
+	loopback := `{"identifier":"%s","runtime":"managed","managed":{"provider":"groq","model":"m","mcpServers":[{"name":"v","url":"http://localhost:9000/mcp"}]}}`
+	if s, resp := doPost(t, srv.URL+"/v1/agents", auth, fmt.Sprintf(loopback, "prod-loopback")); s != http.StatusUnprocessableEntity {
+		t.Errorf("loopback http in production: %d %s, want 422", s, resp)
+	}
+	dev, devAuth, _, _ := startManagedServer(t, box, func(s *agentsapi.Service) *agentsapi.Service { return s.WithLoopbackMCP(true) })
+	if s, resp := doPost(t, dev.URL+"/v1/agents", devAuth, fmt.Sprintf(loopback, "dev-loopback")); s != http.StatusCreated {
+		t.Errorf("loopback http in development: %d %s, want 201", s, resp)
+	}
+}
+
+// TestManagedAgent_RejectedConfigNeverEchoesTheSecret: a refused config's
+// 422 body and the server's logs never carry an auth secret.
+func TestManagedAgent_RejectedConfigNeverEchoesTheSecret(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32))
+	srv, auth, _, _ := startManagedServer(t, box)
+	const secret = "Bearer SECRET-MARKER"
+	for id, server := range map[string]string{
+		"bad-url":    `{"name":"v","url":"https://SECRET-MARKER@[::1","authSecret":"` + secret + `"}`,
+		"bad-header": `{"name":"v","url":"https://a.example","authHeader":"Host","authSecret":"` + secret + `"}`,
+		"bad-name":   `{"name":"SECRET-MARKER","url":"https://a.example","authSecret":"` + secret + `"}`,
+		"bad-type":   `{"name":"v","url":"https://a.example","authSecret":["` + secret + `"]}`,
+		"private":    `{"name":"v","url":"https://10.0.0.1/","authSecret":"` + secret + `"}`,
+	} {
+		s, resp := doPost(t, srv.URL+"/v1/agents", auth, `{"identifier":"`+id+`","runtime":"managed","managed":{"provider":"groq","model":"m","mcpServers":[`+server+`]}}`)
+		if s != http.StatusUnprocessableEntity || strings.Contains(resp, "SECRET-MARKER") {
+			t.Errorf("%s: %d %s", id, s, resp)
+		}
+	}
+	if strings.Contains(logs.String(), "SECRET-MARKER") {
+		t.Fatalf("logs carry the secret:\n%s", logs.String())
+	}
+}
+
+// TestManagedAgent_KeyIsNotCarriedToANewEndpoint: a patch that moves the
+// model endpoint must send the API key again.
+func TestManagedAgent_KeyIsNotCarriedToANewEndpoint(t *testing.T) {
+	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32))
+	srv, auth, _, _ := startManagedServer(t, box)
+	if s, resp := doPost(t, srv.URL+"/v1/agents", auth, `{"identifier":"keyed","runtime":"managed","managed":{"provider":"my-vllm","baseUrl":"https://llm.example/v1","model":"m","apiKey":"sk-secret"}}`); s != http.StatusCreated {
+		t.Fatalf("create: %d %s", s, resp)
+	}
+	patch := func(b string) (int, string) {
+		req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/v1/agents/keyed", strings.NewReader(b))
+		req.Header.Set("Authorization", auth)
+		r, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = r.Body.Close() }()
+		var buf bytes.Buffer
+		_, _ = buf.ReadFrom(r.Body)
+		return r.StatusCode, buf.String()
+	}
+	if s, resp := patch(`{"managed":{"provider":"my-vllm","baseUrl":"https://evil.example/v1","model":"m"}}`); s != http.StatusUnprocessableEntity || !strings.Contains(resp, "apiKey") {
+		t.Fatalf("moved baseUrl without key: %d %s, want 422", s, resp)
+	}
+	if s, resp := patch(`{"managed":{"provider":"my-vllm","baseUrl":"https://llm.example/v1","model":"m2"}}`); s != http.StatusOK || !strings.Contains(resp, `"apiKeySet":true`) {
+		t.Fatalf("same baseUrl without key: %d %s", s, resp)
+	}
+	if s, resp := patch(`{"managed":{"provider":"my-vllm","baseUrl":"https://other.example/v1","model":"m","apiKey":"sk-other"}}`); s != http.StatusOK || !strings.Contains(resp, `"apiKeySet":true`) {
+		t.Fatalf("moved baseUrl with key: %d %s", s, resp)
 	}
 }

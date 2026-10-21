@@ -113,7 +113,7 @@ func TestParseConfig_AnyProvider(t *testing.T) {
 		{`{"provider":"anthropic","model":"m"}`, "anthropic", ""},
 	}
 	for _, c := range cases {
-		got, err := ParseConfig(json.RawMessage(c.cfg))
+		got, err := ParseConfig(json.RawMessage(c.cfg), false)
 		if err != nil {
 			t.Fatalf("%s: %v", c.cfg, err)
 		}
@@ -121,7 +121,7 @@ func TestParseConfig_AnyProvider(t *testing.T) {
 			t.Fatalf("%s: provider %q url %q, want %q %q", c.cfg, got.Provider, got.BaseURL, c.wantProvider, c.wantURL)
 		}
 	}
-	if _, err := ParseConfig(json.RawMessage(`{"provider":"bard","model":"m"}`)); err == nil {
+	if _, err := ParseConfig(json.RawMessage(`{"provider":"bard","model":"m"}`), false); err == nil {
 		t.Fatal("an unknown provider with no baseUrl was accepted")
 	}
 }

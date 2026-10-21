@@ -38,6 +38,13 @@ func (s *scriptClient) Message(_ context.Context, req aibuilder.MessageRequest) 
 // vault is a stub MCP server (JSON responses) with tools that succeed, fail,
 // stall and overflow.
 type vault struct {
+	// extra lists that many more tools, t000..., each with a description of
+	// desc bytes; listDelay stalls tools/list.
+	extra     int
+	desc      int
+	listDelay time.Duration
+	more      []string
+
 	mu      sync.Mutex
 	calls   []string
 	headers []http.Header
@@ -70,9 +77,13 @@ func (v *vault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result = map[string]any{"protocolVersion": mcp.ProtocolVersion, "capabilities": map[string]any{}}
 	case "tools/list":
 		var tools []any
-		for _, n := range []string{"get_record", "search_vault", "fail", "slow", "big", "wide", "bad.name"} {
+		for _, n := range append([]string{"get_record", "search_vault", "fail", "slow", "big", "wide"}, v.more...) {
 			tools = append(tools, map[string]any{"name": n, "description": n, "inputSchema": map[string]any{"type": "object"}})
 		}
+		for i := 0; i < v.extra; i++ {
+			tools = append(tools, map[string]any{"name": fmt.Sprintf("t%03d", i), "description": strings.Repeat("d", v.desc), "inputSchema": map[string]any{"type": "object"}})
+		}
+		time.Sleep(v.listDelay)
 		result = map[string]any{"tools": tools}
 	case "tools/call":
 		switch req.Params.Name {
@@ -425,7 +436,7 @@ func TestDispatch_SealedToolSecretWithoutBoxIsPermanent(t *testing.T) {
 func TestParseConfig_MCPServers(t *testing.T) {
 	base := `{"provider":"openai","model":"m","mcpServers":%s}`
 	good := `[{"name":"vault","url":"https://vault.example/mcp","authSecret":"Bearer t"},{"name":"tickets-2","url":"http://127.0.0.1:9000/mcp","authHeader":"X-Api-Key"}]`
-	c, err := ParseConfig(json.RawMessage(fmt.Sprintf(base, good)))
+	c, err := ParseConfig(json.RawMessage(fmt.Sprintf(base, good)), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,11 +461,14 @@ func TestParseConfig_MCPServers(t *testing.T) {
 		"not an object": `["https://a.example"]`,
 	}
 	for name, servers := range bad {
-		if _, err := ParseConfig(json.RawMessage(fmt.Sprintf(base, servers))); err == nil {
+		if _, err := ParseConfig(json.RawMessage(fmt.Sprintf(base, servers)), true); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	if _, err := ParseConfig(json.RawMessage(`{"provider":"openai","model":"m","mcp_servers":[]}`)); err == nil || !strings.Contains(err.Error(), "mcpServers") {
+	if _, err := ParseConfig(json.RawMessage(fmt.Sprintf(base, good)), false); err == nil {
+		t.Error("loopback http accepted outside development")
+	}
+	if _, err := ParseConfig(json.RawMessage(`{"provider":"openai","model":"m","mcp_servers":[]}`), true); err == nil || !strings.Contains(err.Error(), "mcpServers") {
 		t.Errorf("snake_case mcp_servers: %v, want a pointer to mcpServers", err)
 	}
 }
@@ -499,5 +513,195 @@ func TestFit(t *testing.T) {
 	}
 	if _, cut = fitJSON(raw, 10); !cut {
 		t.Fatal("a budget too small for any content must still report a cut")
+	}
+}
+
+// useVaults points the harness's agent at the given stub servers, named
+// v0, v1, ... in order.
+func useVaults(t *testing.T, h *toolHarness, vs ...*vault) {
+	t.Helper()
+	var servers []MCPServer
+	for i, v := range vs {
+		srv := httptest.NewServer(v)
+		t.Cleanup(srv.Close)
+		servers = append(servers, MCPServer{Name: fmt.Sprintf("v%d", i), URL: srv.URL, AuthHeader: "Authorization"})
+	}
+	cfg, _ := json.Marshal(Config{Provider: ProviderOpenAI, Model: "m", MCPServers: servers})
+	h.turn.Agent.Managed = cfg
+}
+
+func answer(int, aibuilder.MessageRequest) aibuilder.MessageResponse {
+	return aibuilder.MessageResponse{Text: "ok"}
+}
+
+func offered(h *toolHarness) []string {
+	var names []string
+	for _, td := range h.model.reqs[0].Tools {
+		names = append(names, td.Name)
+	}
+	return names
+}
+
+// TestDispatch_ToolCountCaps: at most 64 tools per server and 128 per turn
+// are offered, in server order; the rest are skipped with a warning.
+func TestDispatch_ToolCountCaps(t *testing.T) {
+	h := newToolHarness(t, answer)
+	useVaults(t, h, &vault{extra: 70}, &vault{extra: 70}, &vault{extra: 70})
+	if _, err := h.exec.Dispatch(context.Background(), h.turn); err != nil {
+		t.Fatal(err)
+	}
+	names := offered(h)
+	if len(names) != maxToolsPerTurn {
+		t.Fatalf("offered %d tools, want %d", len(names), maxToolsPerTurn)
+	}
+	if names[0] != "v0__get_record" || names[maxToolsPerServer-1] != "v0__t057" || names[maxToolsPerServer] != "v1__get_record" || names[maxToolsPerTurn-1] != "v1__t057" {
+		t.Fatalf("offered order = %v ... %v", names[:2], names[len(names)-2:])
+	}
+	if !strings.Contains(h.logs.String(), "managed agent tool skipped") {
+		t.Fatalf("no warning for skipped tools:\n%s", h.logs.String())
+	}
+}
+
+// TestDispatch_ToolDefinitionCaps: a definition over 32 KiB is skipped, and
+// the turn's definitions stay within 256 KiB.
+func TestDispatch_ToolDefinitionCaps(t *testing.T) {
+	h := newToolHarness(t, answer)
+	useVaults(t, h, &vault{extra: 1, desc: maxToolDefBytes}, &vault{extra: 40, desc: 6 << 10}, &vault{extra: 40, desc: 6 << 10})
+	if _, err := h.exec.Dispatch(context.Background(), h.turn); err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, td := range h.model.reqs[0].Tools {
+		if td.Name == "v0__t000" {
+			t.Fatal("an oversized definition was offered")
+		}
+		total += len(td.Name) + len(td.Description) + len(td.InputSchema)
+	}
+	if total > maxToolDefsBytes || len(h.model.reqs[0].Tools) < 10 {
+		t.Fatalf("definitions total %d bytes over %d tools", total, len(h.model.reqs[0].Tools))
+	}
+	if !strings.Contains(h.logs.String(), "managed agent tool skipped") {
+		t.Fatal("no warning for skipped tools")
+	}
+}
+
+// TestDispatch_ServersAreListedInParallel: slow servers are listed at once,
+// not one after another, and tool order stays the configured order.
+func TestDispatch_ServersAreListedInParallel(t *testing.T) {
+	h := newToolHarness(t, answer)
+	h.exec.toolTimeout = 2 * time.Second
+	useVaults(t, h, &vault{listDelay: 300 * time.Millisecond}, &vault{listDelay: 300 * time.Millisecond}, &vault{listDelay: 300 * time.Millisecond})
+	start := time.Now()
+	if _, err := h.exec.Dispatch(context.Background(), h.turn); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 800*time.Millisecond {
+		t.Fatalf("listing three 300ms servers took %v", d)
+	}
+	names := offered(h)
+	if len(names) != 18 || names[0] != "v0__get_record" || names[6] != "v1__get_record" || names[12] != "v2__get_record" {
+		t.Fatalf("offered = %v", names)
+	}
+}
+
+// TestDispatch_FinalRoundWithoutTextFallsBack: a model that still asks for
+// tools on the last round gets a fixed reply rather than a failed turn that
+// would rerun forever.
+func TestDispatch_FinalRoundWithoutTextFallsBack(t *testing.T) {
+	h := newToolHarness(t, func(n int, req aibuilder.MessageRequest) aibuilder.MessageResponse {
+		return aibuilder.MessageResponse{ToolCalls: []aibuilder.ToolCall{call(fmt.Sprintf("c%d", n), "vault__search_vault", `{}`)}}
+	})
+	reply, err := h.exec.Dispatch(context.Background(), h.turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.model.reqs) != maxModelRounds || reply.Parts[0].Text != fallbackReply {
+		t.Fatalf("model calls %d reply %+v", len(h.model.reqs), reply)
+	}
+}
+
+// TestDispatch_LogNamesOnlyOfferedToolsAndBoundsCallIDs: a name the model
+// made up is logged as "unknown", and a call id is cut to 64 bytes.
+func TestDispatch_LogNamesOnlyOfferedToolsAndBoundsCallIDs(t *testing.T) {
+	longID := strings.Repeat("i", 200)
+	h := newToolHarness(t, func(n int, req aibuilder.MessageRequest) aibuilder.MessageResponse {
+		if n == 1 {
+			return aibuilder.MessageResponse{ToolCalls: []aibuilder.ToolCall{call(longID, "INVENTED-NAME-MARKER", `{}`)}}
+		}
+		return aibuilder.MessageResponse{Text: "ok"}
+	})
+	if _, err := h.exec.Dispatch(context.Background(), h.turn); err != nil {
+		t.Fatal(err)
+	}
+	logs := h.logs.String()
+	if strings.Contains(logs, "INVENTED-NAME-MARKER") || strings.Contains(logs, longID[:65]) || !strings.Contains(logs, `"tool":"unknown"`) || !strings.Contains(logs, `"call_id":"`+longID[:64]+`"`) {
+		t.Fatalf("log:\n%s", logs)
+	}
+}
+
+// TestDispatch_ToolAliases: a tool name the model APIs would refuse, or one
+// too long, is offered under a deterministic alias that maps back to the
+// original; a name offered twice is skipped.
+func TestDispatch_ToolAliases(t *testing.T) {
+	long := strings.Repeat("x", 70)
+	h := newToolHarness(t, func(n int, req aibuilder.MessageRequest) aibuilder.MessageResponse {
+		if n == 1 {
+			var calls []aibuilder.ToolCall
+			for i, td := range req.Tools {
+				if strings.HasPrefix(td.Name, "v0__notes_search_") || strings.HasPrefix(td.Name, "v0__"+long[:10]) {
+					calls = append(calls, call(fmt.Sprintf("c%d", i), td.Name, `{}`))
+				}
+			}
+			return aibuilder.MessageResponse{ToolCalls: calls}
+		}
+		return aibuilder.MessageResponse{Text: "ok"}
+	})
+	v := &vault{more: []string{"notes.search", long, "dup", "dup"}}
+	useVaults(t, h, v)
+	if _, err := h.exec.Dispatch(context.Background(), h.turn); err != nil {
+		t.Fatal(err)
+	}
+	names := offered(h)
+	if len(names) != 9 || names[8] != "v0__dup" {
+		t.Fatalf("offered = %v", names)
+	}
+	for _, n := range names {
+		if !toolNamePattern.MatchString(n) {
+			t.Fatalf("offered name %q breaks the provider rule", n)
+		}
+	}
+	if a, b := toolAlias("v0", "notes.search"), toolAlias("v0", "notes.search"); a != b || a != names[6] || a == toolAlias("v0", "notes,search") {
+		t.Fatalf("alias not deterministic or not distinct: %q %q", a, b)
+	}
+	if len(names[7]) > 64 || !strings.HasPrefix(names[7], "v0__xxxx") {
+		t.Fatalf("long alias = %q", names[7])
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if strings.Join(v.calls, ",") != "notes.search,"+long {
+		t.Fatalf("server saw calls %v, want the original names", v.calls)
+	}
+	if !strings.Contains(h.logs.String(), "managed agent tool skipped") {
+		t.Fatal("no warning for the duplicate")
+	}
+}
+
+// TestParseConfig_AuthHeaderRules: the auth header must be a header token
+// that does not steer routing, framing or the protocol, or impersonate the
+// correlation headers.
+func TestParseConfig_AuthHeaderRules(t *testing.T) {
+	cfg := func(h string) json.RawMessage {
+		b, _ := json.Marshal(map[string]any{"provider": "openai", "model": "m", "mcpServers": []any{map[string]any{"name": "v", "url": "https://a.example", "authHeader": h}}})
+		return b
+	}
+	for _, h := range []string{"Authorization", "X-Api-Key", "x-vault-token", "Api_Key"} {
+		if _, err := ParseConfig(cfg(h), false); err != nil {
+			t.Errorf("%q refused: %v", h, err)
+		}
+	}
+	for _, h := range []string{"Bad Header", "X:Y", "Host", "connection", "Keep-Alive", "Proxy-Authorization", "proxy-anything", "TE", "Trailer", "Transfer-Encoding", "Upgrade", "Content-Length", "content-type", "Accept", "MCP-Session-Id", "Mcp-Protocol-Version", "Forwarded", "X-Forwarded-For", "x-forwarded-host", "notify-agent-id", "NOTIFY-SUBSCRIBER-ID", strings.Repeat("a", 65)} {
+		if _, err := ParseConfig(cfg(h), false); err == nil {
+			t.Errorf("%q accepted", h)
+		}
 	}
 }

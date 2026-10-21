@@ -38,6 +38,15 @@ type Service struct {
 	// box seals a managed agent's API key before it is stored. Without one,
 	// an agent that sends a key is refused rather than stored in plaintext.
 	box *secretbox.Box
+	// loopbackMCP admits managed agents' MCP servers on loopback, over http
+	// too. Development only.
+	loopbackMCP bool
+}
+
+// WithLoopbackMCP admits MCP servers on loopback when allow is set.
+func (svc *Service) WithLoopbackMCP(allow bool) *Service {
+	svc.loopbackMCP = allow
+	return svc
 }
 
 // WithSecretBox seals managed agents' API keys with box.
@@ -124,7 +133,7 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	if err := checkManaged(req.Runtime, req.Managed); err != nil {
+	if err := svc.checkManaged(req.Runtime, req.Managed); err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
@@ -195,19 +204,22 @@ func (svc *Service) listAgents(w http.ResponseWriter, r *http.Request) {
 // so a mistake is a 422 now rather than a failed turn later. Settings left
 // out entirely are allowed: an agent can be created first and configured
 // after.
-func checkManaged(runtime string, raw json.RawMessage) error {
+func (svc *Service) checkManaged(runtime string, raw json.RawMessage) error {
 	if runtime != agentdomain.RuntimeManaged || len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
-	_, err := managed.ParseConfig(raw)
+	_, err := managed.ParseConfig(raw, svc.loopbackMCP)
 	return err
 }
 
 // sealManagedKey seals the plaintext secrets in a managed agent's settings:
 // the apiKey and each mcpServers entry's authSecret. When next carries no
 // secret, the one in prev (already sealed) is kept, so changing a prompt does
-// not mean sending the key again; a server's secret is kept for the server of
-// the same name. An explicit empty secret clears it. A secret cannot be
+// not mean sending the key again. A secret is kept only while it goes to the
+// same place: the apiKey while provider and baseUrl are unchanged, a server's
+// secret while the server of the same name keeps its url and authHeader.
+// Otherwise the secret must be sent again, so an edit cannot redirect a
+// stored secret. An explicit empty secret clears it. A secret cannot be
 // stored without a secret box.
 func (svc *Service) sealManagedKey(next, prev json.RawMessage) (json.RawMessage, error) {
 	if len(next) == 0 {
@@ -224,7 +236,8 @@ func (svc *Service) sealManagedKey(next, prev json.RawMessage) (json.RawMessage,
 	if len(prev) > 0 {
 		_ = json.Unmarshal(prev, &old)
 	}
-	if err := svc.sealSecret(m, old, "apiKey", "agent API key"); err != nil {
+	sameModel := strings.EqualFold(field(m, "provider"), field(old, "provider")) && field(m, "baseUrl") == field(old, "baseUrl")
+	if err := svc.sealSecret(m, old, sameModel, "apiKey", "agent API key"); err != nil {
 		return nil, err
 	}
 	oldServers := map[string]map[string]any{}
@@ -244,7 +257,9 @@ func (svc *Service) sealManagedKey(next, prev json.RawMessage) (json.RawMessage,
 				continue
 			}
 			name, _ := sm["name"].(string)
-			if err := svc.sealSecret(sm, oldServers[name], "authSecret", "MCP server secret"); err != nil {
+			o := oldServers[name]
+			same := field(sm, "url") == field(o, "url") && strings.EqualFold(authHeader(sm), authHeader(o))
+			if err := svc.sealSecret(sm, o, same, "authSecret", "MCP server secret"); err != nil {
 				return nil, err
 			}
 		}
@@ -252,14 +267,33 @@ func (svc *Service) sealManagedKey(next, prev json.RawMessage) (json.RawMessage,
 	return json.Marshal(m)
 }
 
-// sealSecret seals m[key], keeps old[key] when m has none, and clears it
-// when it is empty.
-func (svc *Service) sealSecret(m, old map[string]any, key, what string) error {
+// field is m[key] as a trimmed string, "" when absent.
+func field(m map[string]any, key string) string {
+	s, _ := m[key].(string)
+	return strings.TrimSpace(s)
+}
+
+func authHeader(server map[string]any) string {
+	if h := field(server, "authHeader"); h != "" {
+		return h
+	}
+	return "Authorization"
+}
+
+// sealSecret seals m[key], keeps old[key] when m has none and same says it
+// still goes to the same place, and clears it when it is empty. A stored
+// secret whose destination changed must be sent again.
+func (svc *Service) sealSecret(m, old map[string]any, same bool, key, what string) error {
 	secret, sent := m[key].(string)
 	if !sent {
-		if k, ok := old[key].(string); ok && k != "" {
-			m[key] = k
+		k, ok := old[key].(string)
+		if !ok || k == "" {
+			return nil
 		}
+		if !same {
+			return fmt.Errorf("the %s was stored for another address; send %s again to use it here", what, key)
+		}
+		m[key] = k
 		return nil
 	}
 	if secret == "" {
@@ -399,7 +433,7 @@ func (svc *Service) patchAgent(w http.ResponseWriter, r *http.Request) {
 		agent.BridgeURL = *req.BridgeURL
 	}
 	if req.Managed != nil {
-		if err := checkManaged(agent.Runtime, *req.Managed); err != nil {
+		if err := svc.checkManaged(agent.Runtime, *req.Managed); err != nil {
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}

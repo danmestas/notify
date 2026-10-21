@@ -285,9 +285,29 @@ func orEmptyLabels(l map[string]string) map[string]string {
 	return l
 }
 
+// hideAuthSecrets replaces every authSecret, at any depth, with
+// authSecretSet.
+func hideAuthSecrets(v any) {
+	switch x := v.(type) {
+	case map[string]any:
+		if s, ok := x["authSecret"]; ok {
+			delete(x, "authSecret")
+			str, _ := s.(string)
+			x["authSecretSet"] = str != ""
+		}
+		for _, c := range x {
+			hideAuthSecrets(c)
+		}
+	case []any:
+		for _, c := range x {
+			hideAuthSecrets(c)
+		}
+	}
+}
+
 // hideAPIKey replaces a managed agent's API key with "apiKeySet": true, and
-// each MCP server's authSecret with "authSecretSet": true. A secret never
-// leaves notify once stored.
+// every authSecret with "authSecretSet": true. A secret never leaves notify
+// once stored.
 func hideAPIKey(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return raw
@@ -300,16 +320,7 @@ func hideAPIKey(raw json.RawMessage) json.RawMessage {
 		delete(m, "apiKey")
 		m["apiKeySet"] = k != ""
 	}
-	if servers, ok := m["mcpServers"].([]any); ok {
-		for _, s := range servers {
-			if sm, ok := s.(map[string]any); ok {
-				if k, ok := sm["authSecret"].(string); ok {
-					delete(sm, "authSecret")
-					sm["authSecretSet"] = k != ""
-				}
-			}
-		}
-	}
+	hideAuthSecrets(m)
 	out, err := json.Marshal(m)
 	if err != nil {
 		return nil
