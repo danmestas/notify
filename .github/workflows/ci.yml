@@ -37,7 +37,7 @@ jobs:
         run: go build ./...
       - name: build dagnats sidecar
         run: |
-          # danmestas/dagnats v0.0.26 (9c16ddd), 2026-10-17. Pinned to the
+          # danmestas/dagnats v0.0.30 (176ad78), 2026-10-20. Pinned to the
           # release tag rather than a bare SHA so the version being run is
           # legible; the SHA is recorded here for traceability.
           #
@@ -51,7 +51,7 @@ jobs:
           #        compiles to so its window can be resolved per subscriber from
           #        the run input (#336)
           # Bump here and in Dockerfile's DAGNATS_VERSION together.
-          GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@v0.0.26
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/danmestas/dagnats/cmd/dagnats@v0.0.30
           echo "DAGNATS_BIN=$RUNNER_TEMP/bin/dagnats" >> "$GITHUB_ENV"
       - name: test (race + coverage)
         # Explicit -timeout for the same reason as lefthook.yml: Go's 10m
