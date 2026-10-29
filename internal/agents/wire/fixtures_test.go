@@ -63,7 +63,7 @@ var fixtures = []struct {
 	}},
 	{"activity", reflect.TypeOf(wire.Activity{}), wire.FromActivity(agentdomain.Activity{
 		ID: "x1", ConversationID: "c1", Role: "agent", RunID: "r1", CreatedAt: "2026-10-02T00:00:00Z",
-		Content: json.RawMessage(`{"parts":[{"text":"Shall I reply?"}],"action":{"label":"Yes","value":"yes"}}`),
+		Content: json.RawMessage(`{"parts":[{"text":"Shall I reply?"}],"action":{"label":"Yes","value":"yes"},"attachments":[{"name":"invoice.md","mediaType":"text/markdown","text":"# Invoice"}]}`),
 	})},
 }
 

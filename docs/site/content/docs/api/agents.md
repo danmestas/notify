@@ -44,6 +44,6 @@ The JSON formats are pinned by fixtures in `internal/agents/wire/testdata`; orga
 
 **Conversation summary** (the cross-agent list): `{conversationId, agentIdentifier, agentName, subscriberId, platformThreadId, status, lastMessageAt, lastActivityId}`.
 
-**Activity**: `{id, conversationId, role, content: {parts: [{type, text}], action?: {label, value}}, runId?, createdAt}`.
+**Activity**: `{id, conversationId, role, content: {parts: [{type, text}], action?: {label, value}, attachments?: [{name, mediaType, text}]}, runId?, createdAt}`.
 
 **Draft list**: `{drafts: […], cursor, gap}`; see [Drafts](../../inbox-and-agents/drafts) for the draft fields.

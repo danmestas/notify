@@ -151,6 +151,8 @@ func FromActivity(a agentdomain.Activity) Activity {
 type Content struct {
 	Parts  []Part                       `json:"parts"`
 	Action *agentdomain.SuggestedAction `json:"action,omitempty"`
+	// Attachments are the text files a user sent with the message.
+	Attachments []agentdomain.Attachment `json:"attachments,omitempty"`
 }
 
 // PartText is the type of a text part, the only kind written today.
@@ -170,7 +172,8 @@ func decodeContent(activityID string, raw json.RawMessage) Content {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"parts"`
-		Action *agentdomain.SuggestedAction `json:"action"`
+		Action      *agentdomain.SuggestedAction `json:"action"`
+		Attachments []agentdomain.Attachment     `json:"attachments"`
 	}
 	out := Content{Parts: []Part{}}
 	if len(raw) == 0 {
@@ -188,6 +191,7 @@ func decodeContent(activityID string, raw json.RawMessage) Content {
 		out.Parts = append(out.Parts, Part{Type: t, Text: p.Text})
 	}
 	out.Action = stored.Action
+	out.Attachments = stored.Attachments
 	return out
 }
 

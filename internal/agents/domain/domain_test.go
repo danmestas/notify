@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 )
 
@@ -91,6 +92,55 @@ func TestValidateLogo(t *testing.T) {
 			err := ValidateLogo(tc.logo)
 			if (err == nil) != tc.ok {
 				t.Fatalf("ValidateLogo err = %v, want ok=%v", err, tc.ok)
+			}
+		})
+	}
+}
+
+func TestValidateAttachments(t *testing.T) {
+	ok := Attachment{Name: "mail.md", MediaType: "text/markdown", Text: "hello"}
+	many := func(n int) []Attachment {
+		out := make([]Attachment, n)
+		for i := range out {
+			out[i] = ok
+		}
+		return out
+	}
+	cases := []struct {
+		name string
+		in   []Attachment
+		ok   bool
+	}{
+		{"none", nil, true},
+		{"one", []Attachment{ok}, true},
+		{"eight", many(8), true},
+		{"nine", many(9), false},
+		{"no name", []Attachment{{MediaType: "text/plain", Text: "x"}}, false},
+		{"name at limit", []Attachment{{Name: strings.Repeat("n", MaxAttachmentName), MediaType: "text/plain"}}, true},
+		{"name too long", []Attachment{{Name: strings.Repeat("n", MaxAttachmentName+1), MediaType: "text/plain"}}, false},
+		{"no media type", []Attachment{{Name: "a", Text: "x"}}, false},
+		{"media type with a newline", []Attachment{{Name: "a", MediaType: "text/plain\nx"}}, false},
+		{"name with a newline", []Attachment{{Name: "a\nb", MediaType: "text/plain"}}, false},
+		{"text at limit", []Attachment{{Name: "a", MediaType: "text/plain", Text: strings.Repeat("t", MaxAttachmentBytes)}}, true},
+		{"text over limit", []Attachment{{Name: "a", MediaType: "text/plain", Text: strings.Repeat("t", MaxAttachmentBytes+1)}}, false},
+		{"total at limit", []Attachment{
+			{Name: "a", MediaType: "text/plain", Text: strings.Repeat("t", MaxAttachmentBytes)},
+			{Name: "b", MediaType: "text/plain", Text: strings.Repeat("t", MaxAttachmentBytes)},
+			{Name: "c", MediaType: "text/plain", Text: strings.Repeat("t", MaxAttachmentBytes)},
+			{Name: "d", MediaType: "text/plain", Text: strings.Repeat("t", MaxAttachmentBytes)},
+		}, true},
+		{"total over limit", []Attachment{
+			{Name: "a", MediaType: "text/plain", Text: strings.Repeat("t", MaxAttachmentBytes)},
+			{Name: "b", MediaType: "text/plain", Text: strings.Repeat("t", MaxAttachmentBytes)},
+			{Name: "c", MediaType: "text/plain", Text: strings.Repeat("t", MaxAttachmentBytes)},
+			{Name: "d", MediaType: "text/plain", Text: strings.Repeat("t", MaxAttachmentBytes)},
+			{Name: "e", MediaType: "text/plain", Text: "x"},
+		}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateAttachments(tc.in); (err == nil) != tc.ok {
+				t.Fatalf("ValidateAttachments err = %v, want ok=%v", err, tc.ok)
 			}
 		})
 	}

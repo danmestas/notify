@@ -196,6 +196,55 @@ type Part struct {
 	Text string `json:"text"`
 }
 
+// Limits on the text attachments of one user message.
+const (
+	MaxAttachments           = 8
+	MaxAttachmentBytes       = 64 * 1024
+	MaxAttachmentsTotalBytes = 256 * 1024
+	MaxAttachmentName        = 200
+	maxAttachmentMediaType   = 127
+)
+
+// Attachment is a text file a user sent with a message: an email as Markdown,
+// or a Markdown or plain-text file. The model reads it in the user's turn.
+type Attachment struct {
+	Name      string `json:"name"`
+	MediaType string `json:"mediaType"`
+	Text      string `json:"text"`
+}
+
+// ValidateAttachments checks the attachments of one user message against the
+// count, size and naming limits.
+func ValidateAttachments(atts []Attachment) error {
+	if len(atts) > MaxAttachments {
+		return fmt.Errorf("at most %d attachments", MaxAttachments)
+	}
+	total := 0
+	for i, a := range atts {
+		if a.Name == "" || len(a.Name) > MaxAttachmentName {
+			return fmt.Errorf("attachment %d: name must be 1-%d characters", i, MaxAttachmentName)
+		}
+		if a.MediaType == "" || len(a.MediaType) > maxAttachmentMediaType {
+			return fmt.Errorf("attachment %d: mediaType must be 1-%d characters", i, maxAttachmentMediaType)
+		}
+		if hasControl(a.Name) || hasControl(a.MediaType) {
+			return fmt.Errorf("attachment %d: name and mediaType may not contain control characters", i)
+		}
+		if len(a.Text) > MaxAttachmentBytes {
+			return fmt.Errorf("attachment %d: text is larger than %d bytes", i, MaxAttachmentBytes)
+		}
+		total += len(a.Text)
+	}
+	if total > MaxAttachmentsTotalBytes {
+		return fmt.Errorf("attachments are larger than %d bytes in total", MaxAttachmentsTotalBytes)
+	}
+	return nil
+}
+
+func hasControl(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
+}
+
 // Draft is an agent's reply to an email, held for the mailbox owner to review
 // and send. notify never sends it. To, Subject, InReplyTo and References are
 // advisory: the mailbox owner recomputes recipients and threading itself.

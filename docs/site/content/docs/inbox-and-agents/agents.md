@@ -86,6 +86,7 @@ It answers `202`: the turn runs as engine work, never inside the request.
 | `subscriberId` | Required. |
 | `text` | Required. |
 | `conversationId` | The thread handle. Empty starts a new conversation; pass the one you were given to continue it. |
+| `attachments` | Optional text files: `[{"name", "mediaType", "text"}]`, for example an email as Markdown. At most 8; `text` at most 64 KB each and 256 KB in all; `name` at most 200 characters. Stored with the message and returned by the transcript as `content.attachments`. A managed agent reads each one after your text as `Attached: <name> (<mediaType>)` and a fenced block, in later turns too. Over a limit is `422`. |
 
 `Idempotency-Key` is optional: 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `_`, `-` (`422` otherwise). Retrying a compose with the same key in the same conversation returns the original message, conversation and run instead of posting twice; a new conversation opened with a key gets a thread id derived from it, so a retry of the opening message lands in the same thread. Reusing a key for a *different* message is `409`.
 
