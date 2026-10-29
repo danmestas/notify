@@ -30,6 +30,7 @@ curl -X POST localhost:3000/v1/agents \
 | `meshSubject` | For `mesh`: the NATS subject prompts are published to. |
 | `managed` | For `managed`: the model settings. See [Managed agents](../managed-agents). |
 | `labels` | Free-form tags. See below. |
+| `logo` | Optional. A `data:` URI (`image/png`, `image/jpeg` or `image/webp`, base64), at most 96 KB decoded; anything else, SVG included, is `422`. `PATCH` with `""` clears it. |
 
 `GET /v1/agents`, `GET /v1/agents/{identifier}`, `PATCH /v1/agents/{identifier}` (a partial update: only the fields you send change) and `DELETE /v1/agents/{identifier}` (`204`) complete the CRUD. `bridgeUrl` appears in responses and is accepted, but there is no `bridge` runtime: only `mesh` and `managed` can be created or switched to.
 
@@ -38,7 +39,7 @@ An agent object:
 ```json
 { "id": "…", "identifier": "support", "name": "Support", "description": "", "runtime": "mesh",
   "active": true, "meshSubject": "agents.prompt.support", "bridgeUrl": "",
-  "welcomeMessage": "", "labels": {"owner": "lou"}, "createdAt": "…", "updatedAt": "…" }
+  "welcomeMessage": "", "labels": {"owner": "lou"}, "logo": "", "createdAt": "…", "updatedAt": "…" }
 ```
 
 `managed` is included for managed agents; organization and environment ids are never part of the format.
@@ -85,10 +86,15 @@ It answers `202`: the turn runs as engine work, never inside the request.
 | `subscriberId` | Required. |
 | `text` | Required. |
 | `conversationId` | The thread handle. Empty starts a new conversation; pass the one you were given to continue it. |
+| `attachments` | Optional text files: `[{"name", "mediaType", "text"}]`, for example an email as Markdown. At most 8; `text` at most 64 KB each and 256 KB in all; `name` at most 200 characters. Stored with the message and returned by the transcript as `content.attachments`. A managed agent reads each one after your text as `Attached: <name> (<mediaType>)` and a fenced block, in later turns too. Over a limit is `422`. |
 
 `Idempotency-Key` is optional: 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `_`, `-` (`422` otherwise). Retrying a compose with the same key in the same conversation returns the original message, conversation and run instead of posting twice; a new conversation opened with a key gets a thread id derived from it, so a retry of the opening message lands in the same thread. Reusing a key for a *different* message is `409`.
 
 Errors: `404` unknown agent, `422` for a missing field or a runtime that cannot execute on this server, `409` for a key conflict.
+
+## Sources
+
+A managed agent's reply lists what it drew on in `content.sources`: one entry per tool call it made, in order, then each attachment of the user's message it read, at most 20. An entry is `{"server", "tool", "label", "ref"?, "error"?}`. `server` and `tool` name the MCP server and tool; `label` is the call's `query`, `id`, `path` or `title` argument (the first present, cut to 120 characters), else the tool name; `ref` is the `id` or `path` argument when there is one; `error` is `true` for a call that failed. An attachment is `{"server": "", "tool": "attachment", "label": "<name>"}`. Mesh agents report no sources.
 
 ## Reading conversations
 

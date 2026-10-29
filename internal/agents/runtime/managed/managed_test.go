@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
@@ -123,5 +124,59 @@ func TestParseConfig_AnyProvider(t *testing.T) {
 	}
 	if _, err := ParseConfig(json.RawMessage(`{"provider":"bard","model":"m"}`), false); err == nil {
 		t.Fatal("an unknown provider with no baseUrl was accepted")
+	}
+}
+
+func actWith(role, text string, atts ...agentdomain.Attachment) agentdomain.Activity {
+	c, _ := json.Marshal(map[string]any{"parts": []map[string]string{{"text": text}}, "attachments": atts})
+	return agentdomain.Activity{Role: role, Content: c}
+}
+
+// TestConversation_IncludesAttachments: an attachment follows the user's text
+// as a labelled fenced block, in the new message and in history, so later
+// turns still see it.
+func TestConversation_IncludesAttachments(t *testing.T) {
+	mail := agentdomain.Attachment{Name: "invoice.md", MediaType: "text/markdown", Text: "# Invoice\n\nTotal: 5"}
+	cases := []struct {
+		name    string
+		history []agentdomain.Activity
+		msg     agentdomain.Activity
+		want    []aibuilder.Message
+	}{
+		{
+			name: "new message",
+			msg:  actWith("user", "Summarize", mail),
+			want: []aibuilder.Message{{Role: aibuilder.RoleUser, Text: "Summarize\n\nAttached: invoice.md (text/markdown)\n```\n# Invoice\n\nTotal: 5\n```"}},
+		},
+		{
+			name:    "history keeps it",
+			history: []agentdomain.Activity{actWith("user", "Summarize", mail), act("agent", "It is 5.")},
+			msg:     act("user", "And tax?"),
+			want: []aibuilder.Message{
+				{Role: aibuilder.RoleUser, Text: "Summarize\n\nAttached: invoice.md (text/markdown)\n```\n# Invoice\n\nTotal: 5\n```"},
+				{Role: aibuilder.RoleAssistant, Text: "It is 5."},
+				{Role: aibuilder.RoleUser, Text: "And tax?"},
+			},
+		},
+		{
+			name: "fence outgrows backticks in the text",
+			msg:  actWith("user", "Read", agentdomain.Attachment{Name: "a.md", MediaType: "text/markdown", Text: "```go\nx\n```"}),
+			want: []aibuilder.Message{{Role: aibuilder.RoleUser, Text: "Read\n\nAttached: a.md (text/markdown)\n````\n```go\nx\n```\n````"}},
+		},
+		{
+			name: "two attachments, no text",
+			msg: actWith("user", "",
+				agentdomain.Attachment{Name: "a.txt", MediaType: "text/plain", Text: "one"},
+				agentdomain.Attachment{Name: "b.txt", MediaType: "text/plain", Text: "two"}),
+			want: []aibuilder.Message{{Role: aibuilder.RoleUser, Text: "Attached: a.txt (text/plain)\n```\none\n```\n\nAttached: b.txt (text/plain)\n```\ntwo\n```"}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := conversation(tc.history, tc.msg)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("conversation = %#v\nwant %#v", got, tc.want)
+			}
+		})
 	}
 }

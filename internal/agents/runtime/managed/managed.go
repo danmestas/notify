@@ -197,7 +197,7 @@ func (e *Executor) Dispatch(ctx context.Context, t agentdomain.Turn) (agentdomai
 	if text == "" {
 		return agentdomain.Reply{}, errors.New("managed agent model returned no text")
 	}
-	return agentdomain.Reply{Parts: []agentdomain.Part{{Text: text}}}, nil
+	return agentdomain.Reply{Parts: []agentdomain.Part{{Text: text}}, Sources: turnSources(t.Message, tools)}, nil
 }
 
 // open returns a secret in the clear, opening it when it is sealed.
@@ -256,18 +256,49 @@ func conversation(history []agentdomain.Activity, msg agentdomain.Activity) []ai
 	return out
 }
 
+// activityBody is the part of an activity's stored content a model reads.
+type activityBody struct {
+	Parts []struct {
+		Text string `json:"text"`
+	} `json:"parts"`
+	Attachments []agentdomain.Attachment `json:"attachments"`
+}
+
+func decodeBody(a agentdomain.Activity) (activityBody, bool) {
+	var c activityBody
+	return c, json.Unmarshal(a.Content, &c) == nil
+}
+
+// activityText is what the model reads of an activity: its text, then one
+// labelled fenced block per attachment, so a later turn still sees them.
 func activityText(a agentdomain.Activity) string {
-	var c struct {
-		Parts []struct {
-			Text string `json:"text"`
-		} `json:"parts"`
-	}
-	if err := json.Unmarshal(a.Content, &c); err != nil {
+	c, ok := decodeBody(a)
+	if !ok {
 		return ""
 	}
 	var b strings.Builder
 	for _, p := range c.Parts {
 		b.WriteString(p.Text)
 	}
-	return strings.TrimSpace(b.String())
+	blocks := []string{strings.TrimSpace(b.String())}
+	for _, att := range c.Attachments {
+		fence := fenceFor(att.Text)
+		blocks = append(blocks, fmt.Sprintf("Attached: %s (%s)\n%s\n%s\n%s", att.Name, att.MediaType, fence, att.Text, fence))
+	}
+	return strings.TrimSpace(strings.Join(blocks, "\n\n"))
+}
+
+// fenceFor returns a backtick fence longer than any run of backticks in text,
+// so the text cannot close its own block.
+func fenceFor(text string) string {
+	longest, run := 0, 0
+	for _, r := range text {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	return strings.Repeat("`", max(3, longest+1))
 }

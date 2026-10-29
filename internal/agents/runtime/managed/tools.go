@@ -144,6 +144,85 @@ type toolSet struct {
 	calls  int
 	bytes  int
 	turn   agentdomain.Turn
+	// sources lists the tool calls made, in order, up to maxSources.
+	sources []agentdomain.Source
+}
+
+// maxSources, maxSourceLabel and maxSourceRef bound what a reply lists.
+const (
+	maxSources     = agentdomain.MaxSources
+	maxSourceLabel = 120
+	maxSourceRef   = 200
+)
+
+func (ts *toolSet) record(s agentdomain.Source) {
+	if len(ts.sources) < maxSources {
+		ts.sources = append(ts.sources, s)
+	}
+}
+
+// turnSources lists what a reply drew on: the attachments of the user's
+// message, then the tool calls in order, at most maxSources.
+func turnSources(msg agentdomain.Activity, ts *toolSet) []agentdomain.Source {
+	var out []agentdomain.Source
+	if body, ok := decodeBody(msg); ok {
+		for _, a := range body.Attachments {
+			out = append(out, agentdomain.Source{Tool: "attachment", Label: a.Name})
+		}
+	}
+	if ts != nil {
+		out = append(out, ts.sources...)
+	}
+	if len(out) > maxSources {
+		out = out[:maxSources]
+	}
+	return out
+}
+
+// sourceFor describes one tool call: the label is the first non-empty query,
+// id, path or title argument, else the tool name; the ref is the id or path.
+func sourceFor(server, tool string, args []byte, failed bool) agentdomain.Source {
+	var m map[string]json.RawMessage
+	_ = json.Unmarshal(args, &m)
+	arg := func(keys ...string) string {
+		for _, k := range keys {
+			raw, ok := m[k]
+			if !ok {
+				continue
+			}
+			var v any
+			if json.Unmarshal(raw, &v) != nil {
+				continue
+			}
+			switch x := v.(type) {
+			case string:
+				if x != "" {
+					return x
+				}
+			case float64:
+				return string(raw)
+			}
+		}
+		return ""
+	}
+	label := arg("query", "id", "path", "title")
+	if label == "" {
+		label = tool
+	}
+	return agentdomain.Source{
+		Server: server,
+		Tool:   tool,
+		Label:  truncateRunes(label, maxSourceLabel),
+		Ref:    truncateRunes(arg("id", "path"), maxSourceRef),
+		Error:  failed,
+	}
+}
+
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }
 
 type route struct {
@@ -353,6 +432,9 @@ func (e *Executor) callTool(ctx context.Context, ts *toolSet, call aibuilder.Too
 			result.IsError = true
 			class = "tool_error"
 		}
+	}
+	if known {
+		ts.record(sourceFor(r.server, r.tool, args, result.IsError))
 	}
 	e.log.LogAttrs(ctx, slog.LevelInfo, "managed agent tool call",
 		slog.String("agent_id", ts.turn.Agent.ID),

@@ -6,9 +6,12 @@ package domain
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
+	"strings"
 )
 
 // Allowed values of Agent.Runtime. The runtime selects how a turn is executed:
@@ -67,6 +70,57 @@ func ValidIdentifier(id string) bool {
 	return identifierPattern.MatchString(id)
 }
 
+// MaxLogoBytes is the largest decoded agent logo.
+const MaxLogoBytes = 96 * 1024
+
+// logoTypes maps each allowed logo media type to the magic bytes its image
+// data must start with. SVG is deliberately absent: it can carry script.
+var logoTypes = map[string][]string{
+	"image/png":  {"\x89PNG\r\n\x1a\n"},
+	"image/jpeg": {"\xff\xd8\xff"},
+	"image/webp": {"RIFF"},
+}
+
+// ValidateLogo checks an agent logo: empty (no logo) or a
+// data:image/{png,jpeg,webp};base64,... URI whose decoded bytes are at most
+// MaxLogoBytes and start like the declared image type.
+func ValidateLogo(logo string) error {
+	if logo == "" {
+		return nil
+	}
+	rest, ok := strings.CutPrefix(logo, "data:")
+	if !ok {
+		return errors.New("logo must be a data: URI")
+	}
+	mediaType, payload, ok := strings.Cut(rest, ";base64,")
+	if !ok {
+		return errors.New("logo must be a base64 data: URI")
+	}
+	magics, ok := logoTypes[mediaType]
+	if !ok {
+		return errors.New("logo must be image/png, image/jpeg or image/webp")
+	}
+	if base64.StdEncoding.DecodedLen(len(payload)) > MaxLogoBytes+2 {
+		return fmt.Errorf("logo is larger than %d bytes", MaxLogoBytes)
+	}
+	raw, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return errors.New("logo is not valid base64")
+	}
+	if len(raw) == 0 {
+		return errors.New("logo has no image data")
+	}
+	if len(raw) > MaxLogoBytes {
+		return fmt.Errorf("logo is larger than %d bytes", MaxLogoBytes)
+	}
+	for _, m := range magics {
+		if strings.HasPrefix(string(raw), m) {
+			return nil
+		}
+	}
+	return fmt.Errorf("logo data is not a %s image", mediaType)
+}
+
 // Agent is a conversational endpoint registered with the platform, uniquely
 // identified by (environment_id, identifier). Exactly one of MeshSubject,
 // BridgeURL, or Managed is meaningful, selected by Runtime.
@@ -83,6 +137,9 @@ type Agent struct {
 	BridgeURL      string          `db:"bridge_url"`   // runtime=bridge
 	Managed        json.RawMessage `db:"managed"`      // runtime=managed: {integration_id, system_prompt, tools[], mcp_servers[], skills[]}
 	WelcomeMessage string          `db:"welcome_message"`
+	// Logo is a data: URI of a png, jpeg or webp image (see ValidateLogo);
+	// empty means none.
+	Logo string `db:"logo"`
 	// Labels are free-form key/value tags, e.g. {"owner":"lou"}, a client uses
 	// to scope which agents a user may pick. notify gives none a meaning.
 	Labels    map[string]string `db:"labels"`
@@ -139,6 +196,55 @@ type Part struct {
 	Text string `json:"text"`
 }
 
+// Limits on the text attachments of one user message.
+const (
+	MaxAttachments           = 8
+	MaxAttachmentBytes       = 64 * 1024
+	MaxAttachmentsTotalBytes = 256 * 1024
+	MaxAttachmentName        = 200
+	maxAttachmentMediaType   = 127
+)
+
+// Attachment is a text file a user sent with a message: an email as Markdown,
+// or a Markdown or plain-text file. The model reads it in the user's turn.
+type Attachment struct {
+	Name      string `json:"name"`
+	MediaType string `json:"mediaType"`
+	Text      string `json:"text"`
+}
+
+// ValidateAttachments checks the attachments of one user message against the
+// count, size and naming limits.
+func ValidateAttachments(atts []Attachment) error {
+	if len(atts) > MaxAttachments {
+		return fmt.Errorf("at most %d attachments", MaxAttachments)
+	}
+	total := 0
+	for i, a := range atts {
+		if a.Name == "" || len(a.Name) > MaxAttachmentName {
+			return fmt.Errorf("attachment %d: name must be 1-%d characters", i, MaxAttachmentName)
+		}
+		if a.MediaType == "" || len(a.MediaType) > maxAttachmentMediaType {
+			return fmt.Errorf("attachment %d: mediaType must be 1-%d characters", i, maxAttachmentMediaType)
+		}
+		if hasControl(a.Name) || hasControl(a.MediaType) {
+			return fmt.Errorf("attachment %d: name and mediaType may not contain control characters", i)
+		}
+		if len(a.Text) > MaxAttachmentBytes {
+			return fmt.Errorf("attachment %d: text is larger than %d bytes", i, MaxAttachmentBytes)
+		}
+		total += len(a.Text)
+	}
+	if total > MaxAttachmentsTotalBytes {
+		return fmt.Errorf("attachments are larger than %d bytes in total", MaxAttachmentsTotalBytes)
+	}
+	return nil
+}
+
+func hasControl(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
+}
+
 // Draft is an agent's reply to an email, held for the mailbox owner to review
 // and send. notify never sends it. To, Subject, InReplyTo and References are
 // advisory: the mailbox owner recomputes recipients and threading itself.
@@ -179,10 +285,27 @@ type Turn struct {
 	Message      Activity   // the inbound user activity
 }
 
-// Reply is a runtime's answer to a Turn.
+// MaxSources is the most sources one reply lists.
+const MaxSources = 20
+
+// Source is what an agent reply drew on: a tool call it made, or an
+// attachment of the user's message it read (Server empty, Tool "attachment").
+// Label is a short human description; Ref identifies the record or file when
+// the call named one.
+type Source struct {
+	Server string `json:"server"`
+	Tool   string `json:"tool"`
+	Label  string `json:"label"`
+	Ref    string `json:"ref,omitempty"`
+	Error  bool   `json:"error,omitempty"`
+}
+
+// Reply is a runtime's answer to a Turn. Sources is empty for a runtime that
+// does not report them.
 type Reply struct {
 	Parts   []Part
 	Actions []SuggestedAction
+	Sources []Source
 }
 
 // Runtime executes one conversation turn. Implementations (mesh, bridge,

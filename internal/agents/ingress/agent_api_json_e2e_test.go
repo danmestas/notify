@@ -19,7 +19,7 @@ import (
 // The agent API's object key sets (#9). A rename in either direction fails
 // here before it reaches a client.
 var (
-	agentKeys        = []string{"active", "bridgeUrl", "createdAt", "description", "id", "identifier", "labels", "meshSubject", "name", "runtime", "updatedAt", "welcomeMessage"}
+	agentKeys        = []string{"active", "bridgeUrl", "createdAt", "description", "id", "identifier", "labels", "logo", "meshSubject", "name", "runtime", "updatedAt", "welcomeMessage"}
 	linkKeys         = []string{"agentId", "config", "connectedAt", "id", "integrationId"}
 	conversationKeys = []string{"agentId", "createdAt", "id", "integrationId", "lastActivityAt", "platformThreadId", "status", "subscriberId"}
 	summaryKeys      = []string{"agentIdentifier", "agentName", "conversationId", "lastActivityId", "lastMessageAt", "platformThreadId", "status", "subscriberId"}

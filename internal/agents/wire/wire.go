@@ -26,6 +26,7 @@ type Agent struct {
 	Managed        json.RawMessage   `json:"managed,omitempty"`
 	WelcomeMessage string            `json:"welcomeMessage"`
 	Labels         map[string]string `json:"labels"`
+	Logo           string            `json:"logo"`
 	CreatedAt      string            `json:"createdAt"`
 	UpdatedAt      string            `json:"updatedAt"`
 }
@@ -44,6 +45,7 @@ func FromAgent(a agentdomain.Agent) Agent {
 		Managed:        hideAPIKey(a.Managed),
 		WelcomeMessage: a.WelcomeMessage,
 		Labels:         orEmptyLabels(a.Labels),
+		Logo:           a.Logo,
 		CreatedAt:      a.CreatedAt,
 		UpdatedAt:      a.UpdatedAt,
 	}
@@ -149,6 +151,11 @@ func FromActivity(a agentdomain.Activity) Activity {
 type Content struct {
 	Parts  []Part                       `json:"parts"`
 	Action *agentdomain.SuggestedAction `json:"action,omitempty"`
+	// Attachments are the text files a user sent with the message.
+	Attachments []agentdomain.Attachment `json:"attachments,omitempty"`
+	// Sources are what an agent reply drew on: the tool calls it made and the
+	// attachments it read.
+	Sources []agentdomain.Source `json:"sources,omitempty"`
 }
 
 // PartText is the type of a text part, the only kind written today.
@@ -168,7 +175,9 @@ func decodeContent(activityID string, raw json.RawMessage) Content {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"parts"`
-		Action *agentdomain.SuggestedAction `json:"action"`
+		Action      *agentdomain.SuggestedAction `json:"action"`
+		Attachments []agentdomain.Attachment     `json:"attachments"`
+		Sources     []agentdomain.Source         `json:"sources"`
 	}
 	out := Content{Parts: []Part{}}
 	if len(raw) == 0 {
@@ -186,6 +195,8 @@ func decodeContent(activityID string, raw json.RawMessage) Content {
 		out.Parts = append(out.Parts, Part{Type: t, Text: p.Text})
 	}
 	out.Action = stored.Action
+	out.Attachments = stored.Attachments
+	out.Sources = stored.Sources
 	return out
 }
 

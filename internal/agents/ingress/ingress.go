@@ -136,6 +136,9 @@ type composeRequest struct {
 	SubscriberID   string `json:"subscriberId"`
 	ConversationID string `json:"conversationId"`
 	Text           string `json:"text"`
+	// Attachments are text files sent with the message (see
+	// agentdomain.ValidateAttachments for the limits).
+	Attachments []agentdomain.Attachment `json:"attachments,omitempty"`
 }
 
 // composeResponse acknowledges an accepted turn: the thread handle to keep
@@ -188,6 +191,7 @@ func (s *Service) compose(w http.ResponseWriter, r *http.Request) {
 		ConversationID:  req.ConversationID,
 		SubscriberID:    req.SubscriberID,
 		Text:            req.Text,
+		Attachments:     req.Attachments,
 		IdempotencyKey:  key,
 	})
 	if err != nil {
@@ -198,6 +202,18 @@ func (s *Service) compose(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(composeResponse(res))
+}
+
+// userContent is the stored body of a user message.
+type userContent struct {
+	Parts       []agentdomain.Part       `json:"parts"`
+	Attachments []agentdomain.Attachment `json:"attachments,omitempty"`
+}
+
+// agentContent is the stored body of an agent reply.
+type agentContent struct {
+	Parts   []agentdomain.Part   `json:"parts"`
+	Sources []agentdomain.Source `json:"sources,omitempty"`
 }
 
 // ComposeResult is the outcome of a composed turn: the conversation thread
@@ -212,6 +228,10 @@ type ComposeResult struct {
 // ErrUnknownRuntime marks an agent whose runtime has no registered executor.
 // Callers map it to 422 (the turn cannot be dispatched on this server).
 var ErrUnknownRuntime = errors.New("agent runtime is not executable on this server")
+
+// ErrInvalidAttachments marks a compose whose attachments break the limits.
+// Callers map it to 422.
+var ErrInvalidAttachments = errors.New("invalid attachments")
 
 // ErrAgentInactive marks a compose with RequireActive to an inactive agent.
 var ErrAgentInactive = errors.New("agent is inactive")
@@ -242,6 +262,7 @@ type ComposeInput struct {
 	ConversationID  string
 	SubscriberID    string
 	Text            string
+	Attachments     []agentdomain.Attachment
 	IdempotencyKey  string
 	// RequireActive refuses an agent marked inactive with ErrAgentInactive.
 	// Set by workflow steps, which wake an agent with no person watching;
@@ -264,6 +285,9 @@ func (s *Service) Compose(ctx context.Context, scope domain.Scope, in ComposeInp
 	}
 	if in.SubscriberID == "" {
 		return ComposeResult{}, fmt.Errorf("subscriberId is required")
+	}
+	if err := agentdomain.ValidateAttachments(in.Attachments); err != nil {
+		return ComposeResult{}, fmt.Errorf("%w: %w", ErrInvalidAttachments, err)
 	}
 
 	agent, err := s.agents.Agents().GetByIdentifier(ctx, scope, in.AgentIdentifier)
@@ -301,7 +325,7 @@ func (s *Service) Compose(ctx context.Context, scope domain.Scope, in ComposeInp
 		return ComposeResult{}, err
 	}
 
-	content, err := json.Marshal(map[string][]agentdomain.Part{"parts": {{Text: in.Text}}})
+	content, err := json.Marshal(userContent{Parts: []agentdomain.Part{{Text: in.Text}}, Attachments: in.Attachments})
 	if err != nil {
 		return ComposeResult{}, err
 	}
@@ -398,7 +422,7 @@ func writeComposeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, agentstore.ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-	case errors.Is(err, ErrUnknownRuntime):
+	case errors.Is(err, ErrUnknownRuntime), errors.Is(err, ErrInvalidAttachments):
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 	case errors.Is(err, ErrIdempotencyConflict):
 		http.Error(w, err.Error(), http.StatusConflict)
@@ -662,7 +686,7 @@ func splitMessage(acts []agentdomain.Activity, activityID string) ([]agentdomain
 // send.in_app handler uses). Returns the persisted message JSON as the task
 // output.
 func (s *Service) deliverReply(ctx context.Context, scope domain.Scope, conv agentdomain.Conversation, runID string, reply agentdomain.Reply) (json.RawMessage, agentdomain.Activity, error) {
-	content, err := json.Marshal(map[string]any{"parts": reply.Parts})
+	content, err := json.Marshal(agentContent{Parts: reply.Parts, Sources: reply.Sources})
 	if err != nil {
 		return nil, agentdomain.Activity{}, fmt.Errorf("marshal reply content: %w", err)
 	}

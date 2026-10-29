@@ -29,7 +29,7 @@ var fixtures = []struct {
 	{"agent", reflect.TypeOf(wire.Agent{}), wire.FromAgent(agentdomain.Agent{
 		ID: "a1", Identifier: "support", Name: "Support", Description: "Answers support mail",
 		Runtime: "managed", Active: true, MeshSubject: "agents.support", BridgeURL: "https://bridge.example",
-		Managed: json.RawMessage(`{"integrationId":"i1"}`), WelcomeMessage: "Hi", Labels: map[string]string{"owner": "lou"}, CreatedAt: "2026-10-01T00:00:00Z", UpdatedAt: "2026-10-02T00:00:00Z",
+		Managed: json.RawMessage(`{"integrationId":"i1"}`), WelcomeMessage: "Hi", Labels: map[string]string{"owner": "lou"}, Logo: "data:image/png;base64,iVBORw0KGgo=", CreatedAt: "2026-10-01T00:00:00Z", UpdatedAt: "2026-10-02T00:00:00Z",
 	})},
 	{"agent_managed", reflect.TypeOf(wire.Agent{}), wire.FromAgent(agentdomain.Agent{
 		ID: "a2", Identifier: "ember", Name: "Ember", Runtime: "managed", Active: true,
@@ -63,7 +63,7 @@ var fixtures = []struct {
 	}},
 	{"activity", reflect.TypeOf(wire.Activity{}), wire.FromActivity(agentdomain.Activity{
 		ID: "x1", ConversationID: "c1", Role: "agent", RunID: "r1", CreatedAt: "2026-10-02T00:00:00Z",
-		Content: json.RawMessage(`{"parts":[{"text":"Shall I reply?"}],"action":{"label":"Yes","value":"yes"}}`),
+		Content: json.RawMessage(`{"parts":[{"text":"Shall I reply?"}],"action":{"label":"Yes","value":"yes"},"attachments":[{"name":"invoice.md","mediaType":"text/markdown","text":"# Invoice"}],"sources":[{"server":"vault","tool":"get_record","label":"rec_1","ref":"rec_1","error":true}]}`),
 	})},
 }
 
