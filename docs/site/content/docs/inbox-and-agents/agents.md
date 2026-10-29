@@ -92,6 +92,10 @@ It answers `202`: the turn runs as engine work, never inside the request.
 
 Errors: `404` unknown agent, `422` for a missing field or a runtime that cannot execute on this server, `409` for a key conflict.
 
+## Sources
+
+A managed agent's reply lists what it drew on in `content.sources`: one entry per tool call it made, in order, then each attachment of the user's message it read, at most 20. An entry is `{"server", "tool", "label", "ref"?, "error"?}`. `server` and `tool` name the MCP server and tool; `label` is the call's `query`, `id`, `path` or `title` argument (the first present, cut to 120 characters), else the tool name; `ref` is the `id` or `path` argument when there is one; `error` is `true` for a call that failed. An attachment is `{"server": "", "tool": "attachment", "label": "<name>"}`. Mesh agents report no sources.
+
 ## Reading conversations
 
 | Route | Returns |

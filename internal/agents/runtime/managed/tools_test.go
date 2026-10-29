@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -703,5 +704,80 @@ func TestParseConfig_AuthHeaderRules(t *testing.T) {
 		if _, err := ParseConfig(cfg(h), false); err == nil {
 			t.Errorf("%q accepted", h)
 		}
+	}
+}
+
+// TestDispatch_RecordsSources: each tool call becomes a source, in order, with
+// a label from its arguments, an optional ref, and error set when it failed;
+// each attachment the turn used follows as a source with no server.
+func TestDispatch_RecordsSources(t *testing.T) {
+	h := newToolHarness(t, func(n int, req aibuilder.MessageRequest) aibuilder.MessageResponse {
+		if n == 1 {
+			return aibuilder.MessageResponse{ToolCalls: []aibuilder.ToolCall{
+				call("c1", "vault__get_record", `{"id":"rec_1"}`),
+				call("c2", "vault__search_vault", `{"query":"Friday lunch","limit":3}`),
+				call("c3", "vault__fail", `{}`),
+				call("c4", "vault__missing", `{}`),
+			}}
+		}
+		return aibuilder.MessageResponse{Text: "Done."}
+	})
+	h.turn.Message = actWith("user", "check", agentdomain.Attachment{Name: "mail.md", MediaType: "text/markdown", Text: "x"})
+	reply, err := h.exec.Dispatch(context.Background(), h.turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []agentdomain.Source{
+		{Server: "", Tool: "attachment", Label: "mail.md"},
+		{Server: "vault", Tool: "get_record", Label: "rec_1", Ref: "rec_1"},
+		{Server: "vault", Tool: "search_vault", Label: "Friday lunch"},
+		{Server: "vault", Tool: "fail", Label: "fail", Error: true},
+	}
+	if !reflect.DeepEqual(reply.Sources, want) {
+		t.Fatalf("sources = %+v\nwant %+v", reply.Sources, want)
+	}
+}
+
+func TestSourceFor(t *testing.T) {
+	long := strings.Repeat("é", 200)
+	cases := []struct {
+		name string
+		args string
+		want agentdomain.Source
+	}{
+		{"query", `{"query":"a b"}`, agentdomain.Source{Server: "s", Tool: "t", Label: "a b"}},
+		{"id sets ref", `{"id":"r1"}`, agentdomain.Source{Server: "s", Tool: "t", Label: "r1", Ref: "r1"}},
+		{"path sets ref", `{"path":"notes/a.md"}`, agentdomain.Source{Server: "s", Tool: "t", Label: "notes/a.md", Ref: "notes/a.md"}},
+		{"title is label only", `{"title":"Plan"}`, agentdomain.Source{Server: "s", Tool: "t", Label: "Plan"}},
+		{"query wins over id", `{"id":"r1","query":"q"}`, agentdomain.Source{Server: "s", Tool: "t", Label: "q", Ref: "r1"}},
+		{"id wins over path for ref", `{"path":"p","id":"r1"}`, agentdomain.Source{Server: "s", Tool: "t", Label: "r1", Ref: "r1"}},
+		{"no useful argument", `{"limit":3}`, agentdomain.Source{Server: "s", Tool: "t", Label: "t"}},
+		{"empty string falls through", `{"query":"","id":"r2"}`, agentdomain.Source{Server: "s", Tool: "t", Label: "r2", Ref: "r2"}},
+		{"numeric id", `{"id":42}`, agentdomain.Source{Server: "s", Tool: "t", Label: "42", Ref: "42"}},
+		{"label truncated at 120 runes", `{"query":"` + long + `"}`, agentdomain.Source{Server: "s", Tool: "t", Label: strings.Repeat("é", 120)}},
+		{"not an object", `[1]`, agentdomain.Source{Server: "s", Tool: "t", Label: "t"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sourceFor("s", "t", []byte(tc.args), false); got != tc.want {
+				t.Fatalf("sourceFor = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSources_CappedAtTwenty: a turn lists at most 20 sources.
+func TestSources_CappedAtTwenty(t *testing.T) {
+	var atts []agentdomain.Attachment
+	for i := 0; i < 8; i++ {
+		atts = append(atts, agentdomain.Attachment{Name: fmt.Sprintf("a%d", i), MediaType: "text/plain"})
+	}
+	ts := &toolSet{}
+	for i := 0; i < 30; i++ {
+		ts.record(agentdomain.Source{Tool: fmt.Sprintf("t%d", i)})
+	}
+	got := turnSources(actWith("user", "x", atts...), ts)
+	if len(got) != maxSources || got[0].Label != "a0" || got[8].Tool != "t0" || got[maxSources-1].Tool != "t11" {
+		t.Fatalf("sources = %+v", got)
 	}
 }

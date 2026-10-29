@@ -210,6 +210,12 @@ type userContent struct {
 	Attachments []agentdomain.Attachment `json:"attachments,omitempty"`
 }
 
+// agentContent is the stored body of an agent reply.
+type agentContent struct {
+	Parts   []agentdomain.Part   `json:"parts"`
+	Sources []agentdomain.Source `json:"sources,omitempty"`
+}
+
 // ComposeResult is the outcome of a composed turn: the conversation thread
 // handle to keep composing into, the appended user activity, and the engine
 // run executing the turn.
@@ -680,7 +686,7 @@ func splitMessage(acts []agentdomain.Activity, activityID string) ([]agentdomain
 // send.in_app handler uses). Returns the persisted message JSON as the task
 // output.
 func (s *Service) deliverReply(ctx context.Context, scope domain.Scope, conv agentdomain.Conversation, runID string, reply agentdomain.Reply) (json.RawMessage, agentdomain.Activity, error) {
-	content, err := json.Marshal(map[string]any{"parts": reply.Parts})
+	content, err := json.Marshal(agentContent{Parts: reply.Parts, Sources: reply.Sources})
 	if err != nil {
 		return nil, agentdomain.Activity{}, fmt.Errorf("marshal reply content: %w", err)
 	}

@@ -165,6 +165,7 @@ func TestCompose_AttachmentsReachTheModelAndTheTranscript(t *testing.T) {
 			Role    string `json:"role"`
 			Content struct {
 				Attachments []map[string]string `json:"attachments"`
+				Sources     []map[string]any    `json:"sources"`
 			} `json:"content"`
 		} `json:"activities"`
 	}
@@ -177,8 +178,12 @@ func TestCompose_AttachmentsReachTheModelAndTheTranscript(t *testing.T) {
 		tr.Activities[0].Content.Attachments[0]["text"] != "# Invoice\nTotal: 5" {
 		t.Fatalf("transcript = %+v", tr)
 	}
-	if len(tr.Activities[1].Content.Attachments) != 0 {
-		t.Fatalf("agent reply carries attachments: %+v", tr.Activities[1])
+	if len(tr.Activities[1].Content.Attachments) != 0 || len(tr.Activities[0].Content.Sources) != 0 {
+		t.Fatalf("attachments belong to the user message, sources to the reply: %+v", tr.Activities)
+	}
+	src := tr.Activities[1].Content.Sources
+	if len(src) != 1 || src[0]["server"] != "" || src[0]["tool"] != "attachment" || src[0]["label"] != "invoice.md" {
+		t.Fatalf("reply sources = %+v", src)
 	}
 }
 

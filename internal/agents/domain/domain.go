@@ -285,10 +285,27 @@ type Turn struct {
 	Message      Activity   // the inbound user activity
 }
 
-// Reply is a runtime's answer to a Turn.
+// MaxSources is the most sources one reply lists.
+const MaxSources = 20
+
+// Source is what an agent reply drew on: a tool call it made, or an
+// attachment of the user's message it read (Server empty, Tool "attachment").
+// Label is a short human description; Ref identifies the record or file when
+// the call named one.
+type Source struct {
+	Server string `json:"server"`
+	Tool   string `json:"tool"`
+	Label  string `json:"label"`
+	Ref    string `json:"ref,omitempty"`
+	Error  bool   `json:"error,omitempty"`
+}
+
+// Reply is a runtime's answer to a Turn. Sources is empty for a runtime that
+// does not report them.
 type Reply struct {
 	Parts   []Part
 	Actions []SuggestedAction
+	Sources []Source
 }
 
 // Runtime executes one conversation turn. Implementations (mesh, bridge,

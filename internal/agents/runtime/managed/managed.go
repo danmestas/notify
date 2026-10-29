@@ -197,7 +197,7 @@ func (e *Executor) Dispatch(ctx context.Context, t agentdomain.Turn) (agentdomai
 	if text == "" {
 		return agentdomain.Reply{}, errors.New("managed agent model returned no text")
 	}
-	return agentdomain.Reply{Parts: []agentdomain.Part{{Text: text}}}, nil
+	return agentdomain.Reply{Parts: []agentdomain.Part{{Text: text}}, Sources: turnSources(t.Message, tools)}, nil
 }
 
 // open returns a secret in the clear, opening it when it is sealed.
