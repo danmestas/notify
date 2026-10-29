@@ -6,9 +6,12 @@ package domain
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
+	"strings"
 )
 
 // Allowed values of Agent.Runtime. The runtime selects how a turn is executed:
@@ -67,6 +70,57 @@ func ValidIdentifier(id string) bool {
 	return identifierPattern.MatchString(id)
 }
 
+// MaxLogoBytes is the largest decoded agent logo.
+const MaxLogoBytes = 96 * 1024
+
+// logoTypes maps each allowed logo media type to the magic bytes its image
+// data must start with. SVG is deliberately absent: it can carry script.
+var logoTypes = map[string][]string{
+	"image/png":  {"\x89PNG\r\n\x1a\n"},
+	"image/jpeg": {"\xff\xd8\xff"},
+	"image/webp": {"RIFF"},
+}
+
+// ValidateLogo checks an agent logo: empty (no logo) or a
+// data:image/{png,jpeg,webp};base64,... URI whose decoded bytes are at most
+// MaxLogoBytes and start like the declared image type.
+func ValidateLogo(logo string) error {
+	if logo == "" {
+		return nil
+	}
+	rest, ok := strings.CutPrefix(logo, "data:")
+	if !ok {
+		return errors.New("logo must be a data: URI")
+	}
+	mediaType, payload, ok := strings.Cut(rest, ";base64,")
+	if !ok {
+		return errors.New("logo must be a base64 data: URI")
+	}
+	magics, ok := logoTypes[mediaType]
+	if !ok {
+		return errors.New("logo must be image/png, image/jpeg or image/webp")
+	}
+	if base64.StdEncoding.DecodedLen(len(payload)) > MaxLogoBytes+2 {
+		return fmt.Errorf("logo is larger than %d bytes", MaxLogoBytes)
+	}
+	raw, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return errors.New("logo is not valid base64")
+	}
+	if len(raw) == 0 {
+		return errors.New("logo has no image data")
+	}
+	if len(raw) > MaxLogoBytes {
+		return fmt.Errorf("logo is larger than %d bytes", MaxLogoBytes)
+	}
+	for _, m := range magics {
+		if strings.HasPrefix(string(raw), m) {
+			return nil
+		}
+	}
+	return fmt.Errorf("logo data is not a %s image", mediaType)
+}
+
 // Agent is a conversational endpoint registered with the platform, uniquely
 // identified by (environment_id, identifier). Exactly one of MeshSubject,
 // BridgeURL, or Managed is meaningful, selected by Runtime.
@@ -83,6 +137,9 @@ type Agent struct {
 	BridgeURL      string          `db:"bridge_url"`   // runtime=bridge
 	Managed        json.RawMessage `db:"managed"`      // runtime=managed: {integration_id, system_prompt, tools[], mcp_servers[], skills[]}
 	WelcomeMessage string          `db:"welcome_message"`
+	// Logo is a data: URI of a png, jpeg or webp image (see ValidateLogo);
+	// empty means none.
+	Logo string `db:"logo"`
 	// Labels are free-form key/value tags, e.g. {"owner":"lou"}, a client uses
 	// to scope which agents a user may pick. notify gives none a meaning.
 	Labels    map[string]string `db:"labels"`

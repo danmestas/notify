@@ -100,6 +100,7 @@ type agentRequest struct {
 	Managed        json.RawMessage   `json:"managed"`
 	WelcomeMessage string            `json:"welcomeMessage"`
 	Labels         map[string]string `json:"labels"`
+	Logo           string            `json:"logo"`
 }
 
 // createAgent persists a new agent within the request Scope and returns the
@@ -133,6 +134,10 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	if err := agentdomain.ValidateLogo(req.Logo); err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
 	if err := svc.checkManaged(req.Runtime, req.Managed); err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -150,6 +155,7 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 	scope := identity.ScopeFrom(r.Context())
 	agent, err := svc.store.Agents().Create(r.Context(), scope, agentdomain.Agent{
 		Labels:         req.Labels,
+		Logo:           req.Logo,
 		Identifier:     req.Identifier,
 		Name:           req.Name,
 		Description:    req.Description,
@@ -389,6 +395,8 @@ type agentPatch struct {
 	WelcomeMessage *string          `json:"welcomeMessage"`
 	// Labels, when present, replaces the agent's labels; {} clears them.
 	Labels *map[string]string `json:"labels"`
+	// Logo, when present, replaces the agent's logo; "" clears it.
+	Logo *string `json:"logo"`
 }
 
 // patchAgent applies a partial update to the agent addressed by {identifier}
@@ -453,6 +461,13 @@ func (svc *Service) patchAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		agent.Labels = *req.Labels
+	}
+	if req.Logo != nil {
+		if err := agentdomain.ValidateLogo(*req.Logo); err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		agent.Logo = *req.Logo
 	}
 	updated, err := svc.store.Agents().Update(r.Context(), scope, agent)
 	if err != nil {

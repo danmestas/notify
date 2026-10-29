@@ -35,7 +35,7 @@ The JSON formats are pinned by fixtures in `internal/agents/wire/testdata`; orga
 { "id": "a1", "identifier": "support", "name": "Support", "description": "", "runtime": "managed",
   "active": true, "meshSubject": "", "bridgeUrl": "",
   "managed": { "apiKeySet": true, "model": "…", "provider": "openrouter", "systemPrompt": "…" },
-  "welcomeMessage": "", "labels": { "owner": "lou" }, "createdAt": "…", "updatedAt": "…" }
+  "welcomeMessage": "", "labels": { "owner": "lou" }, "logo": "", "createdAt": "…", "updatedAt": "…" }
 ```
 
 **Link**: `{id, agentId, integrationId, connectedAt, config?}`.
