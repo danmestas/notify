@@ -2,6 +2,8 @@
 
 notify is a self-hosted notification and durable-communications engine, written in Go. You define workflows, send them events, and notify delivers through in-app, email, SMS, push and chat channels. It also hosts a subscriber inbox, conversations with agents, a reply loop for inbound email, and a blob store for the original mail. It runs on the [dagnats](https://github.com/danmestas/dagnats) workflow engine.
 
+Docs and overview: <https://notify-docs.daniel-mestas.workers.dev>
+
 - **Workflows** of ordered steps: channel sends, delays, digests, throttles, HTTP requests, streams, and agent messages. Each run is durable and survives restarts.
 - **Subscribers and topics**, per-subscriber channel preferences and digest windows, templates with layouts and translations.
 - **Inbox and agents**: in-app messages with read state and a live stream, and agents that run on a NATS mesh or on a model notify calls for you.
