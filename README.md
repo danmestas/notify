@@ -63,7 +63,7 @@ The site is built and served by Cloudflare Workers Builds from `wrangler.jsonc` 
 
 ```bash
 go build ./...
-go test -race ./...     # the suite starts a dagnats sidecar; set DAGNATS_BIN to a dagnats binary; default ~/projects/notify/.bin/dagnats
+go test -race ./...     # the suite runs dagnats in-process; no dagnats binary needed
 ```
 
 Tooling is pinned in `mise.toml` (gofumpt, golangci-lint, lefthook); `lefthook.yml` runs formatting, build and lint before each commit, and vet and the race tests before each push. CI is in `.github/workflows`.

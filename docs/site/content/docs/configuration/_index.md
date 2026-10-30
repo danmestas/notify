@@ -117,4 +117,4 @@ With neither key set the builder is disabled.
 
 ## Not read by notify
 
-`deploy/notify-prelude.sh` and `deploy/compose.hub.yml` also mention `RESEND_API_KEY`, `TWILIO_*`, `SIGNALWIRE_*`, `CF_API_TOKEN`, `CF_EMAIL_FROM`, `FIREBASE_*` and `TELEGRAM_CHAT_ID`. **`notify serve` does not read these.** The hub prelude passes them through for operators and logs which are set (names only); providers are configured as [integrations](../channels) through the API. `DAGNATS_BIN` is read only by the test suite, to find a sidecar binary.
+`deploy/notify-prelude.sh` and `deploy/compose.hub.yml` also mention `RESEND_API_KEY`, `TWILIO_*`, `SIGNALWIRE_*`, `CF_API_TOKEN`, `CF_EMAIL_FROM`, `FIREBASE_*` and `TELEGRAM_CHAT_ID`. **`notify serve` does not read these.** The hub prelude passes them through for operators and logs which are set (names only); providers are configured as [integrations](../channels) through the API.
