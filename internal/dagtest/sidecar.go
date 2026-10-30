@@ -5,7 +5,14 @@ package dagtest
 
 import (
 	"fmt"
+	"log"
 	"net"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -14,8 +21,8 @@ import (
 
 // StartSidecar runs a dagnats server in this test process with a private data
 // dir, waits until it is ready, and returns the NATS client URL and the HTTP
-// base URL (which also hosts the worker bridge). The server is stopped via
-// t.Cleanup.
+// base URL (which also hosts the worker bridge). The server is stopped when
+// the test ends.
 func StartSidecar(t *testing.T) (natsURL, httpURL string) {
 	t.Helper()
 
@@ -28,7 +35,7 @@ func StartSidecar(t *testing.T) (natsURL, httpURL string) {
 		natsPort := freePort(t)
 
 		cfg := server.DefaultConfig()
-		cfg.DataDir = t.TempDir()
+		cfg.DataDir = dataDir(t)
 		cfg.HTTPAddr = "127.0.0.1:0"
 		cfg.NATSHost = "127.0.0.1"
 		cfg.NATSPort = natsPort
@@ -44,13 +51,14 @@ func StartSidecar(t *testing.T) (natsURL, httpURL string) {
 
 		addr, runErr := waitReady(srv, errCh, 10*time.Second)
 		if addr != "" {
-			t.Cleanup(func() { stop(t, srv, errCh) })
+			t.Cleanup(func() { go stopAndRemove(srv, errCh, cfg.DataDir) })
 			return fmt.Sprintf("nats://127.0.0.1:%d", natsPort), "http://" + addr
 		}
 		if runErr == nil {
-			stop(t, srv, errCh)
+			go stopAndRemove(srv, errCh, cfg.DataDir)
 			t.Fatalf("dagnats server not ready within 10s")
 		}
+		_ = os.RemoveAll(cfg.DataDir)
 		t.Logf("dagnats server failed on attempt %d/%d: %v; retrying with a fresh port", attempt, attempts, runErr)
 	}
 	t.Fatalf("dagnats server never became ready after %d attempts", attempts)
@@ -77,15 +85,62 @@ func waitReady(srv *server.Server, errCh <-chan error, timeout time.Duration) (s
 	return "", nil
 }
 
-func stop(t *testing.T, srv *server.Server, errCh <-chan error) {
+// stopAndRemove shuts the server down and then deletes its data dir. It runs
+// off the test's goroutine: a graceful stop waits out any in-flight bridge
+// long-poll (a JetStream Fetch that ignores the client going away, up to the
+// engine's 5s poll timeout), which would otherwise add that wait to every test.
+func stopAndRemove(srv *server.Server, errCh <-chan error, dir string) {
 	srv.Stop()
 	select {
 	case err := <-errCh:
 		if err != nil {
-			t.Logf("dagnats server shutdown: %v", err)
+			log.Printf("dagtest: dagnats server shutdown: %v", err)
 		}
-	case <-time.After(20 * time.Second):
-		t.Errorf("dagnats server did not stop within 20s")
+	case <-time.After(30 * time.Second):
+		log.Printf("dagtest: dagnats server did not stop within 30s")
+	}
+	_ = os.RemoveAll(dir)
+}
+
+// Data dirs live under a per-process parent, so dirs a test binary leaves when
+// it exits before a background stop finishes are swept by the next run.
+const parentPrefix = "notify-dagtest-"
+
+var sweepOnce sync.Once
+
+// dataDir returns a fresh data dir under this process's parent, first sweeping
+// parents left behind by test processes that have since exited.
+func dataDir(t *testing.T) string {
+	t.Helper()
+	sweepOnce.Do(sweepDeadParents)
+	parent := filepath.Join(os.TempDir(), parentPrefix+strconv.Itoa(os.Getpid()))
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		t.Fatalf("create dagtest parent dir: %v", err)
+	}
+	dir, err := os.MkdirTemp(parent, "srv-")
+	if err != nil {
+		t.Fatalf("create dagtest data dir: %v", err)
+	}
+	return dir
+}
+
+func sweepDeadParents() {
+	entries, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		rest, ok := strings.CutPrefix(e.Name(), parentPrefix)
+		if !ok || !e.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(rest)
+		if err != nil || pid == os.Getpid() {
+			continue
+		}
+		if syscall.Kill(pid, 0) == syscall.ESRCH {
+			_ = os.RemoveAll(filepath.Join(os.TempDir(), e.Name()))
+		}
 	}
 }
 
