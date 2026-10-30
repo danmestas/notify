@@ -17,14 +17,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/danmestas/dagnats/cli"
+	"github.com/danmestas/dagnats/dagnatstest"
 	"github.com/go-chi/chi/v5"
 	"github.com/nats-io/nats.go"
 
@@ -442,16 +442,13 @@ func (h *harness) dlqReplay(t *testing.T, runID string) {
 	}
 }
 
-// dagnats runs the dagnats CLI against the test sidecar.
+// dagnats runs the dagnats CLI in-process against the test sidecar.
 func (h *harness) dagnats(t *testing.T, args ...string) ([]byte, error) {
 	t.Helper()
-	cmd := exec.Command(dagtest.Binary(t), args...)
-	cmd.Env = append(os.Environ(), "DAGNATS_NATS_URL="+h.natsURL)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return stdout.Bytes(), fmt.Errorf("dagnats %s: %w (stderr: %s)", strings.Join(args, " "), err, stderr.String())
+	cliFix := dagnatstest.NewCLIFixture(&dagnatstest.Harness{NC: h.nc}, cli.Run, cli.SwapExitFunc)
+	out, err := cliFix.RunErr(t, args...)
+	if err != nil {
+		return []byte(out), fmt.Errorf("dagnats %s: %w", strings.Join(args, " "), err)
 	}
-	return stdout.Bytes(), nil
+	return []byte(out), nil
 }
