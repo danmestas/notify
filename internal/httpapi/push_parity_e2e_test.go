@@ -96,7 +96,9 @@ func TestPushParity_EndToEnd(t *testing.T) {
 	// the real connectivity service, so the path under test includes encrypted
 	// credential storage and the real ntfy client.
 	eng.Handle("send.push", delivery.NewPush(st, conn).HandlePush)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	id := identity.New(st, masterKey)
 	aud := audience.New(st)

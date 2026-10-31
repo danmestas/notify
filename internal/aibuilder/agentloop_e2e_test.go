@@ -71,7 +71,9 @@ func TestAgentLoop_E2E_DurableBuildPersistsToSession(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	if err := b.RegisterWorkflow(ctx); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)

@@ -115,7 +115,9 @@ func newHarness(t *testing.T) *harness {
 	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
 	eng.Handle(ingress.TaskManaged, ing.HandleTurn)
 	eng.Handle("agent_message", agentstep.New(st, ing, ags.Drafts()).Handle)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	agent, err := ags.Agents().Create(ctx, testScope, agentdomain.Agent{
 		Identifier:  "stub",
@@ -195,7 +197,9 @@ func newRetryHarness(t *testing.T) *harness {
 		WithRuntime(agentdomain.RuntimeMesh, meshClient).
 		WithRetry(ladderRetry)
 	eng2.Handle(ingress.TaskMesh, ing2.HandleTurn)
-	eng2.StartWorkers(ctx)
+	if err := eng2.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	r := chi.NewRouter()
 	ing2.Routes(r)

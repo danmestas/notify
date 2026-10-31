@@ -86,7 +86,9 @@ func TestParkedTaskOutlastsAckWaitWithoutHoldingItsLane(t *testing.T) {
 		}
 		return h.handle(ctx, tp)
 	})
-	e.StartWorkers(context.Background())
+	if err := e.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 	registerOneStep(t, e, "wf-park", "park.wait")
 
 	ctx := context.Background()
@@ -135,7 +137,9 @@ func TestParkedTaskResumesAfterRestart(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	first.Handle("park.restart", h.handle)
-	first.StartWorkers(context.Background())
+	if err := first.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 	registerOneStep(t, first, "wf-park-restart", "park.restart")
 	id, err := first.StartRun(context.Background(), "wf-park-restart", nil)
 	if err != nil {
@@ -154,7 +158,9 @@ func TestParkedTaskResumesAfterRestart(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = second.Stop() })
 	second.Handle("park.restart", h.handle)
-	second.StartWorkers(context.Background())
+	if err := second.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	if snap := awaitRun(t, second, id, 30*time.Second); !snap.Succeeded() {
 		t.Fatalf("run status = %q, want completed after the restart", snap.Status)
@@ -164,6 +170,73 @@ func TestParkedTaskResumesAfterRestart(t *testing.T) {
 	}
 	if got := h.parks.Load(); got != 1 {
 		t.Fatalf("started from scratch %d times, want 1: the restart lost the deadline", got)
+	}
+}
+
+// runLongTask registers a one-step workflow over a handler that sleeps for
+// run on its first call, starts a run of it and waits for the run to finish.
+// It returns how many times the handler ran and the most copies of it that
+// ran at once.
+func runLongTask(t *testing.T, e *Engine, task string, run time.Duration, opts ...HandleOption) (runs, maxInFlight int32) {
+	t.Helper()
+	var n, inFlight, peak atomic.Int32
+	e.Handle(task, func(context.Context, TaskPayload) (json.RawMessage, error) {
+		first := n.Add(1) == 1
+		cur := inFlight.Add(1)
+		defer inFlight.Add(-1)
+		for {
+			p := peak.Load()
+			if cur <= p || peak.CompareAndSwap(p, cur) {
+				break
+			}
+		}
+		if first {
+			time.Sleep(run)
+		}
+		return json.RawMessage(`{}`), nil
+	}, opts...)
+	if err := e.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
+	registerOneStep(t, e, "wf-"+task, task)
+	id, err := e.StartRun(context.Background(), "wf-"+task, nil)
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if snap := awaitRun(t, e, id, 30*time.Second); !snap.Succeeded() {
+		t.Fatalf("run status = %q, want completed", snap.Status)
+	}
+	time.Sleep(3 * time.Second) // let a stray redelivery show itself
+	return n.Load(), peak.Load()
+}
+
+// TestTaskOutlastingAckWaitRunsOnce proves dagnats' automatic heartbeat keeps
+// a running handler's claim: one that runs well past a 2s AckWait is never
+// redelivered, so it runs exactly once and never takes a second slot.
+func TestTaskOutlastingAckWaitRunsOnce(t *testing.T) {
+	e, err := New(dagtest.StartSidecar(t), withAckWait(2*time.Second))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = e.Stop() })
+	runs, peak := runLongTask(t, e, "long.run", 7*time.Second)
+	if runs != 1 || peak != 1 {
+		t.Fatalf("handler ran %d times, %d at once; want once: the claim lapsed past AckWait", runs, peak)
+	}
+}
+
+// TestMaxRunTimeReachesTheWorker proves WithMaxRunTime is the heartbeat's cap
+// for its type: a handler that outruns a 3s cap stops being kept alive, so
+// its task redelivers after the 2s AckWait and runs a second time.
+func TestMaxRunTimeReachesTheWorker(t *testing.T) {
+	e, err := New(dagtest.StartSidecar(t), withAckWait(2*time.Second))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = e.Stop() })
+	runs, _ := runLongTask(t, e, "capped.run", 9*time.Second, WithMaxRunTime(3*time.Second))
+	if runs < 2 {
+		t.Fatalf("handler ran %d times, want a redelivery once it outran its 3s max run time", runs)
 	}
 }
 
@@ -179,7 +252,9 @@ func TestReady_ReportsStoppedWorker(t *testing.T) {
 	t.Cleanup(func() { _ = e.Stop() })
 	e.Handle("noop", func(context.Context, TaskPayload) (json.RawMessage, error) { return nil, nil })
 	ctx, cancel := context.WithCancel(context.Background())
-	e.StartWorkers(ctx)
+	if err := e.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 	if err := e.Ready(); err != nil {
 		t.Fatalf("Ready before cancel: %v", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/danmestas/dagnats/dag"
 
@@ -24,6 +25,22 @@ import (
 // controlMap contract every other step type uses; the handler does a second
 // json.Unmarshal on the string.
 type httpRequest struct{}
+
+// HTTPMaxTimeoutSec caps an http_request step's timeoutSec. The http_request
+// task's max run time is derived from it.
+const HTTPMaxTimeoutSec = 300
+
+// httpDefaultTimeoutSec applies when a step sets no timeout.
+const httpDefaultTimeoutSec = 30
+
+// HTTPTimeout is the request timeout an http_request step runs with: its
+// authored timeoutSec, 30s when unset, never more than HTTPMaxTimeoutSec.
+func HTTPTimeout(timeoutSec int) time.Duration {
+	if timeoutSec <= 0 {
+		timeoutSec = httpDefaultTimeoutSec
+	}
+	return time.Duration(min(timeoutSec, HTTPMaxTimeoutSec)) * time.Second
+}
 
 func (httpRequest) Name() string        { return "http_request" }
 func (httpRequest) DisplayName() string { return "HTTP Request" }
@@ -55,6 +72,9 @@ func (httpRequest) ParseForm(form url.Values) (json.RawMessage, error) {
 		} else {
 			return nil, fmt.Errorf("timeoutSec must be a positive whole number")
 		}
+	}
+	if timeoutSec > HTTPMaxTimeoutSec {
+		return nil, fmt.Errorf("timeoutSec must be at most %d", HTTPMaxTimeoutSec)
 	}
 	method := formField(form, "method")
 	if method == "" {

@@ -339,7 +339,9 @@ func runServe(args []string) error {
 	// never fails the turn or blocks the other.
 	ing = ing.WithReplyHook(replyhook.Combine(slog.Default(), eml.ReplyHook, chat.ReplyHook))
 	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
-	eng.Handle(ingress.TaskManaged, ing.HandleTurn)
+	// A managed turn with tools runs up to managed.MaxTurnDuration; past that
+	// plus a margin it is hung, and dagnats stops keeping its claim alive.
+	eng.Handle(ingress.TaskManaged, ing.HandleTurn, engine.WithMaxRunTime(managed.MaxTurnDuration+runTimeMargin))
 
 	// B3: durable AI workflow-builder loop, hosted as a dagnats agent-loop
 	// handler alongside the synchronous console path (console.Builder.Run).
@@ -362,7 +364,9 @@ func runServe(args []string) error {
 		aiLoop.Register()
 	}
 
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		return err
+	}
 
 	// Launch the chat inbound pollers now that the engine worker pool is live.
 	// Each poller no-ops when its bot token is unset.

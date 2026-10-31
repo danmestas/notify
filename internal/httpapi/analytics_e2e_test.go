@@ -57,7 +57,9 @@ func TestAnalytics_DeliveriesByChannel(t *testing.T) {
 
 	// in_app delivery handler publishes delivery-status events on the bus.
 	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	// Projector drains every env's delivery-status events into analytics.
 	an := analytics.New(st, bus)

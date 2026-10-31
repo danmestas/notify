@@ -65,7 +65,9 @@ func TestEmailParity_EndToEnd(t *testing.T) {
 	// Register both delivery handlers before workers start.
 	eng.Handle("send.in_app", delivery.New(st).HandleInApp)
 	eng.Handle("send.email", delivery.NewEmail(st, capResolver{c: cap, from: "noreply@acme.io"}).HandleEmail)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	masterKey := bytesRepeat(0x2a, 32)
 	id := identity.New(st, masterKey)

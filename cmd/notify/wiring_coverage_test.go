@@ -14,7 +14,7 @@ import (
 // code exactly as easily as the code can drift from the registry.
 type recordingRegistrar struct{ registered []string }
 
-func (r *recordingRegistrar) Handle(taskType string, _ engine.HandlerFunc) {
+func (r *recordingRegistrar) Handle(taskType string, _ engine.HandlerFunc, _ ...engine.HandleOption) {
 	r.registered = append(r.registered, taskType)
 }
 

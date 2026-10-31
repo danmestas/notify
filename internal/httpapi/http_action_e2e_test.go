@@ -73,7 +73,9 @@ func newHTTPActionHarness(t *testing.T) *httpActionHarness {
 	if !eng.Handles("http_request") {
 		t.Fatal(`handler desync: "http_request" not registered; add eng.Handle("http_request", ...) before StartWorkers`)
 	}
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	masterKey := bytes.Repeat([]byte{0x2c}, 32)
 	id := identity.New(st, masterKey)

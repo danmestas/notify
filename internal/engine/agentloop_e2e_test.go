@@ -61,7 +61,9 @@ func TestEngine_AgentLoop_CheckpointRoundTrip(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	e.StartWorkers(ctx)
+	if err := e.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	def := engine.WorkflowDef{
 		Name: "agent-loop-counter",
@@ -124,7 +126,9 @@ func TestEngine_AgentLoop_MaxIterationsEnforced(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	e.StartWorkers(ctx)
+	if err := e.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	def := engine.WorkflowDef{
 		Name: "agent-loop-forever",
@@ -193,7 +197,9 @@ func TestEngine_AgentLoop_Stream(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	e.StartWorkers(ctx)
+	if err := e.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	def := engine.WorkflowDef{
 		Name: "agent-loop-stream",

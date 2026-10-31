@@ -76,7 +76,9 @@ func TestIntegrationRouting_TwoChatSteps_EndToEnd(t *testing.T) {
 	// Register the chat handler, backed by the real connectivity.Service, before
 	// workers start.
 	eng.Handle("send.chat", delivery.NewChat(st, conn).HandleChat)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	id := identity.New(st, masterKey)
 	aud := audience.New(st)

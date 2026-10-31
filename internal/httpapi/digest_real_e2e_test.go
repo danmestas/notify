@@ -69,7 +69,9 @@ func newDigestHarness(t *testing.T) *digestHarness {
 	if !eng.Handles("digest.wait") {
 		t.Fatal("digest.wait handler not registered")
 	}
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	masterKey := bytes.Repeat([]byte{0x2a}, 32)
 	id := identity.New(st, masterKey)

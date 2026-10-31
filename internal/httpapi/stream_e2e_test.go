@@ -205,7 +205,9 @@ func TestStream_TriggerToSSE_EndToEnd(t *testing.T) {
 	// Register handlers before StartWorkers, mirroring cmd/notify/main.go's
 	// ordering requirement.
 	wireStreamHandler(eng, st, bus)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	id := identity.New(st, bytesRepeat(0x2a, 32))
 	aud := audience.New(st)
@@ -376,7 +378,9 @@ func TestStream_ReplayAfterFullRestart(t *testing.T) {
 	}
 
 	wireStreamHandler(eng, st, bus)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	id := identity.New(st, bytesRepeat(0x2a, 32))
 	aud := audience.New(st)
@@ -500,7 +504,9 @@ func TestStream_CrossTenantCannotRead(t *testing.T) {
 	t.Cleanup(func() { _ = bus.Close() })
 
 	wireStreamHandler(eng, st, bus)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	id := identity.New(st, bytesRepeat(0x2a, 32))
 	aud := audience.New(st)
@@ -604,7 +610,9 @@ func TestStream_TopicInjectionViaPayload(t *testing.T) {
 	t.Cleanup(func() { _ = bus.Close() })
 
 	wireStreamHandler(eng, st, bus)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	id := identity.New(st, bytesRepeat(0x2a, 32))
 	aud := audience.New(st)

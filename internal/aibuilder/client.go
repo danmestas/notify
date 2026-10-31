@@ -120,6 +120,16 @@ type anthropicClient struct {
 // backstop against a permanently stalled TCP connection.
 const anthropicHTTPTimeout = 120 * time.Second
 
+// MaxModelCallDuration bounds one Client.Message call as a whole. The
+// Anthropic SDK retries an overloaded API twice and waits whatever Retry-After
+// the server sends, so the per-request timeout alone does not bound a call;
+// three full attempts fit inside this. The OpenAI-compatible client makes one
+// request of at most openaiHTTPTimeout. Task max-run-times are derived from it.
+const MaxModelCallDuration = 3*anthropicHTTPTimeout + 30*time.Second
+
+// modelCallMax is MaxModelCallDuration, shortened by tests.
+var modelCallMax = MaxModelCallDuration
+
 // NewAnthropicClient builds a Client over the Anthropic Messages API using the
 // given key. An empty key falls back to the SDK's ANTHROPIC_API_KEY lookup.
 func NewAnthropicClient(apiKey string) Client {
@@ -135,6 +145,8 @@ func NewAnthropicClient(apiKey string) Client {
 // Messages API, and flattens the response content blocks back into text +
 // tool calls.
 func (c *anthropicClient) Message(ctx context.Context, req MessageRequest) (MessageResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, modelCallMax)
+	defer cancel()
 	maxTokens := req.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = DefaultMaxTokens

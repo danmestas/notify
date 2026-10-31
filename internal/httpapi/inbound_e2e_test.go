@@ -54,7 +54,9 @@ func TestInbound_FiresWorkflow(t *testing.T) {
 	t.Cleanup(func() { _ = bus.Close() })
 
 	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	masterKey := make([]byte, 32)
 	for i := range masterKey {

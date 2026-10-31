@@ -31,7 +31,9 @@ func TestEngine_StartRun_OneStepCompletes(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	e.StartWorkers(ctx)
+	if err := e.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	def := engine.WorkflowDef{
 		Name: "foundation-smoke",

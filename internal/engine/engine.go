@@ -142,6 +142,8 @@ type Engine struct {
 	started       bool
 	ackWait       time.Duration
 	concurrency   int
+	// maxRunTime holds the WithMaxRunTime of each type that set one.
+	maxRunTime map[string]time.Duration
 
 	w *worker.Worker
 	// life ends every in-flight handler's context on Stop, so a handler that
@@ -189,6 +191,7 @@ func New(natsURL string, opts ...Option) (*Engine, error) {
 		agentHandlers: make(map[string]AgentLoopFunc),
 		ackWait:       defaultAckWait,
 		concurrency:   handlerConcurrency,
+		maxRunTime:    make(map[string]time.Duration),
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -198,7 +201,7 @@ func New(natsURL string, opts ...Option) (*Engine, error) {
 
 // Handle registers a handler for a task type. It must be called before
 // StartWorkers; calling it afterward panics.
-func (e *Engine) Handle(taskType string, fn HandlerFunc) {
+func (e *Engine) Handle(taskType string, fn HandlerFunc, opts ...HandleOption) {
 	if e.started {
 		panic("engine: Handle called after StartWorkers")
 	}
@@ -206,6 +209,36 @@ func (e *Engine) Handle(taskType string, fn HandlerFunc) {
 		panic("engine: Handle conflicts with HandleAgentLoop for task type " + taskType)
 	}
 	e.handlers[taskType] = fn
+	e.applyHandleOptions(taskType, opts)
+}
+
+// HandleOption tunes one task type at registration.
+type HandleOption func(e *Engine, taskType string)
+
+// WithMaxRunTime is how long dagnats keeps a running task of this type
+// claimed (its worker heartbeats while the handler runs). Past it the task
+// redelivers, so set it above the type's own worst case. Types without it get
+// dagnats' default of an hour.
+func WithMaxRunTime(d time.Duration) HandleOption {
+	if d <= 0 || d > worker.MaxRunTimeMax {
+		panic("engine: WithMaxRunTime out of range")
+	}
+	return func(e *Engine, taskType string) { e.maxRunTime[taskType] = d }
+}
+
+func (e *Engine) applyHandleOptions(taskType string, opts []HandleOption) {
+	for _, opt := range opts {
+		opt(e, taskType)
+	}
+}
+
+// workerOptions are the SDK options every type gets, plus its own max run time.
+func (e *Engine) workerOptions(taskType string) []worker.HandlerOption {
+	opts := []worker.HandlerOption{worker.WithConcurrency(e.concurrency), worker.WithAckWait(e.ackWait)}
+	if d, ok := e.maxRunTime[taskType]; ok {
+		opts = append(opts, worker.WithMaxRunTime(d))
+	}
+	return opts
 }
 
 // Handles reports whether a handler is registered for taskType. It is a
@@ -217,26 +250,32 @@ func (e *Engine) Handles(taskType string) bool {
 }
 
 // StartWorkers starts claiming tasks for every registered type. Claiming stops
-// when ctx is cancelled or Stop is called.
-func (e *Engine) StartWorkers(ctx context.Context) {
+// when ctx is cancelled or Stop is called. It fails when dagnats will not let
+// the worker subscribe (its task stream is not ready, or permission is
+// denied); the engine then claims nothing, and Ready says so.
+func (e *Engine) StartWorkers(ctx context.Context) error {
 	if e.started {
 		panic("engine: StartWorkers called twice")
 	}
 	e.started = true
 	e.life, e.endLife = context.WithCancel(context.WithoutCancel(ctx))
 	if len(e.handlers)+len(e.agentHandlers) == 0 {
-		return
+		return nil
 	}
-	e.w = worker.NewWorker(e.nc)
-	opts := []worker.HandlerOption{worker.WithConcurrency(e.concurrency), worker.WithAckWait(e.ackWait)}
+	w := worker.NewWorker(e.nc)
 	for taskType, fn := range e.handlers {
-		e.w.Handle(taskType, e.taskHandler(taskType, fn), opts...)
+		w.Handle(taskType, e.taskHandler(taskType, fn), e.workerOptions(taskType)...)
 	}
 	for taskType, fn := range e.agentHandlers {
-		e.w.Handle(taskType, e.loopHandler(taskType, fn), opts...)
+		w.Handle(taskType, e.loopHandler(taskType, fn), e.workerOptions(taskType)...)
 	}
-	e.w.Start()
+	if err := w.Start(); err != nil {
+		e.endLife()
+		return fmt.Errorf("engine: start task worker: %w", err)
+	}
+	e.w = w
 	context.AfterFunc(ctx, e.stopWorker)
+	return nil
 }
 
 // Ready reports whether the engine can reach dagnats and, once started, is
@@ -245,7 +284,7 @@ func (e *Engine) Ready() error {
 	if !e.nc.IsConnected() {
 		return fmt.Errorf("dagnats NATS connection is %s", e.nc.Status())
 	}
-	if e.started && e.w != nil && e.life.Err() != nil {
+	if e.started && e.life.Err() != nil {
 		return errors.New("task worker stopped")
 	}
 	return nil

@@ -469,7 +469,9 @@ func TestIngest_StreamWorkflow_TopicInEnvelope(t *testing.T) {
 		mu.Unlock()
 		return json.RawMessage(`{}`), nil
 	})
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	dagName := scope.EnvID + "-" + streamTrigger
 	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{

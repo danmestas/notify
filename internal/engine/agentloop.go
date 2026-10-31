@@ -51,7 +51,7 @@ type AgentLoopFunc func(ctx context.Context, lc *AgentLoopContext) error
 // HandleAgentLoop registers an agent-loop handler for a task type. Like Handle,
 // it must be called before StartWorkers. A task type cannot be registered as
 // both a simple Handle and an agent-loop handler.
-func (e *Engine) HandleAgentLoop(taskType string, fn AgentLoopFunc) {
+func (e *Engine) HandleAgentLoop(taskType string, fn AgentLoopFunc, opts ...HandleOption) {
 	if e.started {
 		panic("engine: HandleAgentLoop called after StartWorkers")
 	}
@@ -59,6 +59,7 @@ func (e *Engine) HandleAgentLoop(taskType string, fn AgentLoopFunc) {
 		panic("engine: HandleAgentLoop conflicts with Handle for task type " + taskType)
 	}
 	e.agentHandlers[taskType] = fn
+	e.applyHandleOptions(taskType, opts)
 }
 
 // AgentLoopContext is the per-iteration handle passed to an AgentLoopFunc. It

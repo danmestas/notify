@@ -63,7 +63,9 @@ func TestRegisterDeliveryHandlers_EmailPublishesDeliveryEvent(t *testing.T) {
 	prefs := preferences.New(st)
 
 	registerDeliveryHandlers(eng, st, conn, prefs, bus, nil)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	scope := domain.Scope{OrgID: "acme", EnvID: "wiring-test"}
 

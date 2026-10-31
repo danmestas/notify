@@ -64,7 +64,9 @@ func TestWorker_DispatchesTaskPayload(t *testing.T) {
 		got <- tp
 		return json.RawMessage(`{"ok":true}`), nil
 	})
-	e.StartWorkers(context.Background())
+	if err := e.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	id := runOneStep(t, e, "wf-echo", "echo", nil, `{"hello":"world"}`)
 	snap := waitTerminal(t, e, id, 15*time.Second)
@@ -108,7 +110,9 @@ func TestWorker_SameTypeRunsInParallel(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	})
-	e.StartWorkers(context.Background())
+	if err := e.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	ctx := context.Background()
 	if err := e.RegisterWorkflow(ctx, engine.WorkflowDef{
@@ -155,7 +159,9 @@ func TestWorker_RetryableErrorRetries(t *testing.T) {
 		}
 		return json.RawMessage(`{}`), nil
 	})
-	e.StartWorkers(context.Background())
+	if err := e.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	retry := &engine.RetryPolicy{MaxAttempts: 3, Strategy: dag.RetryFixed, InitialDelay: 50 * time.Millisecond, MaxDelay: 50 * time.Millisecond}
 	id := runOneStep(t, e, "wf-flaky", "flaky", retry, "")
@@ -179,7 +185,9 @@ func TestWorker_PlainErrorDeadLetters(t *testing.T) {
 		calls.Add(1)
 		return nil, errors.New("permanent")
 	})
-	e.StartWorkers(context.Background())
+	if err := e.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	retry := &engine.RetryPolicy{MaxAttempts: 3, Strategy: dag.RetryFixed, InitialDelay: 50 * time.Millisecond, MaxDelay: 50 * time.Millisecond}
 	id := runOneStep(t, e, "wf-broken", "broken", retry, "")
@@ -201,7 +209,9 @@ func TestWorker_RetriesExhaustedDeadLetter(t *testing.T) {
 		calls.Add(1)
 		return nil, engine.NewRetryableError(errors.New("still down"))
 	})
-	e.StartWorkers(context.Background())
+	if err := e.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	retry := &engine.RetryPolicy{MaxAttempts: 2, Strategy: dag.RetryFixed, InitialDelay: 50 * time.Millisecond, MaxDelay: 50 * time.Millisecond}
 	id := runOneStep(t, e, "wf-always-flaky", "always-flaky", retry, "")
@@ -230,7 +240,9 @@ func TestWorker_PanicFailsOnlyItsStep(t *testing.T) {
 		siblingRan.Store(true)
 		return json.RawMessage(`{}`), nil
 	})
-	e.StartWorkers(context.Background())
+	if err := e.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	ctx := context.Background()
 	if err := e.RegisterWorkflow(ctx, engine.WorkflowDef{
@@ -275,7 +287,9 @@ func TestWorker_StopDrainsInFlight(t *testing.T) {
 		finished.Store(true)
 		return json.RawMessage(`{"drained":true}`), nil
 	})
-	e.StartWorkers(context.Background())
+	if err := e.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 	id := runOneStep(t, e, "wf-steady", "steady", nil, "")
 
 	select {
@@ -321,7 +335,9 @@ func TestWorker_StopCancelsWaitingHandlers(t *testing.T) {
 		<-ctx.Done()
 		return nil, engine.NewRetryableError(ctx.Err())
 	})
-	e.StartWorkers(context.Background())
+	if err := e.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 	runOneStep(t, e, "wf-waiter", "waiter", nil, "")
 	select {
 	case <-started:
@@ -356,7 +372,9 @@ func TestAgentLoop_LargeState(t *testing.T) {
 		}
 		return lc.Complete(json.RawMessage(fmt.Sprintf(`{"bytes":%d}`, len(cp))))
 	})
-	e.StartWorkers(context.Background())
+	if err := e.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	ctx := context.Background()
 	if err := e.RegisterWorkflow(ctx, engine.WorkflowDef{
@@ -386,7 +404,9 @@ func TestAgentLoop_PanicFailsStep(t *testing.T) {
 	e.HandleAgentLoop("agent.boom", func(_ context.Context, _ *engine.AgentLoopContext) error {
 		panic("loop blew up")
 	})
-	e.StartWorkers(context.Background())
+	if err := e.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	ctx := context.Background()
 	if err := e.RegisterWorkflow(ctx, engine.WorkflowDef{

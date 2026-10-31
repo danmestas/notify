@@ -9,7 +9,7 @@ weight: 2
 
 - The **durable workflow engine**: notify registers each workflow as a DAG definition, starts a run per trigger, and the engine dispatches the steps.
 - An **embedded NATS server with JetStream**. notify uses it for the event streams below, the digest and throttle counters, and mesh agent dispatch (unless `NOTIFY_MESH_NATS_URL` points elsewhere).
-- A **NATS control plane and task queues**. notify registers workflows and starts runs with request/reply on `api.workflows.register`, `api.runs.start` and `api.runs.get`, and its step handlers (send an email, call a URL, run an agent turn) claim tasks with dagnats' worker SDK, run them in the notify process, and report results back over the same connection. Up to 256 tasks of one type run at once, so one slow digest wait or agent turn never holds up the rest of its type.
+- A **NATS control plane and task queues**. notify registers workflows and starts runs with request/reply on `api.workflows.register`, `api.runs.start` and `api.runs.get`, and its step handlers (send an email, call a URL, run an agent turn) claim tasks with dagnats' worker SDK, run them in the notify process, and report results back over the same connection. Up to 256 tasks of one type run at once, so one slow digest wait or agent turn never holds up the rest of its type. While a handler runs, dagnats keeps its task claimed for up to an hour; `agent.turn.managed` and `http_request` set their own caps from their limits. Waits (delays and digests) do not run in a handler at all: they park in dagnats until their time comes.
 
 notify makes two connections: NATS (`-nats-url`) for the engine, and, on its own, a NATS connection for mesh dispatch.
 
@@ -41,7 +41,7 @@ These streams and a few KV buckets live in the sidecar's data directory, so **th
 
 ## Versions
 
-notify tracks the latest dagnats. The `Dockerfile` (`DAGNATS_VERSION`) and `go.mod` pin one release, currently `v0.0.35`, so builds are reproducible rather than following a moving branch. Run the same version in production and bump the pin when you upgrade. Keep the sidecar binary at a stable path.
+notify tracks the latest dagnats. The `Dockerfile` (`DAGNATS_VERSION`) and `go.mod` pin one release, currently `v0.0.36`, so builds are reproducible rather than following a moving branch. Run the same version in production and bump the pin when you upgrade. Keep the sidecar binary at a stable path.
 
 ## Running two environments on one machine
 

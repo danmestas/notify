@@ -73,7 +73,9 @@ func TestCheckThrottle_StepHandler_SecondRunDropped(t *testing.T) {
 	if !eng.Handles(delivery.TaskThrottle) {
 		t.Fatalf("handler desync: %q not registered; add eng.Handle(%q, ...) before StartWorkers", delivery.TaskThrottle, delivery.TaskThrottle)
 	}
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	masterKey := bytes.Repeat([]byte{0x2b}, 32)
 	id := identity.New(st, masterKey)
@@ -220,7 +222,9 @@ func TestThrottle_SecondSendThrottled(t *testing.T) {
 	t.Cleanup(func() { _ = bus.Close() })
 
 	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).WithThrottle(bus).HandleInApp)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	masterKey := bytes.Repeat([]byte{0x2a}, 32)
 	id := identity.New(st, masterKey)

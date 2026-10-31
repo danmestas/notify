@@ -28,7 +28,7 @@ An `http_request` step calls an HTTP endpoint in the middle of a workflow and ke
 | `method` | `GET` | `GET`, `POST`, `PUT`, `PATCH` or `DELETE`. |
 | `headers` | `""` | A **string** containing a JSON object of header names to values, for example `"{\"X-Key\": \"abc\"}"`. Stored as a string so it fits the flat `controlValues` shape. Values are JSON-escaped when rendered. A header whose name or value contains a line break after rendering is a failure (see Failure policy). **Encrypted at rest** and shown masked when read back. A blank or malformed string means no headers. |
 | `body` | `""` | Template. If the body looks like JSON (the `Content-Type` header says so, or it starts like an object or array), inserted values are JSON-escaped; otherwise they are inserted as sent. An empty body sends none. |
-| `timeoutSec` | `30` | Per-request deadline, in seconds. Absent or non-positive means 30. |
+| `timeoutSec` | `30` | Per-request deadline, in seconds. Absent or non-positive means 30. At most 300; the editor refuses more, and a larger stored value runs as 300. |
 | `failurePolicy` | `fail_closed` | `fail_closed` or `continue`. See below. |
 
 Templates see `subscriber` and `payload`.

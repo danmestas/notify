@@ -41,7 +41,9 @@ func TestTaskSpanContinuesTheTriggersTrace(t *testing.T) {
 		got <- trace.SpanContextFromContext(ctx)
 		return json.RawMessage(`{}`), nil
 	})
-	e.StartWorkers(context.Background())
+	if err := e.StartWorkers(context.Background()); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	ctx, root := tp.Tracer("test").Start(context.Background(), "trigger")
 	if err := e.RegisterWorkflow(ctx, engine.WorkflowDef{
