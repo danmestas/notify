@@ -181,9 +181,9 @@ func decodeMessage(t *testing.T, data string) domain.Message {
 // subscriber (live-tail/analytics parity), and webhooksout's durable
 // consumer (outbound-webhook parity) — all against a real dagnats sidecar.
 func TestStream_TriggerToSSE_EndToEnd(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -355,9 +355,9 @@ func TestStream_TriggerToSSE_EndToEnd(t *testing.T) {
 // replays both messages. A merely in-memory fan-out (core NATS) could not
 // survive this — the durable NOTIFY_FEED stream is what does.
 func TestStream_ReplayAfterFullRestart(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -455,7 +455,7 @@ func TestStream_ReplayAfterFullRestart(t *testing.T) {
 	frames := stream.read(t, 2, 15*time.Second)
 
 	// The two triggers are dispatched to independent engine worker
-	// goroutines (engine.pollLoop spawns one goroutine per polled task), so
+	// goroutines (the engine runs tasks of one type concurrently), so
 	// their PublishFeed calls — and therefore the durable stream's sequence
 	// order — can land in either order, regardless of HTTP trigger order.
 	// Assert on the SET of replayed contents (both sends survived the
@@ -478,9 +478,9 @@ func TestStream_ReplayAfterFullRestart(t *testing.T) {
 // topic string, a topic crafted to literally spell tenant A's subject
 // prefix, and outright wildcard topics — never sees any of A's data.
 func TestStream_CrossTenantCannotRead(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -582,9 +582,9 @@ func TestStream_CrossTenantCannotRead(t *testing.T) {
 // while a payload token that merely ADDS topic segments (multi-token,
 // wildcard-free) is legal and publishes normally.
 func TestStream_TopicInjectionViaPayload(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

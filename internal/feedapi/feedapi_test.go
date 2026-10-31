@@ -83,7 +83,7 @@ func (s *sseStream) close() {
 
 func connectFeedGateway(t *testing.T) (*Gateway, *eventbus.Bus) {
 	t.Helper()
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	t.Cleanup(cancel)

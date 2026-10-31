@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/steptype"
 )
@@ -26,7 +28,7 @@ func TestHTTPRequest_Compile_IsNormalTask(t *testing.T) {
 	if sd.Task != "http_request" {
 		t.Errorf("Task = %q, want http_request", sd.Task)
 	}
-	if sd.Type != "normal" {
+	if sd.Type != dag.StepTypeNormal {
 		t.Errorf("Type = %q, want normal", sd.Type)
 	}
 	if sd.ID != "h1" {

@@ -1,8 +1,8 @@
 name: notify
 
 # The notify deploy unit is a tightly-coupled pair plus persistent state:
-#   dagnats  -- workflow engine sidecar (embedded NATS + JetStream + HTTP
-#               bridge). Its embedded NATS binds to LOOPBACK in standalone mode
+#   dagnats  -- workflow engine sidecar (embedded NATS + JetStream). Its
+#               embedded NATS binds to LOOPBACK in standalone mode
 #               (a security default; only leaf/cluster mode binds 0.0.0.0), so
 #               notify must reach it over localhost, not a service DNS name.
 #   notify   -- API/delivery server. It shares dagnats' network namespace
@@ -58,7 +58,6 @@ services:
         condition: service_healthy
     environment:
       NOTIFY_NATS_URL: nats://127.0.0.1:4222
-      NOTIFY_BRIDGE_URL: http://127.0.0.1:8080
       NOTIFY_ADDR: 0.0.0.0:3000
       NOTIFY_DB: /data/notify.db
       # Browser-facing dagnats console base for activity run deep-links. This

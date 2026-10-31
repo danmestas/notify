@@ -1,6 +1,6 @@
 # Cuts a GitHub release when a version-* tag is pushed.
 #
-#   git tag -a version-0.1.0 -m "Requires DAGNATS_BRIDGE_TOKEN when the bridge is gated."
+#   git tag -a version-0.1.0 -m "Requires DAGNATS_LOOP_STATE_MAX_BYTES=524288 on the sidecar."
 #   git push origin version-0.1.0
 #
 # The tag's ANNOTATION becomes the release's upgrade notes, so operator-visible

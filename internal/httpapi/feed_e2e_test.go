@@ -24,7 +24,7 @@ import (
 // a request with no Authorization header is rejected before it ever
 // reaches the feedapi gateway.
 func TestFeedStream_RequiresApiKey(t *testing.T) {
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	ctx := context.Background()
 
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "notify.db"))

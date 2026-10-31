@@ -22,14 +22,7 @@ import (
 // the one place the environment is interpreted.
 type config struct {
 	// Core transport / storage (flag- and env-overridable).
-	natsURL   string
-	bridgeURL string
-	// bridgeToken authenticates notify against the dagnats worker bridge.
-	// Env-only, and deliberately not a flag: a flag value is visible to every
-	// user on the box via ps. The name matches the variable dagnats itself
-	// reads, so a host that already configured the sidecar needs no new
-	// setting.
-	bridgeToken string
+	natsURL string
 	// sendmailCommand is the argv the "sendmail" email provider pipes each
 	// message to. Host configuration like dbPath: it names a binary on this
 	// machine, so it is a flag/env rather than a per-tenant integration field
@@ -137,7 +130,6 @@ func masterKey(hexKey string, dev bool) ([]byte, error) {
 func loadConfig(args []string) (config, error) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	natsURL := fs.String("nats-url", envOr("NOTIFY_NATS_URL", "nats://127.0.0.1:4222"), "NATS client URL of the running dagnats sidecar (notify does not embed it)")
-	bridgeURL := fs.String("bridge-url", envOr("NOTIFY_BRIDGE_URL", "http://127.0.0.1:8080"), "worker bridge URL of the running dagnats sidecar")
 	sendmailCommand := fs.String("sendmail-command", envOr("NOTIFY_SENDMAIL_COMMAND", "/usr/sbin/sendmail -ti"), "command the \"sendmail\" email provider pipes messages to (split on whitespace, run without a shell)")
 	smtpAddr := fs.String("smtp", envOr("NOTIFY_SMTP_ADDR", ""), "address for the embedded SMTP receiver, e.g. 0.0.0.0:25 (empty = off); makes the inbound MX host notify itself")
 	smtpCert := fs.String("smtp-cert", envOr("NOTIFY_SMTP_CERT", ""), "PEM certificate file for the SMTP receiver's STARTTLS (with -smtp-key); reloaded when it changes")
@@ -162,9 +154,7 @@ func loadConfig(args []string) (config, error) {
 	}
 
 	return config{
-		natsURL:     *natsURL,
-		bridgeURL:   *bridgeURL,
-		bridgeToken: os.Getenv("DAGNATS_BRIDGE_TOKEN"),
+		natsURL: *natsURL,
 		// Whitespace split, no shell: there is no quoting to get wrong and
 		// nothing an operator-typed value could inject through.
 		sendmailCommand: strings.Fields(*sendmailCommand),

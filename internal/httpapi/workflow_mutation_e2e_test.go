@@ -29,8 +29,8 @@ import (
 // the server, auth header, and the trigger identifier of the created workflow.
 func setupWorkflowSuite(t *testing.T) (srv *httptest.Server, authHeader string, svc *authoring.Service, sc domain.Scope, st *store.Store) {
 	t.Helper()
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

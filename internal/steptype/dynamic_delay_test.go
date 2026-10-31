@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/steptype"
 )
@@ -20,7 +22,7 @@ func TestCompile_DynamicDelayIsNativeSleep(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: compile: %v", kind, err)
 		}
-		if def.Type != "sleep" || def.Task != "" || def.Retry != nil {
+		if def.Type != dag.StepTypeSleep || def.Task != "" || def.Retry != nil {
 			t.Fatalf("%s: def = %+v, want a sleep with no task or retry", kind, def)
 		}
 		if string(def.Config) != `{"until_input_path":"delays.d1"}` {
@@ -41,7 +43,7 @@ func TestCompile_DynamicDelayDottedStepIDKeepsTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if def.Type != "normal" || def.Task != "delay.dynamic" {
+	if def.Type != dag.StepTypeNormal || def.Task != "delay.dynamic" {
 		t.Fatalf("def = %+v, want the delay.dynamic task", def)
 	}
 	if _, _, ok := steptype.NativeDynamicDelay(step); ok {

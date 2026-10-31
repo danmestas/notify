@@ -32,14 +32,14 @@ func (c *scriptedClient) Message(_ context.Context, _ MessageRequest) (MessageRe
 
 // TestAgentLoop_E2E_DurableBuildPersistsToSession proves the AgentLoop harness
 // end-to-end against a real dagnats sidecar: a seeded session is built by a
-// mock-driven loop that iterates over the bridge (setWorkflowMetadata -> addStep
+// mock-driven loop that iterates over the engine (setWorkflowMetadata -> addStep
 // -> stop), the run reaches a terminal completed state, and the final draft lands
 // in builder_sessions. It exercises Register/RegisterWorkflow/Dispatch and the
 // checkpoint round-trip across real iterations.
 func TestAgentLoop_E2E_DurableBuildPersistsToSession(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestAgentLoop_E2E_DurableBuildPersistsToSession(t *testing.T) {
 		t.Fatalf("persisted steps = %+v, want one delay step", draft.Steps)
 	}
 
-	// The loop iterated at least 3 model turns over the bridge (set, add, stop).
+	// The loop iterated at least 3 model turns over the engine (set, add, stop).
 	client.mu.Lock()
 	calls := client.n
 	client.mu.Unlock()

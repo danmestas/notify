@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 )
@@ -83,7 +85,7 @@ func (httpRequest) Compile(step domain.Step) (engine.StepDef, error) {
 	}
 	// No Config: the handler loads url/method/headers/body/timeout/policy from
 	// the store at run time, mirroring every other normal-task step type.
-	return engine.StepDef{ID: step.StepID, Task: "http_request", Type: "normal"}, nil
+	return engine.StepDef{ID: step.StepID, Task: "http_request", Type: dag.StepTypeNormal}, nil
 }
 
 // httpRequestCfg holds the validated control values for an http_request step.

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 )
@@ -52,7 +54,7 @@ func (agentMessage) Compile(step domain.Step) (engine.StepDef, error) {
 	if _, err := AgentMessageConfig(step.ControlValues); err != nil {
 		return engine.StepDef{}, err
 	}
-	return engine.StepDef{ID: step.StepID, Task: "agent_message", Type: "normal"}, nil
+	return engine.StepDef{ID: step.StepID, Task: "agent_message", Type: dag.StepTypeNormal}, nil
 }
 
 func (agentMessage) TaskTypes() []string { return []string{"agent_message"} }

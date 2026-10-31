@@ -30,9 +30,9 @@ import (
 // receives a correctly rendered in_app message through the real engine +
 // delivery worker. Both s1 ("Hi Ada") and s2 ("Hi Bob") must get the broadcast.
 func TestTopic_MulticastDelivers(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

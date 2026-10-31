@@ -34,7 +34,7 @@ import (
 // not just that EmailHandler accepts a publisher (that part was already
 // covered by internal/delivery's own unit tests).
 func TestRegisterDeliveryHandlers_EmailPublishesDeliveryEvent(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	ctx := context.Background()
 
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "notify.db"))
@@ -43,7 +43,7 @@ func TestRegisterDeliveryHandlers_EmailPublishesDeliveryEvent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

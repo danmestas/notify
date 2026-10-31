@@ -51,12 +51,16 @@ type fakeLoopCtx struct {
 	completed      bool
 	completeOutput json.RawMessage
 	streams        [][]byte
+	continueErr    error
 }
 
 func (f *fakeLoopCtx) Iteration() int         { return f.iter }
 func (f *fakeLoopCtx) Checkpoint() []byte     { return f.checkpoint }
 func (f *fakeLoopCtx) Input() json.RawMessage { return f.input }
 func (f *fakeLoopCtx) Continue(cp []byte) error {
+	if f.continueErr != nil {
+		return f.continueErr
+	}
 	f.continued = true
 	f.nextCheckpoint = cp
 	return nil

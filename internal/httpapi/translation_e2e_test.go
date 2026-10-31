@@ -29,9 +29,9 @@ import (
 // seeded in the translations store. A subscriber with locale "es" and a seeded
 // (es, greeting -> "Hola") yields content "Hola Ada".
 func TestTranslation_LocalizedInApp(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

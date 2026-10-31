@@ -6,7 +6,7 @@ weight: 5
 ## Health
 
 - `GET /healthz`: liveness. `200 {"status":"ok","version":"…"}`. Reports the build version, which makes it a way to see what is actually running.
-- `GET /readyz`: readiness. `200` only when the dagnats bridge answers `/ready` **and** the SQLite writer answers a ping; otherwise `503`, with `bridge` and `db` saying which. Both are checked live on each request, with a 3-second timeout each.
+- `GET /readyz`: readiness. `200` only when notify's NATS connection to dagnats is up **and** the SQLite writer answers a ping; otherwise `503`, with `dagnats` and `db` saying which. Both are checked live on each request; the ping has a 3-second timeout.
 
 Use `/healthz` for a restart decision and `/readyz` to decide whether to send traffic.
 
@@ -25,7 +25,7 @@ notify logs to standard error. By default the format is the standard `log` packa
 
 Things worth alerting on:
 
-- Start-up failures naming the bridge: unreachable, or rejected credentials (`DAGNATS_BRIDGE_TOKEN`).
+- Start-up failures naming the dagnats NATS connection, and `/readyz` reporting `"dagnats": false`.
 - `emailloop:` lines. Every inbound mail that is dropped is logged with the address and the reason (`no_token`, `invalid_token`, `domain_unverified`, `no_binding`, …). The loop is never silent.
 - `retention:` lines for purge failures.
 - `trigger: digestKey resolved to nothing`: a digest that is merging unrelated events.

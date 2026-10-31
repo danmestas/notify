@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
@@ -16,66 +15,6 @@ import (
 
 	"github.com/danmestas/notify/internal/observe"
 )
-
-// TestContextWithRemoteTrace_GraftsParentAndKeepsDeadline pins the consumer half
-// of the trace seam: dagnats hands each polled task its own W3C trace context
-// (dagnats#534), and notify must continue that trace rather than starting a new
-// root — otherwise every delivery span orphans from the trigger that caused it.
-//
-// It must GRAFT the remote span context onto the caller's ctx, not replace ctx
-// with one rooted on Background: the poll loop's ctx carries the deadline and
-// cancellation that bound the handler, and discarding those to gain a parent
-// would trade a tracing nicety for a lifecycle bug.
-func TestContextWithRemoteTrace_GraftsParentAndKeepsDeadline(t *testing.T) {
-	const tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-
-	base, cancel := context.WithTimeout(context.Background(), time.Hour)
-	defer cancel()
-	wantDeadline, _ := base.Deadline()
-
-	ctx := observe.ContextWithRemoteTrace(base, tp, "")
-
-	sc := oteltrace.SpanContextFromContext(ctx)
-	if !sc.IsValid() {
-		t.Fatal("no span context grafted from a valid traceparent")
-	}
-	if got, want := sc.TraceID().String(), "4bf92f3577b34da6a3ce929d0e0e4736"; got != want {
-		t.Fatalf("TraceID = %s, want %s", got, want)
-	}
-	if got, want := sc.SpanID().String(), "00f067aa0ba902b7"; got != want {
-		t.Fatalf("parent SpanID = %s, want %s", got, want)
-	}
-	if !sc.IsRemote() {
-		t.Fatal("grafted span context should be marked remote")
-	}
-	if !sc.IsSampled() {
-		t.Fatal("sampled flag from the traceparent was dropped")
-	}
-	// The lifecycle half: ctx must still be the caller's, deadline intact.
-	got, ok := ctx.Deadline()
-	if !ok || !got.Equal(wantDeadline) {
-		t.Fatalf("deadline lost: got (%v, %v), want %v — extraction must not reroot on Background", got, ok, wantDeadline)
-	}
-}
-
-// TestContextWithRemoteTrace_NoOpOnMissingOrInvalid ensures a task without trace
-// context (or with a malformed one) is returned unchanged rather than panicking
-// or attaching a bogus parent. dagnats omits the field when it has no context.
-func TestContextWithRemoteTrace_NoOpOnMissingOrInvalid(t *testing.T) {
-	for _, tc := range []struct{ name, tp string }{
-		{"empty", ""},
-		{"garbage", "not-a-traceparent"},
-		{"all-zero trace id", "00-00000000000000000000000000000000-00f067aa0ba902b7-01"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			base := context.Background()
-			ctx := observe.ContextWithRemoteTrace(base, tc.tp, "")
-			if sc := oteltrace.SpanContextFromContext(ctx); sc.IsValid() {
-				t.Fatalf("expected no valid span context for %q, got trace=%s", tc.tp, sc.TraceID())
-			}
-		})
-	}
-}
 
 // TestInjectNATSHeader_UsesLowercaseW3CKey pins the header-key casing on the NATS
 // seam, which is not a style question but a correctness one.

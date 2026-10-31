@@ -31,9 +31,9 @@ import (
 // scenario (subscriber -> trigger -> delivered in_app message) and
 // assert the two recorded-contract oracles in docs/proof/in-app-parity-oracle.md.
 func TestInAppParity_EndToEnd(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

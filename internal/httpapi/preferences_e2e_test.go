@@ -40,8 +40,8 @@ type preferencesResponse struct {
 // server, auth header, scope, the authoring/preferences services, and store.
 func setupPreferencesSuite(t *testing.T) (srv *httptest.Server, authHeader string, scope domain.Scope, au *authoring.Service, prefs *preferences.Service, aud *audience.Service, st *store.Store) {
 	t.Helper()
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

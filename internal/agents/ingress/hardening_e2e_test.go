@@ -313,7 +313,7 @@ func TestRestartMidTurnIdempotentReplay_E2E(t *testing.T) {
 	// sidecar, stores, and bus.
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	eng2, err := engine.New(h.natsURL, h.bridgeURL)
+	eng2, err := engine.New(h.natsURL)
 	if err != nil {
 		t.Fatalf("engine.New (restart): %v", err)
 	}

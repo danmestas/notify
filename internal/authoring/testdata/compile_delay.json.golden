@@ -1,9 +1,11 @@
 {
   "name": "env_golden-wf-delay",
+  "version": "",
   "steps": [
     {
       "id": "delay-1",
       "task": "",
+      "timeout": 0,
       "type": "sleep",
       "config": {
         "duration": 18000000000000

@@ -38,9 +38,9 @@ import (
 // /v1/analytics/deliveries) works against DuckDB. Compiled/run only under
 // `-tags duckdb` (links DuckDB's CGo static library).
 func TestAnalytics_DeliveriesByChannel_DuckDB(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

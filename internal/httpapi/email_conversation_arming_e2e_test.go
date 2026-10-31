@@ -60,11 +60,11 @@ func newEmailArmHarness(t *testing.T) *emailArmHarness {
 // not configured.
 func newEmailArmHarnessWithSecret(t *testing.T, secret string) *emailArmHarness {
 	t.Helper()
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

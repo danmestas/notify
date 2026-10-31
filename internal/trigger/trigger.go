@@ -174,7 +174,7 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 	// Named-return defer rather than per-return calls: Ingest has many error
 	// exits (store lookups, fan-out, per-subscriber ingest) and this marks all
 	// of them — including ones added later — so failed triggers are findable by
-	// span status, matching engine.request and bridge.resolve.
+	// span status, matching engine.request.
 	defer func() {
 		if err != nil {
 			span.RecordError(err)

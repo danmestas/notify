@@ -45,9 +45,9 @@ func (r capResolver) ResolveEmailIntegration(_ context.Context, _ domain.Scope, 
 // scenario (subscriber -> trigger -> delivered email message) and
 // assert both the persisted Message and the captured provider invocation.
 func TestEmailParity_EndToEnd(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

@@ -31,9 +31,9 @@ import (
 // mounted and returns the server plus an API key header and the raw scope.
 func startOperatorServer(t *testing.T) (*httptest.Server, string, domain.Scope) {
 	t.Helper()
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

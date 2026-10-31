@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/steptype"
 )
@@ -24,7 +26,7 @@ func TestCompile_ScheduledDelayIsNativeCronSleep(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", c.cv, err)
 		}
-		if def.Type != "sleep" || def.Task != "" || def.Retry != nil || string(def.Config) != c.want {
+		if def.Type != dag.StepTypeSleep || def.Task != "" || def.Retry != nil || string(def.Config) != c.want {
 			t.Fatalf("%s: def = %+v config %s, want a sleep with %s", c.cv, def, def.Config, c.want)
 		}
 	}

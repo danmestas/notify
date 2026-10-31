@@ -204,38 +204,11 @@ func runServe(args []string) error {
 	}
 	defer func() { _ = st.Close() }()
 
-	eng, err := engine.New(cfg.natsURL, cfg.bridgeURL, engine.WithBridgeToken(cfg.bridgeToken))
+	eng, err := engine.New(cfg.natsURL)
 	if err != nil {
 		return fmt.Errorf("engine.New: %w", err)
 	}
 	defer func() { _ = eng.Stop() }()
-
-	// Boot-time dagnats bridge reachability probe (notify hardening #6):
-	// engine.New only validates the NATS control-plane connection; the HTTP
-	// worker bridge is otherwise first touched lazily on the first poll (see
-	// engine.go's poll), so a misconfigured -bridge-url/NOTIFY_BRIDGE_URL
-	// would silently boot and then have every send.* task fail forever. A
-	// transport-level failure (nothing listening) is fatal here; see
-	// probeBridgeReachable's doc comment for why a reachable-but-not-2xx
-	// bridge is logged and swallowed instead.
-	bridgeClient := &http.Client{Timeout: bridgeProbeTimeout}
-	if err := probeBridgeReachable(ctx, bridgeClient, cfg.bridgeURL); err != nil {
-		return fmt.Errorf("probeBridgeReachable: %w", err)
-	}
-
-	// Reachability is not permission. dagnats serves /ready outside its auth
-	// middleware, so a bridge that refuses every one of our task polls still
-	// probes healthy -- which is exactly how #325 stayed invisible. Verify the
-	// credentials before serving, and refuse to boot rather than accept
-	// triggers we can never execute.
-	if cfg.bridgeToken == "" {
-		slog.Default().Info("dagnats bridge auth disabled: DAGNATS_BRIDGE_TOKEN unset")
-	} else {
-		slog.Default().Info("dagnats bridge auth enabled", "url", cfg.bridgeURL)
-	}
-	if err := probeBridgeAuth(ctx, bridgeClient, cfg.bridgeURL, cfg.bridgeToken); err != nil {
-		return fmt.Errorf("probeBridgeAuth: %w", err)
-	}
 
 	bus, err := eventbus.Connect(ctx, cfg.natsURL)
 	if err != nil {
@@ -536,10 +509,10 @@ func runServe(args []string) error {
 	root.Handle("/console", consoleRoutes)
 	root.Handle("/console/", consoleRoutes)
 	// Readiness probe (notify hardening #6), distinct from /healthz's
-	// liveness-only check: reports 503 until both the dagnats bridge and the
-	// writer DB pool answer live, 200 once both do.
+	// liveness-only check: reports 503 until both the engine's dagnats
+	// connection and the writer DB pool are live, 200 once both are.
 	writer, _ := st.Pools()
-	root.HandleFunc("/readyz", readyzHandler(cfg.bridgeURL, bridgeClient, writer))
+	root.HandleFunc("/readyz", readyzHandler(eng.Ready, writer))
 	// Ops metrics (notify hardening #8): JSON of delivery outcomes and NATS link
 	// status, mounted ahead of the "/" catch-all. Unauthenticated, same trust
 	// posture as /healthz — an operator gates it at the ingress if needed.
@@ -577,13 +550,19 @@ func runServe(args []string) error {
 
 	srv := &http.Server{Addr: cfg.addr, Handler: root}
 
+	// Defers run last-in first-out, so this one drains the engine before any
+	// dependency deferred above (bus, mesh, webhooks, analytics, store) closes
+	// under a handler that is still finishing. The earlier defer covers the
+	// returns before this point; Stop is safe to call twice.
+	defer func() { _ = eng.Stop() }()
+
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()
 	}()
 
-	fmt.Printf("notify %s serving on %s (nats=%s bridge=%s db=%s)\n",
-		version.Version, cfg.addr, cfg.natsURL, cfg.bridgeURL, cfg.dbPath)
+	fmt.Printf("notify %s serving on %s (nats=%s db=%s)\n",
+		version.Version, cfg.addr, cfg.natsURL, cfg.dbPath)
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("ListenAndServe: %w", err)

@@ -75,6 +75,6 @@ An **agent** is a conversational endpoint registered in a scope. A **conversatio
 1. The API authenticates the key and resolves the scope.
 2. The trigger service finds the workflow by `name`, refuses if it is missing, inactive or empty, and upserts the recipient.
 3. It starts a run on the dagnats engine, with an idempotency key built from the transaction id and the subscriber.
-4. The engine dispatches each step as a task. notify's worker pool polls the sidecar's HTTP bridge, runs the step (render, check preferences, send, record a message) and reports back.
+4. The engine dispatches each step as a task. notify claims it over NATS with dagnats' worker SDK, runs the step (render, check preferences, send, record a message) and reports back.
 5. Regular delays and digests are engine-native sleeps, and so are scheduled and dynamic delays where the engine can express them (see [Delay](../workflows/step-types/delay)). Those hold no notify worker while waiting and a restart loses nothing. The remaining waits run as long-lived tasks that recompute their remaining time after a restart.
 6. Delivery-status events go on a JetStream stream, which feeds analytics, the console's live activity view, and your outbound webhooks.

@@ -18,13 +18,12 @@ import (
 // It registers a one-step agent-loop workflow whose handler loads an int
 // counter from the checkpoint (0 when absent), increments it, and Continues
 // with the new checkpoint until the counter hits 3, then Completes. It proves,
-// against the real dagnats bridge, that: the handler is invoked across multiple
-// iterations, the checkpoint round-trips (the counter persists), Iteration()
-// advances 0,1,2, and the final Complete output carries the total.
+// against a real dagnats worker, that: the handler is invoked across multiple
+// iterations, the checkpoint round-trips (each call sees the counter 0,1,2), and the final Complete output carries the total.
 func TestEngine_AgentLoop_CheckpointRoundTrip(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	e, err := engine.New(natsURL, bridgeURL)
+	e, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -46,10 +45,10 @@ func TestEngine_AgentLoop_CheckpointRoundTrip(t *testing.T) {
 			}
 			n = c.N
 		}
-		n++
 		mu.Lock()
-		iters = append(iters, lc.Iteration())
+		iters = append(iters, n)
 		mu.Unlock()
+		n++
 		if n >= 3 {
 			out := json.RawMessage(fmt.Sprintf(`{"total":%d}`, n))
 			mu.Lock()
@@ -67,7 +66,7 @@ func TestEngine_AgentLoop_CheckpointRoundTrip(t *testing.T) {
 	def := engine.WorkflowDef{
 		Name: "agent-loop-counter",
 		Steps: []engine.StepDef{
-			engine.AgentLoopStep("count", "agent.count", engine.AgentLoopConfig{MaxIterations: 10}),
+			engine.AgentLoopStep("count", "agent.count", engine.AgentLoopConfig{MaxIterations: 10}, 0),
 		},
 	}
 	if err := e.RegisterWorkflow(ctx, def); err != nil {
@@ -91,7 +90,7 @@ func TestEngine_AgentLoop_CheckpointRoundTrip(t *testing.T) {
 	}
 	for i, got := range iters {
 		if got != i {
-			t.Fatalf("Iteration() at call %d = %d, want %d (iters=%v)", i, got, i, iters)
+			t.Fatalf("checkpoint at call %d = %d, want %d (iters=%v)", i, got, i, iters)
 		}
 	}
 	if string(completeOut) != `{"total":3}` {
@@ -103,9 +102,9 @@ func TestEngine_AgentLoop_CheckpointRoundTrip(t *testing.T) {
 // that never Completes is bounded: the engine fails the run with the
 // iteration-limit error once Iterations reaches MaxIterations.
 func TestEngine_AgentLoop_MaxIterationsEnforced(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	e, err := engine.New(natsURL, bridgeURL)
+	e, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -130,7 +129,7 @@ func TestEngine_AgentLoop_MaxIterationsEnforced(t *testing.T) {
 	def := engine.WorkflowDef{
 		Name: "agent-loop-forever",
 		Steps: []engine.StepDef{
-			engine.AgentLoopStep("loop", "agent.forever", engine.AgentLoopConfig{MaxIterations: 3}),
+			engine.AgentLoopStep("loop", "agent.forever", engine.AgentLoopConfig{MaxIterations: 3}, 0),
 		},
 	}
 	if err := e.RegisterWorkflow(ctx, def); err != nil {
@@ -162,9 +161,9 @@ func TestEngine_AgentLoop_MaxIterationsEnforced(t *testing.T) {
 // raw bytes that a plain NATS subscriber on stream.{runID}.{stepID} receives,
 // then Completes the run.
 func TestEngine_AgentLoop_Stream(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	e, err := engine.New(natsURL, bridgeURL)
+	e, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -199,7 +198,7 @@ func TestEngine_AgentLoop_Stream(t *testing.T) {
 	def := engine.WorkflowDef{
 		Name: "agent-loop-stream",
 		Steps: []engine.StepDef{
-			engine.AgentLoopStep("emit", "agent.stream", engine.AgentLoopConfig{MaxIterations: 5}),
+			engine.AgentLoopStep("emit", "agent.stream", engine.AgentLoopConfig{MaxIterations: 5}, 0),
 		},
 	}
 	if err := e.RegisterWorkflow(ctx, def); err != nil {

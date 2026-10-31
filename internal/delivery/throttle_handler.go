@@ -79,7 +79,7 @@ func (h *ThrottleHandler) Handle(ctx context.Context, t engine.TaskPayload) (jso
 		notificationID = env.NotificationID
 		transactionID = env.TransactionID
 	} else {
-		notif, err := h.store.Notifications().GetByRunID(ctx, t.RunID)
+		notif, err := NotificationByRun(ctx, h.store, t.RunID)
 		if err != nil {
 			return nil, fmt.Errorf("throttle: notification by run %q: %w", t.RunID, err)
 		}
