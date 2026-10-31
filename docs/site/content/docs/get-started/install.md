@@ -53,10 +53,10 @@ notify version         print the version
 dagnats provides the durable workflow engine, and an embedded NATS server with JetStream, over which notify registers workflows and claims tasks. notify never starts it; start it first.
 
 ```bash
-go install github.com/danmestas/dagnats/cmd/dagnats@v0.0.37
+go install github.com/danmestas/dagnats/cmd/dagnats@v0.0.38
 dagnats serve
 ```
 
-The `Dockerfile` and `go.mod` pin the dagnats version (`DAGNATS_VERSION`, currently `v0.0.37`); use the same one. With no configuration `dagnats serve` binds NATS on `127.0.0.1:4222`, the default notify expects (`-nats-url`), and its HTTP console on `127.0.0.1:8080`. Its data directory defaults to a per-user path, or `DAGNATS_DATA_DIR` if set.
+The `Dockerfile` and `go.mod` pin the dagnats version (`DAGNATS_VERSION`, currently `v0.0.38`); use the same one. With no configuration `dagnats serve` binds NATS on `127.0.0.1:4222`, the default notify expects (`-nats-url`), and its HTTP console on `127.0.0.1:8080`. Its data directory defaults to a per-user path, or `DAGNATS_DATA_DIR` if set.
 
 Read [the dagnats sidecar](../../operations/dagnats-sidecar) before running this anywhere that is not your laptop.
