@@ -155,7 +155,7 @@ func TestDelayDeadlineRepo_SurvivesPastStepOutputsRetentionWindow(t *testing.T) 
 // background-purge mechanism: PurgeOlderThan deletes rows older than the
 // given cutoff (abandoned by a run that never reached Clear) but leaves
 // rows within it untouched. This is the retention path startDelayDeadlinePurge
-// drives from cmd/notify/retention.go -- Save itself no longer sweeps.
+// drives from notify/retention.go -- Save itself no longer sweeps.
 func TestDelayDeadlineRepo_PurgeOlderThanSweepsExpiredRows(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t)

@@ -59,8 +59,8 @@ func TestFullJourney_RealBinary(t *testing.T) {
 	base, authHeader := startServe(t, dbPath, natsURL, keyHex, apiKey)
 
 	// /healthz must answer 200 WITHOUT auth — the container/orchestrator probe
-	// target. A healthy response also means serve got past engine.New +
-	// eventbus.Connect, i.e. it reached the dagnats sidecar.
+	// target. A healthy response also means serve got past notify.New,
+	// i.e. it reached the dagnats sidecar.
 	hzResp, err := http.Get(base + "/healthz")
 	if err != nil {
 		t.Fatalf("GET /healthz: %v", err)
@@ -325,8 +325,8 @@ func startServe(t *testing.T, dbPath, natsURL, keyHex, apiKey string) (base, aut
 
 // serveReadyOK polls the unauthenticated /healthz liveness endpoint and reports
 // whether the binary served 200 within timeout (non-fatal so the caller can
-// retry). A healthy /healthz means runServe got past store.Open + engine.New +
-// eventbus.Connect — i.e. it connected to the dagnats sidecar.
+// retry). A healthy /healthz means serve dialed dagnats and got through
+// notify.New — i.e. it connected to the dagnats sidecar.
 func serveReadyOK(base string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

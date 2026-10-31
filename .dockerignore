@@ -8,7 +8,6 @@ docs
 *.db-shm
 *.duckdb
 coverage.out
-/notify
 Dockerfile
 compose.yml
 .dockerignore

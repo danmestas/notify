@@ -73,11 +73,14 @@ func (e *ServiceError) Error() string {
 // terminalState matches the task states that end a turn (TS TERMINAL port).
 var terminalState = regexp.MustCompile(`TASK_STATE_(COMPLETED|FAILED|CANCELED|REJECTED)`)
 
-// Client dispatches mesh turns over an owned NATS connection.
+// Client dispatches mesh turns over a NATS connection.
 type Client struct {
-	nc      *nats.Conn
-	allow   string
-	timeout time.Duration
+	nc *nats.Conn
+	// ownsConn is set when Dial dialed nc; a connection passed to FromConn
+	// belongs to the caller and Close leaves it open.
+	ownsConn bool
+	allow    string
+	timeout  time.Duration
 }
 
 // Option customises a Client at Dial time.
@@ -100,15 +103,27 @@ func Dial(natsURL string, opts ...Option) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	c := FromConn(nc, opts...)
+	c.ownsConn = true
+	return c, nil
+}
+
+// FromConn returns a Client that dispatches over an existing connection. The
+// connection stays the caller's: Close does not close it.
+func FromConn(nc *nats.Conn, opts ...Option) *Client {
 	c := &Client{nc: nc, allow: DefaultAllowedSubjects, timeout: DefaultTimeout}
 	for _, opt := range opts {
 		opt(c)
 	}
-	return c, nil
+	return c
 }
 
-// Close releases the NATS connection.
-func (c *Client) Close() { c.nc.Close() }
+// Close releases the NATS connection when the client dialed it.
+func (c *Client) Close() {
+	if c.ownsConn {
+		c.nc.Close()
+	}
+}
 
 // envelope is the v2 wire message, both directions.
 type envelope struct {

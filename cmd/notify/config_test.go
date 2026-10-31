@@ -69,7 +69,7 @@ func TestLoadConfig_MasterKeyRequiredUnlessDev(t *testing.T) {
 			t.Fatalf("loadConfig -dev: %v", err)
 		}
 		want := sha256.Sum256([]byte("notify-dev-master-key"))
-		if string(cfg.masterKey) != string(want[:]) {
+		if string(cfg.app.MasterKey) != string(want[:]) {
 			t.Fatal("dev master key mismatch: loadConfig did not derive the fixed dev key")
 		}
 	})
@@ -85,7 +85,7 @@ func TestLoadConfig_MasterKeyRequiredUnlessDev(t *testing.T) {
 		if err != nil {
 			t.Fatalf("loadConfig: %v", err)
 		}
-		if string(cfg.masterKey) != string(raw) {
+		if string(cfg.app.MasterKey) != string(raw) {
 			t.Fatal("master key not decoded from hex as expected")
 		}
 	})
@@ -104,7 +104,7 @@ func TestLoadConfig_SMTPCertAndKeyTogether(t *testing.T) {
 		}
 	}
 	cfg, err := loadConfig([]string{"-dev", "-smtp-cert", "/etc/ssl/mx.pem", "-smtp-key", "/etc/ssl/mx.key"})
-	if err != nil || cfg.smtpCert != "/etc/ssl/mx.pem" || cfg.smtpKey != "/etc/ssl/mx.key" {
-		t.Fatalf("both set: cfg=%q/%q err=%v", cfg.smtpCert, cfg.smtpKey, err)
+	if err != nil || cfg.app.SMTPCert != "/etc/ssl/mx.pem" || cfg.app.SMTPKey != "/etc/ssl/mx.key" {
+		t.Fatalf("both set: cfg=%q/%q err=%v", cfg.app.SMTPCert, cfg.app.SMTPKey, err)
 	}
 }
