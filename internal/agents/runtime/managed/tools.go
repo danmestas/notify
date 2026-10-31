@@ -25,10 +25,15 @@ import (
 // Per-turn limits on tool use. The whole loop runs in memory inside the turn
 // task; a crash reruns the turn from its start.
 const (
-	maxMCPServers      = 8
-	maxModelRounds     = 6
-	maxToolCalls       = 12
-	toolCallTimeout    = 10 * time.Second
+	maxMCPServers   = 8
+	maxModelRounds  = 6
+	maxToolCalls    = 12
+	toolCallTimeout = 10 * time.Second
+	// MaxTurnDuration is the most one turn's model and tool work can take:
+	// the tool listing (all servers at once, one toolCallTimeout), then up to
+	// maxModelRounds model calls and maxToolCalls tool calls. Without tools a
+	// turn is one model call, well inside it.
+	MaxTurnDuration    = toolCallTimeout + maxModelRounds*aibuilder.MaxModelCallDuration + maxToolCalls*toolCallTimeout
 	maxResultBytes     = 64 << 10
 	maxTurnResultBytes = 256 << 10
 	// minResultBytes is the least budget worth handing a result; below it the

@@ -34,9 +34,9 @@ import (
 // delivery-status event fans out over the event bus to the webhooksout consumer
 // which POSTs the raw message to the tenant's active webhook endpoint.
 func TestWebhook_DeliveryStatusPostedToEndpoint(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -58,7 +58,9 @@ func TestWebhook_DeliveryStatusPostedToEndpoint(t *testing.T) {
 	// Register the in_app delivery handler (publishing delivery-status events)
 	// before workers start.
 	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	// Start the outbound webhook consumer; it subscribes to every env's
 	// delivery-status events and POSTs each to that scope's active endpoints.

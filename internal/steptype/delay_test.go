@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/steptype"
 )
@@ -27,7 +29,7 @@ func TestCompile_DelayWeeks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if def.Type != "sleep" || string(def.Config) != `{"duration":1209600000000000}` {
+	if def.Type != dag.StepTypeSleep || string(def.Config) != `{"duration":1209600000000000}` {
 		t.Fatalf("delay weeks def = %+v, want sleep 1209600000000000", def)
 	}
 }
@@ -41,7 +43,7 @@ func TestCompile_DelayMonths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if def.Type != "sleep" || string(def.Config) != `{"duration":2592000000000000}` {
+	if def.Type != dag.StepTypeSleep || string(def.Config) != `{"duration":2592000000000000}` {
 		t.Fatalf("delay months def = %+v, want sleep 2592000000000000", def)
 	}
 }
@@ -56,7 +58,7 @@ func TestCompile_DelayScheduled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if def.ID != "d" || def.Type != "normal" || def.Task != "delay.scheduled" {
+	if def.ID != "d" || def.Type != dag.StepTypeNormal || def.Task != "delay.scheduled" {
 		t.Fatalf("scheduled delay def = %+v, want {ID:d Type:normal Task:delay.scheduled}", def)
 	}
 	if def.Config != nil {
@@ -78,7 +80,7 @@ func TestCompile_DelayDynamic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if def.ID != "d" || def.Type != "normal" || def.Task != "delay.dynamic" {
+	if def.ID != "d" || def.Type != dag.StepTypeNormal || def.Task != "delay.dynamic" {
 		t.Fatalf("dynamic delay def = %+v, want {ID:d Type:normal Task:delay.dynamic}", def)
 	}
 	if def.Config != nil {
@@ -145,7 +147,7 @@ func TestCompile_DelayRegular_BackwardCompat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if def.Type != "sleep" || string(def.Config) != `{"duration":180000000000}` || def.Retry != nil {
+	if def.Type != dag.StepTypeSleep || string(def.Config) != `{"duration":180000000000}` || def.Retry != nil {
 		t.Fatalf("regular delay def = %+v, want sleep 180000000000 no-retry", def)
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/steptype"
 )
@@ -23,7 +25,7 @@ import (
 // The engine's Handles() smoke test in internal/httpapi/throttle_e2e_test.go
 // catches the reverse — a task registered in main.go but not covered here.
 func TestHandlerDesyncGuard(t *testing.T) {
-	// expectedNormalTasks is the complete set of Type:"normal" engine task names
+	// expectedNormalTasks is the complete set of Type:dag.StepTypeNormal engine task names
 	// that steptype.Default() can produce at compile time. Every entry must have
 	// a matching eng.Handle call in cmd/notify/main.go.
 	expectedNormalTasks := map[string]bool{
@@ -83,7 +85,7 @@ func TestHandlerDesyncGuard(t *testing.T) {
 			t.Errorf("Compile(%q cv=%s): %v", step.Type, step.ControlValues, err)
 			continue
 		}
-		if def.Type == "normal" {
+		if def.Type == dag.StepTypeNormal {
 			gotNormal[def.Task] = true
 		}
 	}

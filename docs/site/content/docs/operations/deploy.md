@@ -42,7 +42,7 @@ An example launchd job for notify (adapt paths; secrets belong in your secret st
         <key>NOTIFY_ADDR</key>            <string>127.0.0.1:3000</string>
         <key>NOTIFY_DB</key>              <string>/var/lib/notify/notify.db</string>
         <key>NOTIFY_PUBLIC_BASE_URL</key> <string>https://notify.example.com</string>
-        <!-- NOTIFY_MASTER_KEY_HEX, DAGNATS_BRIDGE_TOKEN, NOTIFY_INBOUND_SECRET: inject from your secret store -->
+        <!-- NOTIFY_MASTER_KEY_HEX, NOTIFY_INBOUND_SECRET: inject from your secret store -->
     </dict>
     <key>StandardOutPath</key>    <string>/var/log/notify.log</string>
     <key>StandardErrorPath</key>  <string>/var/log/notify.log</string>
@@ -54,7 +54,7 @@ On systemd the equivalent is a service with `Restart=always`, `After=` the dagna
 
 ### Start-up order
 
-Because the supervisor starts jobs independently, notify may start before the sidecar's HTTP bridge is listening, for example after a reboot. notify retries the reachability check for about 30 seconds (10 tries, 3 seconds apart) before exiting; an exit makes the supervisor restart it. A bridge that is reachable but not yet answering ready is logged and does not block start: `/readyz` flips to ready once it does. A bridge that **rejects notify's credentials** is fatal immediately, so a wrong `DAGNATS_BRIDGE_TOKEN` is a loud failure at start, not workflows that silently never run.
+Because the supervisor starts jobs independently, notify may start before the sidecar's NATS port is listening, for example after a reboot. notify then exits at start and the supervisor restarts it until dagnats is up. `/readyz` reports `"dagnats": false` whenever notify's connection to dagnats is down.
 
 ### Putting it on the internet
 

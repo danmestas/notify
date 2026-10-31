@@ -32,9 +32,9 @@ import (
 // context from the store (its TaskPayload.Input is empty because the upstream
 // sleep step produces no output).
 func TestDelay_InAppDeliveredAfterSleep(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -53,7 +53,9 @@ func TestDelay_InAppDeliveredAfterSleep(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = bus.Close() })
 	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	masterKey := bytes.Repeat([]byte{0x2a}, 32)
 	id := identity.New(st, masterKey)

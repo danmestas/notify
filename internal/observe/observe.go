@@ -11,7 +11,6 @@ package observe
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/nats-io/nats.go"
@@ -139,39 +138,4 @@ func (c natsHeaderCarrier) Keys() []string {
 		out = append(out, k)
 	}
 	return out
-}
-
-// ContextWithRemoteTrace grafts the W3C trace context described by traceparent
-// and tracestate onto ctx, so a span started from the result continues the
-// caller's trace instead of beginning a new one.
-//
-// This is the consumer half of the bridge seam: dagnats stamps each polled task
-// with its own trace context (dagnats#534), which is what lets a delivery span
-// hang off the trigger that caused it rather than orphaning.
-//
-// It grafts only the span context and keeps ctx otherwise intact. Extraction
-// roots on a fresh context, so using the extracted context directly would
-// silently discard the poll loop's deadline and cancellation — the bounds on the
-// handler that runs next. Gaining a trace parent is not worth losing those.
-//
-// An empty or malformed traceparent leaves ctx untouched; dagnats omits the
-// field when it has no context to pass on.
-func ContextWithRemoteTrace(ctx context.Context, traceparent, tracestate string) context.Context {
-	if traceparent == "" {
-		return ctx
-	}
-	carrier := propagation.MapCarrier{"traceparent": traceparent}
-	if tracestate != "" {
-		carrier["tracestate"] = tracestate
-	}
-	sc := trace.SpanContextFromContext(wire.Extract(context.Background(), carrier))
-	if !sc.IsValid() {
-		return ctx
-	}
-	return trace.ContextWithRemoteSpanContext(ctx, sc)
-}
-
-// InjectHTTPHeader writes the W3C traceparent of ctx's span into h.
-func InjectHTTPHeader(ctx context.Context, h http.Header) {
-	wire.Inject(ctx, propagation.HeaderCarrier(h))
 }

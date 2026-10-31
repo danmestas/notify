@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danmestas/dagnats/dag"
+
 	_ "modernc.org/sqlite"
 
 	"github.com/danmestas/notify/internal/audience"
@@ -31,8 +33,8 @@ const (
 func setup(t *testing.T) (*trigger.Service, domain.Scope, string) {
 	t.Helper()
 
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -68,7 +70,7 @@ func setup(t *testing.T) (*trigger.Service, domain.Scope, string) {
 	dagName := scope.EnvID + "-" + testTrigger
 	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
 		Name:  dagName,
-		Steps: []engine.StepDef{{ID: "S1", Task: "send.in_app", Type: "normal"}},
+		Steps: []engine.StepDef{{ID: "S1", Task: "send.in_app", Type: dag.StepTypeNormal}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
@@ -182,8 +184,8 @@ func TestIngest_UnknownWorkflow(t *testing.T) {
 // whose single step is Type:"email" ingests, dispatches send.email via StartRun,
 // and persists a notification with a non-empty run_id.
 func TestIngest_EmailWorkflow(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -220,7 +222,7 @@ func TestIngest_EmailWorkflow(t *testing.T) {
 	dagName := scope.EnvID + "-" + emailTrigger
 	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
 		Name:  dagName,
-		Steps: []engine.StepDef{{ID: "S1", Task: "send.email", Type: "normal"}},
+		Steps: []engine.StepDef{{ID: "S1", Task: "send.email", Type: dag.StepTypeNormal}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
@@ -255,8 +257,8 @@ func TestIngest_EmailWorkflow(t *testing.T) {
 // every topic member: each subscriber gets its own engine run + notification
 // row (with a non-empty run_id), all sharing one transactionId.
 func TestIngest_TopicFanout(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -292,7 +294,7 @@ func TestIngest_TopicFanout(t *testing.T) {
 	dagName := scope.EnvID + "-" + testTrigger
 	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
 		Name:  dagName,
-		Steps: []engine.StepDef{{ID: "S1", Task: "send.in_app", Type: "normal"}},
+		Steps: []engine.StepDef{{ID: "S1", Task: "send.in_app", Type: dag.StepTypeNormal}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
@@ -346,8 +348,8 @@ func TestIngest_TopicFanout(t *testing.T) {
 // whose control_values contain a corrupted (non-parseable) data_json string
 // causes Ingest to surface an error rather than silently sending a nil payload.
 func TestIngest_PushDataJSONCorrupted_ReturnsError(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -388,7 +390,7 @@ func TestIngest_PushDataJSONCorrupted_ReturnsError(t *testing.T) {
 	dagName := scope.EnvID + "-" + pushTrigger
 	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
 		Name:  dagName,
-		Steps: []engine.StepDef{{ID: "P1", Task: "send.push", Type: "normal"}},
+		Steps: []engine.StepDef{{ID: "P1", Task: "send.push", Type: dag.StepTypeNormal}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
@@ -417,8 +419,8 @@ func TestIngest_PushDataJSONCorrupted_ReturnsError(t *testing.T) {
 // TaskPayload.Input it receives — the same envelope trigger.Ingest passed to
 // engine.StartRun.
 func TestIngest_StreamWorkflow_TopicInEnvelope(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -467,12 +469,14 @@ func TestIngest_StreamWorkflow_TopicInEnvelope(t *testing.T) {
 		mu.Unlock()
 		return json.RawMessage(`{}`), nil
 	})
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	dagName := scope.EnvID + "-" + streamTrigger
 	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
 		Name:  dagName,
-		Steps: []engine.StepDef{{ID: "S1", Task: "send.stream", Type: "normal"}},
+		Steps: []engine.StepDef{{ID: "S1", Task: "send.stream", Type: dag.StepTypeNormal}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}

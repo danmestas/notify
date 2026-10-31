@@ -20,7 +20,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/delivery/template"
@@ -167,7 +166,7 @@ func (h *Handler) Handle(ctx context.Context, t engine.TaskPayload) (json.RawMes
 	}
 	bodyStr := template.RenderAs(bodyEsc, cfg.Body, data, noTranslate)
 
-	reqCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSec)*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, steptype.HTTPTimeout(cfg.TimeoutSec))
 	defer cancel()
 
 	var bodyReader io.Reader
@@ -221,7 +220,7 @@ func (h *Handler) onFailure(ctx context.Context, scope domain.Scope, t engine.Ta
 // id (notification -> workflow -> step), applying the same defaults the registry
 // validates: method GET, timeoutSec 30, failurePolicy fail_closed.
 func loadConfig(ctx context.Context, s *store.Store, box *secretbox.Box, runID, stepID string) (stepConfig, error) {
-	notif, err := s.Notifications().GetByRunID(ctx, runID)
+	notif, err := delivery.NotificationByRun(ctx, s, runID)
 	if err != nil {
 		return stepConfig{}, fmt.Errorf("notification by run %q: %w", runID, err)
 	}

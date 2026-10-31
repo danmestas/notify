@@ -9,6 +9,5 @@ import (
 // startSidecar runs an in-process dagnats server and returns its NATS URL.
 func startSidecar(t *testing.T) (natsURL string) {
 	t.Helper()
-	natsURL, _ = dagtest.StartSidecar(t)
-	return natsURL
+	return dagtest.StartSidecar(t)
 }

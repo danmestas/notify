@@ -34,9 +34,9 @@ import (
 // provider_id/integration_id and each httptest fake webhook receives exactly
 // one POST.
 func TestIntegrationRouting_TwoChatSteps_EndToEnd(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -76,7 +76,9 @@ func TestIntegrationRouting_TwoChatSteps_EndToEnd(t *testing.T) {
 	// Register the chat handler, backed by the real connectivity.Service, before
 	// workers start.
 	eng.Handle("send.chat", delivery.NewChat(st, conn).HandleChat)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	id := identity.New(st, masterKey)
 	aud := audience.New(st)

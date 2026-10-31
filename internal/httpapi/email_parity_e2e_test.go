@@ -45,9 +45,9 @@ func (r capResolver) ResolveEmailIntegration(_ context.Context, _ domain.Scope, 
 // scenario (subscriber -> trigger -> delivered email message) and
 // assert both the persisted Message and the captured provider invocation.
 func TestEmailParity_EndToEnd(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -65,7 +65,9 @@ func TestEmailParity_EndToEnd(t *testing.T) {
 	// Register both delivery handlers before workers start.
 	eng.Handle("send.in_app", delivery.New(st).HandleInApp)
 	eng.Handle("send.email", delivery.NewEmail(st, capResolver{c: cap, from: "noreply@acme.io"}).HandleEmail)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	masterKey := bytesRepeat(0x2a, 32)
 	id := identity.New(st, masterKey)

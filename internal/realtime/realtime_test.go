@@ -25,7 +25,7 @@ func scopeInjector(s domain.Scope, next http.Handler) http.Handler {
 }
 
 func TestGateway_StreamsPublishedInboxEvents(t *testing.T) {
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

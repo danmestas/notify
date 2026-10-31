@@ -32,9 +32,9 @@ import (
 // trigger -> delivery -> in_app message pipeline over a real dagnats sidecar,
 // real temp SQLite, and the real HTTP surface.
 func TestInbound_FiresWorkflow(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -54,7 +54,9 @@ func TestInbound_FiresWorkflow(t *testing.T) {
 	t.Cleanup(func() { _ = bus.Close() })
 
 	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	masterKey := make([]byte, 32)
 	for i := range masterKey {

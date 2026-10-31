@@ -18,7 +18,6 @@ max_duration: "720h"             # ~30d; restart policy keeps it alive between
 # standalone (localhost-only) single-box phase.
 env:
   NOTIFY_NATS_URL: "nats://127.0.0.1:4222"        # engine + mesh + agent hub
-  NOTIFY_BRIDGE_URL: "http://127.0.0.1:8080"      # engine HTTP bridge
   NOTIFY_ADDR: "0.0.0.0:3000"
   NOTIFY_DB: "/data/notify.db"
   NOTIFY_MESH_NATS_URL: ""                          # empty → reuse engine NATS

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/dagtest"
 	"github.com/danmestas/notify/internal/engine"
 )
@@ -15,9 +17,9 @@ import (
 // and asserts the run drives to terminal "completed" — proving trigger -> a
 // one-step DAG -> complete against the real engine.
 func TestEngine_StartRun_OneStepCompletes(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	e, err := engine.New(natsURL, bridgeURL)
+	e, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -29,12 +31,14 @@ func TestEngine_StartRun_OneStepCompletes(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	e.StartWorkers(ctx)
+	if err := e.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	def := engine.WorkflowDef{
 		Name: "foundation-smoke",
 		Steps: []engine.StepDef{
-			{ID: "noop", Task: "noop", Type: "normal"},
+			{ID: "noop", Task: "noop", Type: dag.StepTypeNormal},
 		},
 	}
 	if err := e.RegisterWorkflow(ctx, def); err != nil {

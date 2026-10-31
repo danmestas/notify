@@ -1,6 +1,8 @@
 package main
 
 import (
+	"time"
+
 	"github.com/danmestas/notify/internal/agents/agentstep"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/delivery"
@@ -9,6 +11,7 @@ import (
 	"github.com/danmestas/notify/internal/eventbus"
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/secretbox"
+	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -68,12 +71,16 @@ func registerDeliveryHandlers(eng taskRegistrar, st *store.Store, conn *connecti
 	eng.Handle("send.stream", wireCommon(delivery.NewStream(st), d).WithFeed(bus).HandleStream)
 }
 
+// runTimeMargin is added to a task type's own worst case to make its max run
+// time: room for the store reads and writes around the bounded work.
+const runTimeMargin = 5 * time.Minute
+
 // taskRegistrar is the slice of *engine.Engine the task wiring needs. Narrowing
 // it to Handle lets the coverage test observe the REAL registration code path
 // with a recorder, instead of asserting against a second hand-maintained list
 // that could drift from the first -- which is the very failure this guards.
 type taskRegistrar interface {
-	Handle(taskType string, fn engine.HandlerFunc)
+	Handle(taskType string, fn engine.HandlerFunc, opts ...engine.HandleOption)
 }
 
 // stepTaskDeps carries what the step-task handlers need to be constructed.
@@ -124,7 +131,8 @@ func registerStepTaskHandlers(eng taskRegistrar, d stepTaskDeps) {
 
 	// http_request: outbound HTTP action step. Makes the interpolated call, then
 	// captures statusCode/body/headers into step_outputs for downstream steps.
-	eng.Handle("http_request", httpaction.New(d.store, httpaction.WithSecretBox(d.secrets)).Handle)
+	eng.Handle("http_request", httpaction.New(d.store, httpaction.WithSecretBox(d.secrets)).Handle,
+		engine.WithMaxRunTime(steptype.HTTPMaxTimeoutSec*time.Second+runTimeMargin))
 
 	// agent_message: post the rendered text to an agent conversation and
 	// start the agent's turn, in process (#4).

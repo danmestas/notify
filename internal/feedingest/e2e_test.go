@@ -62,7 +62,7 @@ type fullStack struct {
 
 func newFullStack(t *testing.T) *fullStack {
 	t.Helper()
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	ctx := context.Background()
 
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "notify.db"))

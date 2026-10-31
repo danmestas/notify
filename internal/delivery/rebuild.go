@@ -32,7 +32,7 @@ func (h *Handler) rebuildEnvelope(ctx context.Context, t engine.TaskPayload) (ru
 // It is exported so internal/delivery/httpaction can reuse it without a parent
 // package import cycle; the channel handlers in this package call it directly.
 func RebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) (runenv.InAppEnvelope, string, map[string]map[string]any, error) {
-	notif, err := s.Notifications().GetByRunID(ctx, t.RunID)
+	notif, err := NotificationByRun(ctx, s, t.RunID)
 	if err != nil {
 		return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: notification by run %q: %w", t.RunID, err)
 	}
@@ -168,7 +168,7 @@ func isRunEnvelope(data []byte) bool {
 // to it), so this standalone helper resolves the
 // notification -> workflow -> step controlValues and returns controlValues.cron.
 func stepCron(ctx context.Context, s *store.Store, runID, stepID string) (string, error) {
-	notif, err := s.Notifications().GetByRunID(ctx, runID)
+	notif, err := NotificationByRun(ctx, s, runID)
 	if err != nil {
 		return "", fmt.Errorf("stepCron: notification by run %q: %w", runID, err)
 	}

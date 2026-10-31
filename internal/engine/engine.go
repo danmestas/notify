@@ -1,108 +1,75 @@
-// Package engine is notify's control-plane and worker client to the dagnats
-// execution engine, which runs as a sidecar process. It hides the NATS
-// request/reply control plane and the HTTP worker bridge behind a small, deep
-// API: callers register workflows, start runs, poll run snapshots, and
-// register task handlers without ever touching NATS or HTTP directly.
+// Package engine is notify's client to the dagnats execution engine, which
+// runs as a separate process. It hides dagnats' NATS control plane and its
+// worker SDK behind a small, deep API: callers register workflows, start runs,
+// poll run snapshots, and register task handlers without touching NATS.
 package engine
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
+	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/danmestas/dagnats/dag"
+	"github.com/danmestas/dagnats/worker"
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/danmestas/notify/internal/eventbus"
 	"github.com/danmestas/notify/internal/observe"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
-// Control-plane subjects exposed by the dagnats NATS API.
-const (
-	subjRegister = "api.workflows.register"
-	subjStartRun = "api.runs.start"
-	subjGetRun   = "api.runs.get"
-
-	controlTimeout = 5 * time.Second
+// Workflow definitions are dagnats' own types, so notify registers exactly
+// what dagnats validates.
+type (
+	WorkflowDef     = dag.WorkflowDef
+	StepDef         = dag.StepDef
+	RetryPolicy     = dag.RetryPolicy
+	SingletonConfig = dag.SingletonConfig
 )
 
-// WorkflowDef mirrors dagnats's dag.WorkflowDef JSON (only the fields notify
-// needs). dagnats requires at least one step and rejects unknown workflows.
-type WorkflowDef struct {
-	Name  string    `json:"name"`
-	Steps []StepDef `json:"steps"`
-	// IdempotencyKey is a dot-path evaluated against the run input; a StartRun
-	// whose key value was already seen returns the existing run id instead of
-	// starting a duplicate run.
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
-	// Singleton constrains runs to one at a time per key (dagnats admission).
-	Singleton *SingletonConfig `json:"singleton,omitempty"`
-}
-
-// SingletonConfig mirrors dagnats's dag.SingletonConfig: at most one active
-// run per key. Key is a dot-path evaluated against the run input; empty keys
-// the lock by workflow name alone.
-type SingletonConfig struct {
-	Mode string `json:"mode"` // "skip" drops the duplicate; "cancel" cancels the active run
-	Key  string `json:"key,omitempty"`
-}
-
-// RetryPolicy mirrors dagnats's dag.RetryPolicy. Durations marshal as
-// nanoseconds (Go time.Duration JSON), matching the dagnats wire.
-type RetryPolicy struct {
-	MaxAttempts  int           `json:"max_attempts"`
-	Strategy     string        `json:"strategy"` // "fixed" | "linear" | "exponential"
-	InitialDelay time.Duration `json:"initial_delay"`
-	MaxDelay     time.Duration `json:"max_delay"`
-}
-
-// StepDef mirrors dagnats's dag.StepDef JSON. Type marshals as a string such as
-// "normal" or "agent_loop"; set it explicitly to be safe. Timeout bounds a
-// single task dispatch (per agent-loop iteration) and marshals as nanoseconds
-// (Go time.Duration JSON), matching dagnats's dag.StepDef.Timeout.
-type StepDef struct {
-	ID        string          `json:"id"`
-	Task      string          `json:"task"`
-	Type      string          `json:"type,omitempty"`
-	Config    json.RawMessage `json:"config,omitempty"`
-	DependsOn []string        `json:"depends_on,omitempty"`
-	Retry     *RetryPolicy    `json:"retry,omitempty"`
-	Timeout   time.Duration   `json:"timeout,omitempty"`
-}
-
-// TaskPayload mirrors dagnats's protocol.TaskPayload / bridge pollResponse JSON.
-// Attempt is the 1-based dispatch count; always ≥1 since danmestas/dagnats#384
-// fixed first-dispatch propagation (previously omitted, unmarshaling to 0).
+// TaskPayload is what a handler learns about the task it runs.
 type TaskPayload struct {
-	TaskID string `json:"task_id"`
-	RunID  string `json:"run_id"`
-	StepID string `json:"step_id"`
-	// Iteration is the 0-based agent-loop iteration count: 0 on first dispatch,
-	// incremented by the engine on each Continue. Omitted (0) for normal steps.
-	Iteration int             `json:"iteration,omitempty"`
-	Attempt   int             `json:"attempt"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	// TraceParent/TraceState carry the W3C trace context dagnats stamps on each
-	// dispatched task (danmestas/dagnats#534), letting this task's spans continue
-	// the trace that started the run instead of rooting a new one.
-	//
-	// The JSON keys are the un-underscored W3C wire names and must match
-	// dagnats's tags byte-for-byte — JSON field matching is case-insensitive but
-	// name-exact, and a silent mismatch here reproduces the orphaned-trace bug
-	// that a canonicalised header key caused on the NATS seam (#250).
-	TraceParent string `json:"traceparent,omitempty"`
-	TraceState  string `json:"tracestate,omitempty"`
+	// TaskID is {runID}.{stepID}, dagnats' key for the task.
+	TaskID string
+	RunID  string
+	StepID string
+	// Attempt is the 1-based dispatch count: 1 first, 2 on the first retry.
+	Attempt int
+	Input   json.RawMessage
+	// ResumeAt is the deadline an earlier dispatch of this step parked it
+	// until with WaitUntil; zero when the step has never parked. A handler
+	// resumes toward it rather than recomputing a wait from now.
+	ResumeAt time.Time
 }
+
+// WaitError is WaitUntil's result: it asks the engine to park the task.
+type WaitError struct{ At time.Time }
+
+func (e *WaitError) Error() string { return "engine: wait until " + e.At.Format(time.RFC3339) }
+
+// WaitUntil returns the error a handler returns to wait until at without
+// holding a worker: the engine parks the task in dagnats (a durable,
+// delayed redelivery) and dispatches it again with ResumeAt set to at. It
+// survives restarts, a cancelled run is never redelivered, and a wait of any
+// length holds no slot and no claim. The resumed dispatch returns output once
+// at has passed, or WaitUntil again.
+func WaitUntil(at time.Time) error { return &WaitError{At: at} }
+
+// maxPark bounds one park. A longer wait parks again on resume, which also
+// rewrites the marker before dagnats' 30-day checkpoint TTL could drop it.
+const maxPark = time.Hour
+
+// parkPrefix tags the pause name that carries a park's deadline.
+const parkPrefix = "until:"
 
 // RunSnapshot mirrors the run fields of dagnats's api.runs.get reply
 // (RunResponse embeds dag.WorkflowRun).
@@ -152,49 +119,45 @@ func (e *NonRetryableError) Unwrap() error { return e.Err }
 // NewNonRetryableError wraps err so the failure is explicitly non-retriable.
 func NewNonRetryableError(err error) error { return &NonRetryableError{Err: err} }
 
-// Engine talks to a dagnats sidecar over NATS (control) and HTTP (worker
-// bridge). The zero value is not usable; construct with New.
-type Engine struct {
-	nc        *nats.Conn
-	bridgeURL string
-	http      *http.Client
-	log       *slog.Logger
+// handlerConcurrency is how many tasks of one type run at once. The HTTP bridge
+// this replaces started a goroutine per polled task with no bound of its own,
+// so the consumer's MaxAckPending was the only limit; the worker SDK's ceiling
+// is the closest match, and it keeps a slow digest.wait or agent turn from
+// holding up the rest of its type.
+const handlerConcurrency = worker.ConcurrencyMax
 
-	// bridgeToken authenticates every worker-bridge request. dagnats gates
-	// the bridge on DAGNATS_BRIDGE_TOKEN: with it set, a request without a
-	// matching bearer is answered 401 and no task is ever handed over, so a
-	// notify that does not send it accepts triggers and executes nothing
-	// (#325). Empty means the bridge is in open dev mode, which is how the
-	// test sidecar and the mini both run it.
-	bridgeToken string
+// defaultAckWait is how long a claim lasts without a heartbeat; it matches
+// dagnats' default. Keeping a long wait's claim alive is the worker SDK's job.
+const defaultAckWait = 5 * time.Minute
+
+// Engine talks to dagnats over one NATS connection: request/reply for the
+// control plane, and dagnats' worker SDK for tasks. The zero value is not
+// usable; construct with New.
+type Engine struct {
+	nc  *nats.Conn
+	log *slog.Logger
 
 	handlers      map[string]HandlerFunc
 	agentHandlers map[string]AgentLoopFunc
 	started       bool
+	ackWait       time.Duration
+	concurrency   int
+	// maxRunTime holds the WithMaxRunTime of each type that set one.
+	maxRunTime map[string]time.Duration
 
-	// checkpoints is the dagnats "checkpoints" KV bucket, opened lazily on the
-	// first agent-loop dispatch. Agent-loop handlers read/write durable state
-	// here at key {runID}.{stepID} (the bridge has no checkpoint-read endpoint).
-	kvOnce      sync.Once
-	checkpoints jetstream.KeyValue
-	kvErr       error
-
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	w *worker.Worker
+	// life ends every in-flight handler's context on Stop, so a handler that
+	// waits (digest.wait, a delay) returns and requeues instead of holding
+	// shutdown for the worker's drain timeout.
+	life     context.Context
+	endLife  context.CancelFunc
+	stopOnce sync.Once
 }
 
-// Option configures an Engine at construction. Options are variadic so the
-// many existing New(natsURL, bridgeURL) call sites stay untouched.
+// Option configures an Engine at construction.
 type Option func(*Engine)
 
-// WithBridgeToken sets the bearer token sent on every worker-bridge request.
-// Empty is the zero value and sends no Authorization header, matching a
-// dagnats bridge running in open dev mode.
-func WithBridgeToken(token string) Option {
-	return func(e *Engine) { e.bridgeToken = token }
-}
-
-// WithLogger sets the logger used for bridge faults. Defaults to
+// WithLogger sets the logger used for handler faults. Defaults to
 // slog.Default().
 func WithLogger(l *slog.Logger) Option {
 	return func(e *Engine) {
@@ -204,20 +167,31 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
-// New dials the sidecar's NATS endpoint and prepares an HTTP client for the
-// worker bridge mounted at bridgeURL.
-func New(natsURL, bridgeURL string, opts ...Option) (*Engine, error) {
+// withAckWait shortens the claim lease, for tests that outlast it.
+func withAckWait(d time.Duration) Option {
+	return func(e *Engine) { e.ackWait = d }
+}
+
+// withConcurrency lowers the per-lane task limit, for tests that need a lane
+// to fill.
+func withConcurrency(n int) Option {
+	return func(e *Engine) { e.concurrency = n }
+}
+
+// New dials dagnats' NATS endpoint.
+func New(natsURL string, opts ...Option) (*Engine, error) {
 	nc, err := eventbus.DialNATS(natsURL, "notify-engine", "dagnats sidecar (-nats-url)")
 	if err != nil {
 		return nil, err
 	}
 	e := &Engine{
 		nc:            nc,
-		bridgeURL:     bridgeURL,
-		http:          &http.Client{Timeout: 30 * time.Second},
 		log:           slog.Default(),
 		handlers:      make(map[string]HandlerFunc),
 		agentHandlers: make(map[string]AgentLoopFunc),
+		ackWait:       defaultAckWait,
+		concurrency:   handlerConcurrency,
+		maxRunTime:    make(map[string]time.Duration),
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -227,11 +201,44 @@ func New(natsURL, bridgeURL string, opts ...Option) (*Engine, error) {
 
 // Handle registers a handler for a task type. It must be called before
 // StartWorkers; calling it afterward panics.
-func (e *Engine) Handle(taskType string, fn HandlerFunc) {
+func (e *Engine) Handle(taskType string, fn HandlerFunc, opts ...HandleOption) {
 	if e.started {
 		panic("engine: Handle called after StartWorkers")
 	}
+	if _, dup := e.agentHandlers[taskType]; dup {
+		panic("engine: Handle conflicts with HandleAgentLoop for task type " + taskType)
+	}
 	e.handlers[taskType] = fn
+	e.applyHandleOptions(taskType, opts)
+}
+
+// HandleOption tunes one task type at registration.
+type HandleOption func(e *Engine, taskType string)
+
+// WithMaxRunTime is how long dagnats keeps a running task of this type
+// claimed (its worker heartbeats while the handler runs). Past it the task
+// redelivers, so set it above the type's own worst case. Types without it get
+// dagnats' default of an hour.
+func WithMaxRunTime(d time.Duration) HandleOption {
+	if d <= 0 || d > worker.MaxRunTimeMax {
+		panic("engine: WithMaxRunTime out of range")
+	}
+	return func(e *Engine, taskType string) { e.maxRunTime[taskType] = d }
+}
+
+func (e *Engine) applyHandleOptions(taskType string, opts []HandleOption) {
+	for _, opt := range opts {
+		opt(e, taskType)
+	}
+}
+
+// workerOptions are the SDK options every type gets, plus its own max run time.
+func (e *Engine) workerOptions(taskType string) []worker.HandlerOption {
+	opts := []worker.HandlerOption{worker.WithConcurrency(e.concurrency), worker.WithAckWait(e.ackWait)}
+	if d, ok := e.maxRunTime[taskType]; ok {
+		opts = append(opts, worker.WithMaxRunTime(d))
+	}
+	return opts
 }
 
 // Handles reports whether a handler is registered for taskType. It is a
@@ -242,317 +249,209 @@ func (e *Engine) Handles(taskType string) bool {
 	return ok
 }
 
-// StartWorkers launches one long-poll loop per registered task type. Loops run
-// until ctx is cancelled or Stop is called.
-func (e *Engine) StartWorkers(ctx context.Context) {
+// StartWorkers starts claiming tasks for every registered type. Claiming stops
+// when ctx is cancelled or Stop is called. It fails when dagnats will not let
+// the worker subscribe (its task stream is not ready, or permission is
+// denied); the engine then claims nothing, and Ready says so.
+func (e *Engine) StartWorkers(ctx context.Context) error {
+	if e.started {
+		panic("engine: StartWorkers called twice")
+	}
 	e.started = true
-	loopCtx, cancel := context.WithCancel(ctx)
-	e.cancel = cancel
-	for taskType := range e.handlers {
-		e.wg.Add(1)
-		go e.pollLoop(loopCtx, taskType)
+	e.life, e.endLife = context.WithCancel(context.WithoutCancel(ctx))
+	if len(e.handlers)+len(e.agentHandlers) == 0 {
+		return nil
 	}
-	for taskType := range e.agentHandlers {
-		e.wg.Add(1)
-		go e.pollLoop(loopCtx, taskType)
+	w := worker.NewWorker(e.nc)
+	for taskType, fn := range e.handlers {
+		w.Handle(taskType, e.taskHandler(taskType, fn), e.workerOptions(taskType)...)
 	}
+	for taskType, fn := range e.agentHandlers {
+		w.Handle(taskType, e.loopHandler(taskType, fn), e.workerOptions(taskType)...)
+	}
+	if err := w.Start(); err != nil {
+		e.endLife()
+		return fmt.Errorf("engine: start task worker: %w", err)
+	}
+	e.w = w
+	context.AfterFunc(ctx, e.stopWorker)
+	return nil
 }
 
-// RegisterWorkflow registers def with the engine. Returns an error if the
-// engine rejects the definition.
-func (e *Engine) RegisterWorkflow(ctx context.Context, def WorkflowDef) error {
-	body, err := json.Marshal(def)
-	if err != nil {
-		return fmt.Errorf("marshal workflow def: %w", err)
+// Ready reports whether the engine can reach dagnats and, once started, is
+// claiming tasks. It backs /readyz.
+func (e *Engine) Ready() error {
+	if !e.nc.IsConnected() {
+		return fmt.Errorf("dagnats NATS connection is %s", e.nc.Status())
 	}
-	reply, err := e.request(ctx, subjRegister, body)
-	if err != nil {
-		return err
+	if e.started && e.life.Err() != nil {
+		return errors.New("task worker stopped")
 	}
-	return decodeError(reply)
+	return nil
 }
 
-// StartRun triggers a run of the named workflow with the given input and
-// returns the new run ID.
-func (e *Engine) StartRun(ctx context.Context, workflow string, input json.RawMessage) (string, error) {
-	body, err := json.Marshal(struct {
-		Workflow string          `json:"workflow"`
-		Input    json.RawMessage `json:"input,omitempty"`
-	}{Workflow: workflow, Input: input})
-	if err != nil {
-		return "", fmt.Errorf("marshal start-run request: %w", err)
-	}
-	reply, err := e.request(ctx, subjStartRun, body)
-	if err != nil {
-		return "", err
-	}
-	if err := decodeError(reply); err != nil {
-		return "", err
-	}
-	var res struct {
-		RunID string `json:"run_id"`
-	}
-	if err := json.Unmarshal(reply, &res); err != nil {
-		return "", fmt.Errorf("decode start-run reply: %w", err)
-	}
-	return res.RunID, nil
-}
-
-// GetRun fetches the current snapshot for a run. The request body is the plain
-// run-id bytes (not JSON), per the dagnats api.runs.get contract.
-func (e *Engine) GetRun(ctx context.Context, runID string) (RunSnapshot, error) {
-	reply, err := e.request(ctx, subjGetRun, []byte(runID))
-	if err != nil {
-		return RunSnapshot{}, err
-	}
-	if err := decodeError(reply); err != nil {
-		return RunSnapshot{}, err
-	}
-	var snap RunSnapshot
-	if err := json.Unmarshal(reply, &snap); err != nil {
-		return RunSnapshot{}, fmt.Errorf("decode run snapshot: %w", err)
-	}
-	return snap, nil
-}
-
-// Stop cancels all worker loops, waits for them to drain, and closes the NATS
-// connection.
+// Stop ends in-flight handlers' contexts, waits for them to settle their
+// tasks, and closes the NATS connection. It never calls dagnats' control plane.
 func (e *Engine) Stop() error {
-	if e.cancel != nil {
-		e.cancel()
-	}
-	e.wg.Wait()
+	e.stopWorker()
 	e.nc.Close()
 	return nil
 }
 
-// request issues a NATS request/reply with the control timeout, honoring ctx
-// cancellation.
-func (e *Engine) request(ctx context.Context, subject string, body []byte) ([]byte, error) {
-	ctx, span := observe.Tracer().Start(
-		ctx, "notify.engine.request",
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(attribute.String("nats.subject", subject)),
-	)
-	defer span.End()
-
-	// RequestMsgWithContext (not RequestWithContext) so the request carries a
-	// W3C traceparent: dagnats stitches the run it starts onto notify's trace.
-	req := &nats.Msg{Subject: subject, Data: body, Header: nats.Header{}}
-	observe.InjectNATSHeader(ctx, req.Header)
-
-	msg, err := e.nc.RequestMsgWithContext(ctx, req)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("nats request %q: %w", subject, err)
-	}
-	return msg.Data, nil
+// stopWorker cancels handler contexts first so a waiting handler returns, then
+// lets the worker drain: every in-flight task publishes its outcome while the
+// connection is still open.
+func (e *Engine) stopWorker() {
+	e.stopOnce.Do(func() {
+		if e.endLife != nil {
+			e.endLife()
+		}
+		if e.w != nil {
+			e.w.Stop()
+		}
+	})
 }
 
-// decodeError returns a Go error if reply is a {"error":...} envelope.
-func decodeError(reply []byte) error {
-	var env struct {
-		Error string `json:"error"`
+// taskHandler adapts a HandlerFunc to the worker SDK: the handler's output
+// completes the step, a WaitError parks it, a RetryableError hands it back to
+// the retry policy, and any other error or a panic fails the step permanently.
+func (e *Engine) taskHandler(taskType string, fn HandlerFunc) worker.HandlerFunc {
+	return func(tc worker.TaskContext) error {
+		ctx, end := e.taskContext(tc, taskType)
+		defer end()
+		t := payloadOf(tc)
+		t.ResumeAt = parkedUntil(tc)
+		var out json.RawMessage
+		err := e.guard(taskType, t.TaskID, func() (herr error) {
+			out, herr = fn(ctx, t)
+			return herr
+		})
+		var we *WaitError
+		if errors.As(err, &we) {
+			return park(ctx, tc, we.At)
+		}
+		if err != nil {
+			return failure(ctx, err)
+		}
+		return tc.Complete(out)
 	}
-	if err := json.Unmarshal(reply, &env); err == nil && env.Error != "" {
-		return fmt.Errorf("engine: %s", env.Error)
+}
+
+// park parks tc until at with dagnats' Pause: a checkpointed marker naming the
+// deadline, then a delayed redelivery. A wait longer than maxPark parks again
+// on resume.
+func park(ctx context.Context, tc worker.TaskContext, at time.Time) error {
+	d := min(time.Until(at), maxPark)
+	if d <= 0 {
+		d = time.Millisecond
+	}
+	if err := tc.Pause(parkPrefix+timestamp.Format(at), d); err != nil {
+		return failure(ctx, NewRetryableError(fmt.Errorf("park until %s: %w", at.Format(time.RFC3339), err)))
 	}
 	return nil
 }
 
-// pollRequest is the JSON body for POST /v1/tasks/poll.
-type pollRequest struct {
-	TaskTypes []string `json:"task_types"`
-	MaxTasks  int      `json:"max_tasks"`
-	TimeoutMs int64    `json:"timeout_ms"`
-}
-
-// resolveRequest is the JSON body for POST /v1/tasks/{id}/resolve.
-type resolveRequest struct {
-	Action      string          `json:"action"`
-	Output      json.RawMessage `json:"output,omitempty"`
-	Error       string          `json:"error,omitempty"`
-	FailureType string          `json:"failure_type,omitempty"`
-}
-
-// Long-poll timeouts for the worker bridge. Agent-loop steps re-enqueue their
-// next iteration the instant a handler Continues, and the re-enqueued task is
-// only picked up on a fresh poll cycle — so a short long-poll keeps
-// iteration-to-iteration latency low. Simple one-shot handlers favour a longer
-// poll to minimise idle request churn.
-const (
-	pollTimeoutMs          = 5000
-	pollTimeoutAgentLoopMs = 1000
-)
-
-// pollFaultReportInterval rate-limits repeated poll-failure reports for one
-// task type. A poll long-polls for at most pollTimeoutMs and fails instantly
-// when the bridge rejects it, so a persistent fault (a 401 from a bridge whose
-// DAGNATS_BRIDGE_TOKEN we do not carry) recurs several times a second per task
-// type. Reporting every occurrence would bury the log; reporting none is what
-// let #325 run for four days with no log line at all.
-const pollFaultReportInterval = 30 * time.Second
-
-// pollLoop long-polls the bridge for one task type and dispatches each task to
-// its handler in its own goroutine.
-func (e *Engine) pollLoop(ctx context.Context, taskType string) {
-	defer e.wg.Done()
-	timeoutMs := int64(pollTimeoutMs)
-	if _, ok := e.agentHandlers[taskType]; ok {
-		timeoutMs = pollTimeoutAgentLoopMs
+// parkedUntil reads the deadline a previous park left for this step, or zero.
+// A read error is treated as no park: the handler then computes its wait
+// afresh, which is what it did before parks existed.
+func parkedUntil(tc worker.TaskContext) time.Time {
+	cp, err := tc.LoadCheckpoint()
+	if err != nil || len(cp) == 0 {
+		return time.Time{}
 	}
-	// Fault state is per-loop, and each loop owns exactly one task type, so
-	// these need no synchronisation.
-	var (
-		consecutiveFailures int
-		lastReported        time.Time
+	var marker struct {
+		Name string `json:"pause_resume"`
+	}
+	if json.Unmarshal(cp, &marker) != nil {
+		return time.Time{}
+	}
+	ts, ok := strings.CutPrefix(marker.Name, parkPrefix)
+	if !ok {
+		return time.Time{}
+	}
+	at, err := timestamp.Parse(ts)
+	if err != nil {
+		return time.Time{}
+	}
+	return at
+}
+
+// taskContext derives the handler's context: the worker's (trace from the
+// dispatch, cancelled with the run) also ends on Stop, and carries one span
+// named for what the task is so deliveries aggregate apart from other steps.
+func (e *Engine) taskContext(tc worker.TaskContext, taskType string) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(tc.Context())
+	stopLife := context.AfterFunc(e.life, cancel)
+	name := "notify.task.run"
+	attrs := []attribute.KeyValue{
+		attribute.String("task.type", taskType),
+		attribute.String("task.id", tc.RunID()+"."+tc.StepID()),
+		attribute.String("run.id", tc.RunID()),
+	}
+	if channel, ok := strings.CutPrefix(taskType, "send."); ok {
+		name = "notify.delivery.send"
+		attrs = append(attrs, attribute.String("channel", channel))
+	}
+	ctx, span := observe.Tracer().Start(
+		ctx, name,
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(attrs...),
 	)
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		tasks, err := e.poll(ctx, taskType, timeoutMs)
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			// A poll failure is reported on its first occurrence and then at
-			// most once per pollFaultReportInterval while it persists. The
-			// error is never silent: a bridge that rejects or cannot serve
-			// this task type means the step never runs, and nothing else in
-			// the system will say so.
-			consecutiveFailures++
-			if lastReported.IsZero() || time.Since(lastReported) >= pollFaultReportInterval {
-				e.log.Warn("engine: bridge poll failed, tasks for this type are not being executed",
-					"task_type", taskType,
-					"bridge_url", e.bridgeURL,
-					"consecutive_failures", consecutiveFailures,
-					"err", err)
-				lastReported = time.Now()
-			}
-			// Transient bridge/network error; back off briefly and retry.
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		if consecutiveFailures > 0 {
-			// Clearing lastReported as well as the counter is what makes the
-			// next fault report immediately instead of waiting out a timer
-			// left over from the previous one.
-			e.log.Info("engine: bridge poll recovered",
-				"task_type", taskType, "after_failures", consecutiveFailures)
-			consecutiveFailures = 0
-			lastReported = time.Time{}
-		}
-		if len(tasks) == 0 {
-			// The bridge's long-poll sometimes returns immediately with no
-			// tasks (e.g. after the backing consumer drains); a short sleep
-			// keeps the loop from busy-spinning against the bridge.
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(100 * time.Millisecond):
-			}
-			continue
-		}
-		for _, task := range tasks {
-			e.wg.Add(1)
-			go func(t TaskPayload) {
-				defer e.wg.Done()
-				e.dispatch(ctx, taskType, t)
-			}(task)
-		}
+	return ctx, func() {
+		span.End()
+		stopLife()
+		cancel()
 	}
 }
 
-// poll issues one long-poll request for taskType and returns the tasks fetched.
-func (e *Engine) poll(ctx context.Context, taskType string, timeoutMs int64) ([]TaskPayload, error) {
-	body, err := json.Marshal(pollRequest{
-		TaskTypes: []string{taskType},
-		MaxTasks:  10,
-		TimeoutMs: timeoutMs,
-	})
-	if err != nil {
-		return nil, err
-	}
-	resp, err := e.post(ctx, e.bridgeURL+"/v1/tasks/poll", body)
-	if err != nil {
-		return nil, err
-	}
-	var tasks []TaskPayload
-	if err := json.Unmarshal(resp, &tasks); err != nil {
-		return nil, fmt.Errorf("decode poll response: %w", err)
-	}
-	return tasks, nil
+// guard runs fn and turns a panic into an error, so a panicking handler fails
+// only its own step.
+func (e *Engine) guard(taskType, taskID string, fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			e.log.Error("engine: task handler panicked",
+				"task_type", taskType, "task_id", taskID, "panic", r, "stack", string(debug.Stack()))
+			err = fmt.Errorf("handler panic: %v", r)
+		}
+	}()
+	return fn()
 }
 
-// runTask executes fn for one task and reports the outcome to the bridge.
-func (e *Engine) runTask(ctx context.Context, fn HandlerFunc, t TaskPayload) {
-	out, err := fn(ctx, t)
-	var req resolveRequest
-	if err != nil {
-		failureType := "non_retriable"
-		var re *RetryableError
-		if errors.As(err, &re) {
-			failureType = "retriable"
-		}
-		req = resolveRequest{
-			Action:      "fail",
-			Error:       err.Error(),
-			FailureType: failureType,
-		}
-	} else {
-		req = resolveRequest{Action: "complete", Output: out}
+// failure maps a handler error onto the worker's classification: only a
+// RetryableError is retried; everything else is permanent, as it always was.
+func failure(ctx context.Context, err error) error {
+	var re *RetryableError
+	if errors.As(err, &re) {
+		recordError(ctx, err)
+		return err
 	}
-	body, mErr := json.Marshal(req)
-	if mErr != nil {
-		return
-	}
-	// Resolution must not be skipped just because the loop ctx was cancelled
-	// mid-flight; use a short independent timeout. WithoutCancel rather than
-	// Background so the span (and any other ctx values) survive the loop's
-	// cancellation while controlTimeout still bounds the call.
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), controlTimeout)
-	defer cancel()
-	rctx, span := observe.Tracer().Start(
-		rctx, "notify.bridge.resolve",
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(
-			attribute.String("task.id", t.TaskID),
-			attribute.String("resolve.action", req.Action),
-		),
-	)
-	defer span.End()
-	if _, perr := e.post(rctx, e.bridgeURL+"/v1/tasks/"+t.TaskID+"/resolve", body); perr != nil {
-		span.RecordError(perr)
-		span.SetStatus(codes.Error, perr.Error())
-	}
+	return permanent(ctx, err)
 }
 
-// post performs a JSON POST and returns the response body, erroring on non-2xx.
-func (e *Engine) post(ctx context.Context, url string, body []byte) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
+// permanent fails the step with no retry, whatever err wraps.
+func permanent(ctx context.Context, err error) error {
+	recordError(ctx, err)
+	return worker.NewNonRetryableError(err)
+}
+
+func recordError(ctx context.Context, err error) {
+	span := trace.SpanFromContext(ctx)
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+}
+
+// payloadOf reads the handler's view of the task from the worker's context.
+func payloadOf(tc worker.TaskContext) TaskPayload {
+	// RetryCount is 0 on the first dispatch and the attempt number after.
+	attempt := tc.RetryCount()
+	if attempt < 1 {
+		attempt = 1
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if e.bridgeToken != "" {
-		req.Header.Set("Authorization", "Bearer "+e.bridgeToken)
+	return TaskPayload{
+		TaskID:  tc.RunID() + "." + tc.StepID(),
+		RunID:   tc.RunID(),
+		StepID:  tc.StepID(),
+		Attempt: attempt,
+		Input:   tc.Input(),
 	}
-	// Every bridge POST carries traceparent — dagnats's bridge already
-	// extracts it, so the resolve leg stitches with no dagnats change.
-	observe.InjectHTTPHeader(ctx, req.Header)
-	resp, err := e.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("POST %s: status %d: %s", url, resp.StatusCode, data)
-	}
-	return data, nil
 }

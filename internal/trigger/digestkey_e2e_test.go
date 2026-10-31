@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/danmestas/dagnats/dag"
+
 	_ "modernc.org/sqlite"
 
 	"github.com/danmestas/notify/internal/audience"
@@ -55,8 +57,8 @@ func (f *fakeDigester) DigestClaim(key string) (bool, error) {
 // a fakeDigester plus the db path for notification inspection.
 func setupDigest(t *testing.T, cv string) (*trigger.Service, domain.Scope, string, *fakeDigester) {
 	t.Helper()
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -85,7 +87,7 @@ func setupDigest(t *testing.T, cv string) (*trigger.Service, domain.Scope, strin
 	}
 	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
 		Name:  scope.EnvID + "-digest-flow",
-		Steps: []engine.StepDef{{ID: "dg", Type: "sleep", Config: json.RawMessage(`{"duration":1000000000}`)}},
+		Steps: []engine.StepDef{{ID: "dg", Type: dag.StepTypeSleep, Config: json.RawMessage(`{"duration":1000000000}`)}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}

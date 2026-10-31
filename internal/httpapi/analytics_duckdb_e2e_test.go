@@ -38,9 +38,9 @@ import (
 // /v1/analytics/deliveries) works against DuckDB. Compiled/run only under
 // `-tags duckdb` (links DuckDB's CGo static library).
 func TestAnalytics_DeliveriesByChannel_DuckDB(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -61,7 +61,9 @@ func TestAnalytics_DeliveriesByChannel_DuckDB(t *testing.T) {
 
 	// in_app delivery handler publishes delivery-status events on the bus.
 	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	// Projector + query backed by an embedded in-memory DuckDB store instead of
 	// SQLite — the only difference from the SQLite analytics e2e.

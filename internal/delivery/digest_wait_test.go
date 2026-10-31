@@ -2,45 +2,40 @@ package delivery
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/danmestas/notify/internal/engine"
 )
 
-// TestDigestWait_ContextCancel_RetryableError is the shutdown-safety regression
-// for the digest.wait handler: HandleDigestWait delegates its wait to
-// waitUntil, which returns a *engine.RetryableError on ctx cancellation so
-// dagnats requeues the task instead of dead-lettering it. Without the requeue,
-// a process restart during a digest cron window permanently drops the digest.
-//
-// This test exercises waitUntil directly — the same function HandleDigestWait
-// uses for its wait phase after resolving the cron duration — mirroring
-// TestWaitUntil_ContextCancel_DoesNotHang from delay_wait_test.go.
-func TestDigestWait_ContextCancel_RetryableError(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	type result struct {
-		out json.RawMessage
-		err error
+// TestDigestWait_ResumedTickFires proves a digest parked until its cron tick
+// fires when it resumes at that tick, instead of recomputing "the next tick
+// after now", which would be a full period later and loop forever. The run has
+// no stored config here on purpose: a resume must not need to recompute.
+func TestDigestWait_ResumedTickFires(t *testing.T) {
+	d := NewDigestWait(newStore(t))
+	out, err := d.HandleDigestWait(context.Background(), engine.TaskPayload{
+		RunID: "run_digest", StepID: "S1", ResumeAt: time.Now().Add(-time.Millisecond),
+	})
+	if err != nil || out != nil {
+		t.Fatalf("resumed digest = (%s, %v), want it to fire with (nil, nil)", out, err)
 	}
-	done := make(chan result, 1)
-	go func() {
-		out, err := waitUntil(ctx, time.Hour)
-		done <- result{out, err}
-	}()
-	cancel()
-	select {
-	case r := <-done:
-		if r.out != nil {
-			t.Fatalf("waitUntil returned non-nil output on cancel: %s", r.out)
-		}
-		var re *engine.RetryableError
-		if !errors.As(r.err, &re) {
-			t.Fatalf("waitUntil on cancel: want *engine.RetryableError, got %T: %v", r.err, r.err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("waitUntil did not return after context cancel (goroutine pinned — digest would be dropped on restart)")
+}
+
+// TestDigestWait_EarlyResumeParksAgain proves a digest redelivered before its
+// tick (a restart, or a park chunk shorter than the wait) parks again toward
+// the same tick rather than firing early or moving the tick.
+func TestDigestWait_EarlyResumeParksAgain(t *testing.T) {
+	d := NewDigestWait(newStore(t))
+	tick := time.Now().Add(time.Hour)
+	_, err := d.HandleDigestWait(context.Background(), engine.TaskPayload{RunID: "run_digest", StepID: "S1", ResumeAt: tick})
+	assertParkedAt(t, err, tick)
+}
+
+func assertParkedAt(t *testing.T, err error, at time.Time) {
+	t.Helper()
+	we, ok := err.(*engine.WaitError)
+	if !ok || !we.At.Equal(at) {
+		t.Fatalf("err = %v (%T), want a park until %v", err, err, at)
 	}
 }

@@ -31,9 +31,9 @@ import (
 // mounted and returns the server plus an API key header and the raw scope.
 func startOperatorServer(t *testing.T) (*httptest.Server, string, domain.Scope) {
 	t.Helper()
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -48,7 +48,9 @@ func startOperatorServer(t *testing.T) (*httptest.Server, string, domain.Scope) 
 
 	// Register the in_app delivery handler so the self-sufficiency proof works.
 	eng.Handle("send.in_app", delivery.New(st).HandleInApp)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	masterKey := bytes.Repeat([]byte{0x2a}, 32)
 	id := identity.New(st, masterKey)

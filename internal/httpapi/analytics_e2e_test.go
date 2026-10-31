@@ -34,9 +34,9 @@ import (
 // asynchronously into the analytics store. Polling GET /v1/analytics/deliveries
 // must observe in_app.sent >= 2.
 func TestAnalytics_DeliveriesByChannel(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -57,7 +57,9 @@ func TestAnalytics_DeliveriesByChannel(t *testing.T) {
 
 	// in_app delivery handler publishes delivery-status events on the bus.
 	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	// Projector drains every env's delivery-status events into analytics.
 	an := analytics.New(st, bus)

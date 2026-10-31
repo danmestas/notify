@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/dagnats/cli"
 	"github.com/danmestas/dagnats/dagnatstest"
 	"github.com/go-chi/chi/v5"
@@ -53,26 +55,25 @@ var testScope = domain.Scope{OrgID: "org_1", EnvID: "env_1"}
 // temp SQLite, eventbus, mesh client, and the HTTP surface (ingress compose +
 // transcript, realtime SSE) behind a scope-injecting middleware.
 type harness struct {
-	natsURL   string
-	bridgeURL string
-	nc        *nats.Conn
-	store     *store.Store
-	agents    *agentstore.Store
-	bus       *eventbus.Bus
-	mesh      *mesh.Client
-	eng       *engine.Engine
-	retry     *engine.RetryPolicy
-	srv       *httptest.Server
-	agent     agentdomain.Agent
+	natsURL string
+	nc      *nats.Conn
+	store   *store.Store
+	agents  *agentstore.Store
+	bus     *eventbus.Bus
+	mesh    *mesh.Client
+	eng     *engine.Engine
+	retry   *engine.RetryPolicy
+	srv     *httptest.Server
+	agent   agentdomain.Agent
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -103,7 +104,7 @@ func newHarness(t *testing.T) *harness {
 	// (danmestas/dagnats#384 unlocked MaxAttempts>0 — see ingress.New comment).
 	retry := &engine.RetryPolicy{
 		MaxAttempts:  0,
-		Strategy:     "fixed",
+		Strategy:     dag.RetryFixed,
 		InitialDelay: 300 * time.Millisecond,
 		MaxDelay:     300 * time.Millisecond,
 	}
@@ -114,7 +115,9 @@ func newHarness(t *testing.T) *harness {
 	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
 	eng.Handle(ingress.TaskManaged, ing.HandleTurn)
 	eng.Handle("agent_message", agentstep.New(st, ing, ags.Drafts()).Handle)
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	agent, err := ags.Agents().Create(ctx, testScope, agentdomain.Agent{
 		Identifier:  "stub",
@@ -140,17 +143,16 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(nc.Close)
 
 	return &harness{
-		natsURL:   natsURL,
-		bridgeURL: bridgeURL,
-		nc:        nc,
-		store:     st,
-		agents:    ags,
-		bus:       bus,
-		mesh:      meshClient,
-		eng:       eng,
-		retry:     retry,
-		srv:       srv,
-		agent:     agent,
+		natsURL: natsURL,
+		nc:      nc,
+		store:   st,
+		agents:  ags,
+		bus:     bus,
+		mesh:    meshClient,
+		eng:     eng,
+		retry:   retry,
+		srv:     srv,
+		agent:   agent,
 	}
 }
 
@@ -168,11 +170,11 @@ func newRetryHarness(t *testing.T) *harness {
 	}
 
 	// MaxAttempts=2: 1 initial + 2 retries = 3 total dispatches. Each round
-	// trip is ~7s (5s bridge poll + 2s mesh timeout); 3 rounds ≈ 21s, safely
-	// under the 45s window in TestTurnRetryLadder_E2E.
+	// trip is about 2s (the mesh timeout), well under the 45s window in
+	// TestTurnRetryLadder_E2E.
 	ladderRetry := &engine.RetryPolicy{
 		MaxAttempts:  2,
-		Strategy:     "fixed",
+		Strategy:     dag.RetryFixed,
 		InitialDelay: 50 * time.Millisecond,
 		MaxDelay:     50 * time.Millisecond,
 	}
@@ -185,7 +187,7 @@ func newRetryHarness(t *testing.T) *harness {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	eng2, err := engine.New(h.natsURL, h.bridgeURL)
+	eng2, err := engine.New(h.natsURL)
 	if err != nil {
 		t.Fatalf("newRetryHarness engine.New: %v", err)
 	}
@@ -195,7 +197,9 @@ func newRetryHarness(t *testing.T) *harness {
 		WithRuntime(agentdomain.RuntimeMesh, meshClient).
 		WithRetry(ladderRetry)
 	eng2.Handle(ingress.TaskMesh, ing2.HandleTurn)
-	eng2.StartWorkers(ctx)
+	if err := eng2.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	r := chi.NewRouter()
 	ing2.Routes(r)
@@ -258,7 +262,7 @@ func (h *harness) startNeverReplyStub(t *testing.T, subject string) *atomic.Int6
 	t.Helper()
 	var n atomic.Int64
 	_, err := h.nc.Subscribe(subject, func(m *nats.Msg) {
-		_ = m.Respond([]byte(`{}`)) // ack so the bridge sees a clean poll; never answers
+		_ = m.Respond([]byte(`{}`)) // ack the request; never answer the turn
 		n.Add(1)
 	})
 	if err != nil {

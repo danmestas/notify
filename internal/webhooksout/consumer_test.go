@@ -18,7 +18,7 @@ import (
 
 func newBus(t *testing.T) *eventbus.Bus {
 	t.Helper()
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	bus, err := eventbus.Connect(ctx, natsURL)

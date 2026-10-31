@@ -40,9 +40,9 @@ type digestHarness struct {
 
 func newDigestHarness(t *testing.T) *digestHarness {
 	t.Helper()
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -69,7 +69,9 @@ func newDigestHarness(t *testing.T) *digestHarness {
 	if !eng.Handles("digest.wait") {
 		t.Fatal("digest.wait handler not registered")
 	}
-	eng.StartWorkers(ctx)
+	if err := eng.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	masterKey := bytes.Repeat([]byte{0x2a}, 32)
 	id := identity.New(st, masterKey)

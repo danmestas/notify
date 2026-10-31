@@ -1,12 +1,11 @@
 // Package dagtest provides a shared test helper that runs a real dagnats
 // server in-process so other packages' tests can exercise the engine against
-// a live NATS + JetStream + HTTP bridge instead of mocks.
+// a live NATS + JetStream + control plane instead of mocks.
 package dagtest
 
 import (
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,59 +18,54 @@ import (
 	"github.com/danmestas/dagnats/server"
 )
 
+// LoopStateMaxBytes is the agent-loop state cap the test server runs with.
+// Agent-loop state rides the task payload and the run snapshot (one KV value
+// under NATS' 1 MiB max_payload), and dagnats' default cap is 256 KiB. The
+// builder's conversation state can outgrow that, so notify raises it;
+// deployments set the same value through DAGNATS_LOOP_STATE_MAX_BYTES.
+const LoopStateMaxBytes = 512 << 10
+
 // StartSidecar runs a dagnats server in this test process with a private data
-// dir, waits until it is ready, and returns the NATS client URL and the HTTP
-// base URL (which also hosts the worker bridge). The server is stopped when
-// the test ends.
-func StartSidecar(t *testing.T) (natsURL, httpURL string) {
+// dir and an OS-assigned NATS port, waits until it is ready, and returns its
+// NATS client URL. The server is stopped when the test ends.
+func StartSidecar(t *testing.T) (natsURL string) {
 	t.Helper()
 
-	// HTTP binds :0 and reports the bound address back, but the server exposes
-	// no accessor for the NATS client URL, so the NATS port is probed free
-	// first. That has a TOCTOU window ("address already in use" from Run);
-	// retry the whole start with a fresh port so a lost race is absorbed.
-	const attempts = 4
-	for attempt := 1; attempt <= attempts; attempt++ {
-		natsPort := freePort(t)
+	cfg := server.DefaultConfig()
+	cfg.DataDir = dataDir(t)
+	cfg.HTTPAddr = "127.0.0.1:0"
+	cfg.NATSHost = "127.0.0.1"
+	cfg.NATSPort = -1
+	cfg.LoopStateMaxBytes = LoopStateMaxBytes
+	// An unset store budget is half the free disk (dagnats #687), and
+	// dagnats' own streams reserve 8 GiB of it, so below ~20 GB free
+	// notify's streams are refused. Pin dagnats' 10 GiB ceiling.
+	// JetStream still needs that much real free space.
+	cfg.MaxStoreBytes = 10 << 30
 
-		cfg := server.DefaultConfig()
-		cfg.DataDir = dataDir(t)
-		cfg.HTTPAddr = "127.0.0.1:0"
-		cfg.NATSHost = "127.0.0.1"
-		cfg.NATSPort = natsPort
-		// An unset store budget is half the free disk (dagnats #687), and
-		// dagnats' own streams reserve 8 GiB of it, so below ~20 GB free
-		// notify's streams are refused. Pin dagnats' 10 GiB ceiling.
-		// JetStream still needs that much real free space.
-		cfg.MaxStoreBytes = 10 << 30
+	srv := server.New(cfg)
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Run() }()
 
-		srv := server.New(cfg)
-		errCh := make(chan error, 1)
-		go func() { errCh <- srv.Run() }()
-
-		addr, runErr := waitReady(srv, errCh, 10*time.Second)
-		if addr != "" {
-			t.Cleanup(func() { go stopAndRemove(srv, errCh, cfg.DataDir) })
-			return fmt.Sprintf("nats://127.0.0.1:%d", natsPort), "http://" + addr
+	url, runErr := waitReady(srv, errCh, 30*time.Second)
+	if url == "" {
+		go stopAndRemove(srv, errCh, cfg.DataDir)
+		if runErr != nil {
+			t.Fatalf("dagnats server failed to start: %v", runErr)
 		}
-		if runErr == nil {
-			go stopAndRemove(srv, errCh, cfg.DataDir)
-			t.Fatalf("dagnats server not ready within 10s")
-		}
-		_ = os.RemoveAll(cfg.DataDir)
-		t.Logf("dagnats server failed on attempt %d/%d: %v; retrying with a fresh port", attempt, attempts, runErr)
+		t.Fatalf("dagnats server not ready within 30s")
 	}
-	t.Fatalf("dagnats server never became ready after %d attempts", attempts)
-	return "", ""
+	t.Cleanup(func() { go stopAndRemove(srv, errCh, cfg.DataDir) })
+	return url
 }
 
-// waitReady polls until the server reports its bound HTTP address (it does so
+// waitReady polls until the server reports its NATS client URL (it does so
 // only once fully started) or Run returns early with an error.
 func waitReady(srv *server.Server, errCh <-chan error, timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if addr := srv.HTTPAddr(); addr != "" {
-			return addr, nil
+		if url := srv.NATSURL(); url != "" {
+			return url, nil
 		}
 		select {
 		case err := <-errCh:
@@ -86,9 +80,7 @@ func waitReady(srv *server.Server, errCh <-chan error, timeout time.Duration) (s
 }
 
 // stopAndRemove shuts the server down and then deletes its data dir. It runs
-// off the test's goroutine: a graceful stop waits out any in-flight bridge
-// long-poll (a JetStream Fetch that ignores the client going away, up to the
-// engine's 5s poll timeout), which would otherwise add that wait to every test.
+// off the test's goroutine so a graceful stop never adds its drain to a test.
 func stopAndRemove(srv *server.Server, errCh <-chan error, dir string) {
 	srv.Stop()
 	select {
@@ -142,19 +134,4 @@ func sweepDeadParents() {
 			_ = os.RemoveAll(filepath.Join(os.TempDir(), e.Name()))
 		}
 	}
-}
-
-// freePort asks the OS for an unused TCP port by binding to :0, reading the
-// assigned port, and releasing it.
-func freePort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("allocate free port: %v", err)
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	if err := l.Close(); err != nil {
-		t.Fatalf("close free-port listener: %v", err)
-	}
-	return port
 }

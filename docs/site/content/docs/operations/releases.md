@@ -15,7 +15,7 @@ Releases are tags named `version-<x.y.z>` (for example `version-0.3.3`). Pushing
 Use an **annotated** tag. Its annotation becomes the release's upgrade notes, so an operator-visible change, such as a new or newly enforced environment variable, travels with the tag:
 
 ```bash
-git tag -a version-0.4.0 -m "Requires DAGNATS_BRIDGE_TOKEN when the bridge is gated."
+git tag -a version-0.4.0 -m "Requires DAGNATS_LOOP_STATE_MAX_BYTES=524288 on the sidecar."
 git push origin version-0.4.0
 ```
 

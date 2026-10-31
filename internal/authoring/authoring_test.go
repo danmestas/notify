@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/dagtest"
 	"github.com/danmestas/notify/internal/domain"
@@ -43,7 +45,7 @@ func TestCompile_OneStepInApp(t *testing.T) {
 		t.Fatalf("len(Steps) = %d, want 1", len(def.Steps))
 	}
 	s := def.Steps[0]
-	if s.ID != "S1" || s.Task != "send.in_app" || s.Type != "normal" {
+	if s.ID != "S1" || s.Task != "send.in_app" || s.Type != dag.StepTypeNormal {
 		t.Fatalf("step = %+v, want {ID:S1 Task:send.in_app Type:normal}", s)
 	}
 	if len(s.DependsOn) != 0 {
@@ -118,7 +120,7 @@ func TestCompile_DelayThenInApp(t *testing.T) {
 		t.Fatalf("len(Steps) = %d, want 2", len(def.Steps))
 	}
 	d := def.Steps[0]
-	if d.ID != "d1" || d.Type != "sleep" {
+	if d.ID != "d1" || d.Type != dag.StepTypeSleep {
 		t.Fatalf("delay step = %+v, want {ID:d1 Type:sleep}", d)
 	}
 	if d.Task != "" {
@@ -137,7 +139,7 @@ func TestCompile_DelayThenInApp(t *testing.T) {
 		t.Fatalf("root sleep DependsOn = %v, want empty", d.DependsOn)
 	}
 	c := def.Steps[1]
-	if c.ID != "S1" || c.Task != "send.in_app" || c.Type != "normal" {
+	if c.ID != "S1" || c.Task != "send.in_app" || c.Type != dag.StepTypeNormal {
 		t.Fatalf("channel step = %+v, want {ID:S1 Task:send.in_app Type:normal}", c)
 	}
 	if len(c.DependsOn) != 1 || c.DependsOn[0] != "d1" {
@@ -162,7 +164,7 @@ func TestCompile_DigestThenInApp(t *testing.T) {
 		t.Fatalf("len(Steps) = %d, want 2", len(def.Steps))
 	}
 	d := def.Steps[0]
-	if d.ID != "dg" || d.Type != "sleep" || d.Task != "" {
+	if d.ID != "dg" || d.Type != dag.StepTypeSleep || d.Task != "" {
 		t.Fatalf("digest step = %+v, want {ID:dg Type:sleep Task:\"\"}", d)
 	}
 	if string(d.Config) != `{"until_input_path":"digestDeadline"}` {
@@ -172,7 +174,7 @@ func TestCompile_DigestThenInApp(t *testing.T) {
 		t.Fatalf("root sleep DependsOn = %v, want empty", d.DependsOn)
 	}
 	c := def.Steps[1]
-	if c.ID != "S1" || c.Task != "send.in_app" || c.Type != "normal" {
+	if c.ID != "S1" || c.Task != "send.in_app" || c.Type != dag.StepTypeNormal {
 		t.Fatalf("channel step = %+v, want {ID:S1 Task:send.in_app Type:normal}", c)
 	}
 	if len(c.DependsOn) != 1 || c.DependsOn[0] != "dg" {
@@ -197,7 +199,7 @@ func TestCompile_DigestScheduledThenInApp(t *testing.T) {
 		t.Fatalf("Compile: %v", err)
 	}
 	d := def.Steps[0]
-	if d.ID != "dg" || d.Type != "normal" || d.Task != "digest.wait" {
+	if d.ID != "dg" || d.Type != dag.StepTypeNormal || d.Task != "digest.wait" {
 		t.Fatalf("scheduled digest step = %+v, want {ID:dg Type:normal Task:digest.wait}", d)
 	}
 	if d.Config != nil {
@@ -337,8 +339,8 @@ func TestCompile_DelayUnits(t *testing.T) {
 }
 
 func TestPublish_DelayWorkflowRegisters(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -371,8 +373,8 @@ func TestPublish_DelayWorkflowRegisters(t *testing.T) {
 }
 
 func TestPublish_RegistersWithEngine(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -415,8 +417,8 @@ func mustSteps(t *testing.T, steps []domain.Step) json.RawMessage {
 // engine. This is the boot-time path that survives an engine restart: without
 // it, persisted workflows fire with task_count=0 until re-saved.
 func TestRepublishAll_RegistersAllStoredWorkflows(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -466,8 +468,8 @@ func TestRepublishAll_RegistersAllStoredWorkflows(t *testing.T) {
 // registered. The bad row is written directly through the store to bypass
 // Create's compile-on-write validation (which would reject it up front).
 func TestRepublishAll_SkipsUncompilableWorkflow(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -544,8 +546,8 @@ func TestRepublishAll_NilEngineNoop(t *testing.T) {
 }
 
 func TestUpdate_RecompilesAndReregisters(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -647,8 +649,8 @@ func TestUpdate_ZeroStepsPersistsConfigAndReturnsErrNoSteps(t *testing.T) {
 }
 
 func TestUpdate_ReturnsNotFoundForMissingWorkflow(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -687,8 +689,8 @@ func TestUpdate_422OnBadDelayStep(t *testing.T) {
 	}
 	defer st.Close()
 
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -732,8 +734,8 @@ func TestDelete_RemovesWorkflow(t *testing.T) {
 	}
 	defer st.Close()
 
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -769,8 +771,8 @@ func TestDelete_RemovesWorkflow(t *testing.T) {
 }
 
 func TestDuplicate_CopiesStepsAndPublishes(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -825,8 +827,8 @@ func TestDuplicate_CopiesStepsAndPublishes(t *testing.T) {
 }
 
 func TestDuplicate_409OnIdentifierCollision(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -941,8 +943,8 @@ func TestSetActive_TogglesActiveFlag(t *testing.T) {
 	}
 	defer st.Close()
 
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -1000,7 +1002,7 @@ func TestCompile_ThrottleStep_Valid(t *testing.T) {
 	if s.Task != "check.throttle" {
 		t.Errorf("Task = %q, want check.throttle", s.Task)
 	}
-	if s.Type != "normal" {
+	if s.Type != dag.StepTypeNormal {
 		t.Errorf("Type = %q, want normal", s.Type)
 	}
 	if s.ID != "T1" {
@@ -1062,14 +1064,14 @@ func TestCompile_ThrottleBeforeChannel(t *testing.T) {
 		t.Fatalf("got %d steps, want 2", len(def.Steps))
 	}
 	thr := def.Steps[0]
-	if thr.Task != "check.throttle" || thr.Type != "normal" {
+	if thr.Task != "check.throttle" || thr.Type != dag.StepTypeNormal {
 		t.Errorf("throttle step = %+v, want {Task:check.throttle Type:normal}", thr)
 	}
 	if len(thr.DependsOn) != 0 {
 		t.Errorf("throttle DependsOn = %v, want empty", thr.DependsOn)
 	}
 	ch := def.Steps[1]
-	if ch.Task != "send.in_app" || ch.Type != "normal" {
+	if ch.Task != "send.in_app" || ch.Type != dag.StepTypeNormal {
 		t.Errorf("channel step = %+v, want {Task:send.in_app Type:normal}", ch)
 	}
 	if len(ch.DependsOn) != 1 || ch.DependsOn[0] != "T1" {
@@ -1120,8 +1122,8 @@ func TestEnsure_CreatesWhenAbsent(t *testing.T) {
 // even though a live engine is wired (so a real Update call WOULD record
 // one).
 func TestEnsure_NoopWhenEqual(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -1480,8 +1482,8 @@ func TestEnsure_ScopeIsolation(t *testing.T) {
 // 0-step registration, and until #310 that rejection surfaced as an ERROR on
 // every restart for an entirely expected state.
 func TestRepublishAll_SkipsZeroStepDraftQuietly(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

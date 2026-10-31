@@ -17,16 +17,16 @@ docker compose up --build
 | `dagnats` | `--target dagnats` | The workflow engine sidecar. `DAGNATS_HTTP_ADDR=0.0.0.0:8080`, `DAGNATS_DATA_DIR=/data`, volume `dagnats-data`. |
 | `notify` | `--target notify` | The API server. `NOTIFY_DB=/data/notify.db`, volume `notify-data`. |
 
-**notify shares dagnats' network namespace** (`network_mode: "service:dagnats"`). In standalone mode dagnats binds its NATS port to loopback only, so notify reaches it as `nats://127.0.0.1:4222` and the bridge as `http://127.0.0.1:8080`. Because they share a namespace, the host port for notify is published on the `dagnats` service.
+**notify shares dagnats' network namespace** (`network_mode: "service:dagnats"`). In standalone mode dagnats binds its NATS port to loopback only, so notify reaches it as `nats://127.0.0.1:4222`. Because they share a namespace, the host port for notify is published on the `dagnats` service.
 
 Published ports:
 
 - `${NOTIFY_HOST_PORT:-3000}:3000`: the notify API and console. Change `NOTIFY_HOST_PORT` if 3000 is taken.
 - `127.0.0.1:${DAGNATS_CONSOLE_HOST_PORT:-8081}:8080`: dagnats' own console. It has no authentication, so it is bound to loopback on purpose. notify links to it from run pages through `NOTIFY_DAGNATS_CONSOLE_URL`.
 
-The `notify` service sets `NOTIFY_NATS_URL`, `NOTIFY_BRIDGE_URL`, `NOTIFY_ADDR=0.0.0.0:3000`, `NOTIFY_DB`, `NOTIFY_DAGNATS_CONSOLE_URL` and `NOTIFY_MASTER_KEY_HEX`. Add any other [environment variable](../../configuration) to the `environment:` block.
+The `notify` service sets `NOTIFY_NATS_URL`, `NOTIFY_ADDR=0.0.0.0:3000`, `NOTIFY_DB`, `NOTIFY_DAGNATS_CONSOLE_URL` and `NOTIFY_MASTER_KEY_HEX`. Add any other [environment variable](../../configuration) to the `environment:` block.
 
-Both services have health checks (`/ready` on the bridge, `/healthz` on notify), and notify waits for dagnats to be healthy.
+Both services have health checks (`/ready` on dagnats, `/healthz` on notify), and notify waits for dagnats to be healthy.
 
 ## The master key
 
@@ -49,7 +49,7 @@ The `Dockerfile` has these targets:
 | Target | Contents |
 |---|---|
 | `notify` | Static `notify` binary on Alpine 3.20, runs as a non-root `notify` user under `tini`. `EXPOSE 3000`, `VOLUME /data`, default command `serve`. |
-| `dagnats` | The dagnats binary, built with `go install` at `DAGNATS_VERSION` (default `v0.0.34`). `EXPOSE 4222 8080`. |
+| `dagnats` | The dagnats binary, built with `go install` at `DAGNATS_VERSION` (default `v0.0.36`). `EXPOSE 4222 8080`. |
 | `hub` | The `notify` target with `deploy/notify-prelude.sh` as entrypoint; see [Deploy](../../operations/deploy#the-hub-compose-file). |
 
 The default image is built with `CGO_ENABLED=0` and does not include the DuckDB analytics backend.

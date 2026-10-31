@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/steptype"
 )
@@ -34,7 +36,7 @@ func TestCompile_DigestRegular_WithDigestKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile keyed: %v", err)
 	}
-	if plain.Type != "sleep" || string(plain.Config) != `{"until_input_path":"digestDeadline"}` {
+	if plain.Type != dag.StepTypeSleep || string(plain.Config) != `{"until_input_path":"digestDeadline"}` {
 		t.Fatalf("regular digest def = %+v, want a run-input-resolved sleep", plain)
 	}
 	if string(keyed.Config) != string(plain.Config) || keyed.Type != plain.Type {
@@ -52,7 +54,7 @@ func TestCompile_DigestRegular_BackwardCompat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if def.Type != "sleep" || string(def.Config) != `{"until_input_path":"digestDeadline"}` {
+	if def.Type != dag.StepTypeSleep || string(def.Config) != `{"until_input_path":"digestDeadline"}` {
 		t.Fatalf("legacy digest def = %+v, want a run-input-resolved sleep", def)
 	}
 	// The authored window is no longer IN the compiled config, so Compile must
@@ -75,7 +77,7 @@ func TestCompile_DigestScheduled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if def.ID != "dg" || def.Type != "normal" || def.Task != "digest.wait" {
+	if def.ID != "dg" || def.Type != dag.StepTypeNormal || def.Task != "digest.wait" {
 		t.Fatalf("scheduled digest def = %+v, want {ID:dg Type:normal Task:digest.wait}", def)
 	}
 	if def.Config != nil {

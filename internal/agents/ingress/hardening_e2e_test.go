@@ -313,7 +313,7 @@ func TestRestartMidTurnIdempotentReplay_E2E(t *testing.T) {
 	// sidecar, stores, and bus.
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	eng2, err := engine.New(h.natsURL, h.bridgeURL)
+	eng2, err := engine.New(h.natsURL)
 	if err != nil {
 		t.Fatalf("engine.New (restart): %v", err)
 	}
@@ -322,7 +322,9 @@ func TestRestartMidTurnIdempotentReplay_E2E(t *testing.T) {
 		WithRuntime(agentdomain.RuntimeMesh, h.mesh).
 		WithRetry(h.retry)
 	eng2.Handle(ingress.TaskMesh, ing2.HandleTurn)
-	eng2.StartWorkers(ctx)
+	if err := eng2.StartWorkers(ctx); err != nil {
+		t.Fatalf("StartWorkers: %v", err)
+	}
 
 	// Re-submitting the inbound activity across the restart (what a webhook
 	// redelivery or a recovering server would do) must return the existing

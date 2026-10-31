@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
@@ -82,7 +84,7 @@ func (s *Service) Register(ctx context.Context) error {
 		Steps: []engine.StepDef{{
 			ID:   "verify",
 			Task: TaskVerify,
-			Type: "normal",
+			Type: dag.StepTypeNormal,
 		}},
 	}
 	if err := s.eng.RegisterWorkflow(ctx, def); err != nil {

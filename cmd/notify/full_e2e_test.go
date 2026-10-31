@@ -41,7 +41,7 @@ import (
 // library/control-plane concern; the data plane runs entirely through the
 // deployed artifact. No mocks: real binary, real sidecar, real SQLite.
 func TestFullJourney_RealBinary(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "notify.db")
 
@@ -53,10 +53,10 @@ func TestFullJourney_RealBinary(t *testing.T) {
 	}
 	keyHex := hex.EncodeToString(keyRaw)
 
-	apiKey := seedTenant(t, ctx, dbPath, keyRaw, natsURL, bridgeURL)
+	apiKey := seedTenant(t, ctx, dbPath, keyRaw, natsURL)
 
 	// Boot the real artifact, retrying the port bind if it loses a race.
-	base, authHeader := startServe(t, dbPath, natsURL, bridgeURL, keyHex, apiKey)
+	base, authHeader := startServe(t, dbPath, natsURL, keyHex, apiKey)
 
 	// /healthz must answer 200 WITHOUT auth — the container/orchestrator probe
 	// target. A healthy response also means serve got past engine.New +
@@ -166,7 +166,7 @@ func TestFullJourney_RealBinary(t *testing.T) {
 // notify used to fall back to unconditionally — which would encrypt every
 // credential and cookie under a key anyone can compute.
 func TestServe_NoMasterKeyNoDev_ExitsNonZero(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	dbPath := filepath.Join(t.TempDir(), "notify.db")
 	bin := buildNotify(t)
 	addr := freeAddr(t)
@@ -177,7 +177,7 @@ func TestServe_NoMasterKeyNoDev_ExitsNonZero(t *testing.T) {
 	defer cancel()
 
 	serve := exec.CommandContext(ctx, bin, "serve",
-		"--db", dbPath, "--nats-url", natsURL, "--bridge-url", bridgeURL, "--addr", addr)
+		"--db", dbPath, "--nats-url", natsURL, "--addr", addr)
 	serve.Env = envWithout(os.Environ(), "NOTIFY_MASTER_KEY_HEX", "NOTIFY_DEV")
 	var stderr bytes.Buffer
 	serve.Stderr = &stderr
@@ -222,7 +222,7 @@ func envWithout(env []string, keys ...string) []string {
 // in_app workflow whose body uses Handlebars + a {{t}} translation wrapped in a
 // layout, then registers the DAG with the sidecar. It returns the API key. The
 // store and engine are released before the serve binary opens the same DB.
-func seedTenant(t *testing.T, ctx context.Context, dbPath string, keyRaw []byte, natsURL, bridgeURL string) string {
+func seedTenant(t *testing.T, ctx context.Context, dbPath string, keyRaw []byte, natsURL string) string {
 	t.Helper()
 	st, err := store.Open(ctx, dbPath)
 	if err != nil {
@@ -239,7 +239,7 @@ func seedTenant(t *testing.T, ctx context.Context, dbPath string, keyRaw []byte,
 		t.Fatalf("layout upsert: %v", err)
 	}
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -292,7 +292,7 @@ func freeAddr(t *testing.T) string {
 // retrying with a fresh port if the bind loses a race (freeAddr's TOCTOU
 // window). It returns the base URL and auth header once the binary serves 200,
 // and registers process teardown.
-func startServe(t *testing.T, dbPath, natsURL, bridgeURL, keyHex, apiKey string) (base, authHeader string) {
+func startServe(t *testing.T, dbPath, natsURL, keyHex, apiKey string) (base, authHeader string) {
 	t.Helper()
 	bin := buildNotify(t)
 	authHeader = "ApiKey " + apiKey
@@ -300,7 +300,7 @@ func startServe(t *testing.T, dbPath, natsURL, bridgeURL, keyHex, apiKey string)
 	for attempt := 1; attempt <= attempts; attempt++ {
 		addr := freeAddr(t)
 		serve := exec.Command(bin, "serve",
-			"--db", dbPath, "--nats-url", natsURL, "--bridge-url", bridgeURL, "--addr", addr)
+			"--db", dbPath, "--nats-url", natsURL, "--addr", addr)
 		serve.Env = append(os.Environ(), "NOTIFY_MASTER_KEY_HEX="+keyHex)
 		serve.Stdout = os.Stderr
 		serve.Stderr = os.Stderr

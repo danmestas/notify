@@ -38,7 +38,7 @@ func turn(subject, text string) domain.Turn {
 // the request and publishes a single answer envelope to the reply_to header
 // subject. Also asserts the v2 request envelope shape on the wire.
 func TestDispatch_PiStyleReplyEnvelope(t *testing.T) {
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	nc := connect(t, natsURL)
 
 	const subject = "agents.prompt.test.pi"
@@ -94,7 +94,7 @@ func TestDispatch_PiStyleReplyEnvelope(t *testing.T) {
 // state frame (one frame uses task.status.state, the terminal uses
 // statusUpdate.state — both shapes appear in the wild).
 func TestDispatch_ClaudeStyleStreamFrames(t *testing.T) {
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	nc := connect(t, natsURL)
 
 	const subject = "agents.prompt.test.claude"
@@ -142,7 +142,7 @@ func TestDispatch_ClaudeStyleStreamFrames(t *testing.T) {
 // TestDispatch_ServiceError4xx_Permanent proves Nats-Service-Error-Code
 // surfacing: a 400 ack with no answer is a permanent ServiceError.
 func TestDispatch_ServiceError4xx_Permanent(t *testing.T) {
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	nc := connect(t, natsURL)
 
 	const subject = "agents.prompt.test.err"
@@ -184,7 +184,7 @@ func TestDispatch_ServiceError4xx_Permanent(t *testing.T) {
 // distinguishable ErrAckedNoV2Answer after the ~3s grace, well before the
 // dispatch deadline.
 func TestDispatch_V03AckNoAnswer(t *testing.T) {
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	nc := connect(t, natsURL)
 
 	const subject = "agents.prompt.test.v03"
@@ -218,7 +218,7 @@ func TestDispatch_V03AckNoAnswer(t *testing.T) {
 // TestDispatch_TaskFailed_Permanent proves an explicit TASK_STATE_FAILED with
 // no answer text is permanent (straight to the DLQ, no pointless retries).
 func TestDispatch_TaskFailed_Permanent(t *testing.T) {
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	nc := connect(t, natsURL)
 
 	const subject = "agents.prompt.test.failed"
@@ -252,7 +252,7 @@ func TestDispatch_TaskFailed_Permanent(t *testing.T) {
 // TestDispatch_NoResponders_Transient proves an offline agent (no responder
 // on the subject) is a transient error: the engine may retry it.
 func TestDispatch_NoResponders_Transient(t *testing.T) {
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
 	c, err := mesh.Dial(natsURL, mesh.WithTimeout(2*time.Second))
 	if err != nil {
@@ -272,7 +272,7 @@ func TestDispatch_NoResponders_Transient(t *testing.T) {
 // TestDispatch_SubjectOutsideAllowlist proves the §8 guard: a mesh subject
 // outside the allowlist pattern is rejected permanently before any publish.
 func TestDispatch_SubjectOutsideAllowlist(t *testing.T) {
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
 	c, err := mesh.Dial(natsURL) // default allowlist agents.prompt.>
 	if err != nil {

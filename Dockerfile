@@ -28,7 +28,7 @@ FROM golang:1.27.3 AS dagnats-builder
 # Matches the dagnats module version in go.mod (the tests run that version
 # in-process). Do not build against a moving branch ref: it makes
 # Docker smoke non-reproducible and can fail transiently at module verification.
-ARG DAGNATS_VERSION=v0.0.34
+ARG DAGNATS_VERSION=v0.0.36
 WORKDIR /src
 RUN CGO_ENABLED=0 go install github.com/danmestas/dagnats/cmd/dagnats@${DAGNATS_VERSION}
 
@@ -69,9 +69,12 @@ RUN apk add --no-cache ca-certificates tini && \
     mkdir -p /data && chown dagnats:dagnats /data
 COPY --from=dagnats-builder /go/bin/dagnats /usr/local/bin/dagnats
 USER dagnats
+# DAGNATS_LOOP_STATE_MAX_BYTES: room for the AI builder's conversation, which
+# rides each agent-loop task (dagnats' default is 256 KiB).
 ENV DAGNATS_HTTP_ADDR=0.0.0.0:8080 \
-    DAGNATS_DATA_DIR=/data
-# 4222: NATS client port  8080: HTTP control plane + worker bridge + /ready
+    DAGNATS_DATA_DIR=/data \
+    DAGNATS_LOOP_STATE_MAX_BYTES=524288
+# 4222: NATS client port (notify's control plane and tasks)  8080: console + /ready
 EXPOSE 4222 8080
 VOLUME ["/data"]
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/dagnats"]

@@ -11,7 +11,7 @@ name: notify-hub
 #                                       │  over Tailscale — Mini dials OUT, no inbound port
 #   ┌─────────────────────── shared netns ───────────────────────┐
 #   │  cloudflared ──► 127.0.0.1:3000  notify (API + workers)     │
-#   │  dagnats (NATS :4222 — leaf mode binds 0.0.0.0 + bridge :8080)
+#   │  dagnats (NATS :4222 — leaf mode binds 0.0.0.0 + console :8080)
 #   │       owns the netns + published :3000 and :4222 host ports │
 #   └────────────────────────────┬───────────────────────────────┘
 #                                 ▼
@@ -77,8 +77,8 @@ services:
       # so host-run sesh agents (SESH_HUB_URL=nats://127.0.0.1:4222) and other
       # containers can reach the hub. Bound to loopback by default — drop the
       # 127.0.0.1 prefix only if remote hosts must reach it directly (prefer
-      # leafing them into the root hub instead). The bridge/console (:8080/
-      # :8081) stay internal.
+      # leafing them into the root hub instead). The console (:8080/
+      # :8081) stays internal.
       - "127.0.0.1:4222:4222"
     volumes:
       - dagnats-data:/data
@@ -111,7 +111,6 @@ services:
     environment:
       # --- engine (in-pod dagnats) ---
       NOTIFY_NATS_URL: nats://127.0.0.1:4222
-      NOTIFY_BRIDGE_URL: http://127.0.0.1:8080
       NOTIFY_ADDR: 0.0.0.0:3000
       NOTIFY_DB: /data/notify.db
       NOTIFY_DAGNATS_CONSOLE_URL: ${NOTIFY_DAGNATS_CONSOLE_URL:-http://localhost:8081}
