@@ -34,9 +34,9 @@ import (
 // asynchronously into the analytics store. Polling GET /v1/analytics/deliveries
 // must observe in_app.sent >= 2.
 func TestAnalytics_DeliveriesByChannel(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

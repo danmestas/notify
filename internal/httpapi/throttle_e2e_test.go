@@ -42,9 +42,9 @@ import (
 // is absent (the Handles guard below catches handler-desync before workers
 // start).
 func TestCheckThrottle_StepHandler_SecondRunDropped(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -198,9 +198,9 @@ func TestCheckThrottle_StepHandler_SecondRunDropped(t *testing.T) {
 // check.throttle step handler; see TestCheckThrottle_StepHandler_SecondRunDropped
 // for the step-level proof.
 func TestThrottle_SecondSendThrottled(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

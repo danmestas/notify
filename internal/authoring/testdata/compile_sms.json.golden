@@ -1,9 +1,11 @@
 {
   "name": "env_golden-wf-sms",
+  "version": "",
   "steps": [
     {
       "id": "sms-1",
       "task": "send.sms",
+      "timeout": 0,
       "type": "normal"
     }
   ],

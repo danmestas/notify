@@ -47,7 +47,7 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	ctx := context.Background()
 
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "notify.db"))
@@ -505,7 +505,7 @@ func TestIngest_TouchActivity(t *testing.T) {
 // (its own SourceKey auth), while /v1/feed/stream still 401s without one:
 // proof the ingest mount lives OUTSIDE identity.Middleware.
 func TestIngest_RouteMountSplit(t *testing.T) {
-	natsURL, _ := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 	ctx := context.Background()
 
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "notify.db"))

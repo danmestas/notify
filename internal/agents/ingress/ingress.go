@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/go-chi/chi/v5"
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
@@ -81,13 +83,13 @@ func New(agents *agentstore.Store, core *corestore.Store, eng *engine.Engine, bu
 		// backoff before dead-lettering, giving mesh agents up to 4 total
 		// dispatch attempts (dagnats retry semantics: ≤ MaxAttempts
 		// retries after the first attempt). The fix landed in
-		// danmestas/dagnats#384: the bridge pollResponse now always carries
+		// danmestas/dagnats#384: every dispatched task now carries
 		// Attempt≥1, so the retry counter advances correctly and the
 		// dedup-by-Nats-Msg-Id stall that made MaxAttempts>0 unsafe is
 		// gone.
 		retry: &engine.RetryPolicy{
 			MaxAttempts:  3,
-			Strategy:     "fixed",
+			Strategy:     dag.RetryFixed,
 			InitialDelay: 2 * time.Second,
 			MaxDelay:     2 * time.Second,
 		},
@@ -472,7 +474,7 @@ func (s *Service) ensureWorkflow(ctx context.Context, agent agentdomain.Agent) (
 		Steps: []engine.StepDef{{
 			ID:    "turn",
 			Task:  "agent.turn." + agent.Runtime,
-			Type:  "normal",
+			Type:  dag.StepTypeNormal,
 			Retry: s.retry,
 		}},
 	}

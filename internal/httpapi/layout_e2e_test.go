@@ -30,9 +30,9 @@ import (
 // layout's content template before persistence. Real sidecar + temp SQLite +
 // HTTP surface, mirroring the in-app parity harness.
 func TestLayout_WrapsContent(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

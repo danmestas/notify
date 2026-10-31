@@ -134,8 +134,8 @@ func TestTurnRetryDLQReplay_E2E(t *testing.T) {
 // danmestas/dagnats#384: with MaxAttempts=2 and a never-reply stub, the
 // engine dispatches the turn MaxAttempts+1 times (initial + 2 retries = 3
 // total) before dead-lettering. DLQ replay on a live stub resumes the
-// conversation. Wall-clock budget: each round trip ≈ 7s (5s bridge poll +
-// 2s mesh timeout); 3 rounds ≈ 21s, well under the 60s suite budget.
+// conversation. Wall-clock budget: each round trip is about 2s (the mesh
+// timeout); 3 rounds ≈ 21s, well under the 60s suite budget.
 func TestTurnRetryLadder_E2E(t *testing.T) {
 	h := newRetryHarness(t)
 	stub := h.startStub(t)
@@ -157,8 +157,8 @@ func TestTurnRetryLadder_E2E(t *testing.T) {
 	out := h.compose(t, first.ConversationID, "ladder payload")
 
 	// The engine dispatches MaxAttempts+1 times total (initial + 2 retries).
-	// Each round trip ≈ 7s (5s bridge poll + 2s mesh timeout + backoff);
-	// 3 rounds ≈ 21s, so a 45s window covers all overhead.
+	// Each round trip is about 2s (mesh timeout + backoff), so a 45s window
+	// covers all overhead with room to spare.
 	wantDispatches := int64(h.retry.MaxAttempts + 1)
 	deadline := time.Now().Add(45 * time.Second)
 	for dispatches.Load() < wantDispatches {

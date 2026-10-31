@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 )
@@ -196,7 +198,7 @@ func TestStream_Compile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	want := engine.StepDef{ID: "S1", Task: "send.stream", Type: "normal"}
+	want := engine.StepDef{ID: "S1", Task: "send.stream", Type: dag.StepTypeNormal}
 	if !reflect.DeepEqual(sd, want) {
 		t.Fatalf("Compile = %+v, want %+v", sd, want)
 	}

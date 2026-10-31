@@ -1,9 +1,11 @@
 {
   "name": "env_golden-wf-chat",
+  "version": "",
   "steps": [
     {
       "id": "chat-1",
       "task": "send.chat",
+      "timeout": 0,
       "type": "normal"
     }
   ],

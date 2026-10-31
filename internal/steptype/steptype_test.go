@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/steptype"
 )
@@ -65,10 +67,10 @@ func TestDelayDigestCompileDiverged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("digest compile: %v", err)
 	}
-	if delayDef.Type != "sleep" || string(delayDef.Config) != `{"duration":180000000000}` {
+	if delayDef.Type != dag.StepTypeSleep || string(delayDef.Config) != `{"duration":180000000000}` {
 		t.Fatalf("delay def = %+v, want an unchanged baked duration", delayDef)
 	}
-	if digestDef.Type != "sleep" || string(digestDef.Config) != `{"until_input_path":"digestDeadline"}` {
+	if digestDef.Type != dag.StepTypeSleep || string(digestDef.Config) != `{"until_input_path":"digestDeadline"}` {
 		t.Fatalf("digest def = %+v, want a run-input-resolved sleep", digestDef)
 	}
 	if reflect.DeepEqual(delayDef, digestDef) {
@@ -158,7 +160,7 @@ func TestThrottle_Compile_Valid(t *testing.T) {
 	if sd.Task != "check.throttle" {
 		t.Errorf("Task = %q, want check.throttle", sd.Task)
 	}
-	if sd.Type != "normal" {
+	if sd.Type != dag.StepTypeNormal {
 		t.Errorf("Type = %q, want normal", sd.Type)
 	}
 	if sd.ID != "T1" {

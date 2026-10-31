@@ -32,9 +32,9 @@ import (
 // context from the store (its TaskPayload.Input is empty because the upstream
 // sleep step produces no output).
 func TestDelay_InAppDeliveredAfterSleep(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

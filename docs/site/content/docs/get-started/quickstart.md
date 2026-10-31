@@ -13,7 +13,7 @@ You need the `notify` and `dagnats` binaries ([Install](../install)).
 dagnats serve
 ```
 
-Leave it running. notify expects NATS on `nats://127.0.0.1:4222` and the worker bridge on `http://127.0.0.1:8080`, which are what `dagnats serve` binds by default.
+Leave it running. notify expects NATS on `nats://127.0.0.1:4222`, which is what `dagnats serve` binds by default.
 
 ## 2. Create a tenant
 
@@ -51,13 +51,13 @@ notify serve -dev
 export NOTIFY_MASTER_KEY_HEX=$(openssl rand -hex 32)
 ```
 
-notify listens on `127.0.0.1:3000` (`-addr`). On start it checks that the dagnats bridge is reachable and that the bridge accepts its credentials, and it exits if not. Check it:
+notify listens on `127.0.0.1:3000` (`-addr`). On start it connects to dagnats over NATS, and it exits if it cannot. Check it:
 
 ```bash
 curl -s localhost:3000/healthz
 # {"status":"ok","version":"0.0.0-dev"}
 curl -s localhost:3000/readyz
-# {"status":"ok","bridge":true,"db":true}
+# {"status":"ok","dagnats":true,"db":true}
 ```
 
 ## 4. Create a workflow

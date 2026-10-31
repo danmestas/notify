@@ -1,9 +1,11 @@
 {
   "name": "env_golden-wf-digest",
+  "version": "",
   "steps": [
     {
       "id": "digest-1",
       "task": "",
+      "timeout": 0,
       "type": "sleep",
       "config": {
         "until_input_path": "digestDeadline"

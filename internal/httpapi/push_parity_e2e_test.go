@@ -61,9 +61,9 @@ func (c *ntfyCapture) all() []ntfyRequest {
 // subscriber + topic credentials (HTTP) -> trigger (HTTP) -> delivered push
 // message, asserting the persisted Message and the exact ntfy wire.
 func TestPushParity_EndToEnd(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

@@ -1,9 +1,11 @@
 {
   "name": "env_golden-wf-email",
+  "version": "",
   "steps": [
     {
       "id": "email-1",
       "task": "send.email",
+      "timeout": 0,
       "type": "normal"
     }
   ],

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/robfig/cron/v3"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -175,7 +177,7 @@ func sleepStepDef(step domain.Step) (engine.StepDef, error) {
 	if err != nil {
 		return engine.StepDef{}, err
 	}
-	return engine.StepDef{ID: step.StepID, Type: "sleep", Config: cfg}, nil
+	return engine.StepDef{ID: step.StepID, Type: dag.StepTypeSleep, Config: cfg}, nil
 }
 
 // parseSleepForm builds a delay/digest step's controlValues from the editor's
@@ -264,7 +266,7 @@ const maxDelayResumeAttempts = 1000
 func delayRetryPolicy() *engine.RetryPolicy {
 	return &engine.RetryPolicy{
 		MaxAttempts:  maxDelayResumeAttempts,
-		Strategy:     "fixed",
+		Strategy:     dag.RetryFixed,
 		InitialDelay: time.Second,
 		MaxDelay:     time.Second,
 	}
@@ -418,9 +420,9 @@ func (delay) Compile(step domain.Step) (engine.StepDef, error) {
 			if err != nil {
 				return engine.StepDef{}, fmt.Errorf("marshal scheduled delay sleep config: %w", err)
 			}
-			return engine.StepDef{ID: step.StepID, Type: "sleep", Config: cfg}, nil
+			return engine.StepDef{ID: step.StepID, Type: dag.StepTypeSleep, Config: cfg}, nil
 		}
-		return engine.StepDef{ID: step.StepID, Type: "normal", Task: "delay.scheduled", Retry: delayRetryPolicy()}, nil
+		return engine.StepDef{ID: step.StepID, Type: dag.StepTypeNormal, Task: "delay.scheduled", Retry: delayRetryPolicy()}, nil
 	case "dynamic":
 		if dcv.DynamicKey == "" {
 			return engine.StepDef{}, fmt.Errorf("dynamic delay requires a dynamicKey")
@@ -435,9 +437,9 @@ func (delay) Compile(step domain.Step) (engine.StepDef, error) {
 			if err != nil {
 				return engine.StepDef{}, fmt.Errorf("marshal dynamic delay sleep config: %w", err)
 			}
-			return engine.StepDef{ID: step.StepID, Type: "sleep", Config: cfg}, nil
+			return engine.StepDef{ID: step.StepID, Type: dag.StepTypeSleep, Config: cfg}, nil
 		}
-		return engine.StepDef{ID: step.StepID, Type: "normal", Task: "delay.dynamic", Retry: delayRetryPolicy()}, nil
+		return engine.StepDef{ID: step.StepID, Type: dag.StepTypeNormal, Task: "delay.dynamic", Retry: delayRetryPolicy()}, nil
 	default:
 		return sleepStepDef(step)
 	}
@@ -585,7 +587,7 @@ func (digest) Compile(step domain.Step) (engine.StepDef, error) {
 		if _, perr := ParseCron(dcv.Cron); perr != nil {
 			return engine.StepDef{}, fmt.Errorf("invalid digest cron %q: %w", dcv.Cron, perr)
 		}
-		return engine.StepDef{ID: step.StepID, Type: "normal", Task: "digest.wait", Retry: delayRetryPolicy()}, nil
+		return engine.StepDef{ID: step.StepID, Type: dag.StepTypeNormal, Task: "digest.wait", Retry: delayRetryPolicy()}, nil
 	}
 	// A regular window sleeps until an instant carried in the RUN INPUT rather
 	// than for a duration baked into the DAG. The DAG is per-workflow and the
@@ -609,5 +611,5 @@ func (digest) Compile(step domain.Step) (engine.StepDef, error) {
 	if err != nil {
 		return engine.StepDef{}, fmt.Errorf("marshal digest sleep config: %w", err)
 	}
-	return engine.StepDef{ID: step.StepID, Type: "sleep", Config: cfg}, nil
+	return engine.StepDef{ID: step.StepID, Type: dag.StepTypeSleep, Config: cfg}, nil
 }

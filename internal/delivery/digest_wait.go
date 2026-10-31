@@ -32,9 +32,9 @@ func NewDigestWait(s *store.Store) *DigestWait { return &DigestWait{store: s} }
 // digest.
 //
 // Goroutine budget: the handler holds its worker goroutine for the entire
-// window. The engine dispatches up to its poll batch per cycle in separate
-// goroutines with no semaphore, so many concurrent long-window digests hold
-// many goroutines — acceptable at current scale (see real-digest risks).
+// window. The engine runs up to 256 tasks of one type at once, so many
+// concurrent long-window digests hold many goroutines — acceptable at current
+// scale (see real-digest risks).
 func (d *DigestWait) HandleDigestWait(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
 	cronExpr, err := stepCron(ctx, d.store, t.RunID, t.StepID)
 	if err != nil {

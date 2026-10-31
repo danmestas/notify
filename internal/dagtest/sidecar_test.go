@@ -2,7 +2,6 @@ package dagtest_test
 
 import (
 	"context"
-	"net/http"
 	"testing"
 	"time"
 
@@ -15,13 +14,13 @@ import (
 // TestStartSidecar_InProcess proves the sidecar needs no dagnats binary: with
 // PATH empty, HOME pointed at an empty dir and DAGNATS_BIN naming nothing, it
 // still serves NATS + JetStream (with dagnats' streams provisioned) and the
-// HTTP /ready endpoint.
+// NATS control plane.
 func TestStartSidecar_InProcess(t *testing.T) {
 	t.Setenv("PATH", "")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("DAGNATS_BIN", "/nonexistent/dagnats")
 
-	natsURL, httpURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
 	nc, err := nats.Connect(natsURL)
 	if err != nil {
@@ -39,16 +38,13 @@ func TestStartSidecar_InProcess(t *testing.T) {
 		t.Fatalf("dagnats streams not provisioned: %v", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, httpURL+"/ready", nil)
+	// api.runs.get answers with an {"error":...} envelope for an unknown
+	// run, which is enough to prove the control plane is serving.
+	msg, err := nc.RequestWithContext(ctx, "api.runs.get", []byte("no-such-run"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("api.runs.get: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /ready: %v", err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /ready = %d, want 200", resp.StatusCode)
+	if len(msg.Data) == 0 {
+		t.Fatal("api.runs.get replied with an empty body")
 	}
 }

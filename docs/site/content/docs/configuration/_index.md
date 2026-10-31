@@ -29,15 +29,11 @@ Flags use Go's `flag` package, so `-addr` and `--addr` are the same. Variables m
 | `-master-key-hex` | `NOTIFY_MASTER_KEY_HEX` | none | 32 bytes as 64 hex characters. **Required** unless `-dev`. Encrypts API keys, integration credentials, session cookies, environment variables and managed-agent keys. Prefer the environment variable: a flag value is visible in `ps`. |
 | `-dev` | `NOTIFY_DEV` (`1` or `true`) | off | Allow starting with no master key by deriving a fixed, **publicly known** one. Development only. |
 | `-nats-url` | `NOTIFY_NATS_URL` | `nats://127.0.0.1:4222` | NATS client URL of the running dagnats sidecar. notify does not embed NATS. |
-| `-bridge-url` | `NOTIFY_BRIDGE_URL` | `http://127.0.0.1:8080` | The sidecar's HTTP worker bridge. |
-| (env only) | `DAGNATS_BRIDGE_TOKEN` | none | The bearer token the sidecar's bridge requires. Must equal the value the sidecar was started with. The name matches the one dagnats reads, so a host that already configured the sidecar needs no new setting. |
 | `-sendmail-command` | `NOTIFY_SENDMAIL_COMMAND` | `/usr/sbin/sendmail -ti` | Command the `sendmail` email provider pipes each message to. Split on whitespace, run without a shell. |
 | `-ssrf-allow` | `NOTIFY_SSRF_ALLOWED_HOSTS` | empty | Comma-separated exact hosts that outbound HTTP may reach even though they resolve to an internal address. No wildcards. Empty blocks every internal range. A malformed entry stops start. |
 | (env only) | `NOTIFY_PUBLIC_BASE_URL` | empty | The server's public origin. Used to derive the default Web Push VAPID subject (`https://<host>`; localhost and IPs yield none), and passed to the console for rendered webhook URLs. |
 | (env only) | `NOTIFY_CONSOLE_READ_ONLY` | off | Exactly `1` disables every mutation in the console. |
 | (env only) | `NOTIFY_DAGNATS_CONSOLE_URL` | empty | Base URL of dagnats' console, as your browser sees it, for run deep-links in Activity. |
-
-At start notify retries the bridge reachability check (about 30 seconds in total) and exits if the bridge stays unreachable, then checks that the bridge accepts its credentials and exits on `401` or `403`. With `DAGNATS_BRIDGE_TOKEN` unset it logs that bridge auth is disabled.
 
 ## serve: agents
 

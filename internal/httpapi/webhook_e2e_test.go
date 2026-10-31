@@ -34,9 +34,9 @@ import (
 // delivery-status event fans out over the event bus to the webhooksout consumer
 // which POSTs the raw message to the tenant's active webhook endpoint.
 func TestWebhook_DeliveryStatusPostedToEndpoint(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
