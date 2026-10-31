@@ -66,7 +66,6 @@ type SessionStore interface {
 // the next iteration's Checkpoint() — no live engine or NATS required.
 // *engine.AgentLoopContext satisfies it structurally.
 type loopContext interface {
-	Iteration() int
 	Checkpoint() []byte
 	Input() json.RawMessage
 	Continue(checkpoint []byte) error
@@ -75,7 +74,7 @@ type loopContext interface {
 }
 
 // loopState is the full agent-loop checkpoint: it round-trips verbatim through
-// the engine's checkpoint KV between iterations, so each dispatch reconstructs
+// the engine's agent-loop checkpoint between iterations, so each dispatch reconstructs
 // the conversation and the in-progress draft without any other persisted state.
 // Scope, SessionID and GatedTypes are frozen on iteration 0 (the tool enum stays
 // stable across the run, matching the synchronous Builder which gates once).
@@ -107,6 +106,10 @@ type loopState struct {
 	// plumbing) and is compared against AgentLoopBuilder.tokenBudget each
 	// iteration.
 	TokensUsed int64 `json:"tokensUsed,omitempty"`
+	// Iteration counts the Continues so far (0 on the first iteration), for
+	// the operator's logs. The engine's iteration counter is not exposed to
+	// handlers, so the loop keeps its own.
+	Iteration int `json:"iteration,omitempty"`
 }
 
 // runInput is the StartRun payload: the session to build into plus its tenancy
@@ -257,7 +260,7 @@ func (b *AgentLoopBuilder) RegisterWorkflow(ctx context.Context) error {
 		Steps: []engine.StepDef{
 			engine.AgentLoopStep(AgentLoopStepID, AgentLoopTask, engine.AgentLoopConfig{
 				MaxIterations: b.maxIters,
-			}),
+			}, 0),
 		},
 	}
 	return b.eng.RegisterWorkflow(ctx, def)
@@ -324,7 +327,7 @@ func (b *AgentLoopBuilder) handle(ctx context.Context, lc loopContext) error {
 		MaxTokens:  DefaultMaxTokens,
 	})
 	if err != nil {
-		slog.Error("aibuilder: model call failed", "sessionID", st.SessionID, "iter", lc.Iteration(), "err", err)
+		slog.Error("aibuilder: model call failed", "sessionID", st.SessionID, "iter", st.Iteration, "err", err)
 		b.emit(lc, Event{Kind: KindError, Err: err})
 		return fmt.Errorf("aibuilder: model call: %w", err)
 	}
@@ -338,7 +341,7 @@ func (b *AgentLoopBuilder) handle(ctx context.Context, lc loopContext) error {
 	st.TokensUsed += resp.Usage.InputTokens + resp.Usage.OutputTokens
 	if b.tokenBudget > 0 && st.TokensUsed >= int64(b.tokenBudget) {
 		budgetErr := fmt.Errorf("aibuilder: token budget exceeded (%d >= %d)", st.TokensUsed, b.tokenBudget)
-		slog.Error("aibuilder: token budget exceeded", "sessionID", st.SessionID, "iter", lc.Iteration(), "tokensUsed", st.TokensUsed, "tokenBudget", b.tokenBudget)
+		slog.Error("aibuilder: token budget exceeded", "sessionID", st.SessionID, "iter", st.Iteration, "tokensUsed", st.TokensUsed, "tokenBudget", b.tokenBudget)
 		b.emit(lc, Event{Kind: KindError, Err: budgetErr, Draft: st.Draft.clone()})
 		return budgetErr
 	}
@@ -547,6 +550,7 @@ func (b *AgentLoopBuilder) selfCorrectLimitExceeded(lc loopContext, st *loopStat
 // continueLoop checkpoints the full loop state and asks the engine for another
 // iteration.
 func (b *AgentLoopBuilder) continueLoop(lc loopContext, st *loopState) error {
+	st.Iteration++
 	cp, err := json.Marshal(st)
 	if err != nil {
 		return fmt.Errorf("aibuilder: marshal checkpoint: %w", err)

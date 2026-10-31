@@ -34,9 +34,9 @@ import (
 // self-sources, drains the three merged events, and renders {{digest.count}} =>
 // a single "You have 3 new items" message (NOT three separate messages).
 func TestDigest_BatchesEvents(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

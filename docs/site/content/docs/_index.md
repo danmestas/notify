@@ -10,14 +10,14 @@ This documentation describes release {{< param "version" >}}. Everything here wa
 
 ## How it fits together
 
-notify is one Go binary. It keeps its state in a SQLite file and runs workflows on a **dagnats sidecar**, a separate process that provides the durable workflow engine, an embedded NATS server with JetStream, and an HTTP worker bridge. notify connects to the sidecar on start; it never starts it.
+notify is one Go binary. It keeps its state in a SQLite file and runs workflows on a **dagnats sidecar**, a separate process that provides the durable workflow engine, and an embedded NATS server with JetStream. notify connects to the sidecar on start; it never starts it.
 
 ```mermaid
 graph LR
     Client[Your backend] -->|"/v1 API (ApiKey)"| Notify[notify]
     Browser[Subscriber browser] -->|"/v1 inbox (Bearer session)"| Notify
     Notify --> DB[(SQLite)]
-    Notify <-->|NATS + HTTP bridge| Dagnats[dagnats sidecar]
+    Notify <-->|NATS| Dagnats[dagnats sidecar]
     Notify --> Providers[Email, SMS, push, chat providers]
     Notify -.->|optional| Blobs[(fs or S3 blob store)]
     Mail[Mail server or forwarder] -->|inbound email| Notify

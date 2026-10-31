@@ -31,8 +31,8 @@ const idempotencyTestTrigger = "idempotent-flow"
 func setupIdempotency(t *testing.T) (*trigger.Service, domain.Scope, string) {
 	t.Helper()
 
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
-	eng, err := engine.New(natsURL, bridgeURL)
+	natsURL := dagtest.StartSidecar(t)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

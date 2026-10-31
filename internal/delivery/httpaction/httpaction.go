@@ -221,7 +221,7 @@ func (h *Handler) onFailure(ctx context.Context, scope domain.Scope, t engine.Ta
 // id (notification -> workflow -> step), applying the same defaults the registry
 // validates: method GET, timeoutSec 30, failurePolicy fail_closed.
 func loadConfig(ctx context.Context, s *store.Store, box *secretbox.Box, runID, stepID string) (stepConfig, error) {
-	notif, err := s.Notifications().GetByRunID(ctx, runID)
+	notif, err := delivery.NotificationByRun(ctx, s, runID)
 	if err != nil {
 		return stepConfig{}, fmt.Errorf("notification by run %q: %w", runID, err)
 	}

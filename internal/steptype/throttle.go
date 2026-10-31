@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 )
@@ -61,7 +63,7 @@ func (throttle) Compile(step domain.Step) (engine.StepDef, error) {
 	}
 	// No Config: the handler loads limit/windowSec from the store at run time
 	// using the workflow row, following the same pattern as other task handlers.
-	return engine.StepDef{ID: step.StepID, Task: "check.throttle", Type: "normal"}, nil
+	return engine.StepDef{ID: step.StepID, Task: "check.throttle", Type: dag.StepTypeNormal}, nil
 }
 
 // throttleCfg holds the validated control values for a throttle step.

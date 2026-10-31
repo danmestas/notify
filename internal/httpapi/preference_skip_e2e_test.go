@@ -109,9 +109,9 @@ func TestPreference_SendsWhenEnabled(t *testing.T) {
 // in_app handler), and HTTP server, and publishes the "welcome" in_app workflow.
 func newPrefHarness(t *testing.T) (srv *httptest.Server, scope domain.Scope, prefs *preferences.Service, authHeader string) {
 	t.Helper()
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

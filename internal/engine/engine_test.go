@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/dagtest"
 	"github.com/danmestas/notify/internal/engine"
 )
@@ -15,9 +17,9 @@ import (
 // (An empty-Name def is NOT used: the server panics on it rather than replying
 // with an error envelope.)
 func TestEngine_RegisterWorkflow_BadDef_Errors(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	e, err := engine.New(natsURL, bridgeURL)
+	e, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -26,7 +28,7 @@ func TestEngine_RegisterWorkflow_BadDef_Errors(t *testing.T) {
 	bad := engine.WorkflowDef{
 		Name: "bad-dep",
 		Steps: []engine.StepDef{
-			{ID: "a", Task: "noop", Type: "normal", DependsOn: []string{"nonexistent"}},
+			{ID: "a", Task: "noop", Type: dag.StepTypeNormal, DependsOn: []string{"nonexistent"}},
 		},
 	}
 	if err := e.RegisterWorkflow(context.Background(), bad); err == nil {
@@ -37,9 +39,9 @@ func TestEngine_RegisterWorkflow_BadDef_Errors(t *testing.T) {
 // TestEngine_GetRun_UnknownID_Errors asserts GetRun returns an error (not a
 // zero snapshot with empty status) for an unknown run id.
 func TestEngine_GetRun_UnknownID_Errors(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	e, err := engine.New(natsURL, bridgeURL)
+	e, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

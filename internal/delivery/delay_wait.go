@@ -211,7 +211,7 @@ func resolveDynamicDuration(payload json.RawMessage, dynamicKey, dynamicKind str
 // them directly. Scope is returned alongside so HandleDynamic can pass it to
 // DelayDeadlines().Save without a second notification lookup.
 func (d *DelayWait) stepInputs(ctx context.Context, runID, stepID string) (json.RawMessage, json.RawMessage, domain.Scope, error) {
-	notif, err := d.store.Notifications().GetByRunID(ctx, runID)
+	notif, err := NotificationByRun(ctx, d.store, runID)
 	if err != nil {
 		return nil, nil, domain.Scope{}, fmt.Errorf("delay: notification by run %q: %w", runID, err)
 	}
@@ -241,7 +241,7 @@ func (d *DelayWait) stepInputs(ctx context.Context, runID, stepID string) (json.
 // dropped one. The previous behaviour was UTC for everyone, so UTC is also the
 // correct thing to fall back to.
 func (d *DelayWait) subscriberLocation(ctx context.Context, runID string) *time.Location {
-	notif, err := d.store.Notifications().GetByRunID(ctx, runID)
+	notif, err := NotificationByRun(ctx, d.store, runID)
 	if err != nil {
 		return time.UTC
 	}

@@ -9,7 +9,7 @@
 # child so signals propagate cleanly.
 #
 # Design notes:
-#   * Engine NATS (NOTIFY_NATS_URL / NOTIFY_BRIDGE_URL) is the in-pod dagnats
+#   * Engine NATS (NOTIFY_NATS_URL) is the in-pod dagnats
 #     sidecar reached over loopback. MESH NATS (NOTIFY_MESH_NATS_URL) is the
 #     EXTERNAL sesh A2A hub where responder agents (pi, gemini, omp, grok)
 #     subscribe. They are deliberately different endpoints.
@@ -34,7 +34,6 @@ log() { printf 'notify-prelude: %s\n' "$*" >&2; }
 # These match cmd/notify/main.go's envOr() defaults so the container behaves the
 # same whether or not the orchestrator set them.
 export NOTIFY_NATS_URL="${NOTIFY_NATS_URL:-nats://127.0.0.1:4222}"
-export NOTIFY_BRIDGE_URL="${NOTIFY_BRIDGE_URL:-http://127.0.0.1:8080}"
 export NOTIFY_ADDR="${NOTIFY_ADDR:-0.0.0.0:3000}"
 export NOTIFY_DB="${NOTIFY_DB:-/data/notify.db}"
 

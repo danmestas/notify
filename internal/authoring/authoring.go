@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"regexp"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/secretbox"
@@ -196,7 +198,7 @@ func Compile(wf domain.Workflow) (engine.WorkflowDef, error) {
 		} else {
 			// Unknown/legacy type: preserve historical behavior — an
 			// unregistered type compiled to a channel "send.<type>" task.
-			sd = engine.StepDef{ID: step.StepID, Task: "send." + step.Type, Type: "normal"}
+			sd = engine.StepDef{ID: step.StepID, Task: "send." + step.Type, Type: dag.StepTypeNormal}
 		}
 		if i > 0 {
 			sd.DependsOn = []string{steps[i-1].StepID}

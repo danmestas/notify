@@ -34,9 +34,9 @@ import (
 // gateway) drive subscriber -> trigger -> delivered in_app message and assert
 // the message is pushed over a live SSE stream to the subscriber.
 func TestRealtime_InAppStreamsToSubscriber(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
-	eng, err := engine.New(natsURL, bridgeURL)
+	eng, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}

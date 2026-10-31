@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/danmestas/dagnats/dag"
+
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/domain"
@@ -252,7 +254,7 @@ func TestRollback_Pre0028Version_FallsBackWithoutRestoringRow(t *testing.T) {
 	// COLUMN default applies.
 	legacyDef := engine.WorkflowDef{
 		Name:  "env_1-welcome",
-		Steps: []engine.StepDef{{ID: "S1", Task: "send.in_app", Type: "normal"}},
+		Steps: []engine.StepDef{{ID: "S1", Task: "send.in_app", Type: dag.StepTypeNormal}},
 	}
 	legacyDefJSON, err := json.Marshal(legacyDef)
 	if err != nil {

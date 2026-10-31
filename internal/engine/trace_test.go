@@ -20,7 +20,7 @@ var traceparentRe = regexp.MustCompile(`^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$`)
 // the run trace onto notify's trigger trace. It fails against the headerless
 // nc.RequestWithContext this used to use.
 func TestRequestInjectsTraceparent(t *testing.T) {
-	natsURL, bridgeURL := dagtest.StartSidecar(t)
+	natsURL := dagtest.StartSidecar(t)
 
 	// Independent connection that watches the control subject alongside
 	// dagnats; whichever replies first satisfies StartRun, and we only assert
@@ -47,7 +47,7 @@ func TestRequestInjectsTraceparent(t *testing.T) {
 		t.Fatalf("flush: %v", err)
 	}
 
-	e, err := engine.New(natsURL, bridgeURL)
+	e, err := engine.New(natsURL)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
