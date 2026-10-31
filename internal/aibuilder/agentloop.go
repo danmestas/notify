@@ -555,7 +555,15 @@ func (b *AgentLoopBuilder) continueLoop(lc loopContext, st *loopState) error {
 	if err != nil {
 		return fmt.Errorf("aibuilder: marshal checkpoint: %w", err)
 	}
-	return lc.Continue(cp)
+	if err := lc.Continue(cp); err != nil {
+		// The usual cause is a conversation over dagnats' agent-loop state
+		// cap, which only the sidecar's setting can raise.
+		err = fmt.Errorf("aibuilder: save the build's %d-byte conversation state (dagnats caps it at loop_state_max_bytes; raise DAGNATS_LOOP_STATE_MAX_BYTES on the sidecar): %w", len(cp), err)
+		slog.Error("aibuilder: continue failed", "sessionID", st.SessionID, "iter", st.Iteration, "stateBytes", len(cp), "err", err)
+		b.emit(lc, Event{Kind: KindError, Err: err, Draft: st.Draft.clone()})
+		return err
+	}
+	return nil
 }
 
 // emit streams ev to the run's stream subject as JSON. Streaming is

@@ -289,6 +289,13 @@ func TestWorker_StopDrainsInFlight(t *testing.T) {
 	if !finished.Load() {
 		t.Fatal("Stop returned while the task was still running")
 	}
+	again := time.Now()
+	if err := e.Stop(); err != nil {
+		t.Fatalf("second Stop: %v", err)
+	}
+	if took := time.Since(again); took > time.Second {
+		t.Fatalf("second Stop took %v; it must not drain again", took)
+	}
 
 	reader, err := engine.New(natsURL)
 	if err != nil {

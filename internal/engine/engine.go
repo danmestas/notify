@@ -13,6 +13,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/danmestas/dagnats/dag"
 	"github.com/danmestas/dagnats/worker"
@@ -100,6 +101,10 @@ func NewNonRetryableError(err error) error { return &NonRetryableError{Err: err}
 // holding up the rest of its type.
 const handlerConcurrency = worker.ConcurrencyMax
 
+// defaultAckWait is how long a claim lasts without a heartbeat; it matches
+// dagnats' default. Keeping a long wait's claim alive is the worker SDK's job.
+const defaultAckWait = 5 * time.Minute
+
 // Engine talks to dagnats over one NATS connection: request/reply for the
 // control plane, and dagnats' worker SDK for tasks. The zero value is not
 // usable; construct with New.
@@ -110,6 +115,7 @@ type Engine struct {
 	handlers      map[string]HandlerFunc
 	agentHandlers map[string]AgentLoopFunc
 	started       bool
+	ackWait       time.Duration
 
 	w *worker.Worker
 	// life ends every in-flight handler's context on Stop, so a handler that
@@ -133,6 +139,11 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
+// withAckWait shortens the claim lease, for tests that outlast it.
+func withAckWait(d time.Duration) Option {
+	return func(e *Engine) { e.ackWait = d }
+}
+
 // New dials dagnats' NATS endpoint.
 func New(natsURL string, opts ...Option) (*Engine, error) {
 	nc, err := eventbus.DialNATS(natsURL, "notify-engine", "dagnats sidecar (-nats-url)")
@@ -144,6 +155,7 @@ func New(natsURL string, opts ...Option) (*Engine, error) {
 		log:           slog.Default(),
 		handlers:      make(map[string]HandlerFunc),
 		agentHandlers: make(map[string]AgentLoopFunc),
+		ackWait:       defaultAckWait,
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -183,11 +195,12 @@ func (e *Engine) StartWorkers(ctx context.Context) {
 		return
 	}
 	e.w = worker.NewWorker(e.nc)
+	opts := []worker.HandlerOption{worker.WithConcurrency(handlerConcurrency), worker.WithAckWait(e.ackWait)}
 	for taskType, fn := range e.handlers {
-		e.w.Handle(taskType, e.taskHandler(taskType, fn), worker.WithConcurrency(handlerConcurrency))
+		e.w.Handle(taskType, e.taskHandler(taskType, fn), opts...)
 	}
 	for taskType, fn := range e.agentHandlers {
-		e.w.Handle(taskType, e.loopHandler(taskType, fn), worker.WithConcurrency(handlerConcurrency))
+		e.w.Handle(taskType, e.loopHandler(taskType, fn), opts...)
 	}
 	e.w.Start()
 	context.AfterFunc(ctx, e.stopWorker)
