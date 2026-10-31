@@ -12,64 +12,158 @@ import (
 	"github.com/danmestas/notify/internal/dagtest"
 )
 
-// TestTaskOutlastingAckWaitRunsOnce proves the engine keeps a long task's
-// claim alive: a handler that runs well past its AckWait is not redelivered,
-// so it runs exactly once and never holds a second slot of its lane.
-func TestTaskOutlastingAckWaitRunsOnce(t *testing.T) {
-	t.Skip("pending dagnats' worker robustness release: the SDK heartbeats a running handler and skips redelivery of a task already running; un-skip when notify repins to it")
+// parkingHandler waits until a deadline by parking: the first dispatch parks
+// until now+wait, and the resumed one completes. It counts both.
+type parkingHandler struct {
+	wait      time.Duration
+	parks     atomic.Int32
+	completes atomic.Int32
+	resumedAt atomic.Value // time.Time: the ResumeAt the resumed dispatch saw
+	parkedAt  atomic.Value // time.Time: the deadline the first dispatch asked for
+}
+
+func (h *parkingHandler) handle(_ context.Context, t TaskPayload) (json.RawMessage, error) {
+	if t.ResumeAt.IsZero() {
+		h.parks.Add(1)
+		at := time.Now().Add(h.wait)
+		h.parkedAt.Store(at)
+		return nil, WaitUntil(at)
+	}
+	if time.Now().Before(t.ResumeAt) {
+		return nil, WaitUntil(t.ResumeAt)
+	}
+	h.resumedAt.Store(t.ResumeAt)
+	h.completes.Add(1)
+	return json.RawMessage(`{}`), nil
+}
+
+func registerOneStep(t *testing.T, e *Engine, name, task string) {
+	t.Helper()
+	if err := e.RegisterWorkflow(context.Background(), WorkflowDef{
+		Name:  name,
+		Steps: []StepDef{{ID: "only", Task: task, Type: dag.StepTypeNormal}},
+	}); err != nil {
+		t.Fatalf("RegisterWorkflow: %v", err)
+	}
+}
+
+func awaitRun(t *testing.T, e *Engine, id string, within time.Duration) RunSnapshot {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	var snap RunSnapshot
+	for time.Now().Before(deadline) {
+		s, err := e.GetRun(context.Background(), id)
+		if err == nil {
+			snap = s
+			if s.IsTerminal() {
+				return s
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("run %s never finished; last %+v", id, snap)
+	return snap
+}
+
+// TestParkedTaskOutlastsAckWaitWithoutHoldingItsLane proves a wait longer
+// than the claim's AckWait parks instead of holding a worker: with one slot
+// per lane, a second task of the same type runs and finishes while the first
+// is parked, and the parked one then completes exactly once.
+func TestParkedTaskOutlastsAckWaitWithoutHoldingItsLane(t *testing.T) {
 	natsURL := dagtest.StartSidecar(t)
-	e, err := New(natsURL, withAckWait(2*time.Second))
+	e, err := New(natsURL, withAckWait(2*time.Second), withConcurrency(1))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(func() { _ = e.Stop() })
 
-	var runs, inFlight, maxInFlight atomic.Int32
-	e.Handle("long.wait", func(_ context.Context, _ TaskPayload) (json.RawMessage, error) {
-		runs.Add(1)
-		n := inFlight.Add(1)
-		for {
-			m := maxInFlight.Load()
-			if n <= m || maxInFlight.CompareAndSwap(m, n) {
-				break
-			}
+	h := &parkingHandler{wait: 6 * time.Second}
+	var quick atomic.Int32
+	e.Handle("park.wait", func(ctx context.Context, tp TaskPayload) (json.RawMessage, error) {
+		if string(tp.Input) == `{"quick":true}` {
+			quick.Add(1)
+			return json.RawMessage(`{}`), nil
 		}
-		time.Sleep(7 * time.Second)
-		inFlight.Add(-1)
-		return json.RawMessage(`{}`), nil
+		return h.handle(ctx, tp)
 	})
 	e.StartWorkers(context.Background())
+	registerOneStep(t, e, "wf-park", "park.wait")
 
 	ctx := context.Background()
-	if err := e.RegisterWorkflow(ctx, WorkflowDef{
-		Name:  "wf-long-wait",
-		Steps: []StepDef{{ID: "only", Task: "long.wait", Type: dag.StepTypeNormal}},
-	}); err != nil {
-		t.Fatalf("RegisterWorkflow: %v", err)
-	}
-	id, err := e.StartRun(ctx, "wf-long-wait", nil)
+	parked, err := e.StartRun(ctx, "wf-park", nil)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
+	for h.parks.Load() == 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	other, err := e.StartRun(ctx, "wf-park", json.RawMessage(`{"quick":true}`))
+	if err != nil {
+		t.Fatalf("StartRun (quick): %v", err)
+	}
+	if snap := awaitRun(t, e, other, 4*time.Second); !snap.Succeeded() {
+		t.Fatalf("quick run status = %q; the parked task held the lane", snap.Status)
+	}
+	if h.completes.Load() != 0 {
+		t.Fatal("the parked task completed before its deadline")
+	}
 
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		snap, gerr := e.GetRun(ctx, id)
-		if gerr == nil && snap.IsTerminal() {
-			if !snap.Succeeded() {
-				t.Fatalf("run status = %q, want completed", snap.Status)
-			}
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
+	if snap := awaitRun(t, e, parked, 30*time.Second); !snap.Succeeded() {
+		t.Fatalf("parked run status = %q, want completed", snap.Status)
 	}
-	// Give a late redelivery time to show itself before counting.
-	time.Sleep(3 * time.Second)
-	if got := runs.Load(); got != 1 {
-		t.Fatalf("handler ran %d times, want 1: the claim lapsed and was redelivered", got)
+	time.Sleep(3 * time.Second) // let a stray redelivery show itself
+	if got := h.completes.Load(); got != 1 {
+		t.Fatalf("parked task completed %d times, want 1", got)
 	}
-	if got := maxInFlight.Load(); got != 1 {
-		t.Fatalf("%d copies of the task ran at once, want 1", got)
+	if got := h.parks.Load(); got != 1 {
+		t.Fatalf("parked task started from scratch %d times, want 1", got)
+	}
+	if want, got := h.parkedAt.Load().(time.Time), h.resumedAt.Load().(time.Time); !got.Equal(want) {
+		t.Fatalf("resumed with ResumeAt %v, want the parked deadline %v", got, want)
+	}
+}
+
+// TestParkedTaskResumesAfterRestart proves a parked task survives notify
+// going away mid-wait: a fresh engine on the same dagnats resumes it at the
+// original deadline and completes it once.
+func TestParkedTaskResumesAfterRestart(t *testing.T) {
+	natsURL := dagtest.StartSidecar(t)
+	h := &parkingHandler{wait: 4 * time.Second}
+
+	first, err := New(natsURL)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	first.Handle("park.restart", h.handle)
+	first.StartWorkers(context.Background())
+	registerOneStep(t, first, "wf-park-restart", "park.restart")
+	id, err := first.StartRun(context.Background(), "wf-park-restart", nil)
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	for h.parks.Load() == 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := first.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	second, err := New(natsURL)
+	if err != nil {
+		t.Fatalf("New (second): %v", err)
+	}
+	t.Cleanup(func() { _ = second.Stop() })
+	second.Handle("park.restart", h.handle)
+	second.StartWorkers(context.Background())
+
+	if snap := awaitRun(t, second, id, 30*time.Second); !snap.Succeeded() {
+		t.Fatalf("run status = %q, want completed after the restart", snap.Status)
+	}
+	if got := h.completes.Load(); got != 1 {
+		t.Fatalf("completed %d times, want 1", got)
+	}
+	if got := h.parks.Load(); got != 1 {
+		t.Fatalf("started from scratch %d times, want 1: the restart lost the deadline", got)
 	}
 }
 

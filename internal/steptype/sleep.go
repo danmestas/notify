@@ -250,19 +250,14 @@ func delayType(controlValues json.RawMessage) (delayControlValues, error) {
 }
 
 // maxDelayResumeAttempts is the attempt cap on scheduled/dynamic delay tasks.
-// It is intentionally large: these waits are always safely resumable (the
-// handler recomputes the remaining duration from time.Now() on every dispatch),
-// so the cap is a runaway backstop, NOT a wait-duration limit. A value of 3
-// would dead-letter the task after just three process restarts — silently
-// dropping the notification if the delay spans multiple deploys.
+// It is intentionally large: these waits are always safely resumable (a parked
+// wait resumes toward its stored deadline), so the cap is a runaway backstop,
+// NOT a wait-duration limit. Parking itself consumes no attempts.
 const maxDelayResumeAttempts = 1000
 
 // delayRetryPolicy is attached to the scheduled/dynamic StepDef so dagnats
-// requeues the task when its handler returns a RetryableError. The delay
-// handlers return RetryableError on context cancellation (shutdown): the
-// requeue re-dispatches the wait after restart, where a scheduled delay
-// recomputes the next occurrence and an ISO-8601 dynamic delay recomputes the
-// remaining duration. Without a RetryPolicy the requeue would never fire.
+// retries the task when its handler returns a RetryableError, such as a park
+// that could not be recorded. Without a RetryPolicy that retry would never fire.
 func delayRetryPolicy() *engine.RetryPolicy {
 	return &engine.RetryPolicy{
 		MaxAttempts:  maxDelayResumeAttempts,

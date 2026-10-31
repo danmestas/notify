@@ -87,44 +87,32 @@ func TestResolveDynamicDuration_Errors(t *testing.T) {
 	}
 }
 
-// TestWaitUntil_PastDurationReturnsImmediately proves a non-positive duration
-// returns (nil, nil) without arming a timer.
-func TestWaitUntil_PastDurationReturnsImmediately(t *testing.T) {
-	out, err := waitUntil(context.Background(), 0)
+// TestWaitUntil_PastDeadlineReturnsImmediately proves a deadline that has
+// arrived fires now: (nil, nil), nothing parked.
+func TestWaitUntil_PastDeadlineReturnsImmediately(t *testing.T) {
+	out, err := waitUntil(time.Now().Add(-time.Second))
 	if err != nil || out != nil {
-		t.Fatalf("waitUntil(0) = (%v, %v), want (nil, nil)", out, err)
+		t.Fatalf("waitUntil(past) = (%v, %v), want (nil, nil)", out, err)
 	}
 }
 
-// TestWaitUntil_ContextCancel_DoesNotHang is the shutdown regression: a pending
-// scheduled/dynamic delay must NOT pin its worker goroutine on a bare sleep
-// (which would hang engine Stop()/wg.Wait()). With a long wait still pending,
-// cancelling the context must make the handler return promptly with a
-// *engine.RetryableError so dagnats requeues the wait. The 1-hour timer here
-// would never elapse within the test; only the ctx-aware select returns it.
-func TestWaitUntil_ContextCancel_DoesNotHang(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	type result struct {
-		out json.RawMessage
-		err error
+// TestWaitUntil_FutureDeadlineParks proves a pending wait never blocks its
+// worker: it returns at once with the engine's park request for that exact
+// deadline, so dagnats holds the task (durably, across restarts) instead of a
+// goroutine sleeping out the wait.
+func TestWaitUntil_FutureDeadlineParks(t *testing.T) {
+	fire := time.Now().Add(time.Hour)
+	begin := time.Now()
+	out, err := waitUntil(fire)
+	if took := time.Since(begin); took > time.Second {
+		t.Fatalf("waitUntil blocked for %v; it must park, not sleep", took)
 	}
-	done := make(chan result, 1)
-	go func() {
-		out, err := waitUntil(ctx, time.Hour)
-		done <- result{out, err}
-	}()
-	cancel()
-	select {
-	case r := <-done:
-		var re *engine.RetryableError
-		if !errors.As(r.err, &re) {
-			t.Fatalf("err = %v (%T), want *engine.RetryableError", r.err, r.err)
-		}
-		if r.out != nil {
-			t.Fatalf("out = %s, want nil", r.out)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("waitUntil did not return after context cancel: goroutine would pin engine WaitGroup and hang Stop()")
+	var we *engine.WaitError
+	if !errors.As(err, &we) || !we.At.Equal(fire) {
+		t.Fatalf("err = %v (%T), want *engine.WaitError at %v", err, err, fire)
+	}
+	if out != nil {
+		t.Fatalf("out = %s, want nil", out)
 	}
 }
 
@@ -164,29 +152,24 @@ func seedDelayRun(t *testing.T, s *store.Store, runID, stepID string, cv json.Ra
 	return scope
 }
 
-// dispatchCancelled calls HandleDynamic/HandleScheduled with a
-// short-timeout context, mirroring a real requeue: the handler's DB lookups
-// and deadline resolution/persistence run and complete against a still-live
-// context, then the timeout fires while it is blocked in waitUntil's
-// ctx-aware select, returning a *engine.RetryableError instead of actually
-// sleeping out the (possibly month-long) wait. An already-cancelled context
-// would fail the DB lookups themselves before resolution ever runs, which is
-// not what a requeue looks like.
-func dispatchCancelled(t *testing.T, fn func(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error), payload engine.TaskPayload) {
+// dispatchParked calls HandleDynamic/HandleScheduled the way the engine first
+// dispatches a delay: its lookups and deadline resolution run, and it returns
+// the park request rather than sleeping out the (possibly month-long) wait.
+// It returns the deadline the handler parked until.
+func dispatchParked(t *testing.T, fn func(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error), payload engine.TaskPayload) time.Time {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	_, err := fn(ctx, payload)
-	var re *engine.RetryableError
-	if !errors.As(err, &re) {
-		t.Fatalf("dispatch (timeout mid-wait): err = %v (%T), want *engine.RetryableError", err, err)
+	_, err := fn(context.Background(), payload)
+	var we *engine.WaitError
+	if !errors.As(err, &we) {
+		t.Fatalf("dispatch: err = %v (%T), want *engine.WaitError", err, err)
 	}
+	return we.At
 }
 
 // TestHandleDynamic_Relative_RequeueResumesOriginalDeadline is the core
 // #273 regression: a relative dynamic delay's first dispatch persists a
-// fire-at deadline; a requeue (simulated here by re-dispatching against a
-// cancelled context, mirroring a restart) must resume toward that SAME
+// fire-at deadline; a requeue (simulated here by dispatching again, as a
+// resume or a restart does) must resume toward that SAME
 // deadline rather than resolving a new one an hour later.
 func TestHandleDynamic_Relative_RequeueResumesOriginalDeadline(t *testing.T) {
 	s := newStore(t)
@@ -196,7 +179,7 @@ func TestHandleDynamic_Relative_RequeueResumesOriginalDeadline(t *testing.T) {
 	payload := json.RawMessage(`{"wait":{"amount":1,"unit":"hours"}}`)
 	seedDelayRun(t, s, "run_requeue", "S1", cv, payload)
 
-	dispatchCancelled(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_requeue", StepID: "S1"})
+	dispatchParked(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_requeue", StepID: "S1"})
 	first, err := s.DelayDeadlines().Get(context.Background(), "run_requeue", "S1")
 	if err != nil {
 		t.Fatalf("Get after first dispatch: %v", err)
@@ -204,7 +187,7 @@ func TestHandleDynamic_Relative_RequeueResumesOriginalDeadline(t *testing.T) {
 
 	// Requeue: dispatch again. If the bug were present, this would resolve a
 	// brand new "now + 1h" deadline roughly an hour after the first.
-	dispatchCancelled(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_requeue", StepID: "S1"})
+	dispatchParked(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_requeue", StepID: "S1"})
 	second, err := s.DelayDeadlines().Get(context.Background(), "run_requeue", "S1")
 	if err != nil {
 		t.Fatalf("Get after requeue: %v", err)
@@ -228,7 +211,7 @@ func TestHandleDynamic_Relative_RepeatedRequeuesDoNotExtendWait(t *testing.T) {
 
 	var deadlines []time.Time
 	for i := 0; i < 5; i++ {
-		dispatchCancelled(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_repeat", StepID: "S1"})
+		dispatchParked(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_repeat", StepID: "S1"})
 		got, err := s.DelayDeadlines().Get(context.Background(), "run_repeat", "S1")
 		if err != nil {
 			t.Fatalf("Get after dispatch %d: %v", i, err)
@@ -254,7 +237,7 @@ func TestHandleDynamic_Relative_SurvivesPastStepOutputsRetentionWindow(t *testin
 	payload := json.RawMessage(`{"wait":{"amount":30,"unit":"days"}}`)
 	seedDelayRun(t, s, "run_long", "S1", cv, payload)
 
-	dispatchCancelled(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_long", StepID: "S1"})
+	dispatchParked(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_long", StepID: "S1"})
 	before, err := s.DelayDeadlines().Get(context.Background(), "run_long", "S1")
 	if err != nil {
 		t.Fatalf("Get after first dispatch: %v", err)
@@ -272,7 +255,7 @@ func TestHandleDynamic_Relative_SurvivesPastStepOutputsRetentionWindow(t *testin
 		t.Fatalf("backdate created_at: %v", err)
 	}
 
-	dispatchCancelled(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_long", StepID: "S1"})
+	dispatchParked(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_long", StepID: "S1"})
 	after, err := s.DelayDeadlines().Get(context.Background(), "run_long", "S1")
 	if err != nil {
 		t.Fatalf("Get after requeue past 7 days: %v", err)
@@ -293,7 +276,7 @@ func TestHandleDynamic_Instant_WritesNoDeadlineRow(t *testing.T) {
 	payload := json.RawMessage(`{"sendAt":"2099-01-01T00:00:00Z"}`)
 	seedDelayRun(t, s, "run_instant", "S1", cv, payload)
 
-	dispatchCancelled(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_instant", StepID: "S1"})
+	dispatchParked(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_instant", StepID: "S1"})
 
 	if _, err := s.DelayDeadlines().Get(context.Background(), "run_instant", "S1"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("instant dynamic delay wrote a deadline row: err = %v, want ErrNotFound", err)
@@ -310,10 +293,36 @@ func TestHandleScheduled_WritesNoDeadlineRow(t *testing.T) {
 	cv := json.RawMessage(`{"type":"scheduled","atTime":"09:00"}`)
 	seedDelayRun(t, s, "run_scheduled", "S1", cv, json.RawMessage(`{}`))
 
-	dispatchCancelled(t, d.HandleScheduled, engine.TaskPayload{RunID: "run_scheduled", StepID: "S1"})
+	dispatchParked(t, d.HandleScheduled, engine.TaskPayload{RunID: "run_scheduled", StepID: "S1"})
 
 	if _, err := s.DelayDeadlines().Get(context.Background(), "run_scheduled", "S1"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("scheduled delay wrote a deadline row: err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestHandleScheduled_ResumesAtTheParkedFireTime proves a scheduled delay
+// keeps the fire time it parked for: resumed at it, it fires; resumed early, it
+// parks toward the same time. Recomputing "the next occurrence after now" on
+// resume would skip to the following occurrence and never fire.
+func TestHandleScheduled_ResumesAtTheParkedFireTime(t *testing.T) {
+	s := newStore(t)
+	d := NewDelayWait(s)
+	cv := json.RawMessage(`{"type":"scheduled","atTime":"09:00"}`)
+	seedDelayRun(t, s, "run_sched_resume", "S1", cv, json.RawMessage(`{}`))
+
+	fire := dispatchParked(t, d.HandleScheduled, engine.TaskPayload{RunID: "run_sched_resume", StepID: "S1"})
+	if !fire.After(time.Now()) {
+		t.Fatalf("parked until %v, want a future occurrence", fire)
+	}
+	early := dispatchParked(t, d.HandleScheduled, engine.TaskPayload{RunID: "run_sched_resume", StepID: "S1", ResumeAt: fire})
+	if !early.Equal(fire) {
+		t.Fatalf("early resume parked until %v, want the same %v", early, fire)
+	}
+	out, err := d.HandleScheduled(context.Background(), engine.TaskPayload{
+		RunID: "run_sched_resume", StepID: "S1", ResumeAt: time.Now().Add(-time.Millisecond),
+	})
+	if err != nil || out != nil {
+		t.Fatalf("resume at the fire time = (%s, %v), want it to fire with (nil, nil)", out, err)
 	}
 }
 
@@ -329,8 +338,10 @@ func TestHandleDynamic_Relative_ClearsDeadlineOnCompletion(t *testing.T) {
 	seedDelayRun(t, s, "run_complete", "S1", cv, payload)
 
 	ctx := context.Background()
-	if _, err := d.HandleDynamic(ctx, engine.TaskPayload{RunID: "run_complete", StepID: "S1"}); err != nil {
-		t.Fatalf("HandleDynamic: %v", err)
+	at := dispatchParked(t, d.HandleDynamic, engine.TaskPayload{RunID: "run_complete", StepID: "S1"})
+	time.Sleep(time.Until(at))
+	if _, err := d.HandleDynamic(ctx, engine.TaskPayload{RunID: "run_complete", StepID: "S1", ResumeAt: at}); err != nil {
+		t.Fatalf("HandleDynamic (resumed): %v", err)
 	}
 
 	if _, err := s.DelayDeadlines().Get(ctx, "run_complete", "S1"); !errors.Is(err, store.ErrNotFound) {

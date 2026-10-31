@@ -26,16 +26,15 @@ func NewDigestWait(s *store.Store) *DigestWait { return &DigestWait{store: s} }
 
 // HandleDigestWait is registered via engine.Handle("digest.wait", ...). It
 // loads the scheduled-digest step's cron expression (by run id + step id),
-// computes the time until the next cron tick, and delegates to waitUntil which
-// honours context cancellation by returning a *engine.RetryableError — so a
-// shutting-down worker requeues the task instead of permanently dropping the
-// digest.
-//
-// Goroutine budget: the handler holds its worker goroutine for the entire
-// window. The engine runs up to 256 tasks of one type at once, so many
-// concurrent long-window digests hold many goroutines — acceptable at current
-// scale (see real-digest risks).
+// computes the next cron tick, and parks the task until it (waitUntil). A
+// parked digest holds no worker slot, survives a restart, and resumes at the
+// tick it parked for.
 func (d *DigestWait) HandleDigestWait(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
+	// A resumed digest fires at the tick it parked for. Recomputing
+	// "the next tick after now" at that tick would wait a whole period more.
+	if !t.ResumeAt.IsZero() {
+		return waitUntil(t.ResumeAt)
+	}
 	cronExpr, err := stepCron(ctx, d.store, t.RunID, t.StepID)
 	if err != nil {
 		return nil, err
@@ -44,5 +43,5 @@ func (d *DigestWait) HandleDigestWait(ctx context.Context, t engine.TaskPayload)
 	if err != nil {
 		return nil, fmt.Errorf("digest.wait: invalid cron %q: %w", cronExpr, err)
 	}
-	return waitUntil(ctx, time.Until(schedule.Next(time.Now())))
+	return waitUntil(schedule.Next(time.Now()))
 }
