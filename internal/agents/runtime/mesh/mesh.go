@@ -30,6 +30,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nats-io/nats.go"
 
@@ -351,25 +352,56 @@ func lastTerminal(states []string) string {
 	return ""
 }
 
+// The transcript is bounded in bytes as well as in count, so the request stays
+// under NATS max_payload (1 MiB by default) however long earlier replies were.
+// An agent that quotes the conversation back grows every turn otherwise.
+const (
+	MaxPromptHistoryBytes = 256 << 10
+	maxHistoryLineBytes   = 32 << 10
+)
+
 // Prompt renders the turn for the v1 wire: the bounded transcript prepended
 // as "role: text" lines under a short header, then the new message (RFC 0002
 // §4 — the v2 envelope carries no history field, so history rides in-band).
+// Each line is cut to maxHistoryLineBytes, and the oldest lines are dropped
+// once the transcript would pass MaxPromptHistoryBytes.
 func Prompt(t domain.Turn) string {
 	msg := contentText(t.Message.Content)
 	if len(t.History) == 0 {
 		return msg
 	}
+	lines := make([]string, 0, len(t.History))
+	size := 0
+	for i := len(t.History) - 1; i >= 0; i-- {
+		a := t.History[i]
+		line := a.Role + ": " + cutBytes(contentText(a.Content), maxHistoryLineBytes) + "\n"
+		if size+len(line) > MaxPromptHistoryBytes {
+			break
+		}
+		size += len(line)
+		lines = append(lines, line)
+	}
 	var b strings.Builder
 	b.WriteString("Conversation so far:\n")
-	for _, a := range t.History {
-		b.WriteString(a.Role)
-		b.WriteString(": ")
-		b.WriteString(contentText(a.Content))
-		b.WriteString("\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		b.WriteString(lines[i])
 	}
 	b.WriteString("---\n")
 	b.WriteString(msg)
 	return b.String()
+}
+
+// cutBytes shortens s to at most n bytes on a rune boundary, marking the cut.
+func cutBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	const mark = " …[cut]"
+	end := n - len(mark)
+	for end > 0 && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return s[:end] + mark
 }
 
 // contentText extracts the joined part text from an activity content body
