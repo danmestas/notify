@@ -24,6 +24,7 @@ import (
 
 	"github.com/danmestas/notify/internal/eventbus"
 	"github.com/danmestas/notify/internal/observe"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // Workflow definitions are dagnats' own types, so notify registers exactly
@@ -305,7 +306,7 @@ func park(ctx context.Context, tc worker.TaskContext, at time.Time) error {
 	if d <= 0 {
 		d = time.Millisecond
 	}
-	if err := tc.Pause(parkPrefix+at.UTC().Format(time.RFC3339Nano), d); err != nil {
+	if err := tc.Pause(parkPrefix+timestamp.Format(at), d); err != nil {
 		return failure(ctx, NewRetryableError(fmt.Errorf("park until %s: %w", at.Format(time.RFC3339), err)))
 	}
 	return nil
@@ -329,7 +330,7 @@ func parkedUntil(tc worker.TaskContext) time.Time {
 	if !ok {
 		return time.Time{}
 	}
-	at, err := time.Parse(time.RFC3339Nano, ts)
+	at, err := timestamp.Parse(ts)
 	if err != nil {
 		return time.Time{}
 	}
