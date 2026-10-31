@@ -94,6 +94,7 @@ func (s *Service) runBlueskyPoll(ctx context.Context, scope domain.Scope, client
 			}
 			s.log.Warn("chatloop: bluesky notifications poll", "err", err)
 		} else {
+			retry := false
 			for i := len(notes) - 1; i >= 0; i-- {
 				n := notes[i]
 				if n.Reason != "mention" && n.Reason != "reply" {
@@ -122,7 +123,9 @@ func (s *Service) runBlueskyPoll(ctx context.Context, scope domain.Scope, client
 					continue
 				}
 
-				if !s.claimInbound(ctx, scope, providerBluesky, n.URI) {
+				dispatch, again := s.claimInbound(ctx, scope, providerBluesky, n.URI)
+				retry = retry || again
+				if !dispatch {
 					continue
 				}
 
@@ -145,7 +148,7 @@ func (s *Service) runBlueskyPoll(ctx context.Context, scope domain.Scope, client
 
 				s.handleInbound(ctx, scope, providerBluesky, did, "bluesky:"+did, text)
 			}
-			if len(notes) > 0 && notes[0].IndexedAt != "" && notes[0].IndexedAt > lastSeenAt {
+			if !retry && len(notes) > 0 && notes[0].IndexedAt != "" && notes[0].IndexedAt > lastSeenAt {
 				lastSeenAt = notes[0].IndexedAt
 				s.savePollCursor(ctx, scope, providerBluesky, lastSeenAt)
 			}

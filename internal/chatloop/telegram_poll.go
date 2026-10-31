@@ -47,7 +47,8 @@ const telegramPollTimeout = 25
 // batch and loaded at start, which closes the window where a restart re-reads
 // that last batch. The offset only saves re-reading: each update_id is also
 // claimed in the store before dispatch (claimInbound), so a message gets at
-// most one agent turn even if the process dies between dispatch and the save. The loop runs until ctx is cancelled; a request error backs off
+// most one agent turn even if the process dies between dispatch and the save.
+// The loop runs until ctx is cancelled; a request error backs off
 // briefly before retrying so a transient outage does not hot-spin.
 func (s *Service) runTelegramPoll(ctx context.Context, scope domain.Scope) {
 	base := s.telegramBaseURL
@@ -84,6 +85,7 @@ func (s *Service) runTelegramPoll(ctx context.Context, scope domain.Scope) {
 			continue
 		}
 		batchStart := offset
+		retry := false
 		for _, u := range updates {
 			if u.UpdateID >= offset {
 				offset = u.UpdateID + 1
@@ -96,12 +98,16 @@ func (s *Service) runTelegramPoll(ctx context.Context, scope domain.Scope) {
 			}
 			chatID := strconv.FormatInt(u.Message.Chat.ID, 10)
 			subscriberID := "tg:" + strconv.FormatInt(u.Message.From.ID, 10)
-			if !s.claimInbound(ctx, scope, providerTelegram, strconv.FormatInt(u.UpdateID, 10)) {
+			dispatch, again := s.claimInbound(ctx, scope, providerTelegram, strconv.FormatInt(u.UpdateID, 10))
+			retry = retry || again
+			if !dispatch {
 				continue
 			}
 			s.handleInbound(ctx, scope, providerTelegram, chatID, subscriberID, u.Message.Text)
 		}
-		if offset != batchStart {
+		if retry {
+			offset = batchStart
+		} else if offset != batchStart {
 			s.savePollCursor(ctx, scope, providerTelegram, strconv.FormatInt(offset, 10))
 		}
 	}

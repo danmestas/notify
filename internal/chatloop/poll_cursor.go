@@ -27,19 +27,21 @@ func (s *Service) savePollCursor(ctx context.Context, scope domain.Scope, provid
 }
 
 // claimInbound records that the poller is about to dispatch the inbound
-// message (provider, id). It reports true only for the first claim, so each
+// message (provider, id). dispatch is true only for the first claim, so each
 // message produces at most one agent turn even if the process dies between
 // dispatch and the cursor save, or the platform returns it again. When the
-// claim cannot be recorded the message is skipped rather than dispatched
-// unclaimed, since an unclaimed dispatch risks a duplicate public reply; the
-// platform returns it again on a later poll.
-func (s *Service) claimInbound(ctx context.Context, scope domain.Scope, provider, id string) bool {
+// claim cannot be recorded, dispatch is false and retry is true: the message
+// is not dispatched unclaimed (that risks a duplicate public reply), and the
+// caller must keep its cursor at the batch start so the next poll re-reads
+// the batch. Re-reading is safe because the messages already claimed are
+// skipped.
+func (s *Service) claimInbound(ctx context.Context, scope domain.Scope, provider, id string) (dispatch, retry bool) {
 	fresh, err := s.core.ChatInbound().MarkHandled(ctx, scope, provider, id)
 	if err != nil {
 		if ctx.Err() == nil {
-			s.log.Warn("chatloop: claim inbound message; skipping", "provider", provider, "id", id, "err", err)
+			s.log.Warn("chatloop: claim inbound message; retrying next poll", "provider", provider, "id", id, "err", err)
 		}
-		return false
+		return false, true
 	}
-	return fresh
+	return fresh, false
 }

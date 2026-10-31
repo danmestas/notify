@@ -79,6 +79,7 @@ func (s *Service) runMastodonPoll(ctx context.Context, scope domain.Scope, baseU
 			s.log.Warn("chatloop: mastodon notifications poll", "err", redactToken(err, token))
 		} else {
 			prevSinceID := sinceID
+			retry := false
 			for _, n := range notes {
 				if n.Type != "mention" || n.Status == nil {
 					continue
@@ -99,7 +100,9 @@ func (s *Service) runMastodonPoll(ctx context.Context, scope domain.Scope, baseU
 				if text == "" {
 					continue
 				}
-				if !s.claimInbound(ctx, scope, providerMastodon, n.ID) {
+				dispatch, again := s.claimInbound(ctx, scope, providerMastodon, n.ID)
+				retry = retry || again
+				if !dispatch {
 					continue
 				}
 				s.mastodonMu.Lock()
@@ -113,7 +116,9 @@ func (s *Service) runMastodonPoll(ctx context.Context, scope domain.Scope, baseU
 				s.mastodonMu.Unlock()
 				s.handleInbound(ctx, scope, providerMastodon, acct, "mastodon:"+acct, text)
 			}
-			if sinceID != prevSinceID {
+			if retry {
+				sinceID = prevSinceID
+			} else if sinceID != prevSinceID {
 				s.savePollCursor(ctx, scope, providerMastodon, sinceID)
 			}
 		}

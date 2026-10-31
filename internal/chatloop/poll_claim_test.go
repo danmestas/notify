@@ -2,6 +2,7 @@ package chatloop
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/providers/bluesky"
+	corestore "github.com/danmestas/notify/internal/store"
 )
 
 // preClaim marks ids as already handled, standing in for a previous process
@@ -108,4 +110,64 @@ func TestTelegramPoll_ClaimSkipsHandledAndDuplicateInBatch(t *testing.T) {
 	stop := runUntilStopped(func(ctx context.Context) { svc.runTelegramPoll(ctx, scope) })
 	defer stop()
 	assertOnlyDispatched(t, resp, "text 11")
+}
+
+// TestMastodonPoll_FailedClaimIsRetriedNextPoll proves a mention whose claim
+// cannot be recorded is not lost: the cursor stays at the batch start, so the
+// next poll re-reads the mention and dispatches it once the store recovers.
+// The fake server honours since_id, so an advanced cursor would hide it.
+func TestMastodonPoll_FailedClaimIsRetriedNextPoll(t *testing.T) {
+	note := `{"id":"201","type":"mention","account":{"acct":"friend@example.social"},` +
+		`"status":{"id":"201","content":"<p>msg 201</p>","visibility":"public"}}`
+	polled := make(chan struct{}, 100)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("since_id") == "201" {
+			_, _ = w.Write([]byte("[]"))
+		} else {
+			_, _ = w.Write([]byte("[" + note + "]"))
+		}
+		select {
+		case polled <- struct{}{}:
+		default:
+		}
+	}))
+	defer srv.Close()
+
+	path := t.TempDir() + "/notify.db"
+	core, err := corestore.Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = core.Close() })
+	// A second connection installs a trigger that makes every claim fail.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	defer raw.Close()
+	if _, err := raw.Exec(`CREATE TRIGGER fail_claim BEFORE INSERT ON chat_inbound_handled
+		BEGIN SELECT RAISE(ABORT, 'claim unavailable'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	resp := &recordingResponder{}
+	svc := New(core, resp, "", "", "support", nil).
+		withHTTPClient(&http.Client{Timeout: 5 * time.Second}).
+		withMastodonPollInterval(20 * time.Millisecond)
+	svc.mastodon = newMastodonSender("tok", srv.URL, svc.httpClient)
+
+	stop := runUntilStopped(func(ctx context.Context) { svc.runMastodonPoll(ctx, scope, srv.URL, "tok") })
+	defer stop()
+	// Let a couple of polls fail their claim.
+	<-polled
+	<-polled
+	if n := resp.count(); n != 0 {
+		t.Fatalf("dispatched %d turns while claims fail, want 0", n)
+	}
+	if _, err := raw.Exec(`DROP TRIGGER fail_claim`); err != nil {
+		t.Fatalf("drop trigger: %v", err)
+	}
+	assertOnlyDispatched(t, resp, "msg 201")
 }
