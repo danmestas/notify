@@ -26,6 +26,10 @@ var _ providers.ChatProvider = (*Client)(nil)
 // default for a new status.
 const defaultVisibility = "public"
 
+// MaxText is Mastodon's default status limit, in characters. An instance can
+// raise it, but 500 is safe on every instance.
+const MaxText = 500
+
 // Client posts chat messages through one Mastodon instance/application.
 // AccessToken is the integration credential (Bearer auth); Visibility is the
 // default status visibility ("public", "unlisted", "private", "direct") and
@@ -63,6 +67,7 @@ func (c *Client) Send(ctx context.Context, msg providers.ChatMessage) (providers
 	if msg.Address != "" {
 		status = msg.Address + " " + msg.Content
 	}
+	status = providers.Truncate(status, MaxText)
 	visibility := c.Visibility
 	if visibility == "" {
 		visibility = defaultVisibility

@@ -12,7 +12,11 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/delivery/httpaction"
+	"github.com/danmestas/notify/internal/providers"
 	"github.com/danmestas/notify/internal/providers/bluesky"
+	"github.com/danmestas/notify/internal/providers/discord"
+	"github.com/danmestas/notify/internal/providers/mastodon"
+	"github.com/danmestas/notify/internal/providers/telegram"
 )
 
 // telegramSender posts a reply via the Telegram Bot API sendMessage. It mirrors
@@ -42,7 +46,7 @@ func (s *telegramSender) send(ctx context.Context, chatID, text string) error {
 	endpoint := strings.TrimRight(s.baseURL, "/") + "/bot" + s.token + "/sendMessage"
 	body, err := json.Marshal(map[string]any{
 		"chat_id":    chatID,
-		"text":       text,
+		"text":       providers.Truncate(text, telegram.MaxText),
 		"parse_mode": "HTML",
 	})
 	if err != nil {
@@ -80,7 +84,7 @@ func (s *discordSender) send(ctx context.Context, channelID, text string) error 
 		return fmt.Errorf("discord: empty bot token")
 	}
 	endpoint := strings.TrimRight(s.baseURL, "/") + "/channels/" + channelID + "/messages"
-	body, err := json.Marshal(map[string]any{"content": text})
+	body, err := json.Marshal(map[string]any{"content": providers.Truncate(text, discord.MaxText)})
 	if err != nil {
 		return fmt.Errorf("discord: marshal body: %w", err)
 	}
@@ -120,7 +124,7 @@ func (s *mastodonSender) send(ctx context.Context, authorAcct, inReplyToID, visi
 	}
 	endpoint := strings.TrimRight(s.baseURL, "/") + "/api/v1/statuses"
 	form := url.Values{}
-	form.Set("status", "@"+authorAcct+" "+text)
+	form.Set("status", providers.Truncate("@"+authorAcct+" "+text, mastodon.MaxText))
 	if inReplyToID != "" {
 		form.Set("in_reply_to_id", inReplyToID)
 	}
@@ -165,7 +169,7 @@ func (s *blueskySender) send(ctx context.Context, text string, pending blueskyPe
 
 	record := map[string]any{
 		"$type":     "app.bsky.feed.post",
-		"text":      text,
+		"text":      providers.Truncate(text, bluesky.MaxText),
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
 	}
 	if pending.parentURI != "" {
