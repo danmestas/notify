@@ -34,10 +34,10 @@ var _ providers.ChatProvider = (*Client)(nil)
 // Bluesky accounts are hosted on.
 const defaultPDSURL = "https://bsky.social"
 
-// maxGraphemes is the AT Protocol post text limit. notify truncates to this
-// (with a trailing ellipsis) rather than letting the PDS reject an oversized
-// post outright.
-const maxGraphemes = 300
+// MaxText is the AT Protocol post text limit, in graphemes. notify truncates
+// to it (see providers.Truncate) rather than letting the PDS reject an
+// oversized post outright.
+const MaxText = 300
 
 // Client posts to one Bluesky account via its PDS. PDSURL defaults to
 // https://bsky.social when empty. Identifier is the account's handle or DID;
@@ -86,7 +86,7 @@ func (c *Client) Send(ctx context.Context, msg providers.ChatMessage) (providers
 
 	hc := c.httpClient()
 	pds := c.pdsURL()
-	text := truncateGraphemes(msg.Content, maxGraphemes)
+	text := providers.Truncate(msg.Content, MaxText)
 
 	if !c.hasSession() {
 		if err := c.login(ctx, hc, pds); err != nil {
@@ -425,17 +425,4 @@ func (c *Client) redact(err error) error {
 		return providers.NewTransientError(errors.New(clean))
 	}
 	return errors.New(clean)
-}
-
-// truncateGraphemes truncates s to at most max runes, replacing the final
-// rune with an ellipsis when truncation occurs so the total length is still
-// max. This is a rune-count approximation of grapheme counting (sufficient
-// for AT Protocol's practical limit); it does not join combining marks or
-// surrogate-pair-style multi-rune clusters into a single unit.
-func truncateGraphemes(s string, max int) string {
-	runes := []rune(s)
-	if len(runes) <= max {
-		return s
-	}
-	return string(runes[:max-1]) + "…"
 }

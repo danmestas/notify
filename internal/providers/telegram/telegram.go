@@ -28,6 +28,9 @@ var _ providers.ChatProvider = (*Client)(nil)
 // defaultBaseURL is the Telegram Bot API host. Overridable in tests via BaseURL.
 const defaultBaseURL = "https://api.telegram.org"
 
+// MaxText is Telegram's sendMessage text limit, in characters.
+const MaxText = 4096
+
 // Client posts chat messages through one Telegram bot. BotToken is the
 // integration credential; the per-recipient chat_id arrives in
 // ChatMessage.Address. BaseURL defaults to the public Telegram host and is
@@ -58,7 +61,7 @@ func (c *Client) Send(ctx context.Context, msg providers.ChatMessage) (providers
 
 	body, err := json.Marshal(map[string]any{
 		"chat_id":                  msg.Address,
-		"text":                     msg.Content,
+		"text":                     providers.Truncate(msg.Content, MaxText),
 		"parse_mode":               "HTML",
 		"disable_web_page_preview": true,
 	})

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"unicode/utf8"
 )
 
 // ChatMessage is a channel-agnostic chat notification. Address is the
@@ -59,4 +60,18 @@ func (c *CaptureChat) Sent() []ChatMessage {
 	out := make([]ChatMessage, len(c.sent))
 	copy(out, c.sent)
 	return out
+}
+
+// Truncate cuts s to at most max runes, replacing the last kept rune with an
+// ellipsis when it cuts, so the result is still at most max runes. Each chat
+// platform rejects a message over its text limit outright, so notify sends a
+// shortened message instead of nothing. Runes approximate the platforms'
+// counting (graphemes on Bluesky, UTF-16 units on Telegram); for the text
+// notify sends the difference is small.
+func Truncate(s string, max int) string {
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:max-1]) + "…"
 }

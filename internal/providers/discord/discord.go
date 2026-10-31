@@ -24,6 +24,9 @@ import (
 
 var _ providers.ChatProvider = (*Client)(nil)
 
+// MaxText is Discord's message content limit, in characters.
+const MaxText = 2000
+
 // Client posts chat messages to one Discord incoming webhook. WebhookURL is the
 // integration credential and also the destination — Discord webhooks need no
 // auth header and no per-recipient address. A nil HTTPClient gets a
@@ -54,7 +57,7 @@ func (c *Client) Send(ctx context.Context, msg providers.ChatMessage) (providers
 		endpoint = u.String()
 	}
 
-	body, err := json.Marshal(map[string]any{"content": msg.Content})
+	body, err := json.Marshal(map[string]any{"content": providers.Truncate(msg.Content, MaxText)})
 	if err != nil {
 		return providers.Result{}, fmt.Errorf("discord: marshal body: %w", err)
 	}

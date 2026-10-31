@@ -151,3 +151,17 @@ func TestBuildMIME_MessageIDAndEncoding(t *testing.T) {
 		t.Errorf("Date header %q is not RFC 1123Z: %v", dateLine, err)
 	}
 }
+
+func TestTruncate(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"short", "short"},
+		{"abcde", "abcde"},
+		{"abcdef", "abcd…"},
+		{"界界界界界界", "界界界界…"},
+	}
+	for _, tc := range tests {
+		if got := Truncate(tc.in, 5); got != tc.want {
+			t.Errorf("Truncate(%q, 5) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
