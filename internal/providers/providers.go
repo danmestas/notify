@@ -5,9 +5,11 @@ package providers
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"mime/quotedprintable"
+	"net"
 	"net/smtp"
 	"strings"
 	"sync"
@@ -78,14 +80,78 @@ type SMTP struct {
 	Host     string
 }
 
-// Send builds an RFC5322 message and dispatches it via net/smtp with PlainAuth.
-func (s *SMTP) Send(_ context.Context, msg EmailMessage) (Result, error) {
-	auth := smtp.PlainAuth("", s.Username, s.Password, s.Host)
+// smtpTimeout bounds a whole SMTP exchange when the caller's context has no
+// deadline, matching the sendmail provider. A var so tests can shorten it.
+var smtpTimeout = 30 * time.Second
+
+// Send builds an RFC5322 message and dispatches it over SMTP with PlainAuth.
+// It does what smtp.SendMail does (STARTTLS when offered, AUTH when offered)
+// but on a connection bounded by ctx: smtp.SendMail sets no deadline, so a
+// server that stops answering would hold the task forever.
+func (s *SMTP) Send(ctx context.Context, msg EmailMessage) (Result, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, smtpTimeout)
+		defer cancel()
+	}
 	mime, messageID := BuildMIME(msg)
-	if err := smtp.SendMail(s.Addr, auth, msg.From, []string{msg.To}, mime); err != nil {
+	if err := s.send(ctx, msg.From, msg.To, mime); err != nil {
 		return Result{}, fmt.Errorf("smtp send: %w", err)
 	}
 	return Result{ProviderMessageID: messageID}, nil
+}
+
+func (s *SMTP) send(ctx context.Context, from, to string, mime []byte) error {
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", s.Addr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	deadline, _ := ctx.Deadline()
+	if err := conn.SetDeadline(deadline); err != nil {
+		return err
+	}
+	// Closing the conn unblocks any read or write when ctx is cancelled early.
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+
+	host, _, err := net.SplitHostPort(s.Addr)
+	if err != nil {
+		return err
+	}
+	c, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = c.Close() }()
+	if ok, _ := c.Extension("STARTTLS"); ok {
+		if err := c.StartTLS(&tls.Config{ServerName: host}); err != nil {
+			return err
+		}
+	}
+	if ok, _ := c.Extension("AUTH"); ok {
+		if err := c.Auth(smtp.PlainAuth("", s.Username, s.Password, s.Host)); err != nil {
+			return err
+		}
+	}
+	if err := c.Mail(from); err != nil {
+		return err
+	}
+	if err := c.Rcpt(to); err != nil {
+		return err
+	}
+	w, err := c.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(mime); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return c.Quit()
 }
 
 // BuildMIME constructs an RFC 5322 message with CRLF line endings and returns
