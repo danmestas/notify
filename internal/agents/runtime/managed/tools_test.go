@@ -45,9 +45,12 @@ type vault struct {
 	desc      int
 	listDelay time.Duration
 	more      []string
+	// instr, when set, adds the get_instructions tool and is its result.
+	instr map[string]any
 
 	mu      sync.Mutex
 	calls   []string
+	args    []map[string]any
 	headers []http.Header
 }
 
@@ -65,6 +68,7 @@ func (v *vault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	v.headers = append(v.headers, r.Header.Clone())
 	if req.Method == "tools/call" {
 		v.calls = append(v.calls, req.Params.Name)
+		v.args = append(v.args, req.Params.Arguments)
 	}
 	v.mu.Unlock()
 	if req.ID == nil {
@@ -81,6 +85,9 @@ func (v *vault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for _, n := range append([]string{"get_record", "search_vault", "fail", "slow", "big", "wide"}, v.more...) {
 			tools = append(tools, map[string]any{"name": n, "description": n, "inputSchema": map[string]any{"type": "object"}})
 		}
+		if v.instr != nil {
+			tools = append(tools, map[string]any{"name": "get_instructions", "description": "live instructions", "inputSchema": map[string]any{"type": "object"}})
+		}
 		for i := 0; i < v.extra; i++ {
 			tools = append(tools, map[string]any{"name": fmt.Sprintf("t%03d", i), "description": strings.Repeat("d", v.desc), "inputSchema": map[string]any{"type": "object"}})
 		}
@@ -92,6 +99,8 @@ func (v *vault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			result = map[string]any{"content": []any{map[string]any{"type": "text", "text": "BODY-MARKER as text"}}, "structuredContent": map[string]any{"id": req.Params.Arguments["id"], "passage": "BODY-MARKER passage"}}
 		case "search_vault":
 			result = map[string]any{"content": []any{map[string]any{"type": "text", "text": "BODY-MARKER hit"}}}
+		case "get_instructions":
+			result = v.instr
 		case "fail":
 			result = map[string]any{"isError": true, "content": []any{map[string]any{"type": "text", "text": "no grant"}}}
 		case "slow":

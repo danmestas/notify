@@ -68,6 +68,16 @@ type Config struct {
 	// MCPServers are the tool servers a turn may call. AuthSecret is sealed
 	// by the API before it is stored, like APIKey.
 	MCPServers []MCPServer `json:"mcpServers,omitempty"`
+	// InstructionsFrom, when set, names the tool that returns the agent's
+	// live instructions and skills each turn (see instructions.go).
+	InstructionsFrom *InstructionsSource `json:"instructionsFrom,omitempty"`
+}
+
+// InstructionsSource is the tool, on one of the agent's mcpServers, that
+// returns its live instructions.
+type InstructionsSource struct {
+	Server string `json:"server"`
+	Tool   string `json:"tool"`
 }
 
 // MCPServer is one Streamable HTTP MCP server. Its tools are offered to the
@@ -108,6 +118,9 @@ func ParseConfig(raw json.RawMessage, allowLoopbackMCP bool) (Config, error) {
 		return c, fmt.Errorf("managed agent maxTokens must be 0-%d", maxMaxTokens)
 	}
 	if err := checkMCPServers(raw, c.MCPServers, allowLoopbackMCP); err != nil {
+		return c, err
+	}
+	if err := checkInstructionsFrom(c.InstructionsFrom, c.MCPServers); err != nil {
 		return c, err
 	}
 	return c, nil
@@ -186,7 +199,7 @@ func (e *Executor) Dispatch(ctx context.Context, t agentdomain.Turn) (agentdomai
 	}
 	resp, err := e.run(ctx, e.newClient(cfg, apiKey), aibuilder.MessageRequest{
 		Model:     cfg.Model,
-		System:    cfg.SystemPrompt,
+		System:    e.systemPrompt(ctx, cfg, t, tools),
 		Messages:  msgs,
 		MaxTokens: maxTokens,
 	}, tools)

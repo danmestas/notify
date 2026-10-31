@@ -30,10 +30,11 @@ const (
 	maxToolCalls    = 12
 	toolCallTimeout = 10 * time.Second
 	// MaxTurnDuration is the most one turn's model and tool work can take:
-	// the tool listing (all servers at once, one toolCallTimeout), then up to
-	// maxModelRounds model calls and maxToolCalls tool calls. Without tools a
-	// turn is one model call, well inside it.
-	MaxTurnDuration    = toolCallTimeout + maxModelRounds*aibuilder.MaxModelCallDuration + maxToolCalls*toolCallTimeout
+	// the tool listing (all servers at once, one toolCallTimeout), the live
+	// instructions call (one more), then up to maxModelRounds model calls and
+	// maxToolCalls tool calls. Without tools a turn is one model call, well
+	// inside it.
+	MaxTurnDuration    = 2*toolCallTimeout + maxModelRounds*aibuilder.MaxModelCallDuration + maxToolCalls*toolCallTimeout
 	maxResultBytes     = 64 << 10
 	maxTurnResultBytes = 256 << 10
 	// minResultBytes is the least budget worth handing a result; below it the
@@ -146,6 +147,11 @@ func checkMCPServers(raw json.RawMessage, servers []MCPServer, allowLoopback boo
 type toolSet struct {
 	defs   []aibuilder.ToolDef
 	routes map[string]route
+	// clients are the turn's server clients by server name, for the servers
+	// whose tools listed.
+	clients map[string]*mcp.Client
+	// skills are the live skills load_skill serves, by name.
+	skills map[string]skill
 	calls  int
 	bytes  int
 	turn   agentdomain.Turn
@@ -299,7 +305,7 @@ func (e *Executor) openTools(ctx context.Context, cfg Config, t agentdomain.Turn
 	}
 	wg.Wait()
 
-	ts := &toolSet{routes: map[string]route{}, turn: t}
+	ts := &toolSet{routes: map[string]route{}, clients: map[string]*mcp.Client{}, turn: t}
 	defBytes := 0
 	for i, s := range cfg.MCPServers {
 		l := lists[i]
@@ -309,8 +315,12 @@ func (e *Executor) openTools(ctx context.Context, cfg Config, t agentdomain.Turn
 				slog.String("error_class", string(mcp.ClassOf(l.err))))
 			continue
 		}
+		ts.clients[s.Name] = l.client
 		offered := 0
 		for _, tool := range l.tools {
+			if cfg.InstructionsFrom != nil && cfg.InstructionsFrom.Server == s.Name && cfg.InstructionsFrom.Tool == tool.Name {
+				continue // the hub's own call, never the model's
+			}
 			name := toolAlias(s.Name, tool.Name)
 			schema := tool.InputSchema
 			if len(bytes.TrimSpace(schema)) == 0 || string(schema) == "null" {
@@ -329,7 +339,7 @@ func (e *Executor) openTools(ctx context.Context, cfg Config, t agentdomain.Turn
 				reason = "definition too large"
 			case defBytes+size > maxToolDefsBytes:
 				reason = "turn definition size limit"
-			case ts.routes[name].client != nil:
+			case ts.routes[name].client != nil || name == loadSkillName:
 				reason = "name collision"
 			}
 			if reason != "" {
@@ -400,12 +410,13 @@ func (e *Executor) callTool(ctx context.Context, ts *toolSet, call aibuilder.Too
 		result    = aibuilder.ToolResult{ToolCallID: call.ID}
 	)
 	r, known := ts.routes[call.Name]
+	local := call.Name == loadSkillName && len(ts.skills) > 0
 	args := bytes.TrimSpace(call.Input)
 	if len(args) == 0 {
 		args = []byte(`{}`)
 	}
 	switch {
-	case !known:
+	case !known && !local:
 		class, result = toolError(call.ID, mcp.Rejected, "no such tool")
 	case !isObject(args):
 		class, result = toolError(call.ID, mcp.Rejected, "arguments must be a JSON object")
@@ -415,9 +426,18 @@ func (e *Executor) callTool(ctx context.Context, ts *toolSet, call aibuilder.Too
 		class, result = toolError(call.ID, mcp.TooLarge, "this turn's tool results are at their size limit; answer with what you have")
 	default:
 		ts.calls++
-		cctx, cancel := context.WithTimeout(ctx, e.toolTimeout)
-		out, stats, err := r.client.CallTool(cctx, r.tool, args)
-		cancel()
+		var (
+			out   mcp.Result
+			stats mcp.Stats
+			err   error
+		)
+		if local {
+			out, err = ts.loadSkill(args)
+		} else {
+			cctx, cancel := context.WithTimeout(ctx, e.toolTimeout)
+			out, stats, err = r.client.CallTool(cctx, r.tool, args)
+			cancel()
+		}
 		st = stats
 		if err != nil {
 			c := mcp.ClassOf(err)
@@ -438,7 +458,10 @@ func (e *Executor) callTool(ctx context.Context, ts *toolSet, call aibuilder.Too
 			class = "tool_error"
 		}
 	}
-	if known {
+	switch {
+	case local:
+		ts.record(skillSource(args, result.IsError))
+	case known:
 		ts.record(sourceFor(r.server, r.tool, args, result.IsError))
 	}
 	e.log.LogAttrs(ctx, slog.LevelInfo, "managed agent tool call",
@@ -472,7 +495,7 @@ func toolError(id string, c mcp.Class, msg string) (string, aibuilder.ToolResult
 // loggedToolName is the tool name as logged: only names that were offered,
 // since the model may invent anything.
 func loggedToolName(ts *toolSet, name string) string {
-	if _, ok := ts.routes[name]; ok {
+	if _, ok := ts.routes[name]; ok || (name == loadSkillName && len(ts.skills) > 0) {
 		return name
 	}
 	return "unknown"
@@ -666,4 +689,21 @@ func shrink(v any, budget int) (any, bool) {
 		return out, true
 	}
 	return nil, false
+}
+
+// checkInstructionsFrom validates the instructions source against the
+// agent's servers. No error quotes a secret.
+func checkInstructionsFrom(src *InstructionsSource, servers []MCPServer) error {
+	if src == nil {
+		return nil
+	}
+	if src.Tool == "" {
+		return errors.New("instructionsFrom needs a tool")
+	}
+	for _, s := range servers {
+		if s.Name == src.Server {
+			return nil
+		}
+	}
+	return fmt.Errorf("instructionsFrom server %q is not one of the agent's mcpServers", src.Server)
 }
