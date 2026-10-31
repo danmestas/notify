@@ -46,15 +46,13 @@ type mastodonNotification struct {
 }
 
 // runMastodonPoll polls GET {baseURL}/api/v1/notifications?types[]=mention on
-// a fixed ticker and feeds each mention into handleInbound. since_id is kept
-// in memory only (mirroring runTelegramPoll's offset): a restart resets it to
-// empty and Mastodon will replay already-seen mentions. Threading itself is
-// idempotent -- handleInbound's chat_thread lookup is keyed on (provider,
-// chat_id), so a replayed mention continues the same conversation rather than
-// forking a new one -- but the replayed message is still handed to the
-// responder as a fresh turn, so a replay after restart can produce one
-// duplicate agent reply. That is the same tradeoff every poller in this
-// package already makes; it is not specific to Mastodon.
+// a fixed ticker and feeds each mention into handleInbound. The since_id
+// cursor is persisted in the store once per batch, after the batch has been
+// dispatched, and loaded at start, so a restart does not re-read handled
+// mentions. The cursor only saves re-reading: correctness comes from claiming
+// each notification id in the store before dispatch (claimInbound), so a
+// mention gets at most one agent turn even if the process dies between
+// dispatch and the cursor save.
 func (s *Service) runMastodonPoll(ctx context.Context, scope domain.Scope, baseURL, token string) {
 	hc := s.httpClient
 	if hc == nil {
@@ -68,7 +66,7 @@ func (s *Service) runMastodonPoll(ctx context.Context, scope domain.Scope, baseU
 		interval = mastodonPollInterval
 	}
 
-	var sinceID string
+	sinceID := s.loadPollCursor(ctx, scope, providerMastodon)
 	for {
 		if ctx.Err() != nil {
 			return
@@ -80,6 +78,7 @@ func (s *Service) runMastodonPoll(ctx context.Context, scope domain.Scope, baseU
 			}
 			s.log.Warn("chatloop: mastodon notifications poll", "err", redactToken(err, token))
 		} else {
+			prevSinceID := sinceID
 			for _, n := range notes {
 				if n.Type != "mention" || n.Status == nil {
 					continue
@@ -100,6 +99,9 @@ func (s *Service) runMastodonPoll(ctx context.Context, scope domain.Scope, baseU
 				if text == "" {
 					continue
 				}
+				if !s.claimInbound(ctx, scope, providerMastodon, n.ID) {
+					continue
+				}
 				s.mastodonMu.Lock()
 				if s.mastodonPending == nil {
 					s.mastodonPending = make(map[string]mastodonPendingReply)
@@ -110,6 +112,9 @@ func (s *Service) runMastodonPoll(ctx context.Context, scope domain.Scope, baseU
 				}
 				s.mastodonMu.Unlock()
 				s.handleInbound(ctx, scope, providerMastodon, acct, "mastodon:"+acct, text)
+			}
+			if sinceID != prevSinceID {
+				s.savePollCursor(ctx, scope, providerMastodon, sinceID)
 			}
 		}
 		if !sleepCtx(ctx, interval) {

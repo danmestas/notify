@@ -148,6 +148,18 @@ func (s *Store) ChatThreads() ChatThreadRepo {
 	return &chatThreadRepo{w: s.writer, r: s.reader}
 }
 
+// ChatPollCursors vends the repository holding each chat poller's resume
+// cursor, so a restart does not replay already-handled messages.
+func (s *Store) ChatPollCursors() ChatPollCursorRepo {
+	return &chatPollCursorRepo{w: s.writer, r: s.reader}
+}
+
+// ChatInbound vends the repository of inbound chat messages already claimed
+// for dispatch, keeping each message to at most one agent turn.
+func (s *Store) ChatInbound() ChatInboundRepo {
+	return &chatInboundRepo{w: s.writer}
+}
+
 // StepOutputs vends the per-step action-output repository: an http_request step
 // writes its response here keyed by (run_id, step_id), and downstream channel
 // steps read every output for a run via ListByRun.
