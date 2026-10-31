@@ -1,7 +1,8 @@
 name: Notify CI result
 
 # Dogfooding: notify reports on its own CI. Runs after the CI workflow finishes
-# and triggers the `ci-result` workflow on the mac-mini instance.
+# and triggers the `ci-result` workflow on the reference instance
+# (notify.craftdesign.group, the Mac mini behind a Cloudflare tunnel).
 #
 # workflow_run (not a step inside CI) so a CI job that fails, is cancelled, or
 # times out still reports — a reporting step appended to CI would be skipped by
@@ -16,17 +17,16 @@ permissions:
 
 jobs:
   report:
-    # Self-hosted only: the runner lives on the same box as notify, so this
-    # reaches it over loopback. The API key never crosses the internet and the
-    # cloudflared tunnel is not in the path.
-    runs-on: [self-hosted, macOS, ARM64, mac-mini]
+    # A hosted runner reaches the instance over HTTPS through the tunnel; the
+    # API key travels only in the Authorization header of that TLS request.
+    runs-on: ubuntu-latest
 
     # Report failures always; report successes only on main. Every green PR push
     # would otherwise page on every commit, and an alerting channel that cries
     # wolf gets muted — which defeats the point of running it for real.
     # Only runs from this repository's own branches. workflow_run fires for
-    # fork PRs too, with this repo's secrets and on this self-hosted runner,
-    # and a fork chooses its own branch name.
+    # fork PRs too, with this repo's secrets, and a fork chooses its own branch
+    # name.
     if: >-
       github.event.workflow_run.head_repository.full_name == github.repository
       && (github.event.workflow_run.conclusion != 'success'
@@ -57,7 +57,7 @@ jobs:
           code=$(curl -s -m 15 -o /tmp/notify-resp.json -w '%{http_code}' \
             -X POST -H "Authorization: ApiKey $NOTIFY_API_KEY" \
             -H 'Content-Type: application/json' \
-            -d "$body" http://127.0.0.1:3030/v1/events/trigger)
+            -d "$body" https://notify.craftdesign.group/v1/events/trigger)
           echo "notify trigger -> HTTP $code"
           cat /tmp/notify-resp.json 2>/dev/null || true
           # Never fail the build over a reporting problem: this job observes CI,
