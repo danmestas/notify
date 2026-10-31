@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nats-io/nats.go"
 
@@ -305,6 +307,39 @@ func TestPrompt_HistoryPrepend(t *testing.T) {
 	want := "Conversation so far:\nuser: hello\nagent: hi there\n---\nwhat next?"
 	if got := mesh.Prompt(tn); got != want {
 		t.Errorf("prompt = %q, want %q", got, want)
+	}
+}
+
+// TestPrompt_HistoryIsBoundedInBytes pins that an oversized transcript cannot
+// push the request past NATS max_payload: each line is cut, and the oldest
+// lines drop first while the new message is always kept whole.
+func TestPrompt_HistoryIsBoundedInBytes(t *testing.T) {
+	text := func(s string) json.RawMessage {
+		b, _ := json.Marshal(map[string]any{"parts": []map[string]string{{"text": s}}})
+		return b
+	}
+	huge := strings.Repeat("é", 400<<10) // 800 KiB of two-byte runes
+	tn := turn("agents.prompt.x", "what next?")
+	for i := range 20 {
+		tn.History = append(tn.History, domain.Activity{Role: "agent", Content: text(fmt.Sprintf("%d:%s", i, huge))})
+	}
+	tn.History = append(tn.History, domain.Activity{Role: "user", Content: text("latest")})
+
+	got := mesh.Prompt(tn)
+	if len(got) > mesh.MaxPromptHistoryBytes+len("what next?")+64 {
+		t.Fatalf("prompt is %d bytes, over the %d history budget", len(got), mesh.MaxPromptHistoryBytes)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("prompt was cut inside a rune")
+	}
+	if !strings.HasSuffix(got, "user: latest\n---\nwhat next?") {
+		t.Errorf("newest history line or the message was dropped: ...%q", got[max(0, len(got)-80):])
+	}
+	if strings.Contains(got, "agent: 0:") {
+		t.Error("oldest line kept while newer ones were dropped")
+	}
+	if !strings.Contains(got, "agent: 19:") {
+		t.Error("newest oversized line dropped instead of cut")
 	}
 }
 
