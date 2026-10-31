@@ -68,6 +68,8 @@ func tenantCases() []tenantCase {
 				"scope of the event they carry, and never read on a tenant's behalf",
 		},
 		{name: "ChatThreads", check: checkChatThreads},
+		{name: "ChatPollCursors", check: checkChatPollCursors},
+		{name: "ChatInbound", check: checkChatInbound},
 		{name: "BuilderSessions", check: checkBuilderSessions},
 		{name: "Environments", check: checkEnvironments},
 
@@ -841,6 +843,31 @@ func checkChatThreads(t *testing.T, ctx context.Context, s *Store, a, b domain.S
 	}
 	if own.ID != ctB.ID {
 		t.Errorf("ChatThreads.GetByChat: own-scope read returned %q, want %q", own.ID, ctB.ID)
+	}
+}
+
+func checkChatPollCursors(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
+	repo := s.ChatPollCursors()
+	if err := repo.Set(ctx, a, "bluesky", "cursor-a"); err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+	got, err := repo.Get(ctx, b, "bluesky")
+	if err != nil {
+		t.Fatalf("Get(b): %v", err)
+	}
+	if got != "" {
+		t.Errorf("ChatPollCursors.Get: cross-tenant read returned %q, want empty", got)
+	}
+}
+
+func checkChatInbound(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
+	repo := s.ChatInbound()
+	if _, err := repo.MarkHandled(ctx, a, "bluesky", "m1"); err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+	fresh, err := repo.MarkHandled(ctx, b, "bluesky", "m1")
+	if err != nil || !fresh {
+		t.Errorf("ChatInbound.MarkHandled: tenant B saw tenant A's claim (fresh=%v, err=%v)", fresh, err)
 	}
 }
 

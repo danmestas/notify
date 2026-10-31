@@ -118,6 +118,37 @@ func runDelayDeadlinePurge(ctx context.Context, log *slog.Logger, st *store.Stor
 	}
 }
 
+// chatInboundRetention bounds how long claimed inbound chat message ids are
+// kept. A message older than this is no longer returned by any poller feed.
+const chatInboundRetention = 30 * 24 * time.Hour
+
+// runChatInboundPurge deletes old chat_inbound_handled claims, once at boot and
+// then daily, in the same shape as the purges above.
+func runChatInboundPurge(ctx context.Context, log *slog.Logger, st *store.Store) {
+	purge := func() {
+		cutoff := time.Now().Add(-chatInboundRetention)
+		n, err := st.ChatInbound().PurgeOlderThan(ctx, cutoff)
+		switch {
+		case err != nil:
+			log.Error("retention: chat_inbound_handled purge failed", "err", err, "cutoff", cutoff)
+		case n > 0:
+			log.Info("retention: purged chat_inbound_handled", "rows", n, "olderThan", chatInboundRetention.String())
+		}
+	}
+
+	purge()
+	t := time.NewTicker(delayDeadlinePurgeInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			purge()
+		}
+	}
+}
+
 // draftPurgeInterval is how often expired agent drafts are deleted. Hourly is
 // ample against a 30-day retention.
 const draftPurgeInterval = time.Hour

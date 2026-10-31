@@ -433,6 +433,8 @@ func (n *Notify) start(ctx context.Context) error {
 	// creating new relative dynamic delays: Save no longer sweeps, so nothing
 	// else would ever reclaim an abandoned deadline row.
 	n.goLoop(func() { runDelayDeadlinePurge(ctx, n.log, n.st) })
+	// chat_inbound_handled would otherwise keep one row per inbound chat message forever.
+	n.goLoop(func() { runChatInboundPurge(ctx, n.log, n.st) })
 	// agent_drafts would otherwise keep every draft no one fetched.
 	n.goLoop(func() { runDraftPurge(ctx, n.log, n.ags) })
 

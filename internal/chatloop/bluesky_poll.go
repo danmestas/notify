@@ -62,15 +62,16 @@ type blueskyListNotificationsResp struct {
 
 // runBlueskyPoll polls app.bsky.notification.listNotifications on a fixed
 // ticker and feeds each mention/reply into handleInbound. Reprocessing is
-// prevented with an in-memory lastSeenAt cursor over the lexicographically
-// (and chronologically, since indexedAt is RFC3339) comparable indexedAt
+// prevented with a lastSeenAt cursor over the lexicographically (and
+// chronologically, since indexedAt is RFC3339) comparable indexedAt
 // timestamps -- chosen over calling com.atproto.notification.updateSeen
-// because our own cursor is authoritative, needs no extra round trip per
-// poll, and mirrors the same in-memory approach runMastodonPoll and
-// runTelegramPoll already use for their own cursors. As with those pollers,
-// a restart resets the cursor to empty and replays already-seen
-// notifications; handleInbound's chat_thread lookup keeps that idempotent
-// for threading, at the cost of a possible duplicate agent reply.
+// because our own cursor is authoritative and needs no extra round trip per
+// poll. The cursor is persisted in the store after each dispatched batch and
+// loaded at start, so a restart does not replay already-handled
+// notifications. The cursor only saves re-reading: correctness comes from
+// claiming each notification uri in the store before dispatch (claimInbound),
+// so a mention gets at most one agent turn even if the process dies between
+// dispatch and the cursor save.
 //
 // The notifications feed is returned newest-first, so each batch is walked
 // in reverse (oldest to newest) both to dispatch turns in chronological
@@ -81,7 +82,7 @@ func (s *Service) runBlueskyPoll(ctx context.Context, scope domain.Scope, client
 		interval = blueskyPollInterval
 	}
 
-	var lastSeenAt string
+	lastSeenAt := s.loadPollCursor(ctx, scope, providerBluesky)
 	for {
 		if ctx.Err() != nil {
 			return
@@ -93,6 +94,7 @@ func (s *Service) runBlueskyPoll(ctx context.Context, scope domain.Scope, client
 			}
 			s.log.Warn("chatloop: bluesky notifications poll", "err", err)
 		} else {
+			retry := false
 			for i := len(notes) - 1; i >= 0; i-- {
 				n := notes[i]
 				if n.Reason != "mention" && n.Reason != "reply" {
@@ -121,6 +123,12 @@ func (s *Service) runBlueskyPoll(ctx context.Context, scope domain.Scope, client
 					continue
 				}
 
+				dispatch, again := s.claimInbound(ctx, scope, providerBluesky, n.URI)
+				retry = retry || again
+				if !dispatch {
+					continue
+				}
+
 				pending := blueskyPendingReply{parentURI: n.URI, parentCID: n.CID}
 				if n.Record.Reply != nil {
 					pending.rootURI = n.Record.Reply.Root.URI
@@ -140,8 +148,9 @@ func (s *Service) runBlueskyPoll(ctx context.Context, scope domain.Scope, client
 
 				s.handleInbound(ctx, scope, providerBluesky, did, "bluesky:"+did, text)
 			}
-			if len(notes) > 0 && notes[0].IndexedAt != "" && notes[0].IndexedAt > lastSeenAt {
+			if !retry && len(notes) > 0 && notes[0].IndexedAt != "" && notes[0].IndexedAt > lastSeenAt {
 				lastSeenAt = notes[0].IndexedAt
+				s.savePollCursor(ctx, scope, providerBluesky, lastSeenAt)
 			}
 		}
 		if !sleepCtx(ctx, interval) {
