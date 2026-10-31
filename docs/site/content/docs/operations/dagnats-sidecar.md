@@ -19,7 +19,14 @@ notify makes two connections: NATS (`-nats-url`) for the engine, and, on its own
 
 ## Agent-loop state
 
-The AI builder keeps its conversation in agent-loop state, which dagnats carries in each task and in the run snapshot. dagnats caps it at 256 KiB by default (`loop_state_max_bytes`); a longer build fails with "over the byte cap". Run the sidecar with `DAGNATS_LOOP_STATE_MAX_BYTES=524288` (512 KiB, what notify's tests use). It must stay under NATS' `max_payload` (1 MiB by default).
+The AI builder keeps its conversation in agent-loop state, which dagnats carries in each task and in the run snapshot.
+
+- dagnats caps the state at `loop_state_max_bytes`, which defaults to 256 KiB.
+- Run the sidecar with **`DAGNATS_LOOP_STATE_MAX_BYTES=524288`** (512 KiB). The Docker image sets it, and notify's tests use the same value. A host that runs dagnats natively must set it itself.
+- The state travels base64-encoded inside JSON, so the bytes on the wire are about four thirds of the cap: 512 KiB of state is about 683 KiB in each task and snapshot. That has to fit under NATS' `max_payload` (1 MiB by default), so do not raise the cap much further without raising `max_payload` too.
+- A build whose conversation outgrows the cap ends with an error that names `DAGNATS_LOOP_STATE_MAX_BYTES`. The error is shown in the builder and logged as `aibuilder: continue failed`.
+
+Before this release the state lived in a KV bucket and could reach about 1 MiB.
 
 ## What notify keeps on it
 

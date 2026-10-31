@@ -550,6 +550,12 @@ func runServe(args []string) error {
 
 	srv := &http.Server{Addr: cfg.addr, Handler: root}
 
+	// Defers run last-in first-out, so this one drains the engine before any
+	// dependency deferred above (bus, mesh, webhooks, analytics, store) closes
+	// under a handler that is still finishing. The earlier defer covers the
+	// returns before this point; Stop is safe to call twice.
+	defer func() { _ = eng.Stop() }()
+
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()
