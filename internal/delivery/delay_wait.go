@@ -29,9 +29,14 @@ func NewDelayWait(s *store.Store) *DelayWait { return &DelayWait{store: s} }
 
 // HandleScheduled is registered via engine.Handle("delay.scheduled", ...). It
 // loads the step's structured calendar (atTime + weekDays/monthDays), computes
-// the next firing instant after now (UTC), and waits until it. A nil output
-// lets the downstream channel step fire.
+// the next firing instant after now, and parks until it. A resumed dispatch
+// keeps the instant it parked for (t.ResumeAt): recomputing "the next instant
+// after now" at that instant would skip to the following occurrence. A nil
+// output lets the downstream channel step fire.
 func (d *DelayWait) HandleScheduled(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
+	if !t.ResumeAt.IsZero() {
+		return waitUntil(t.ResumeAt)
+	}
 	cv, _, _, err := d.stepInputs(ctx, t.RunID, t.StepID)
 	if err != nil {
 		return nil, err
@@ -50,14 +55,15 @@ func (d *DelayWait) HandleScheduled(ctx context.Context, t engine.TaskPayload) (
 	if err != nil {
 		return nil, fmt.Errorf("delay.scheduled: %w", err)
 	}
-	return waitUntil(ctx, time.Until(fire))
+	return waitUntil(fire)
 }
 
 // HandleDynamic is registered via engine.Handle("delay.dynamic", ...). It loads
 // the step's dynamicKey and the trigger payload, resolves the fire-at instant
 // (ISO-8601 timestamp, or a persisted/newly-resolved {amount,unit} deadline —
-// see resolveDynamicFireAt), waits, and on normal completion clears any
-// deadline row so the common path does not accumulate one.
+// see resolveDynamicFireAt), parks until it, and once it has passed clears any
+// deadline row so the common path does not accumulate one. Every dispatch,
+// resumed or not, re-reads the payload and the deadline row.
 func (d *DelayWait) HandleDynamic(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
 	cv, payload, scope, err := d.stepInputs(ctx, t.RunID, t.StepID)
 	if err != nil {
@@ -76,11 +82,10 @@ func (d *DelayWait) HandleDynamic(ctx context.Context, t engine.TaskPayload) (js
 	if err != nil {
 		return nil, fmt.Errorf("delay.dynamic: %w", err)
 	}
-	out, waitErr := waitUntil(ctx, time.Until(fire))
+	out, waitErr := waitUntil(fire)
 	if waitErr != nil {
-		// Context cancelled mid-wait (shutdown): leave any persisted deadline
-		// in place so the requeued dispatch resumes toward it instead of
-		// re-resolving "now + duration".
+		// Parked: the deadline row stays, so the resumed (or restarted)
+		// dispatch heads for it instead of re-resolving "now + duration".
 		return out, waitErr
 	}
 	if clearErr := d.store.DelayDeadlines().Clear(ctx, t.RunID, t.StepID); clearErr != nil {
@@ -127,25 +132,15 @@ func (d *DelayWait) resolveDynamicFireAt(ctx context.Context, scope domain.Scope
 	return fire, nil
 }
 
-// waitUntil blocks for d, honouring context cancellation. On cancellation (the
-// engine's loop ctx is cancelled at Stop()) it returns a RetryableError so the
-// goroutine releases its WaitGroup slot promptly — a bare time.Sleep would pin
-// the goroutine for the full delay and hang Stop(). The RetryableError (paired
-// with the step's RetryPolicy) makes dagnats requeue the task; on re-dispatch
-// after restart the handler recomputes the remaining wait. A non-positive
-// duration returns immediately.
-func waitUntil(ctx context.Context, d time.Duration) (json.RawMessage, error) {
-	if d <= 0 {
+// waitUntil fires once fire has passed and otherwise parks the task until it:
+// the engine holds no worker slot while it waits, a restart resumes it, and a
+// cancelled run is never redelivered. It returns (nil, nil) to fire, so the
+// downstream step runs.
+func waitUntil(fire time.Time) (json.RawMessage, error) {
+	if !time.Now().Before(fire) {
 		return nil, nil
 	}
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return nil, engine.NewRetryableError(ctx.Err())
-	case <-timer.C:
-		return nil, nil
-	}
+	return nil, engine.WaitUntil(fire)
 }
 
 // resolveDynamicDuration navigates dynamicKey into the trigger payload and

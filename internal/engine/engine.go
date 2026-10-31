@@ -44,7 +44,31 @@ type TaskPayload struct {
 	// Attempt is the 1-based dispatch count: 1 first, 2 on the first retry.
 	Attempt int
 	Input   json.RawMessage
+	// ResumeAt is the deadline an earlier dispatch of this step parked it
+	// until with WaitUntil; zero when the step has never parked. A handler
+	// resumes toward it rather than recomputing a wait from now.
+	ResumeAt time.Time
 }
+
+// WaitError is WaitUntil's result: it asks the engine to park the task.
+type WaitError struct{ At time.Time }
+
+func (e *WaitError) Error() string { return "engine: wait until " + e.At.Format(time.RFC3339) }
+
+// WaitUntil returns the error a handler returns to wait until at without
+// holding a worker: the engine parks the task in dagnats (a durable,
+// delayed redelivery) and dispatches it again with ResumeAt set to at. It
+// survives restarts, a cancelled run is never redelivered, and a wait of any
+// length holds no slot and no claim. The resumed dispatch returns output once
+// at has passed, or WaitUntil again.
+func WaitUntil(at time.Time) error { return &WaitError{At: at} }
+
+// maxPark bounds one park. A longer wait parks again on resume, which also
+// rewrites the marker before dagnats' 30-day checkpoint TTL could drop it.
+const maxPark = time.Hour
+
+// parkPrefix tags the pause name that carries a park's deadline.
+const parkPrefix = "until:"
 
 // RunSnapshot mirrors the run fields of dagnats's api.runs.get reply
 // (RunResponse embeds dag.WorkflowRun).
@@ -116,6 +140,7 @@ type Engine struct {
 	agentHandlers map[string]AgentLoopFunc
 	started       bool
 	ackWait       time.Duration
+	concurrency   int
 
 	w *worker.Worker
 	// life ends every in-flight handler's context on Stop, so a handler that
@@ -144,6 +169,12 @@ func withAckWait(d time.Duration) Option {
 	return func(e *Engine) { e.ackWait = d }
 }
 
+// withConcurrency lowers the per-lane task limit, for tests that need a lane
+// to fill.
+func withConcurrency(n int) Option {
+	return func(e *Engine) { e.concurrency = n }
+}
+
 // New dials dagnats' NATS endpoint.
 func New(natsURL string, opts ...Option) (*Engine, error) {
 	nc, err := eventbus.DialNATS(natsURL, "notify-engine", "dagnats sidecar (-nats-url)")
@@ -156,6 +187,7 @@ func New(natsURL string, opts ...Option) (*Engine, error) {
 		handlers:      make(map[string]HandlerFunc),
 		agentHandlers: make(map[string]AgentLoopFunc),
 		ackWait:       defaultAckWait,
+		concurrency:   handlerConcurrency,
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -195,7 +227,7 @@ func (e *Engine) StartWorkers(ctx context.Context) {
 		return
 	}
 	e.w = worker.NewWorker(e.nc)
-	opts := []worker.HandlerOption{worker.WithConcurrency(handlerConcurrency), worker.WithAckWait(e.ackWait)}
+	opts := []worker.HandlerOption{worker.WithConcurrency(e.concurrency), worker.WithAckWait(e.ackWait)}
 	for taskType, fn := range e.handlers {
 		e.w.Handle(taskType, e.taskHandler(taskType, fn), opts...)
 	}
@@ -241,23 +273,67 @@ func (e *Engine) stopWorker() {
 }
 
 // taskHandler adapts a HandlerFunc to the worker SDK: the handler's output
-// completes the step, a RetryableError hands it back to the retry policy, and
-// any other error or a panic fails the step permanently.
+// completes the step, a WaitError parks it, a RetryableError hands it back to
+// the retry policy, and any other error or a panic fails the step permanently.
 func (e *Engine) taskHandler(taskType string, fn HandlerFunc) worker.HandlerFunc {
 	return func(tc worker.TaskContext) error {
 		ctx, end := e.taskContext(tc, taskType)
 		defer end()
 		t := payloadOf(tc)
+		t.ResumeAt = parkedUntil(tc)
 		var out json.RawMessage
 		err := e.guard(taskType, t.TaskID, func() (herr error) {
 			out, herr = fn(ctx, t)
 			return herr
 		})
+		var we *WaitError
+		if errors.As(err, &we) {
+			return park(ctx, tc, we.At)
+		}
 		if err != nil {
 			return failure(ctx, err)
 		}
 		return tc.Complete(out)
 	}
+}
+
+// park parks tc until at with dagnats' Pause: a checkpointed marker naming the
+// deadline, then a delayed redelivery. A wait longer than maxPark parks again
+// on resume.
+func park(ctx context.Context, tc worker.TaskContext, at time.Time) error {
+	d := min(time.Until(at), maxPark)
+	if d <= 0 {
+		d = time.Millisecond
+	}
+	if err := tc.Pause(parkPrefix+at.UTC().Format(time.RFC3339Nano), d); err != nil {
+		return failure(ctx, NewRetryableError(fmt.Errorf("park until %s: %w", at.Format(time.RFC3339), err)))
+	}
+	return nil
+}
+
+// parkedUntil reads the deadline a previous park left for this step, or zero.
+// A read error is treated as no park: the handler then computes its wait
+// afresh, which is what it did before parks existed.
+func parkedUntil(tc worker.TaskContext) time.Time {
+	cp, err := tc.LoadCheckpoint()
+	if err != nil || len(cp) == 0 {
+		return time.Time{}
+	}
+	var marker struct {
+		Name string `json:"pause_resume"`
+	}
+	if json.Unmarshal(cp, &marker) != nil {
+		return time.Time{}
+	}
+	ts, ok := strings.CutPrefix(marker.Name, parkPrefix)
+	if !ok {
+		return time.Time{}
+	}
+	at, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return time.Time{}
+	}
+	return at
 }
 
 // taskContext derives the handler's context: the worker's (trace from the
