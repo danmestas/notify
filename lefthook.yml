@@ -21,10 +21,12 @@ pre-push:
       run: go vet ./...
     test:
       glob: "*.go"
-      # -timeout is explicit because Go's default is 10m PER PACKAGE, and the
-      # console package's suite lands close to that under -race on developer
-      # hardware. Without this the gate rejects pushes based on how fast your
-      # machine is rather than whether the code is correct, and the only ways
-      # out are --no-verify or not pushing. The timeout is a hang backstop, so
-      # it should be comfortably above the slowest legitimate package.
-      run: go test -race -timeout 20m ./...
+      # Only the packages this push changes, without -race: a fast check that
+      # the touched code and its tests still pass. CI runs the whole suite
+      # under -race and is the merge gate, so several sessions pushing at once
+      # don't each run the full suite on one machine.
+      run: |
+        dirs=$(git diff --name-only --diff-filter=d "$(git merge-base HEAD origin/main)" HEAD -- '*.go' | xargs -n1 dirname 2>/dev/null | sort -u | sed 's|^|./|')
+        [ -z "$dirs" ] && exit 0
+        pkgs=$(go list -e -f '{{if or .GoFiles .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' $dirs)
+        [ -z "$pkgs" ] || go test -timeout 10m $pkgs
