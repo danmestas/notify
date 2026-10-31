@@ -10,9 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/danmestas/notify/internal/blobstore"
-
 	"github.com/danmestas/notify/internal/agents/runtime/mesh"
+	"github.com/danmestas/notify/internal/aibuilder"
+	"github.com/danmestas/notify/internal/blobstore"
+	"github.com/danmestas/notify/notify"
 )
 
 // config is the single interpreted view of the process environment for
@@ -20,62 +21,25 @@ import (
 // so the services under internal/ receive primitive inputs through their
 // constructors instead of reaching into os.Getenv at wiring time. cmd/notify is
 // the one place the environment is interpreted.
+//
+// app is what the notify package needs; the rest is the process's own: where
+// to dial, where to listen, and the process-wide SSRF and tracing setup.
 type config struct {
-	// Core transport / storage (flag- and env-overridable).
 	natsURL string
-	// sendmailCommand is the argv the "sendmail" email provider pipes each
-	// message to. Host configuration like dbPath: it names a binary on this
-	// machine, so it is a flag/env rather than a per-tenant integration field
-	// -- otherwise any API-key holder could run an arbitrary command here.
-	sendmailCommand []string
-	dbPath          string
-	addr            string
-	dev             bool
-	masterKey       []byte
-	meshAllow       string
-	meshNATSURL     string
+	// meshNATSURL is the hub mesh agents are dispatched over; empty reuses
+	// natsURL's connection.
+	meshNATSURL string
+	addr        string
 
 	// Comma-separated exact hosts exempted from the outbound SSRF guard.
 	// Empty -- the default -- blocks every internal range, as before.
 	ssrfAllowedHosts string
 
-	// Raw inbound mail storage. blobDriver is "" (off, the default), "fs" or
-	// "s3". Keeping every accepted email is a retention choice, so the
-	// operator makes it explicitly.
-	blobDriver string
-	blobDir    string
-	blobS3     blobstore.S3Config
-
-	// Inbound email loop.
-	inboundSecret string
-	inboundMXHost string
-	// smtpAddr, when set, starts the embedded SMTP receiver on that address so
-	// the inbound MX host can be notify itself. Empty (the default) leaves it
-	// off: notify becomes internet-facing on a protocol it was not previously
-	// hardened for, so the operator chooses it explicitly.
-	smtpAddr string
-	// smtpCert and smtpKey name the STARTTLS certificate and key files for
-	// the SMTP receiver. Both or neither; with neither it speaks plaintext.
-	smtpCert string
-	smtpKey  string
-
-	// Chat two-way loop (Telegram/Discord).
-	telegramBotToken  string
-	discordBotToken   string
-	chatDefaultAgent  string
-	discordRespondAll bool
-	chatDefaultOrg    string
-	chatDefaultEnv    string
-
-	// Console-facing configuration.
-	dagnatsConsoleURL string
-	aiConsoleKey      string
-	consoleReadOnly   bool
-	publicBaseURL     string
-
 	// OpenTelemetry tracing. An empty otelEndpoint disables tracing entirely.
 	otelEndpoint    string
 	otelServiceName string
+
+	app notify.Config
 }
 
 // envOr returns the environment variable value if set, otherwise def.
@@ -154,53 +118,65 @@ func loadConfig(args []string) (config, error) {
 	}
 
 	return config{
-		natsURL: *natsURL,
-		// Whitespace split, no shell: there is no quoting to get wrong and
-		// nothing an operator-typed value could inject through.
-		sendmailCommand: strings.Fields(*sendmailCommand),
-		dbPath:          *dbPath,
-		addr:            *addr,
-		dev:             *dev,
-		masterKey:       mk,
-		meshAllow:       *meshAllow,
-		meshNATSURL:     *meshNATSURL,
-
+		natsURL:          *natsURL,
+		meshNATSURL:      *meshNATSURL,
+		addr:             *addr,
 		ssrfAllowedHosts: *ssrfAllow,
-
-		blobDriver: os.Getenv("NOTIFY_BLOB_DRIVER"),
-		blobDir:    envOr("NOTIFY_BLOB_DIR", filepath.Join(filepath.Dir(*dbPath), "blobs")),
-		blobS3: blobstore.S3Config{
-			Endpoint:  os.Getenv("NOTIFY_BLOB_S3_ENDPOINT"),
-			Region:    os.Getenv("NOTIFY_BLOB_S3_REGION"),
-			Bucket:    os.Getenv("NOTIFY_BLOB_S3_BUCKET"),
-			Prefix:    os.Getenv("NOTIFY_BLOB_S3_PREFIX"),
-			AccessKey: os.Getenv("NOTIFY_BLOB_S3_ACCESS_KEY"),
-			SecretKey: os.Getenv("NOTIFY_BLOB_S3_SECRET_KEY"),
-			UseTLS:    envBool("NOTIFY_BLOB_S3_TLS"),
-		},
-
-		inboundSecret: os.Getenv("NOTIFY_INBOUND_SECRET"),
-		smtpAddr:      *smtpAddr,
-		smtpCert:      *smtpCert,
-		smtpKey:       *smtpKey,
-		inboundMXHost: os.Getenv("NOTIFY_INBOUND_MX_HOST"),
-
-		telegramBotToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),
-		discordBotToken:   os.Getenv("DISCORD_BOT_TOKEN"),
-		chatDefaultAgent:  os.Getenv("NOTIFY_CHAT_DEFAULT_AGENT"),
-		discordRespondAll: envBool("NOTIFY_DISCORD_RESPOND_ALL"),
-		chatDefaultOrg:    os.Getenv("NOTIFY_CHAT_DEFAULT_ORG"),
-		chatDefaultEnv:    os.Getenv("NOTIFY_CHAT_DEFAULT_ENV"),
-
-		dagnatsConsoleURL: os.Getenv("NOTIFY_DAGNATS_CONSOLE_URL"),
-		aiConsoleKey:      firstNonEmpty(os.Getenv("NOTIFY_AI_API_KEY"), os.Getenv("ANTHROPIC_API_KEY")),
-		consoleReadOnly:   os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",
-		publicBaseURL:     os.Getenv("NOTIFY_PUBLIC_BASE_URL"),
-
-		// Standard OTel names, env-only: tracing is an optional integration
-		// like the ones above, and an unset endpoint disables it completely.
+		// Standard OTel names, env-only: tracing is an optional integration,
+		// and an unset endpoint disables it completely.
 		otelEndpoint:    os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 		otelServiceName: envOr("OTEL_SERVICE_NAME", "notify"),
+
+		app: notify.Config{
+			DBPath:    *dbPath,
+			MasterKey: mk,
+			Dev:       *dev,
+			// Whitespace split, no shell: there is no quoting to get wrong and
+			// nothing an operator-typed value could inject through.
+			SendmailCommand: strings.Fields(*sendmailCommand),
+			MeshAllow:       *meshAllow,
+
+			BlobDriver: os.Getenv("NOTIFY_BLOB_DRIVER"),
+			BlobDir:    envOr("NOTIFY_BLOB_DIR", filepath.Join(filepath.Dir(*dbPath), "blobs")),
+			BlobS3: blobstore.S3Config{
+				Endpoint:  os.Getenv("NOTIFY_BLOB_S3_ENDPOINT"),
+				Region:    os.Getenv("NOTIFY_BLOB_S3_REGION"),
+				Bucket:    os.Getenv("NOTIFY_BLOB_S3_BUCKET"),
+				Prefix:    os.Getenv("NOTIFY_BLOB_S3_PREFIX"),
+				AccessKey: os.Getenv("NOTIFY_BLOB_S3_ACCESS_KEY"),
+				SecretKey: os.Getenv("NOTIFY_BLOB_S3_SECRET_KEY"),
+				UseTLS:    envBool("NOTIFY_BLOB_S3_TLS"),
+			},
+
+			InboundSecret: os.Getenv("NOTIFY_INBOUND_SECRET"),
+			InboundMXHost: os.Getenv("NOTIFY_INBOUND_MX_HOST"),
+			SMTPAddr:      *smtpAddr,
+			SMTPCert:      *smtpCert,
+			SMTPKey:       *smtpKey,
+
+			TelegramBotToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),
+			DiscordBotToken:   os.Getenv("DISCORD_BOT_TOKEN"),
+			ChatDefaultAgent:  os.Getenv("NOTIFY_CHAT_DEFAULT_AGENT"),
+			DiscordRespondAll: envBool("NOTIFY_DISCORD_RESPOND_ALL"),
+			ChatDefaultOrg:    os.Getenv("NOTIFY_CHAT_DEFAULT_ORG"),
+			ChatDefaultEnv:    os.Getenv("NOTIFY_CHAT_DEFAULT_ENV"),
+
+			DagnatsConsoleURL: os.Getenv("NOTIFY_DAGNATS_CONSOLE_URL"),
+			AIConsoleKey:      firstNonEmpty(os.Getenv("NOTIFY_AI_API_KEY"), os.Getenv("ANTHROPIC_API_KEY")),
+			ConsoleReadOnly:   os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",
+			PublicBaseURL:     os.Getenv("NOTIFY_PUBLIC_BASE_URL"),
+			HTTPAddr:          *addr,
+
+			// Provider selection (in priority order):
+			//   NOTIFY_AI_API_KEY → OpenRouter (default) or any OpenAI-compatible endpoint
+			//     NOTIFY_AI_BASE_URL overrides the base URL (default: https://openrouter.ai/api/v1)
+			//     NOTIFY_AI_MODEL   overrides the model     (default: openai/gpt-4.1)
+			//   ANTHROPIC_API_KEY  → Anthropic directly (fallback)
+			//   Neither            → builder gracefully disabled (Guided tab shows a note)
+			AI: aibuilder.NewClientFromEnv(os.Getenv),
+
+			DuckDBPath: envOr("NOTIFY_DUCKDB", "notify-analytics.duckdb"),
+		},
 	}, nil
 }
 
@@ -212,18 +188,4 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
-}
-
-// openBlobStore builds the configured raw-mail store, or nil when it is off.
-func openBlobStore(cfg config) (blobstore.Store, error) {
-	switch cfg.blobDriver {
-	case "":
-		return nil, nil
-	case "fs":
-		return blobstore.NewFS(cfg.blobDir)
-	case "s3":
-		return blobstore.NewS3(cfg.blobS3)
-	default:
-		return nil, fmt.Errorf("NOTIFY_BLOB_DRIVER %q is not one of fs, s3 (or empty for off)", cfg.blobDriver)
-	}
 }

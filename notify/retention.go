@@ -1,4 +1,4 @@
-package main
+package notify
 
 import (
 	"context"
@@ -38,8 +38,8 @@ const (
 	delayDeadlinePurgeInterval = 24 * time.Hour
 )
 
-// startStepOutputPurge runs the retention purge once immediately, then on an
-// interval until ctx is cancelled.
+// runStepOutputPurge runs the retention purge once immediately, then on an
+// interval until ctx is cancelled. It blocks; the caller runs it on a goroutine.
 //
 // The immediate pass matters: without it a process that restarts more often
 // than the interval would never purge at all, which is exactly the deployment
@@ -48,111 +48,105 @@ const (
 // Failures are logged and the loop continues. A purge that cannot run is a
 // table that grows, not a request that fails, so it must never take the process
 // down with it.
-func startStepOutputPurge(ctx context.Context, st *store.Store) {
+func runStepOutputPurge(ctx context.Context, log *slog.Logger, st *store.Store) {
 	purge := func() {
 		cutoff := time.Now().Add(-stepOutputRetention)
 		n, err := st.StepOutputs().PurgeOlderThan(ctx, cutoff)
 		switch {
 		case err != nil:
-			slog.Default().Error("retention: step_outputs purge failed",
+			log.Error("retention: step_outputs purge failed",
 				"err", err, "cutoff", cutoff)
 		case n > 0:
-			slog.Default().Info("retention: purged step_outputs",
+			log.Info("retention: purged step_outputs",
 				"rows", n, "olderThan", stepOutputRetention.String())
 		}
 	}
 
-	go func() {
-		purge()
-		t := time.NewTicker(stepOutputPurgeInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				purge()
-			}
+	purge()
+	t := time.NewTicker(stepOutputPurgeInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			purge()
 		}
-	}()
+	}
 }
 
-// startDelayDeadlinePurge runs the delay_deadlines retention purge once
-// immediately, then on an interval until ctx is cancelled.
+// runDelayDeadlinePurge runs the delay_deadlines retention purge once
+// immediately, then on an interval until ctx is cancelled. It blocks.
 //
 // Rows here used to be swept only as a side effect of DelayDeadlines().Save,
 // which meant a deployment that stopped creating new relative dynamic delays
 // stopped sweeping too -- exactly the unbounded growth retention exists to
-// prevent. Moving to the same boot-plus-ticker shape as startStepOutputPurge
+// prevent. Moving to the same boot-plus-ticker shape as runStepOutputPurge
 // closes that gap: the purge now runs regardless of traffic.
 //
-// The immediate pass matters for the same reason as startStepOutputPurge's:
+// The immediate pass matters for the same reason as runStepOutputPurge's:
 // a process that restarts more often than the interval would otherwise never
 // purge at all.
 //
 // Failures are logged and the loop continues. A purge that cannot run is a
 // table that grows, not a request that fails, so it must never take the
 // process down with it.
-func startDelayDeadlinePurge(ctx context.Context, st *store.Store) {
+func runDelayDeadlinePurge(ctx context.Context, log *slog.Logger, st *store.Store) {
 	purge := func() {
 		cutoff := time.Now().Add(-store.MaxDelayDeadlineAge)
 		n, err := st.DelayDeadlines().PurgeOlderThan(ctx, cutoff)
 		switch {
 		case err != nil:
-			slog.Default().Error("retention: delay_deadlines purge failed",
+			log.Error("retention: delay_deadlines purge failed",
 				"err", err, "cutoff", cutoff)
 		case n > 0:
-			slog.Default().Info("retention: purged delay_deadlines",
+			log.Info("retention: purged delay_deadlines",
 				"rows", n, "olderThan", store.MaxDelayDeadlineAge.String())
 		}
 	}
 
-	go func() {
-		purge()
-		t := time.NewTicker(delayDeadlinePurgeInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				purge()
-			}
+	purge()
+	t := time.NewTicker(delayDeadlinePurgeInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			purge()
 		}
-	}()
+	}
 }
 
 // draftPurgeInterval is how often expired agent drafts are deleted. Hourly is
 // ample against a 30-day retention.
 const draftPurgeInterval = time.Hour
 
-// startDraftPurge deletes agent drafts older than agentstore.DraftRetention,
+// runDraftPurge deletes agent drafts older than agentstore.DraftRetention,
 // once at boot and then on an interval, in the same shape as the purges above.
 // A reader whose cursor predates the window is told so by the endpoint (gap),
 // so nothing expires unannounced.
-func startDraftPurge(ctx context.Context, ags *agentstore.Store) {
+func runDraftPurge(ctx context.Context, log *slog.Logger, ags *agentstore.Store) {
 	purge := func() {
 		cutoff := time.Now().Add(-agentstore.DraftRetention)
 		n, err := ags.Drafts().PurgeOlderThan(ctx, cutoff)
 		switch {
 		case err != nil:
-			slog.Default().Error("retention: agent_drafts purge failed", "err", err, "cutoff", cutoff)
+			log.Error("retention: agent_drafts purge failed", "err", err, "cutoff", cutoff)
 		case n > 0:
-			slog.Default().Info("retention: purged agent_drafts", "rows", n, "olderThan", agentstore.DraftRetention.String())
+			log.Info("retention: purged agent_drafts", "rows", n, "olderThan", agentstore.DraftRetention.String())
 		}
 	}
 
-	go func() {
-		purge()
-		t := time.NewTicker(draftPurgeInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				purge()
-			}
+	purge()
+	t := time.NewTicker(draftPurgeInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			purge()
 		}
-	}()
+	}
 }

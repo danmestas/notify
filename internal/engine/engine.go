@@ -134,8 +134,11 @@ const defaultAckWait = 5 * time.Minute
 // control plane, and dagnats' worker SDK for tasks. The zero value is not
 // usable; construct with New.
 type Engine struct {
-	nc  *nats.Conn
-	log *slog.Logger
+	nc *nats.Conn
+	// ownsConn is set when New dialed nc; a connection passed to FromConn
+	// belongs to the caller and Stop leaves it open.
+	ownsConn bool
+	log      *slog.Logger
 
 	handlers      map[string]HandlerFunc
 	agentHandlers map[string]AgentLoopFunc
@@ -178,12 +181,21 @@ func withConcurrency(n int) Option {
 	return func(e *Engine) { e.concurrency = n }
 }
 
-// New dials dagnats' NATS endpoint.
+// New dials dagnats' NATS endpoint. The engine owns that connection and Stop
+// closes it.
 func New(natsURL string, opts ...Option) (*Engine, error) {
 	nc, err := eventbus.DialNATS(natsURL, "notify-engine", "dagnats sidecar (-nats-url)")
 	if err != nil {
 		return nil, err
 	}
+	e := FromConn(nc, opts...)
+	e.ownsConn = true
+	return e, nil
+}
+
+// FromConn builds an engine on an existing connection to dagnats. The
+// connection stays the caller's: Stop drains the worker but does not close it.
+func FromConn(nc *nats.Conn, opts ...Option) *Engine {
 	e := &Engine{
 		nc:            nc,
 		log:           slog.Default(),
@@ -196,7 +208,7 @@ func New(natsURL string, opts ...Option) (*Engine, error) {
 	for _, opt := range opts {
 		opt(e)
 	}
-	return e, nil
+	return e
 }
 
 // Handle registers a handler for a task type. It must be called before
@@ -294,7 +306,9 @@ func (e *Engine) Ready() error {
 // tasks, and closes the NATS connection. It never calls dagnats' control plane.
 func (e *Engine) Stop() error {
 	e.stopWorker()
-	e.nc.Close()
+	if e.ownsConn {
+		e.nc.Close()
+	}
 	return nil
 }
 

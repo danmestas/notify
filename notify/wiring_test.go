@@ -1,4 +1,4 @@
-package main
+package notify
 
 import (
 	"context"
@@ -24,7 +24,7 @@ import (
 )
 
 // TestRegisterDeliveryHandlers_EmailPublishesDeliveryEvent guards against a
-// repeat of the wiring bug where send.email's registration in runServe
+// repeat of the wiring bug where send.email's registration in the server wiring
 // silently omitted .WithEventBus (notify hardening #8): every channel is now
 // wired through wireCommon, whose common[T] constraint cannot omit one of the
 // four shared dependencies without a compile error. This exercises the real

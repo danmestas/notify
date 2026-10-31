@@ -90,7 +90,10 @@ const (
 // Bus is notify's handle on the event bus. It holds the client connection
 // to the dagnats sidecar plus notify's own JetStream resources.
 type Bus struct {
-	nc          *nats.Conn
+	nc *nats.Conn
+	// ownsConn is set when Connect dialed nc; a connection passed to FromConn
+	// belongs to the caller and Close leaves it open.
+	ownsConn    bool
 	js          jetstream.JetStream
 	kv          jetstream.KeyValue
 	throttle    jetstream.KeyValue
@@ -120,19 +123,30 @@ func WithDigestClaimTTL(d time.Duration) Option {
 // (subjects "notify.analytics.>"). The returned Bus owns the connection;
 // the caller must Close it.
 func Connect(ctx context.Context, natsURL string, opts ...Option) (*Bus, error) {
+	nc, err := DialNATS(natsURL, "notify-eventbus", "dagnats sidecar (-nats-url)")
+	if err != nil {
+		return nil, err
+	}
+	b, err := FromConn(ctx, nc, opts...)
+	if err != nil {
+		nc.Close()
+		return nil, err
+	}
+	b.ownsConn = true
+	return b, nil
+}
+
+// FromConn builds a Bus on an existing connection and ensures the same
+// JetStream resources Connect does. The connection stays the caller's: Close
+// does not close it.
+func FromConn(ctx context.Context, nc *nats.Conn, opts ...Option) (*Bus, error) {
 	cfg := busConfig{digestClaimTTL: maxDigestClaimTTL}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 
-	nc, err := DialNATS(natsURL, "notify-eventbus", "dagnats sidecar (-nats-url)")
-	if err != nil {
-		return nil, err
-	}
-
 	js, err := jetstream.New(nc)
 	if err != nil {
-		nc.Close()
 		return nil, fmt.Errorf("eventbus: jetstream init: %w", err)
 	}
 
@@ -140,7 +154,6 @@ func Connect(ctx context.Context, natsURL string, opts ...Option) (*Bus, error) 
 		Bucket: inboxCountsBucket,
 	})
 	if err != nil {
-		nc.Close()
 		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", inboxCountsBucket, err)
 	}
 
@@ -150,7 +163,6 @@ func Connect(ctx context.Context, natsURL string, opts ...Option) (*Bus, error) 
 		TTL:     maxThrottleBucketTTL,
 	})
 	if err != nil {
-		nc.Close()
 		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", throttleBucket, err)
 	}
 
@@ -159,7 +171,6 @@ func Connect(ctx context.Context, natsURL string, opts ...Option) (*Bus, error) 
 		History: 1,
 	})
 	if err != nil {
-		nc.Close()
 		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", digestBucket, err)
 	}
 
@@ -171,7 +182,6 @@ func Connect(ctx context.Context, natsURL string, opts ...Option) (*Bus, error) 
 		TTL:     cfg.digestClaimTTL,
 	})
 	if err != nil {
-		nc.Close()
 		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", digestClaimBucket, err)
 	}
 
@@ -181,7 +191,6 @@ func Connect(ctx context.Context, natsURL string, opts ...Option) (*Bus, error) 
 		TTL:     maxBudgetBucketTTL,
 	})
 	if err != nil {
-		nc.Close()
 		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", budgetBucket, err)
 	}
 
@@ -189,7 +198,6 @@ func Connect(ctx context.Context, natsURL string, opts ...Option) (*Bus, error) 
 		Name:     analyticsStream,
 		Subjects: []string{analyticsSubject},
 	}); err != nil {
-		nc.Close()
 		return nil, fmt.Errorf("eventbus: ensure stream %q: %w", analyticsStream, err)
 	}
 
@@ -199,12 +207,10 @@ func Connect(ctx context.Context, natsURL string, opts ...Option) (*Bus, error) 
 		MaxAge:   deliveryStreamMaxAge,
 		Storage:  jetstream.FileStorage,
 	}); err != nil {
-		nc.Close()
 		return nil, fmt.Errorf("eventbus: ensure stream %q: %w", deliveryStream, err)
 	}
 
 	if err := ensureFeedStream(ctx, js); err != nil {
-		nc.Close()
 		return nil, err
 	}
 
@@ -213,7 +219,7 @@ func Connect(ctx context.Context, natsURL string, opts ...Option) (*Bus, error) 
 
 // Close drains and closes the underlying NATS connection.
 func (b *Bus) Close() error {
-	if b == nil || b.nc == nil {
+	if b == nil || b.nc == nil || !b.ownsConn {
 		return nil
 	}
 	b.nc.Close()

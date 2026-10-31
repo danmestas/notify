@@ -39,7 +39,7 @@ import (
 )
 
 // wireStreamHandler registers send.stream on eng using the exact .With*
-// chain shape cmd/notify/wiring.go's wireCommon expands to for send.stream:
+// chain shape notify/wiring.go's wireCommon expands to for send.stream:
 //
 //	wireCommon(delivery.NewStream(st), d).WithFeed(bus).HandleStream
 //	  == delivery.NewStream(st).WithPreferences(d.prefs).WithEventBus(d.bus).
