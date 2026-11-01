@@ -9,7 +9,7 @@ weight: 2
 
 - The **durable workflow engine**: notify registers each workflow as a DAG definition, starts a run per trigger, and the engine dispatches the steps.
 - An **embedded NATS server with JetStream**. notify uses it for the event streams below, the digest and throttle counters, and mesh agent dispatch (unless `NOTIFY_MESH_NATS_URL` points elsewhere).
-- A **NATS control plane and task queues**. notify registers workflows and starts runs with request/reply on dagnats' routes scoped to the notify program (`api.p.notify.workflows.register`, `api.p.notify.runs.start` and `api.p.notify.runs.get`, dagnats v0.0.43 or later), and its step handlers (send an email, call a URL, run an agent turn) claim tasks with dagnats' worker SDK, run them in the notify process, and report results back over the same connection. Up to 256 tasks of one type run at once, so one slow digest wait or agent turn never holds up the rest of its type. While a handler runs, dagnats keeps its task claimed for up to an hour; `notify.agent.turn.managed` and `notify.http_request` set their own caps from their limits. Waits (delays and digests) do not run in a handler at all: they park in dagnats until their time comes.
+- A **NATS control plane and task queues**. notify registers workflows and starts runs with request/reply on dagnats' routes scoped to the notify program (`api.p.notify.workflows.register`, `api.p.notify.runs.start` and `api.p.notify.runs.get`, dagnats v0.0.44 or later), and its step handlers (send an email, call a URL, run an agent turn) claim tasks with dagnats' worker SDK, run them in the notify process, and report results back over the same connection. Up to 256 tasks of one type run at once, so one slow digest wait or agent turn never holds up the rest of its type. While a handler runs, dagnats keeps its task claimed for up to an hour; `notify.agent.turn.managed` and `notify.http_request` set their own caps from their limits. Waits (delays and digests) do not run in a handler at all: they park in dagnats until their time comes.
 
 Every task type and workflow name notify registers starts with `notify.`: `notify.send.email`, `notify.send.chat`, `notify.delay.scheduled`, `notify.digest.wait`, `notify.check.throttle`, `notify.http_request`, `notify.agent_message`, `notify.verify.credentials`, `notify.agent.turn.mesh`, `notify.agent.turn.managed` and `notify.ai.build`. Workflows are `notify.<environment>-<trigger>` for yours, `notify.agent-turn-<agent id>` for agent turns, and `notify.credential-verify` and `notify.ai-builder`. A worker token for another dagnats program therefore cannot claim notify's tasks. Workflow definitions saved before the prefix existed are read with it added. The old task names (`send.email`, `agent.turn.mesh` and so on) are not served any more: before upgrading from a release older than the `notify.` prefix, run the prefix release until no run started under the old names is in flight (`dagnats run list`).
 
@@ -23,11 +23,11 @@ Every task type and workflow name notify registers starts with `notify.`: `notif
 | `NOTIFY_SEED` | `notify.seed` beside the database | notify's NKey seed, created on first start with mode 0600. |
 | `NOTIFY_JOIN_KEY` | empty | Presented at registration. Not needed on a dagnats with no NATS login, such as a loopback sidecar. |
 
-- **First start registers.** dagnats records notify's public key and manifest, notify proves it holds the seed's key, and dagnats creates its streams (`NOTIFY_ANALYTICS`, `NOTIFY_DELIVERY`, `NOTIFY_FEED`) and KV buckets (`notify_throttle`, `notify_digest`, `notify_digest_claims`, `notify_ingest_budget`) and returns the grant. Later starts with the same seed get the same grant back. notify needs dagnats v0.0.43 or later.
+- **First start registers.** dagnats records notify's public key and manifest, notify proves it holds the seed's key, and dagnats creates its streams (`NOTIFY_ANALYTICS`, `NOTIFY_DELIVERY`, `NOTIFY_FEED`) and KV buckets (`notify_throttle`, `notify_digest`, `notify_digest_claims`, `notify_ingest_budget`) and returns the grant. Later starts with the same seed get the same grant back. notify needs dagnats v0.0.44 or later.
 - **notify runs as its own NATS user.** It logs in with its seed and may touch only what its manifest declares: its own `notify.>` subjects, streams and buckets, the mesh subjects (`agents.prompt`, `agents.task.stream`, `a2a.reply`) and dagnats' program routes. It cannot create a stream or bucket itself, and dagnats denies anything else. If no dagnats program relay answers (no server running, or one older than v0.0.42), `notify serve` exits saying to upgrade or start the dagnats server.
 - **Keep the seed.** It is notify's identity on that dagnats: a new seed under the same name is refused (`name_taken`). Keep it on persistent storage next to `notify.db` and back it up with it.
 - **A refusal stops the start.** notify prints the refusal code (`manifest_changed`, `name_taken`, `join_key_invalid`, `budget_exceeded` and so on) and exits before opening anything.
-- **Upgrades re-register on their own.** A new notify release starts with the same seed and dagnats re-admits its changed manifest (dagnats v0.0.43 or later).
+- **Upgrades re-register on their own.** A new notify release starts with the same seed and dagnats re-admits its changed manifest (dagnats v0.0.44 or later).
 - **A lost connection exits.** The program connection reconnects forever; if it closes for good, notify exits non-zero so its supervisor restarts it. `/readyz` reports the connection, not whether the worker is still consuming.
 
 ## Defaults
@@ -60,7 +60,7 @@ These streams and a few KV buckets live in the sidecar's data directory, so **th
 
 ## Versions
 
-notify tracks the latest dagnats. The `Dockerfile` (`DAGNATS_VERSION`) and `go.mod` pin one release, currently `v0.0.43`, so builds are reproducible rather than following a moving branch. Run the same version in production and bump the pin when you upgrade. Keep the sidecar binary at a stable path.
+notify tracks the latest dagnats. The `Dockerfile` (`DAGNATS_VERSION`) and `go.mod` pin one release, currently `v0.0.44`, so builds are reproducible rather than following a moving branch. Run the same version in production and bump the pin when you upgrade. Keep the sidecar binary at a stable path.
 
 ## Running two environments on one machine
 

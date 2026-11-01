@@ -242,14 +242,9 @@ func TestProgram_EnforcedMeshTurn(t *testing.T) {
 
 // TestProgram_EnforcedBuildStream: the AI builder's console subscribes to the
 // builder step's live output, which a program's worker publishes under
-// stream.p.notify.<run>.build.
-//
-// dagnats v0.0.43 grants a program publish on stream.p.<name>.> but not
-// subscribe, and stream. is an engine root no manifest field can grant, so
-// the subscription is denied: the console's live builder events are lost
-// until dagnats#912 is fixed.
+// stream.p.notify.<run>.build. Since dagnats v0.0.44 a program may subscribe
+// to its own stream.p.<name>.> output (danmestas/dagnats#912).
 func TestProgram_EnforcedBuildStream(t *testing.T) {
-	t.Skip("dagnats v0.0.43 denies a program subscribe on its own stream.p.<name>.>: danmestas/dagnats#912")
 	p, v, _ := runEnforced(t)
 	bus, err := eventbus.FromConn(context.Background(), p.conn,
 		eventbus.WithHostResources(), eventbus.WithProgramOutput(Manifest().Name))
