@@ -147,7 +147,10 @@ func registerStepTaskHandlers(eng taskRegistrar, d stepTaskDeps) {
 // The old names are deliberately absent from Manifest.
 //
 // Remove in the release after N4: delete the second Handle call and
-// registerLegacyAgentLoop.
+// registerLegacyAgentLoop. Not before every run started under the old names
+// has finished: a scheduled delay or digest can keep a run sleeping for days,
+// and it resumes on its old task types. Check that no run in flight predates
+// this release (dagnats run list) before removing.
 func handle(eng taskRegistrar, taskType string, fn engine.HandlerFunc, opts ...engine.HandleOption) {
 	eng.Handle(taskType, fn, opts...)
 	eng.Handle(names.Legacy(taskType), fn, opts...)
