@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sync"
+	"sync/atomic"
 
 	"github.com/danmestas/dagnats/dag"
 
@@ -362,6 +364,9 @@ func (s *Service) Rollback(ctx context.Context, scope domain.Scope, triggerIdent
 	return s.recordVersion(ctx, scope, wf.ID, ver.Name, ver.TriggerIdentifier, steps, payloadSchema, critical, def)
 }
 
+// republishConcurrency bounds RepublishAll's in-flight registrations.
+const republishConcurrency = 8
+
 // RepublishAll re-registers every persisted workflow with the engine. It is
 // called once at boot: the dagnats engine holds its workflow registry in
 // memory and loses it on restart, so a workflow that was only registered at
@@ -386,6 +391,11 @@ func (s *Service) Rollback(ctx context.Context, scope domain.Scope, triggerIdent
 // register is logged and skipped rather than aborting boot. The count of
 // successfully re-registered workflows is returned for the caller to log. A
 // nil engine (store-only wiring) makes this a no-op returning 0.
+//
+// Registrations overlap, republishConcurrency at a time: on a multi-node
+// dagnats each one waits on replication round trips (about 1.6 s on the
+// mesh), so a serial boot of a few dozen workflows would outlast a deploy's
+// health window.
 func (s *Service) RepublishAll(ctx context.Context) (int, error) {
 	wfs, err := s.store.Workflows().ListAll(ctx)
 	if err != nil {
@@ -394,7 +404,11 @@ func (s *Service) RepublishAll(ctx context.Context) (int, error) {
 	if s.eng == nil {
 		return 0, nil
 	}
-	registered := 0
+	var (
+		wg         sync.WaitGroup
+		registered atomic.Int32
+		slots      = make(chan struct{}, republishConcurrency)
+	)
 	for _, wf := range wfs {
 		def, ok := s.bootDef(ctx, wf)
 		if !ok {
@@ -409,15 +423,21 @@ func (s *Service) RepublishAll(ctx context.Context) (int, error) {
 				"org_id", wf.OrgID, "env_id", wf.EnvID)
 			continue
 		}
-		if rErr := s.eng.RegisterWorkflow(ctx, def); rErr != nil {
-			slog.Default().Error("authoring: republish skip (register failed)",
-				"workflow_id", wf.ID, "trigger_identifier", wf.TriggerIdentifier,
-				"org_id", wf.OrgID, "env_id", wf.EnvID, "err", rErr)
-			continue
-		}
-		registered++
+		slots <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer func() { <-slots; wg.Done() }()
+			if rErr := s.eng.RegisterWorkflow(ctx, def); rErr != nil {
+				slog.Default().Error("authoring: republish skip (register failed)",
+					"workflow_id", wf.ID, "trigger_identifier", wf.TriggerIdentifier,
+					"org_id", wf.OrgID, "env_id", wf.EnvID, "err", rErr)
+				return
+			}
+			registered.Add(1)
+		}()
 	}
-	return registered, nil
+	wg.Wait()
+	return int(registered.Load()), nil
 }
 
 // upgradeDef gives a definition persisted before the notify. prefix (N4) the
