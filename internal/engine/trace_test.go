@@ -61,7 +61,7 @@ func TestRequestInjectsTraceparent(t *testing.T) {
 	// The reply may come from dagnats (an error envelope for an unknown
 	// workflow) or from our subscriber; either is fine — the header is what
 	// this test pins.
-	_, _ = e.StartRun(ctx, "no-such-workflow", nil)
+	_, _ = e.StartRun(ctx, "notify.no-such-workflow", nil)
 
 	select {
 	case h := <-got:

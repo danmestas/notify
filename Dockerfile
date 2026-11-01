@@ -28,7 +28,7 @@ FROM golang:1.27.3 AS dagnats-builder
 # Matches the dagnats module version in go.mod (the tests run that version
 # in-process). Do not build against a moving branch ref: it makes
 # Docker smoke non-reproducible and can fail transiently at module verification.
-ARG DAGNATS_VERSION=v0.0.41
+ARG DAGNATS_VERSION=v0.0.42
 WORKDIR /src
 RUN CGO_ENABLED=0 go install github.com/danmestas/dagnats/cmd/dagnats@${DAGNATS_VERSION}
 

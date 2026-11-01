@@ -43,7 +43,7 @@ These streams and a few KV buckets live in the sidecar's data directory, so **th
 
 ## Versions
 
-notify tracks the latest dagnats. The `Dockerfile` (`DAGNATS_VERSION`) and `go.mod` pin one release, currently `v0.0.41`, so builds are reproducible rather than following a moving branch. Run the same version in production and bump the pin when you upgrade. Keep the sidecar binary at a stable path.
+notify tracks the latest dagnats. The `Dockerfile` (`DAGNATS_VERSION`) and `go.mod` pin one release, currently `v0.0.42`, so builds are reproducible rather than following a moving branch. Run the same version in production and bump the pin when you upgrade. Keep the sidecar binary at a stable path.
 
 ## Running two environments on one machine
 

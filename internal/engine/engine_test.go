@@ -26,9 +26,9 @@ func TestEngine_RegisterWorkflow_BadDef_Errors(t *testing.T) {
 	defer e.Stop()
 
 	bad := engine.WorkflowDef{
-		Name: "bad-dep",
+		Name: "notify.bad-dep",
 		Steps: []engine.StepDef{
-			{ID: "a", Task: "noop", Type: dag.StepTypeNormal, DependsOn: []string{"nonexistent"}},
+			{ID: "a", Task: "notify.noop", Type: dag.StepTypeNormal, DependsOn: []string{"nonexistent"}},
 		},
 	}
 	if err := e.RegisterWorkflow(context.Background(), bad); err == nil {

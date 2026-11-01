@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -79,7 +80,7 @@ func TestParkedTaskOutlastsAckWaitWithoutHoldingItsLane(t *testing.T) {
 
 	h := &parkingHandler{wait: 6 * time.Second}
 	var quick atomic.Int32
-	e.Handle("park.wait", func(ctx context.Context, tp TaskPayload) (json.RawMessage, error) {
+	e.Handle("notify.park.wait", func(ctx context.Context, tp TaskPayload) (json.RawMessage, error) {
 		if string(tp.Input) == `{"quick":true}` {
 			quick.Add(1)
 			return json.RawMessage(`{}`), nil
@@ -89,17 +90,17 @@ func TestParkedTaskOutlastsAckWaitWithoutHoldingItsLane(t *testing.T) {
 	if err := e.StartWorkers(context.Background()); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}
-	registerOneStep(t, e, "wf-park", "park.wait")
+	registerOneStep(t, e, "notify.wf-park", "notify.park.wait")
 
 	ctx := context.Background()
-	parked, err := e.StartRun(ctx, "wf-park", nil)
+	parked, err := e.StartRun(ctx, "notify.wf-park", nil)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 	for h.parks.Load() == 0 {
 		time.Sleep(20 * time.Millisecond)
 	}
-	other, err := e.StartRun(ctx, "wf-park", json.RawMessage(`{"quick":true}`))
+	other, err := e.StartRun(ctx, "notify.wf-park", json.RawMessage(`{"quick":true}`))
 	if err != nil {
 		t.Fatalf("StartRun (quick): %v", err)
 	}
@@ -136,12 +137,12 @@ func TestParkedTaskResumesAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	first.Handle("park.restart", h.handle)
+	first.Handle("notify.park.restart", h.handle)
 	if err := first.StartWorkers(context.Background()); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}
-	registerOneStep(t, first, "wf-park-restart", "park.restart")
-	id, err := first.StartRun(context.Background(), "wf-park-restart", nil)
+	registerOneStep(t, first, "notify.wf-park-restart", "notify.park.restart")
+	id, err := first.StartRun(context.Background(), "notify.wf-park-restart", nil)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -157,7 +158,7 @@ func TestParkedTaskResumesAfterRestart(t *testing.T) {
 		t.Fatalf("New (second): %v", err)
 	}
 	t.Cleanup(func() { _ = second.Stop() })
-	second.Handle("park.restart", h.handle)
+	second.Handle("notify.park.restart", h.handle)
 	if err := second.StartWorkers(context.Background()); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}
@@ -198,8 +199,8 @@ func runLongTask(t *testing.T, e *Engine, task string, run time.Duration, opts .
 	if err := e.StartWorkers(context.Background()); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}
-	registerOneStep(t, e, "wf-"+task, task)
-	id, err := e.StartRun(context.Background(), "wf-"+task, nil)
+	registerOneStep(t, e, "notify.wf-"+strings.TrimPrefix(task, "notify."), task)
+	id, err := e.StartRun(context.Background(), "notify.wf-"+strings.TrimPrefix(task, "notify."), nil)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -219,7 +220,7 @@ func TestTaskOutlastingAckWaitRunsOnce(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(func() { _ = e.Stop() })
-	runs, peak := runLongTask(t, e, "long.run", 7*time.Second)
+	runs, peak := runLongTask(t, e, "notify.long.run", 7*time.Second)
 	if runs != 1 || peak != 1 {
 		t.Fatalf("handler ran %d times, %d at once; want once: the claim lapsed past AckWait", runs, peak)
 	}
@@ -234,7 +235,7 @@ func TestMaxRunTimeReachesTheWorker(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(func() { _ = e.Stop() })
-	runs, _ := runLongTask(t, e, "capped.run", 9*time.Second, WithMaxRunTime(3*time.Second))
+	runs, _ := runLongTask(t, e, "notify.capped.run", 9*time.Second, WithMaxRunTime(3*time.Second))
 	if runs < 2 {
 		t.Fatalf("handler ran %d times, want a redelivery once it outran its 3s max run time", runs)
 	}
@@ -250,7 +251,7 @@ func TestReady_ReportsStoppedWorker(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(func() { _ = e.Stop() })
-	e.Handle("noop", func(context.Context, TaskPayload) (json.RawMessage, error) { return nil, nil })
+	e.Handle("notify.noop", func(context.Context, TaskPayload) (json.RawMessage, error) { return nil, nil })
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := e.StartWorkers(ctx); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
