@@ -32,7 +32,7 @@ func TestRequestInjectsTraceparent(t *testing.T) {
 	defer nc.Close()
 
 	got := make(chan nats.Header, 1)
-	sub, err := nc.Subscribe("api.runs.start", func(msg *nats.Msg) {
+	sub, err := nc.Subscribe("api.p.notify.runs.start", func(msg *nats.Msg) {
 		select {
 		case got <- msg.Header:
 		default:
@@ -74,12 +74,12 @@ func TestRequestInjectsTraceparent(t *testing.T) {
 		// TestInjectNATSHeader_UsesLowercaseW3CKey.
 		tpHdr := h.Get("traceparent")
 		if tpHdr == "" {
-			t.Fatalf("api.runs.start carried no lowercase traceparent; header=%v", h)
+			t.Fatalf("api.p.notify.runs.start carried no lowercase traceparent; header=%v", h)
 		}
 		if !traceparentRe.MatchString(tpHdr) {
 			t.Fatalf("traceparent %q does not match W3C format", tpHdr)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("timed out waiting for api.runs.start")
+		t.Fatal("timed out waiting for api.p.notify.runs.start")
 	}
 }
