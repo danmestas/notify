@@ -28,7 +28,7 @@ Every task type and workflow name notify registers starts with `notify.`: `notif
 - **Keep the seed.** It is notify's identity on that dagnats: a new seed under the same name is refused (`name_taken`). Keep it on persistent storage next to `notify.db` and back it up with it.
 - **A refusal stops the start.** notify prints the refusal code (`manifest_changed`, `name_taken`, `join_key_invalid`, `budget_exceeded` and so on) and exits before opening anything.
 - **Upgrades re-register on their own.** A new notify release starts with the same seed and dagnats re-admits its changed manifest (dagnats v0.0.44 or later).
-- **A lost connection exits.** The program connection reconnects forever; if it closes for good, notify exits non-zero so its supervisor restarts it. `/readyz` reports the connection, not whether the worker is still consuming.
+- **A lost connection exits.** The program connection reconnects forever, including while a restarting dagnats node refuses notify's key because it hasn't loaded its program users yet. Only refusals that last past two minutes close it, and the first connection waits the same window. If the connection closes for good, notify exits non-zero so its supervisor restarts it. `/readyz` reports the connection, not whether the worker is still consuming.
 
 ## Moving to another dagnats
 
@@ -70,7 +70,7 @@ These streams and a few KV buckets live in the sidecar's data directory, so **th
 
 ## Versions
 
-notify tracks the latest dagnats. The `Dockerfile` (`DAGNATS_VERSION`) and `go.mod` pin one release, currently `v0.0.46`, so builds are reproducible rather than following a moving branch. Run the same version in production and bump the pin when you upgrade. Keep the sidecar binary at a stable path.
+notify tracks the latest dagnats. The `Dockerfile` (`DAGNATS_VERSION`) and `go.mod` pin one release, currently `v0.0.47`, so builds are reproducible rather than following a moving branch. Run the same version in production and bump the pin when you upgrade. Keep the sidecar binary at a stable path.
 
 ## Running two environments on one machine
 
