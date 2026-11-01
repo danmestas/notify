@@ -13,12 +13,17 @@ import (
 	"github.com/danmestas/notify/internal/observe"
 )
 
-// Control-plane subjects served by dagnats' NATS API (internal/api/natsapi.go).
-// Every reply is JSON; a failure is an {"error": "..."} envelope.
+// Control-plane subjects: dagnats' routes scoped to the notify program
+// (api.p.<program>.*). The server checks that every workflow name, step task
+// type and event type is under notify., and answers a run of another
+// program's workflow like an unknown run. Bodies and replies match the global
+// api.workflows.register / api.runs.* routes, which a program's restricted
+// NATS user may not publish. Every reply is JSON; a failure is an
+// {"error": "..."} envelope.
 const (
-	subjRegister = "api.workflows.register"
-	subjStartRun = "api.runs.start"
-	subjGetRun   = "api.runs.get"
+	subjRegister = "api.p.notify.workflows.register"
+	subjStartRun = "api.p.notify.runs.start"
+	subjGetRun   = "api.p.notify.runs.get"
 )
 
 // RegisterWorkflow registers def with the engine. Returns an error if the

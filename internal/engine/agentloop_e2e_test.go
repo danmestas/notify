@@ -34,7 +34,7 @@ func TestEngine_AgentLoop_CheckpointRoundTrip(t *testing.T) {
 		iters       []int
 		completeOut json.RawMessage
 	)
-	e.HandleAgentLoop("agent.count", func(_ context.Context, lc *engine.AgentLoopContext) error {
+	e.HandleAgentLoop("notify.agent.count", func(_ context.Context, lc *engine.AgentLoopContext) error {
 		n := 0
 		if cp := lc.Checkpoint(); cp != nil {
 			var c struct {
@@ -66,16 +66,16 @@ func TestEngine_AgentLoop_CheckpointRoundTrip(t *testing.T) {
 	}
 
 	def := engine.WorkflowDef{
-		Name: "agent-loop-counter",
+		Name: "notify.agent-loop-counter",
 		Steps: []engine.StepDef{
-			engine.AgentLoopStep("count", "agent.count", engine.AgentLoopConfig{MaxIterations: 10}, 0),
+			engine.AgentLoopStep("count", "notify.agent.count", engine.AgentLoopConfig{MaxIterations: 10}, 0),
 		},
 	}
 	if err := e.RegisterWorkflow(ctx, def); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
 
-	id, err := e.StartRun(ctx, "agent-loop-counter", nil)
+	id, err := e.StartRun(ctx, "notify.agent-loop-counter", nil)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestEngine_AgentLoop_MaxIterationsEnforced(t *testing.T) {
 		mu    sync.Mutex
 		calls int
 	)
-	e.HandleAgentLoop("agent.forever", func(_ context.Context, lc *engine.AgentLoopContext) error {
+	e.HandleAgentLoop("notify.agent.forever", func(_ context.Context, lc *engine.AgentLoopContext) error {
 		mu.Lock()
 		calls++
 		mu.Unlock()
@@ -131,16 +131,16 @@ func TestEngine_AgentLoop_MaxIterationsEnforced(t *testing.T) {
 	}
 
 	def := engine.WorkflowDef{
-		Name: "agent-loop-forever",
+		Name: "notify.agent-loop-forever",
 		Steps: []engine.StepDef{
-			engine.AgentLoopStep("loop", "agent.forever", engine.AgentLoopConfig{MaxIterations: 3}, 0),
+			engine.AgentLoopStep("loop", "notify.agent.forever", engine.AgentLoopConfig{MaxIterations: 3}, 0),
 		},
 	}
 	if err := e.RegisterWorkflow(ctx, def); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
 
-	id, err := e.StartRun(ctx, "agent-loop-forever", nil)
+	id, err := e.StartRun(ctx, "notify.agent-loop-forever", nil)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestEngine_AgentLoop_Stream(t *testing.T) {
 	}
 
 	const want = "tick-tock"
-	e.HandleAgentLoop("agent.stream", func(_ context.Context, lc *engine.AgentLoopContext) error {
+	e.HandleAgentLoop("notify.agent.stream", func(_ context.Context, lc *engine.AgentLoopContext) error {
 		if sErr := lc.Stream([]byte(want)); sErr != nil {
 			return sErr
 		}
@@ -202,16 +202,16 @@ func TestEngine_AgentLoop_Stream(t *testing.T) {
 	}
 
 	def := engine.WorkflowDef{
-		Name: "agent-loop-stream",
+		Name: "notify.agent-loop-stream",
 		Steps: []engine.StepDef{
-			engine.AgentLoopStep("emit", "agent.stream", engine.AgentLoopConfig{MaxIterations: 5}, 0),
+			engine.AgentLoopStep("emit", "notify.agent.stream", engine.AgentLoopConfig{MaxIterations: 5}, 0),
 		},
 	}
 	if err := e.RegisterWorkflow(ctx, def); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
 
-	id, err := e.StartRun(ctx, "agent-loop-stream", nil)
+	id, err := e.StartRun(ctx, "notify.agent-loop-stream", nil)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}

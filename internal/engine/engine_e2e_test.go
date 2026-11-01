@@ -25,7 +25,7 @@ func TestEngine_StartRun_OneStepCompletes(t *testing.T) {
 	}
 	defer e.Stop()
 
-	e.Handle("noop", func(ctx context.Context, task engine.TaskPayload) (json.RawMessage, error) {
+	e.Handle("notify.noop", func(ctx context.Context, task engine.TaskPayload) (json.RawMessage, error) {
 		return json.RawMessage(`{"ok":true}`), nil
 	})
 
@@ -36,16 +36,16 @@ func TestEngine_StartRun_OneStepCompletes(t *testing.T) {
 	}
 
 	def := engine.WorkflowDef{
-		Name: "foundation-smoke",
+		Name: "notify.foundation-smoke",
 		Steps: []engine.StepDef{
-			{ID: "noop", Task: "noop", Type: dag.StepTypeNormal},
+			{ID: "noop", Task: "notify.noop", Type: dag.StepTypeNormal},
 		},
 	}
 	if err := e.RegisterWorkflow(ctx, def); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
 
-	id, err := e.StartRun(ctx, "foundation-smoke", nil)
+	id, err := e.StartRun(ctx, "notify.foundation-smoke", nil)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}

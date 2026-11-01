@@ -47,12 +47,12 @@ func TestTaskSpanContinuesTheTriggersTrace(t *testing.T) {
 
 	ctx, root := tp.Tracer("test").Start(context.Background(), "trigger")
 	if err := e.RegisterWorkflow(ctx, engine.WorkflowDef{
-		Name:  "wf-traced",
+		Name:  "notify.wf-traced",
 		Steps: []engine.StepDef{{ID: "only", Task: "notify.send.in_app", Type: dag.StepTypeNormal}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
-	if _, err := e.StartRun(ctx, "wf-traced", nil); err != nil {
+	if _, err := e.StartRun(ctx, "notify.wf-traced", nil); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 	root.End()

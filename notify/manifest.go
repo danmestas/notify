@@ -8,7 +8,7 @@ import (
 )
 
 // dagnatsRange is the dagnats release range notify is built and tested against.
-const dagnatsRange = ">=0.0.40 <0.1.0"
+const dagnatsRange = ">=0.0.42 <0.1.0"
 
 // Manifest is what dagnats needs to admit notify as a program. Its task types
 // and workflows come from internal/names, the same constants the wiring

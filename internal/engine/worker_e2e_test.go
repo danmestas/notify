@@ -60,7 +60,7 @@ func runOneStep(t *testing.T, e *engine.Engine, name, task string, retry *engine
 func TestWorker_DispatchesTaskPayload(t *testing.T) {
 	e, _ := startEngine(t)
 	got := make(chan engine.TaskPayload, 1)
-	e.Handle("echo", func(_ context.Context, tp engine.TaskPayload) (json.RawMessage, error) {
+	e.Handle("notify.echo", func(_ context.Context, tp engine.TaskPayload) (json.RawMessage, error) {
 		got <- tp
 		return json.RawMessage(`{"ok":true}`), nil
 	})
@@ -68,7 +68,7 @@ func TestWorker_DispatchesTaskPayload(t *testing.T) {
 		t.Fatalf("StartWorkers: %v", err)
 	}
 
-	id := runOneStep(t, e, "wf-echo", "echo", nil, `{"hello":"world"}`)
+	id := runOneStep(t, e, "notify.wf-echo", "notify.echo", nil, `{"hello":"world"}`)
 	snap := waitTerminal(t, e, id, 15*time.Second)
 	if !snap.Succeeded() {
 		t.Fatalf("run status = %q, want completed", snap.Status)
@@ -97,7 +97,7 @@ func TestWorker_SameTypeRunsInParallel(t *testing.T) {
 		all     = make(chan struct{})
 		once    sync.Once
 	)
-	e.Handle("slow", func(ctx context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
+	e.Handle("notify.slow", func(ctx context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
 		if arrived.Add(1) == n {
 			once.Do(func() { close(all) })
 		}
@@ -116,14 +116,14 @@ func TestWorker_SameTypeRunsInParallel(t *testing.T) {
 
 	ctx := context.Background()
 	if err := e.RegisterWorkflow(ctx, engine.WorkflowDef{
-		Name:  "wf-slow",
-		Steps: []engine.StepDef{{ID: "only", Task: "slow", Type: dag.StepTypeNormal}},
+		Name:  "notify.wf-slow",
+		Steps: []engine.StepDef{{ID: "only", Task: "notify.slow", Type: dag.StepTypeNormal}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
 	ids := make([]string, n)
 	for i := range ids {
-		id, err := e.StartRun(ctx, "wf-slow", nil)
+		id, err := e.StartRun(ctx, "notify.wf-slow", nil)
 		if err != nil {
 			t.Fatalf("StartRun %d: %v", i, err)
 		}
@@ -149,7 +149,7 @@ func TestWorker_RetryableErrorRetries(t *testing.T) {
 		mu       sync.Mutex
 		attempts []int
 	)
-	e.Handle("flaky", func(_ context.Context, tp engine.TaskPayload) (json.RawMessage, error) {
+	e.Handle("notify.flaky", func(_ context.Context, tp engine.TaskPayload) (json.RawMessage, error) {
 		mu.Lock()
 		attempts = append(attempts, tp.Attempt)
 		first := len(attempts) == 1
@@ -164,7 +164,7 @@ func TestWorker_RetryableErrorRetries(t *testing.T) {
 	}
 
 	retry := &engine.RetryPolicy{MaxAttempts: 3, Strategy: dag.RetryFixed, InitialDelay: 50 * time.Millisecond, MaxDelay: 50 * time.Millisecond}
-	id := runOneStep(t, e, "wf-flaky", "flaky", retry, "")
+	id := runOneStep(t, e, "notify.wf-flaky", "notify.flaky", retry, "")
 	if snap := waitTerminal(t, e, id, 20*time.Second); !snap.Succeeded() {
 		t.Fatalf("run status = %q, want completed after a retry", snap.Status)
 	}
@@ -181,7 +181,7 @@ func TestWorker_RetryableErrorRetries(t *testing.T) {
 func TestWorker_PlainErrorDeadLetters(t *testing.T) {
 	e, natsURL := startEngine(t)
 	var calls atomic.Int32
-	e.Handle("broken", func(_ context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
+	e.Handle("notify.broken", func(_ context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
 		calls.Add(1)
 		return nil, errors.New("permanent")
 	})
@@ -190,7 +190,7 @@ func TestWorker_PlainErrorDeadLetters(t *testing.T) {
 	}
 
 	retry := &engine.RetryPolicy{MaxAttempts: 3, Strategy: dag.RetryFixed, InitialDelay: 50 * time.Millisecond, MaxDelay: 50 * time.Millisecond}
-	id := runOneStep(t, e, "wf-broken", "broken", retry, "")
+	id := runOneStep(t, e, "notify.wf-broken", "notify.broken", retry, "")
 	if snap := waitTerminal(t, e, id, 15*time.Second); snap.Status != "failed" {
 		t.Fatalf("run status = %q, want failed", snap.Status)
 	}
@@ -205,7 +205,7 @@ func TestWorker_PlainErrorDeadLetters(t *testing.T) {
 func TestWorker_RetriesExhaustedDeadLetter(t *testing.T) {
 	e, natsURL := startEngine(t)
 	var calls atomic.Int32
-	e.Handle("always-flaky", func(_ context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
+	e.Handle("notify.always-flaky", func(_ context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
 		calls.Add(1)
 		return nil, engine.NewRetryableError(errors.New("still down"))
 	})
@@ -214,7 +214,7 @@ func TestWorker_RetriesExhaustedDeadLetter(t *testing.T) {
 	}
 
 	retry := &engine.RetryPolicy{MaxAttempts: 2, Strategy: dag.RetryFixed, InitialDelay: 50 * time.Millisecond, MaxDelay: 50 * time.Millisecond}
-	id := runOneStep(t, e, "wf-always-flaky", "always-flaky", retry, "")
+	id := runOneStep(t, e, "notify.wf-always-flaky", "notify.always-flaky", retry, "")
 	if snap := waitTerminal(t, e, id, 20*time.Second); snap.Status != "failed" {
 		t.Fatalf("run status = %q, want failed", snap.Status)
 	}
@@ -230,13 +230,13 @@ func TestWorker_RetriesExhaustedDeadLetter(t *testing.T) {
 func TestWorker_PanicFailsOnlyItsStep(t *testing.T) {
 	e, _ := startEngine(t)
 	var siblingRan atomic.Bool
-	e.Handle("boom", func(_ context.Context, tp engine.TaskPayload) (json.RawMessage, error) {
+	e.Handle("notify.boom", func(_ context.Context, tp engine.TaskPayload) (json.RawMessage, error) {
 		if string(tp.Input) != "" && bytes.Contains(tp.Input, []byte(`"calm"`)) {
 			return json.RawMessage(`{}`), nil
 		}
 		panic("handler blew up")
 	})
-	e.Handle("sibling", func(_ context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
+	e.Handle("notify.sibling", func(_ context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
 		siblingRan.Store(true)
 		return json.RawMessage(`{}`), nil
 	})
@@ -246,15 +246,15 @@ func TestWorker_PanicFailsOnlyItsStep(t *testing.T) {
 
 	ctx := context.Background()
 	if err := e.RegisterWorkflow(ctx, engine.WorkflowDef{
-		Name: "wf-boom",
+		Name: "notify.wf-boom",
 		Steps: []engine.StepDef{
-			{ID: "boom", Task: "boom", Type: dag.StepTypeNormal},
-			{ID: "sibling", Task: "sibling", Type: dag.StepTypeNormal},
+			{ID: "boom", Task: "notify.boom", Type: dag.StepTypeNormal},
+			{ID: "sibling", Task: "notify.sibling", Type: dag.StepTypeNormal},
 		},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
-	id, err := e.StartRun(ctx, "wf-boom", nil)
+	id, err := e.StartRun(ctx, "notify.wf-boom", nil)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestWorker_PanicFailsOnlyItsStep(t *testing.T) {
 		t.Fatal("the sibling step never ran; the panic took more than its own step")
 	}
 
-	id2 := runOneStep(t, e, "wf-boom-calm", "boom", nil, `{"mood":"calm"}`)
+	id2 := runOneStep(t, e, "notify.wf-boom-calm", "notify.boom", nil, `{"mood":"calm"}`)
 	if snap := waitTerminal(t, e, id2, 15*time.Second); !snap.Succeeded() {
 		t.Fatalf("follow-up run status = %q; the panic left task type boom unserved", snap.Status)
 	}
@@ -281,7 +281,7 @@ func TestWorker_StopDrainsInFlight(t *testing.T) {
 	}
 	started := make(chan struct{})
 	var finished atomic.Bool
-	e.Handle("steady", func(_ context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
+	e.Handle("notify.steady", func(_ context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
 		close(started)
 		time.Sleep(500 * time.Millisecond)
 		finished.Store(true)
@@ -290,7 +290,7 @@ func TestWorker_StopDrainsInFlight(t *testing.T) {
 	if err := e.StartWorkers(context.Background()); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}
-	id := runOneStep(t, e, "wf-steady", "steady", nil, "")
+	id := runOneStep(t, e, "notify.wf-steady", "notify.steady", nil, "")
 
 	select {
 	case <-started:
@@ -330,7 +330,7 @@ func TestWorker_StopCancelsWaitingHandlers(t *testing.T) {
 		t.Fatalf("engine.New: %v", err)
 	}
 	started := make(chan struct{})
-	e.Handle("waiter", func(ctx context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
+	e.Handle("notify.waiter", func(ctx context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
 		close(started)
 		<-ctx.Done()
 		return nil, engine.NewRetryableError(ctx.Err())
@@ -338,7 +338,7 @@ func TestWorker_StopCancelsWaitingHandlers(t *testing.T) {
 	if err := e.StartWorkers(context.Background()); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}
-	runOneStep(t, e, "wf-waiter", "waiter", nil, "")
+	runOneStep(t, e, "notify.wf-waiter", "notify.waiter", nil, "")
 	select {
 	case <-started:
 	case <-time.After(15 * time.Second):
@@ -362,7 +362,7 @@ func TestAgentLoop_LargeState(t *testing.T) {
 		mu   sync.Mutex
 		seen [][]byte
 	)
-	e.HandleAgentLoop("agent.big", func(_ context.Context, lc *engine.AgentLoopContext) error {
+	e.HandleAgentLoop("notify.agent.big", func(_ context.Context, lc *engine.AgentLoopContext) error {
 		cp := lc.Checkpoint()
 		mu.Lock()
 		seen = append(seen, cp)
@@ -378,12 +378,12 @@ func TestAgentLoop_LargeState(t *testing.T) {
 
 	ctx := context.Background()
 	if err := e.RegisterWorkflow(ctx, engine.WorkflowDef{
-		Name:  "wf-big-state",
-		Steps: []engine.StepDef{engine.AgentLoopStep("big", "agent.big", engine.AgentLoopConfig{MaxIterations: 5}, 0)},
+		Name:  "notify.wf-big-state",
+		Steps: []engine.StepDef{engine.AgentLoopStep("big", "notify.agent.big", engine.AgentLoopConfig{MaxIterations: 5}, 0)},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
-	id, err := e.StartRun(ctx, "wf-big-state", nil)
+	id, err := e.StartRun(ctx, "notify.wf-big-state", nil)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestAgentLoop_LargeState(t *testing.T) {
 // step instead of leaving the run in flight.
 func TestAgentLoop_PanicFailsStep(t *testing.T) {
 	e, _ := startEngine(t)
-	e.HandleAgentLoop("agent.boom", func(_ context.Context, _ *engine.AgentLoopContext) error {
+	e.HandleAgentLoop("notify.agent.boom", func(_ context.Context, _ *engine.AgentLoopContext) error {
 		panic("loop blew up")
 	})
 	if err := e.StartWorkers(context.Background()); err != nil {
@@ -410,12 +410,12 @@ func TestAgentLoop_PanicFailsStep(t *testing.T) {
 
 	ctx := context.Background()
 	if err := e.RegisterWorkflow(ctx, engine.WorkflowDef{
-		Name:  "wf-loop-boom",
-		Steps: []engine.StepDef{engine.AgentLoopStep("boom", "agent.boom", engine.AgentLoopConfig{MaxIterations: 3}, 0)},
+		Name:  "notify.wf-loop-boom",
+		Steps: []engine.StepDef{engine.AgentLoopStep("boom", "notify.agent.boom", engine.AgentLoopConfig{MaxIterations: 3}, 0)},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
-	id, err := e.StartRun(ctx, "wf-loop-boom", nil)
+	id, err := e.StartRun(ctx, "notify.wf-loop-boom", nil)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
