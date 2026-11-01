@@ -151,6 +151,9 @@ type Engine struct {
 	maxRunTime map[string]time.Duration
 
 	w *worker.Worker
+	// register, when set, takes every handler instead of w: the host runs
+	// the worker (program.Host.Handle) and owns its drain.
+	register Registrar
 	// life ends every in-flight handler's context on Stop, so a handler that
 	// waits (digest.wait, a delay) returns and requeues instead of holding
 	// shutdown for the worker's drain timeout.
@@ -181,6 +184,22 @@ func withAckWait(d time.Duration) Option {
 // to fill.
 func withConcurrency(n int) Option {
 	return func(e *Engine) { e.concurrency = n }
+}
+
+// Registrar registers a task handler on a worker the host runs. It is
+// program.Host.Handle's shape.
+type Registrar func(taskType string, fn worker.HandlerFunc, opts ...worker.HandlerOption)
+
+// WithRegistrar makes StartWorkers register every handler through register
+// instead of starting a worker of the engine's own. The host then claims the
+// tasks, recovers panics and drains on its stop; the engine still classifies
+// errors, parks waits and ends handler contexts when Start's ctx is cancelled
+// or Stop is called.
+func WithRegistrar(register Registrar) Option {
+	if register == nil {
+		panic("engine: WithRegistrar: register must not be nil")
+	}
+	return func(e *Engine) { e.register = register }
 }
 
 // New dials dagnats' NATS endpoint. The engine owns that connection and Stop
@@ -287,16 +306,16 @@ func (e *Engine) StartWorkers(ctx context.Context) error {
 	}
 	e.started = true
 	e.life, e.endLife = context.WithCancel(context.WithoutCancel(ctx))
+	if e.register != nil {
+		e.registerAll(e.register)
+		context.AfterFunc(ctx, e.endLife)
+		return nil
+	}
 	if len(e.handlers)+len(e.agentHandlers) == 0 {
 		return nil
 	}
 	w := worker.NewWorker(e.nc)
-	for taskType, fn := range e.handlers {
-		w.Handle(taskType, e.taskHandler(taskType, fn), e.workerOptions(taskType)...)
-	}
-	for taskType, fn := range e.agentHandlers {
-		w.Handle(taskType, e.loopHandler(taskType, fn), e.workerOptions(taskType)...)
-	}
+	e.registerAll(w.Handle)
 	if err := w.Start(); err != nil {
 		e.endLife()
 		return fmt.Errorf("engine: start task worker: %w", err)
@@ -304,6 +323,17 @@ func (e *Engine) StartWorkers(ctx context.Context) error {
 	e.w = w
 	context.AfterFunc(ctx, e.stopWorker)
 	return nil
+}
+
+// registerAll hands every registered handler, adapted to the worker SDK, to
+// register.
+func (e *Engine) registerAll(register Registrar) {
+	for taskType, fn := range e.handlers {
+		register(taskType, e.taskHandler(taskType, fn), e.workerOptions(taskType)...)
+	}
+	for taskType, fn := range e.agentHandlers {
+		register(taskType, e.loopHandler(taskType, fn), e.workerOptions(taskType)...)
+	}
 }
 
 // Ready reports whether the engine can reach dagnats and, once started, is

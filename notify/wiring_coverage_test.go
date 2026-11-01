@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/danmestas/notify/internal/engine"
-	"github.com/danmestas/notify/internal/names"
 	"github.com/danmestas/notify/internal/steptype"
 )
 
@@ -69,8 +68,6 @@ func TestWiring_RegistersNoUnknownTaskType(t *testing.T) {
 	known := map[string]bool{}
 	for _, name := range steptype.Default().TaskTypes() {
 		known[name] = true
-		// Remove in the release after N4: the old spelling is registered too.
-		known[names.Legacy(name)] = true
 	}
 
 	var orphaned []string

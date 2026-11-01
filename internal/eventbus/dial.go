@@ -31,12 +31,26 @@ import (
 // folded into the dial error only, since DialNATS itself is shared across
 // callers whose NATS endpoints can differ.
 func DialNATS(natsURL, name, purpose string) (*nats.Conn, error) {
-	nc, err := nats.Connect(
-		natsURL,
+	options := append([]nats.Option{
 		nats.Name(name),
 		nats.MaxReconnects(-1),
-		nats.ReconnectWait(2*time.Second),
+		nats.ReconnectWait(2 * time.Second),
 		nats.ReconnectJitter(500*time.Millisecond, 2*time.Second),
+	}, ConnHandlers(name)...)
+	nc, err := nats.Connect(natsURL, options...)
+	if err != nil {
+		return nil, fmt.Errorf("eventbus: dial %s %q (%s): %w", purpose, natsURL, name, err)
+	}
+	TrackStatus(name, nc)
+	return nc, nil
+}
+
+// ConnHandlers are notify's Disconnect, Reconnect and Closed handlers for the
+// connection called name: they count disconnects and reconnects on /metrics
+// and log each transition. DialNATS applies them; a host that dials for notify
+// (program.Run) takes them through its own options.
+func ConnHandlers(name string) []nats.Option {
+	return []nats.Option{
 		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
 			metrics.NATSDisconnect()
 			slog.Default().Warn("eventbus: NATS disconnected",
@@ -59,14 +73,13 @@ func DialNATS(natsURL, name, purpose string) (*nats.Conn, error) {
 			}
 			slog.Default().Info("eventbus: NATS connection closed", "conn", name)
 		}),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("eventbus: dial %s %q (%s): %w", purpose, natsURL, name, err)
 	}
-	// Publish a live status gauge for this connection so /metrics reflects the
-	// current link state (the zombie-mode symptom this dialer guards against)
-	// rather than a value cached at dial time. Keyed by name, so a re-dial under
-	// the same owner replaces the entry instead of leaking one.
+}
+
+// TrackStatus publishes a live status gauge for nc on /metrics, so it reflects
+// the current link state (the zombie-mode symptom DialNATS guards against)
+// rather than a value cached at dial time. Keyed by name, so a re-dial under
+// the same owner replaces the entry instead of leaking one.
+func TrackStatus(name string, nc *nats.Conn) {
 	metrics.SetNATSStatus(name, func() string { return nc.Status().String() })
-	return nc, nil
 }

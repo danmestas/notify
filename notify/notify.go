@@ -132,11 +132,21 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	n.st = st
 	n.push(st.Close)
 
-	eng := engine.FromConn(h.NC, engine.WithLogger(log))
+	engineOpts := []engine.Option{engine.WithLogger(log)}
+	var busOpts []eventbus.Option
+	if h.handle != nil {
+		engineOpts = append(engineOpts, engine.WithRegistrar(h.handle))
+		busOpts = append(busOpts, eventbus.WithHostStreams())
+	}
+	eng := engine.FromConn(h.NC, engineOpts...)
 	n.eng = eng
 	n.push(eng.Stop)
+	var reg taskRegistrar = eng
+	if h.handle == nil {
+		reg = withLegacy{eng}
+	}
 
-	bus, err := eventbus.FromConn(ctx, h.NC)
+	bus, err := eventbus.FromConn(ctx, h.NC, busOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("eventbus: %w", err)
 	}
@@ -151,7 +161,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// in this worker pool (registered before StartWorkers); the workflow is
 	// declared with the engine in Start.
 	n.credVerify = credverify.New(eng, conn)
-	handle(eng, credverify.TaskVerify, n.credVerify.Handler)
+	reg.Handle(credverify.TaskVerify, n.credVerify.Handler)
 
 	meshClient := mesh.FromConn(meshConn, mesh.WithAllowedSubjects(cfg.MeshAllow))
 	n.push(func() error { meshClient.Close(); return nil })
@@ -183,7 +193,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// mechanically against steptype.Registry.TaskTypes() -- see the coverage
 	// test. Registered after the email loop exists, because send.email takes
 	// it as its reply armer.
-	registerStepTaskHandlers(eng, stepTaskDeps{
+	registerStepTaskHandlers(reg, stepTaskDeps{
 		store: st, conn: conn, prefs: prefs, bus: bus, secrets: secrets, replyArmer: eml,
 		composer: ing, drafts: ags.Drafts(),
 	})
@@ -229,10 +239,10 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// conversation is not its binding, and a panic in one is recovered so it
 	// never fails the turn or blocks the other.
 	ing = ing.WithReplyHook(replyhook.Combine(log, eml.ReplyHook, chat.ReplyHook))
-	handle(eng, ingress.TaskMesh, ing.HandleTurn)
+	reg.Handle(ingress.TaskMesh, ing.HandleTurn)
 	// A managed turn with tools runs up to managed.MaxTurnDuration; past that
 	// plus a margin it is hung, and dagnats stops keeping its claim alive.
-	handle(eng, ingress.TaskManaged, ing.HandleTurn, engine.WithMaxRunTime(managed.MaxTurnDuration+runTimeMargin))
+	reg.Handle(ingress.TaskManaged, ing.HandleTurn, engine.WithMaxRunTime(managed.MaxTurnDuration+runTimeMargin))
 
 	// B3: durable AI workflow-builder loop, hosted as a dagnats agent-loop
 	// handler alongside the synchronous console path (console.Builder.Run).
@@ -242,7 +252,9 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	if cfg.AI != nil {
 		n.aiLoop = aibuilder.NewAgentLoopBuilder(eng, cfg.AI, st.Integrations(), st.BuilderSessions())
 		n.aiLoop.Register()
-		registerLegacyAgentLoop(n.aiLoop)
+		if h.handle == nil {
+			registerLegacyAgentLoop(n.aiLoop)
+		}
 	}
 
 	n.webhooks = webhooksout.New(bus, st).WithSecrets(secrets)

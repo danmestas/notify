@@ -1,6 +1,10 @@
 package eventbus
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/nats-io/nats.go"
+)
 
 // TestDialNATSOptions pins the resilience policy DialNATS must apply to every
 // notify NATS connection: infinite reconnects, jittered backoff, and all three
@@ -33,5 +37,20 @@ func TestDialNATSOptions(t *testing.T) {
 	}
 	if got := nc.Opts.Name; got != "notify-test" {
 		t.Errorf("Name = %q, want %q", got, "notify-test")
+	}
+}
+
+// TestConnHandlers_SetsAllThree pins the handlers a connection notify does not
+// dial itself (program.Run's) receives through Options.NATSOptions.
+func TestConnHandlers_SetsAllThree(t *testing.T) {
+	opts := nats.GetDefaultOptions()
+	for _, o := range ConnHandlers("notify-test") {
+		if err := o(&opts); err != nil {
+			t.Fatalf("option: %v", err)
+		}
+	}
+	if opts.DisconnectedErrCB == nil || opts.ReconnectedCB == nil || opts.ClosedCB == nil {
+		t.Fatalf("handlers set: disconnect=%t reconnect=%t closed=%t, want all three",
+			opts.DisconnectedErrCB != nil, opts.ReconnectedCB != nil, opts.ClosedCB != nil)
 	}
 }

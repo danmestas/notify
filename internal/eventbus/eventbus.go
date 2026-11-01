@@ -108,6 +108,7 @@ type Option func(*busConfig)
 // busConfig holds Connect-time tunables resolved from Options.
 type busConfig struct {
 	digestClaimTTL time.Duration
+	hostStreams    bool
 }
 
 // WithDigestClaimTTL overrides the digest-claim bucket TTL. Tests use a short
@@ -194,23 +195,7 @@ func FromConn(ctx context.Context, nc *nats.Conn, opts ...Option) (*Bus, error) 
 		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", budgetBucket, err)
 	}
 
-	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name:     analyticsStream,
-		Subjects: []string{analyticsSubject},
-	}); err != nil {
-		return nil, fmt.Errorf("eventbus: ensure stream %q: %w", analyticsStream, err)
-	}
-
-	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name:     deliveryStream,
-		Subjects: []string{deliverySubjectAll},
-		MaxAge:   deliveryStreamMaxAge,
-		Storage:  jetstream.FileStorage,
-	}); err != nil {
-		return nil, fmt.Errorf("eventbus: ensure stream %q: %w", deliveryStream, err)
-	}
-
-	if err := ensureFeedStream(ctx, js); err != nil {
+	if err := ensureStreams(ctx, js, cfg.hostStreams); err != nil {
 		return nil, err
 	}
 

@@ -28,7 +28,10 @@ Flags use Go's `flag` package, so `-addr` and `--addr` are the same. Variables m
 | `-db` | `NOTIFY_DB` | `notify.db` | SQLite database path. Other subcommands read the same variable. |
 | `-master-key-hex` | `NOTIFY_MASTER_KEY_HEX` | none | 32 bytes as 64 hex characters. **Required** unless `-dev`. Encrypts API keys, integration credentials, session cookies, environment variables and managed-agent keys. Prefer the environment variable: a flag value is visible in `ps`. |
 | `-dev` | `NOTIFY_DEV` (`1` or `true`) | off | Allow starting with no master key by deriving a fixed, **publicly known** one. Development only. |
-| `-nats-url` | `NOTIFY_NATS_URL` | `nats://127.0.0.1:4222` | NATS client URL of the running dagnats sidecar. notify does not embed NATS. |
+| | `NOTIFY_DAGNATS_URL` | `nats://127.0.0.1:4222` | NATS client URL of the running dagnats. notify does not embed NATS. |
+| | `NOTIFY_SEED` | `notify.seed` beside `-db` | notify's program key; must persist. See [running notify as a program](../operations/dagnats-sidecar#running-notify-as-a-program). |
+| | `NOTIFY_JOIN_KEY` | empty | Join key for registering with a dagnats that has a NATS login. |
+| `-nats-url` | `NOTIFY_NATS_URL` | empty | Deprecated: used as `NOTIFY_DAGNATS_URL` when that is unset. Removed in a later release. |
 | `-sendmail-command` | `NOTIFY_SENDMAIL_COMMAND` | `/usr/sbin/sendmail -ti` | Command the `sendmail` email provider pipes each message to. Split on whitespace, run without a shell. |
 | `-ssrf-allow` | `NOTIFY_SSRF_ALLOWED_HOSTS` | empty | Comma-separated exact hosts that outbound HTTP may reach even though they resolve to an internal address. No wildcards. Empty blocks every internal range. A malformed entry stops start. |
 | (env only) | `NOTIFY_PUBLIC_BASE_URL` | empty | The server's public origin. Used to derive the default Web Push VAPID subject (`https://<host>`; localhost and IPs yield none), and passed to the console for rendered webhook URLs. |
@@ -40,7 +43,7 @@ Flags use Go's `flag` package, so `-addr` and `--addr` are the same. Variables m
 | Flag | Environment variable | Default | Meaning |
 |---|---|---|---|
 | `-mesh-allow` | `NOTIFY_MESH_ALLOW` | `agents.prompt.>` | Allowlist pattern for the NATS subjects mesh agents are dispatched to. |
-| `-mesh-nats-url` | `NOTIFY_MESH_NATS_URL` | empty | NATS URL for mesh dispatch. Empty reuses `-nats-url`. Set it when agents live on a different hub from the engine. |
+| `-mesh-nats-url` | `NOTIFY_MESH_NATS_URL` | empty | NATS URL for mesh dispatch, for a hub that is not a dagnats. Empty dispatches over the dagnats program connection. |
 
 ## serve: inbound email
 

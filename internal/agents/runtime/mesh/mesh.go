@@ -54,6 +54,17 @@ const (
 	streamSubject = "agents.task.stream.>"
 )
 
+// Protocols are the shared subject roots mesh dispatch speaks over a dagnats
+// connection, for notify's program manifest: prompts go out under the default
+// allowlist and answers come back on the task stream. An allowlist outside
+// agents.prompt only works over a separate, non-dagnats mesh connection.
+func Protocols() []string {
+	return []string{
+		strings.TrimSuffix(DefaultAllowedSubjects, ".>"),
+		strings.TrimSuffix(streamSubject, ".>"),
+	}
+}
+
 // ErrAckedNoV2Answer reports the v0.3 case: the agent acked the prompt request
 // but never opened a v2 task stream or published a reply envelope. It is
 // permanent — redelivering the same prompt to the same agent cannot help.
