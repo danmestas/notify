@@ -125,7 +125,7 @@ func newPrefHarness(t *testing.T) (srv *httptest.Server, scope domain.Scope, pre
 	t.Cleanup(func() { _ = st.Close() })
 
 	prefs = preferences.New(st)
-	eng.Handle("send.in_app", delivery.New(st).WithPreferences(prefs).HandleInApp)
+	eng.Handle("notify.send.in_app", delivery.New(st).WithPreferences(prefs).HandleInApp)
 	if err := eng.StartWorkers(ctx); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}

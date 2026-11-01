@@ -9,6 +9,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/names"
 )
 
 // agentMessage is the agent_message ACTION step type: it posts the rendered
@@ -54,10 +55,10 @@ func (agentMessage) Compile(step domain.Step) (engine.StepDef, error) {
 	if _, err := AgentMessageConfig(step.ControlValues); err != nil {
 		return engine.StepDef{}, err
 	}
-	return engine.StepDef{ID: step.StepID, Task: "agent_message", Type: dag.StepTypeNormal}, nil
+	return engine.StepDef{ID: step.StepID, Task: names.AgentMessage, Type: dag.StepTypeNormal}, nil
 }
 
-func (agentMessage) TaskTypes() []string { return []string{"agent_message"} }
+func (agentMessage) TaskTypes() []string { return []string{names.AgentMessage} }
 
 // AgentMessageCfg is an agent_message step's control values. Agent, Text and
 // Conversation are templates rendered against the run at send time, so an

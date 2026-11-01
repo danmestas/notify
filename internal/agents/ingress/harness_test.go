@@ -114,7 +114,7 @@ func newHarness(t *testing.T) *harness {
 		WithRetry(retry)
 	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
 	eng.Handle(ingress.TaskManaged, ing.HandleTurn)
-	eng.Handle("agent_message", agentstep.New(st, ing, ags.Drafts()).Handle)
+	eng.Handle("notify.agent_message", agentstep.New(st, ing, ags.Drafts()).Handle)
 	if err := eng.StartWorkers(ctx); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}

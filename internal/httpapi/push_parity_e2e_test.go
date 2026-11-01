@@ -95,7 +95,7 @@ func TestPushParity_EndToEnd(t *testing.T) {
 	// Register the push delivery handler before workers start: the resolver is
 	// the real connectivity service, so the path under test includes encrypted
 	// credential storage and the real ntfy client.
-	eng.Handle("send.push", delivery.NewPush(st, conn).HandlePush)
+	eng.Handle("notify.send.push", delivery.NewPush(st, conn).HandlePush)
 	if err := eng.StartWorkers(ctx); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}

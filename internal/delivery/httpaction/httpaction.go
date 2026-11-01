@@ -110,7 +110,7 @@ type response struct {
 	Headers    map[string]string `json:"headers"`
 }
 
-// Handle is registered via engine.Handle("http_request", h.Handle).
+// Handle is registered via engine.Handle("notify.http_request", h.Handle).
 //
 // Failure policy (documented contract):
 //   - A COMPLETED HTTP exchange — including a non-2xx response — is a SUCCESS:

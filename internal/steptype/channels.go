@@ -12,13 +12,14 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/names"
 )
 
 // channelStepDef builds the engine StepDef shared by every channel type: a
 // normal "send.<type>" task. DependsOn is left for the caller (positional
 // chaining is workflow-level, not type-level).
 func channelStepDef(step domain.Step) engine.StepDef {
-	return engine.StepDef{ID: step.StepID, Task: "send." + step.Type, Type: dag.StepTypeNormal}
+	return engine.StepDef{ID: step.StepID, Task: names.Send(step.Type), Type: dag.StepTypeNormal}
 }
 
 // emptyControlValues is the default controlValues for a channel step.

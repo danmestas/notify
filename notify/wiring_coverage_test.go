@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/names"
 	"github.com/danmestas/notify/internal/steptype"
 )
 
@@ -68,6 +69,8 @@ func TestWiring_RegistersNoUnknownTaskType(t *testing.T) {
 	known := map[string]bool{}
 	for _, name := range steptype.Default().TaskTypes() {
 		known[name] = true
+		// Remove in the release after N4: the old spelling is registered too.
+		known[names.Legacy(name)] = true
 	}
 
 	var orphaned []string
@@ -99,7 +102,7 @@ func TestRegistryTaskTypes_Deduped(t *testing.T) {
 	if !sort.StringsAreSorted(got) {
 		t.Errorf("TaskTypes is not sorted: %v", got)
 	}
-	for _, want := range []string{"send.in_app", "delay.dynamic", "digest.wait", "check.throttle", "http_request"} {
+	for _, want := range []string{"notify.send.in_app", "notify.delay.dynamic", "notify.digest.wait", "notify.check.throttle", "notify.http_request"} {
 		if !seen[want] {
 			t.Errorf("TaskTypes missing %q; got %v", want, got)
 		}

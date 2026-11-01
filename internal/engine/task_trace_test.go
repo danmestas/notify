@@ -37,7 +37,7 @@ func TestTaskSpanContinuesTheTriggersTrace(t *testing.T) {
 	})
 
 	got := make(chan trace.SpanContext, 1)
-	e.Handle("send.in_app", func(ctx context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
+	e.Handle("notify.send.in_app", func(ctx context.Context, _ engine.TaskPayload) (json.RawMessage, error) {
 		got <- trace.SpanContextFromContext(ctx)
 		return json.RawMessage(`{}`), nil
 	})
@@ -48,7 +48,7 @@ func TestTaskSpanContinuesTheTriggersTrace(t *testing.T) {
 	ctx, root := tp.Tracer("test").Start(context.Background(), "trigger")
 	if err := e.RegisterWorkflow(ctx, engine.WorkflowDef{
 		Name:  "wf-traced",
-		Steps: []engine.StepDef{{ID: "only", Task: "send.in_app", Type: dag.StepTypeNormal}},
+		Steps: []engine.StepDef{{ID: "only", Task: "notify.send.in_app", Type: dag.StepTypeNormal}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}

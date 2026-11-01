@@ -67,10 +67,10 @@ func setup(t *testing.T) (*trigger.Service, domain.Scope, string) {
 		t.Fatalf("Workflows().Create: %v", err)
 	}
 
-	dagName := scope.EnvID + "-" + testTrigger
+	dagName := "notify." + scope.EnvID + "-" + testTrigger
 	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
 		Name:  dagName,
-		Steps: []engine.StepDef{{ID: "S1", Task: "send.in_app", Type: dag.StepTypeNormal}},
+		Steps: []engine.StepDef{{ID: "S1", Task: "notify.send.in_app", Type: dag.StepTypeNormal}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
@@ -219,10 +219,10 @@ func TestIngest_EmailWorkflow(t *testing.T) {
 		t.Fatalf("Workflows().Create: %v", err)
 	}
 
-	dagName := scope.EnvID + "-" + emailTrigger
+	dagName := "notify." + scope.EnvID + "-" + emailTrigger
 	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
 		Name:  dagName,
-		Steps: []engine.StepDef{{ID: "S1", Task: "send.email", Type: dag.StepTypeNormal}},
+		Steps: []engine.StepDef{{ID: "S1", Task: "notify.send.email", Type: dag.StepTypeNormal}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
@@ -291,10 +291,10 @@ func TestIngest_TopicFanout(t *testing.T) {
 		t.Fatalf("Workflows().Create: %v", err)
 	}
 
-	dagName := scope.EnvID + "-" + testTrigger
+	dagName := "notify." + scope.EnvID + "-" + testTrigger
 	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
 		Name:  dagName,
-		Steps: []engine.StepDef{{ID: "S1", Task: "send.in_app", Type: dag.StepTypeNormal}},
+		Steps: []engine.StepDef{{ID: "S1", Task: "notify.send.in_app", Type: dag.StepTypeNormal}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
@@ -387,10 +387,10 @@ func TestIngest_PushDataJSONCorrupted_ReturnsError(t *testing.T) {
 		t.Fatalf("Workflows().Create: %v", err)
 	}
 
-	dagName := scope.EnvID + "-" + pushTrigger
+	dagName := "notify." + scope.EnvID + "-" + pushTrigger
 	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
 		Name:  dagName,
-		Steps: []engine.StepDef{{ID: "P1", Task: "send.push", Type: dag.StepTypeNormal}},
+		Steps: []engine.StepDef{{ID: "P1", Task: "notify.send.push", Type: dag.StepTypeNormal}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}
@@ -462,7 +462,7 @@ func TestIngest_StreamWorkflow_TopicInEnvelope(t *testing.T) {
 		captured  json.RawMessage
 		gotHandle bool
 	)
-	eng.Handle("send.stream", func(_ context.Context, t engine.TaskPayload) (json.RawMessage, error) {
+	eng.Handle("notify.send.stream", func(_ context.Context, t engine.TaskPayload) (json.RawMessage, error) {
 		mu.Lock()
 		captured = append(json.RawMessage(nil), t.Input...)
 		gotHandle = true
@@ -473,10 +473,10 @@ func TestIngest_StreamWorkflow_TopicInEnvelope(t *testing.T) {
 		t.Fatalf("StartWorkers: %v", err)
 	}
 
-	dagName := scope.EnvID + "-" + streamTrigger
+	dagName := "notify." + scope.EnvID + "-" + streamTrigger
 	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
 		Name:  dagName,
-		Steps: []engine.StepDef{{ID: "S1", Task: "send.stream", Type: dag.StepTypeNormal}},
+		Steps: []engine.StepDef{{ID: "S1", Task: "notify.send.stream", Type: dag.StepTypeNormal}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)
 	}

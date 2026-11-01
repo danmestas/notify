@@ -331,7 +331,7 @@ func TestRestartMidTurnIdempotentReplay_E2E(t *testing.T) {
 	// run, not start a duplicate turn.
 	convID := h.conversationRowID(t, h.agent.ID, out.ConversationID)
 	input := turnInputJSON(t, h.agent.Identifier, convID, out.ActivityID)
-	rid, err := eng2.StartRun(ctx, "agent-turn-"+h.agent.ID, input)
+	rid, err := eng2.StartRun(ctx, "notify.agent-turn-"+h.agent.ID, input)
 	if err != nil {
 		t.Fatalf("StartRun across restart: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestRedeliveryDedup_E2E(t *testing.T) {
 	convID := h.conversationRowID(t, h.agent.ID, out.ConversationID)
 	input := turnInputJSON(t, h.agent.Identifier, convID, out.ActivityID)
 	ctx := context.Background()
-	rid, err := h.eng.StartRun(ctx, "agent-turn-"+h.agent.ID, input)
+	rid, err := h.eng.StartRun(ctx, "notify.agent-turn-"+h.agent.ID, input)
 	if err != nil {
 		t.Fatalf("redelivered StartRun: %v", err)
 	}
@@ -399,7 +399,7 @@ func TestRedeliveryDedup_E2E(t *testing.T) {
 	waitFrame(t, frames, 20*time.Second, "ECHO::"+text)
 
 	// Redeliver again after completion — the late-redelivery case.
-	rid2, err := h.eng.StartRun(ctx, "agent-turn-"+h.agent.ID, input)
+	rid2, err := h.eng.StartRun(ctx, "notify.agent-turn-"+h.agent.ID, input)
 	if err != nil {
 		t.Fatalf("post-completion StartRun: %v", err)
 	}

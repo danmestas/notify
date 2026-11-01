@@ -1,10 +1,10 @@
 {
-  "name": "env_golden-wf-push",
+  "name": "notify.env_golden-wf-push",
   "version": "",
   "steps": [
     {
       "id": "push-1",
-      "task": "send.push",
+      "task": "notify.send.push",
       "timeout": 0,
       "type": "normal"
     }

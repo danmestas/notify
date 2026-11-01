@@ -11,6 +11,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/names"
 )
 
 // httpRequest is the http_request ACTION step type. It compiles to a normal
@@ -105,7 +106,7 @@ func (httpRequest) Compile(step domain.Step) (engine.StepDef, error) {
 	}
 	// No Config: the handler loads url/method/headers/body/timeout/policy from
 	// the store at run time, mirroring every other normal-task step type.
-	return engine.StepDef{ID: step.StepID, Task: "http_request", Type: dag.StepTypeNormal}, nil
+	return engine.StepDef{ID: step.StepID, Task: names.HTTPRequest, Type: dag.StepTypeNormal}, nil
 }
 
 // httpRequestCfg holds the validated control values for an http_request step.

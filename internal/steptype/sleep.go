@@ -14,6 +14,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/names"
 )
 
 // cronParser parses digest cron expressions. SecondOptional accepts BOTH the
@@ -417,7 +418,7 @@ func (delay) Compile(step domain.Step) (engine.StepDef, error) {
 			}
 			return engine.StepDef{ID: step.StepID, Type: dag.StepTypeSleep, Config: cfg}, nil
 		}
-		return engine.StepDef{ID: step.StepID, Type: dag.StepTypeNormal, Task: "delay.scheduled", Retry: delayRetryPolicy()}, nil
+		return engine.StepDef{ID: step.StepID, Type: dag.StepTypeNormal, Task: names.DelayScheduled, Retry: delayRetryPolicy()}, nil
 	case "dynamic":
 		if dcv.DynamicKey == "" {
 			return engine.StepDef{}, fmt.Errorf("dynamic delay requires a dynamicKey")
@@ -434,7 +435,7 @@ func (delay) Compile(step domain.Step) (engine.StepDef, error) {
 			}
 			return engine.StepDef{ID: step.StepID, Type: dag.StepTypeSleep, Config: cfg}, nil
 		}
-		return engine.StepDef{ID: step.StepID, Type: dag.StepTypeNormal, Task: "delay.dynamic", Retry: delayRetryPolicy()}, nil
+		return engine.StepDef{ID: step.StepID, Type: dag.StepTypeNormal, Task: names.DelayDynamic, Retry: delayRetryPolicy()}, nil
 	default:
 		return sleepStepDef(step)
 	}
@@ -582,7 +583,7 @@ func (digest) Compile(step domain.Step) (engine.StepDef, error) {
 		if _, perr := ParseCron(dcv.Cron); perr != nil {
 			return engine.StepDef{}, fmt.Errorf("invalid digest cron %q: %w", dcv.Cron, perr)
 		}
-		return engine.StepDef{ID: step.StepID, Type: dag.StepTypeNormal, Task: "digest.wait", Retry: delayRetryPolicy()}, nil
+		return engine.StepDef{ID: step.StepID, Type: dag.StepTypeNormal, Task: names.DigestWait, Retry: delayRetryPolicy()}, nil
 	}
 	// A regular window sleeps until an instant carried in the RUN INPUT rather
 	// than for a duration baked into the DAG. The DAG is per-workflow and the

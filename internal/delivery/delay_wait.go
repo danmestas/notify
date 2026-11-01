@@ -27,7 +27,7 @@ type DelayWait struct {
 // NewDelayWait constructs a DelayWait backed by s.
 func NewDelayWait(s *store.Store) *DelayWait { return &DelayWait{store: s} }
 
-// HandleScheduled is registered via engine.Handle("delay.scheduled", ...). It
+// HandleScheduled is registered via engine.Handle("notify.delay.scheduled", ...). It
 // loads the step's structured calendar (atTime + weekDays/monthDays), computes
 // the next firing instant after now, and parks until it. A resumed dispatch
 // keeps the instant it parked for (t.ResumeAt): recomputing "the next instant
@@ -58,7 +58,7 @@ func (d *DelayWait) HandleScheduled(ctx context.Context, t engine.TaskPayload) (
 	return waitUntil(fire)
 }
 
-// HandleDynamic is registered via engine.Handle("delay.dynamic", ...). It loads
+// HandleDynamic is registered via engine.Handle("notify.delay.dynamic", ...). It loads
 // the step's dynamicKey and the trigger payload, resolves the fire-at instant
 // (ISO-8601 timestamp, or a persisted/newly-resolved {amount,unit} deadline —
 // see resolveDynamicFireAt), parks until it, and once it has passed clears any

@@ -48,7 +48,7 @@ import (
 // This harness carries no preferences.Service, so WithPreferences receives
 // nil — delivery's documented default (a nil PreferenceChecker always sends).
 func wireStreamHandler(eng *engine.Engine, st *store.Store, bus *eventbus.Bus) {
-	eng.Handle("send.stream", delivery.NewStream(st).
+	eng.Handle("notify.send.stream", delivery.NewStream(st).
 		WithPreferences(nil).
 		WithEventBus(bus).
 		WithThrottle(bus).

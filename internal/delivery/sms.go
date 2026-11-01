@@ -134,7 +134,7 @@ func (h *SMSHandler) resolveSMSProvider(ctx context.Context, scope domain.Scope,
 	return sp, providerID, integrationID, nil
 }
 
-// HandleSMS is registered via engine.Handle("send.sms", h.HandleSMS).
+// HandleSMS is registered via engine.Handle("notify.send.sms", h.HandleSMS).
 // It unmarshals the run envelope, renders the body template against the
 // {subscriber, payload} context, resolves the scope's SMS provider and the
 // subscriber's phone number, sends the message, and persists a "sent" sms

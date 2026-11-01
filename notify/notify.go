@@ -151,7 +151,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// in this worker pool (registered before StartWorkers); the workflow is
 	// declared with the engine in Start.
 	n.credVerify = credverify.New(eng, conn)
-	eng.Handle(credverify.TaskVerify, n.credVerify.Handler)
+	handle(eng, credverify.TaskVerify, n.credVerify.Handler)
 
 	meshClient := mesh.FromConn(meshConn, mesh.WithAllowedSubjects(cfg.MeshAllow))
 	n.push(func() error { meshClient.Close(); return nil })
@@ -229,10 +229,10 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// conversation is not its binding, and a panic in one is recovered so it
 	// never fails the turn or blocks the other.
 	ing = ing.WithReplyHook(replyhook.Combine(log, eml.ReplyHook, chat.ReplyHook))
-	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
+	handle(eng, ingress.TaskMesh, ing.HandleTurn)
 	// A managed turn with tools runs up to managed.MaxTurnDuration; past that
 	// plus a margin it is hung, and dagnats stops keeping its claim alive.
-	eng.Handle(ingress.TaskManaged, ing.HandleTurn, engine.WithMaxRunTime(managed.MaxTurnDuration+runTimeMargin))
+	handle(eng, ingress.TaskManaged, ing.HandleTurn, engine.WithMaxRunTime(managed.MaxTurnDuration+runTimeMargin))
 
 	// B3: durable AI workflow-builder loop, hosted as a dagnats agent-loop
 	// handler alongside the synchronous console path (console.Builder.Run).
@@ -242,6 +242,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	if cfg.AI != nil {
 		n.aiLoop = aibuilder.NewAgentLoopBuilder(eng, cfg.AI, st.Integrations(), st.BuilderSessions())
 		n.aiLoop.Register()
+		registerLegacyAgentLoop(n.aiLoop)
 	}
 
 	n.webhooks = webhooksout.New(bus, st).WithSecrets(secrets)

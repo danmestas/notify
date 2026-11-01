@@ -91,7 +91,7 @@ func (h *StreamHandler) publishDelivery(envID string, data []byte) {
 	}
 }
 
-// HandleStream is registered via engine.Handle("send.stream", h.HandleStream).
+// HandleStream is registered via engine.Handle("notify.send.stream", h.HandleStream).
 // It mirrors Handler.HandleInApp's control flow (self-source rebuild, render,
 // filter/throttle/preference gates, persist, best-effort live publish) with
 // two deltas: the routing key is a rendered "topic" (validated as a hard,

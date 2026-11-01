@@ -159,7 +159,7 @@ func (h *ChatHandler) chatAddress(ctx context.Context, scope domain.Scope, subsc
 	return creds.Address, nil
 }
 
-// HandleChat is registered via engine.Handle("send.chat", h.HandleChat).
+// HandleChat is registered via engine.Handle("notify.send.chat", h.HandleChat).
 // It unmarshals the run envelope, renders the body template against the
 // {subscriber, payload} context, resolves the scope's chat provider and the
 // subscriber's chat address, sends the message, and persists a "sent" chat

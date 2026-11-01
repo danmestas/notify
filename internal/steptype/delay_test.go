@@ -58,7 +58,7 @@ func TestCompile_DelayScheduled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if def.ID != "d" || def.Type != dag.StepTypeNormal || def.Task != "delay.scheduled" {
+	if def.ID != "d" || def.Type != dag.StepTypeNormal || def.Task != "notify.delay.scheduled" {
 		t.Fatalf("scheduled delay def = %+v, want {ID:d Type:normal Task:delay.scheduled}", def)
 	}
 	if def.Config != nil {
@@ -80,7 +80,7 @@ func TestCompile_DelayDynamic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if def.ID != "d" || def.Type != dag.StepTypeNormal || def.Task != "delay.dynamic" {
+	if def.ID != "d" || def.Type != dag.StepTypeNormal || def.Task != "notify.delay.dynamic" {
 		t.Fatalf("dynamic delay def = %+v, want {ID:d Type:normal Task:delay.dynamic}", def)
 	}
 	if def.Config != nil {

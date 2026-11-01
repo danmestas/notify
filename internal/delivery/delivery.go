@@ -102,7 +102,7 @@ func (h *Handler) WithDigester(d Digester) *Handler {
 	return h
 }
 
-// HandleInApp is registered via engine.Handle("send.in_app", h.HandleInApp).
+// HandleInApp is registered via engine.Handle("notify.send.in_app", h.HandleInApp).
 // It unmarshals the run envelope, renders the subject/body templates against the
 // {subscriber, payload} context, and persists a "sent" in-app message. On any
 // unmarshal or persist error it records a "error" message (with ErrorText) and

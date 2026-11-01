@@ -150,7 +150,7 @@ func (h *PushHandler) resolvePushProvider(ctx context.Context, scope domain.Scop
 	return pp, providerID, integrationID, nil
 }
 
-// HandlePush is registered via engine.Handle("send.push", h.HandlePush).
+// HandlePush is registered via engine.Handle("notify.send.push", h.HandlePush).
 // It unmarshals the run envelope, renders the title/body templates against the
 // {subscriber, payload} context, resolves the scope's push provider and the
 // subscriber's topic, sends the message, and persists a "sent" push message.

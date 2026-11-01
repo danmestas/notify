@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/danmestas/notify/internal/eventbus"
+	"github.com/danmestas/notify/internal/names"
 	"github.com/danmestas/notify/internal/observe"
 	"github.com/danmestas/notify/internal/timestamp"
 )
@@ -261,6 +263,20 @@ func (e *Engine) Handles(taskType string) bool {
 	return ok
 }
 
+// TaskTypes returns every task type with a registered handler, simple or
+// agent-loop, sorted. Wiring tests compare it with the manifest.
+func (e *Engine) TaskTypes() []string {
+	out := make([]string, 0, len(e.handlers)+len(e.agentHandlers))
+	for taskType := range e.handlers {
+		out = append(out, taskType)
+	}
+	for taskType := range e.agentHandlers {
+		out = append(out, taskType)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // StartWorkers starts claiming tasks for every registered type. Claiming stops
 // when ctx is cancelled or Stop is called. It fails when dagnats will not let
 // the worker subscribe (its task stream is not ready, or permission is
@@ -402,7 +418,7 @@ func (e *Engine) taskContext(tc worker.TaskContext, taskType string) (context.Co
 		attribute.String("task.id", tc.RunID()+"."+tc.StepID()),
 		attribute.String("run.id", tc.RunID()),
 	}
-	if channel, ok := strings.CutPrefix(taskType, "send."); ok {
+	if channel, ok := names.Channel(taskType); ok {
 		name = "notify.delivery.send"
 		attrs = append(attrs, attribute.String("channel", channel))
 	}

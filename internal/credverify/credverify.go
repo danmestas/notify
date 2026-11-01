@@ -5,7 +5,7 @@
 // returns its real run id. The console deep-links that run id into the dagnats
 // console exactly like every other engine run.
 //
-// The single task "verify.credentials" runs inside notify's worker pool (the
+// The single task "notify.verify.credentials" runs inside notify's worker pool (the
 // same StartWorkers loop as send.email / send.push). Its handler performs a
 // real provider handshake via connectivity.VerifyByID. A rejected credential is
 // a completed run with ok=false in the output; an unreachable provider returns a
@@ -23,16 +23,17 @@ import (
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/names"
 )
 
 // TaskVerify is the engine task type the verify workflow's single step runs.
-const TaskVerify = "verify.credentials"
+const TaskVerify = names.VerifyCredentials
 
 // workflowName is the dagnats workflow registered for credential verification.
 // It is a fixed, environment-independent name: verification is not per-tenant
 // content, so one registration serves every scope (the scope travels in the run
 // input, not the workflow name).
-const workflowName = "notify-credential-verify"
+const workflowName = names.CredentialVerifyWorkflow
 
 // Verifier is the subset of connectivity.Service credverify needs: probe one
 // integration's credentials by id within a scope. *connectivity.Service

@@ -61,12 +61,12 @@ func newDigestHarness(t *testing.T) *digestHarness {
 	}
 	t.Cleanup(func() { _ = bus.Close() })
 
-	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).WithDigester(bus).HandleInApp)
-	eng.Handle("digest.wait", delivery.NewDigestWait(st).HandleDigestWait)
+	eng.Handle("notify.send.in_app", delivery.New(st).WithEventBus(bus).WithDigester(bus).HandleInApp)
+	eng.Handle("notify.digest.wait", delivery.NewDigestWait(st).HandleDigestWait)
 	// Guard/smoke: the scheduled-digest window is dead without this handler, so
 	// assert it is registered before the workers start (a wiring regression
 	// would silently leave digest.wait tasks unclaimed forever).
-	if !eng.Handles("digest.wait") {
+	if !eng.Handles("notify.digest.wait") {
 		t.Fatal("digest.wait handler not registered")
 	}
 	if err := eng.StartWorkers(ctx); err != nil {

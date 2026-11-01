@@ -10,6 +10,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/names"
 	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
 )
@@ -20,8 +21,8 @@ import (
 // the engine MaxIterations bound is the durable equivalent of "exceeded max
 // rounds" and the hard cap on a runaway self-correct.
 const (
-	AgentLoopTask        = "ai.build"
-	AgentLoopWorkflow    = "ai-builder"
+	AgentLoopTask        = names.AIBuild
+	AgentLoopWorkflow    = names.AIBuilderWorkflow
 	AgentLoopStepID      = "build"
 	DefaultMaxIterations = 24
 )
@@ -246,8 +247,12 @@ func tokenBudgetFromEnv(getenv func(string) string) int {
 
 // Register registers the per-iteration handler for AgentLoopTask. It must be
 // called before the engine's StartWorkers (HandleAgentLoop panics otherwise).
-func (b *AgentLoopBuilder) Register() {
-	b.eng.HandleAgentLoop(AgentLoopTask, func(ctx context.Context, lc *engine.AgentLoopContext) error {
+func (b *AgentLoopBuilder) Register() { b.RegisterAs(AgentLoopTask) }
+
+// RegisterAs registers the per-iteration handler under taskType. Register uses
+// AgentLoopTask; a second name lets runs started under an older spelling drain.
+func (b *AgentLoopBuilder) RegisterAs(taskType string) {
+	b.eng.HandleAgentLoop(taskType, func(ctx context.Context, lc *engine.AgentLoopContext) error {
 		return b.handle(ctx, lc)
 	})
 }

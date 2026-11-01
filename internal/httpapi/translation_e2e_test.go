@@ -44,7 +44,7 @@ func TestTranslation_LocalizedInApp(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	eng.Handle("send.in_app", delivery.New(st).HandleInApp)
+	eng.Handle("notify.send.in_app", delivery.New(st).HandleInApp)
 	if err := eng.StartWorkers(ctx); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}

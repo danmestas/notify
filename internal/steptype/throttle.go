@@ -11,6 +11,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/names"
 )
 
 // throttle is the standalone throttle step type. It compiles to a normal
@@ -63,7 +64,7 @@ func (throttle) Compile(step domain.Step) (engine.StepDef, error) {
 	}
 	// No Config: the handler loads limit/windowSec from the store at run time
 	// using the workflow row, following the same pattern as other task handlers.
-	return engine.StepDef{ID: step.StepID, Task: "check.throttle", Type: dag.StepTypeNormal}, nil
+	return engine.StepDef{ID: step.StepID, Task: names.CheckThrottle, Type: dag.StepTypeNormal}, nil
 }
 
 // throttleCfg holds the validated control values for a throttle step.

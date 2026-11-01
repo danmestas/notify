@@ -157,7 +157,7 @@ func TestThrottle_Compile_Valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	if sd.Task != "check.throttle" {
+	if sd.Task != "notify.check.throttle" {
 		t.Errorf("Task = %q, want check.throttle", sd.Task)
 	}
 	if sd.Type != dag.StepTypeNormal {
