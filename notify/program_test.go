@@ -2,16 +2,19 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/danmestas/dagnats/program"
+	"github.com/danmestas/dagnats/worker"
 
 	"github.com/danmestas/notify/internal/dagtest"
 	"github.com/danmestas/notify/internal/engine"
@@ -71,33 +74,9 @@ func TestProgram_RunOnOpenAuth(t *testing.T) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	eng := p.notify().eng
-	wf := names.Prefix + "program-test"
-	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
-		Name:  wf,
-		Steps: []engine.StepDef{{ID: "send", Task: names.SendInApp}},
-	}); err != nil {
-		t.Fatalf("RegisterWorkflow: %v", err)
-	}
-	runID, err := eng.StartRun(ctx, wf, []byte(`{}`))
-	if err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
 	// The handler fails the step (no such run in the store), which is enough:
 	// only a claimed task reaches a terminal state.
-	for {
-		snap, err := eng.GetRun(ctx, runID)
-		if err == nil && snap.IsTerminal() {
-			break
-		}
-		if ctx.Err() != nil {
-			t.Fatalf("run %s never finished: the %s task was not handled (last %+v, %v)",
-				runID, names.SendInApp, snap, err)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	runOneStep(t, p.notify().eng, names.SendInApp)
 
 	first := p.grant
 	stopProgram(t, running)
@@ -109,29 +88,95 @@ func TestProgram_RunOnOpenAuth(t *testing.T) {
 	}
 }
 
-// otherManifest is a program registered as "notify" with a manifest that is
-// not notify's, so registering the real one with its key is refused.
-type otherManifest struct{}
+// runOneStep runs a one-step workflow of taskType and waits for it to reach
+// a terminal state, which only a claimed task does.
+func runOneStep(t *testing.T, eng *engine.Engine, taskType string) engine.RunSnapshot {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	wf := names.Prefix + "program-test-" + strings.ReplaceAll(names.Legacy(taskType), ".", "-")
+	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
+		Name:  wf,
+		Steps: []engine.StepDef{{ID: "step", Task: taskType}},
+	}); err != nil {
+		t.Fatalf("RegisterWorkflow: %v", err)
+	}
+	runID, err := eng.StartRun(ctx, wf, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	for {
+		snap, err := eng.GetRun(ctx, runID)
+		if err == nil && snap.IsTerminal() {
+			return snap
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("run %s never finished: the %s task was not handled (last %+v, %v)",
+				runID, taskType, snap, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
 
-func (otherManifest) Manifest() program.Manifest {
-	m := Manifest()
-	m.Version = "other"
+// upgraded is notify as a later release would register it: another version
+// and one more task type, which it handles.
+type upgraded struct{ *Program }
+
+const upgradedTaskType = names.Prefix + "test.upgraded"
+
+func (u upgraded) Manifest() program.Manifest {
+	m := u.Program.Manifest()
+	m.Version = "upgraded"
+	m.TaskTypes = append(m.TaskTypes, upgradedTaskType)
 	return m
 }
-func (otherManifest) Start(context.Context, program.Host) error { return nil }
-func (otherManifest) Stop(context.Context) error                { return nil }
+
+func (u upgraded) Start(ctx context.Context, h program.Host) error {
+	h.Handle(upgradedTaskType, func(tc worker.TaskContext) error {
+		return tc.Complete(json.RawMessage(`"upgraded"`))
+	})
+	return u.Program.Start(ctx, h)
+}
+
+// TestProgram_UpgradeReregisters: a release with a changed manifest (a new
+// version and an added task type) re-registers under the same seed, and the
+// added task type is handled.
+func TestProgram_UpgradeReregisters(t *testing.T) {
+	opts := program.Options{URL: dagtest.StartSidecar(t), SeedPath: filepath.Join(t.TempDir(), "notify.seed")}
+	cfg := programConfig(t)
+	stopProgram(t, runProgram(t, &Program{Config: cfg}, opts))
+
+	next := upgraded{&Program{Config: cfg}}
+	running := runProgram(t, next, opts)
+	defer stopProgram(t, running)
+	if snap := runOneStep(t, next.notify().eng, upgradedTaskType); !snap.Succeeded() {
+		t.Fatalf("run of the added task type = %+v, want completed", snap)
+	}
+}
+
+// otherKey is a program registered as "notify" under another key.
+type otherKey struct{}
+
+func (otherKey) Manifest() program.Manifest                { return Manifest() }
+func (otherKey) Start(context.Context, program.Host) error { return nil }
+func (otherKey) Stop(context.Context) error                { return nil }
 
 // TestProgram_RefusalBeforeStart: a refused registration reaches the caller as
 // an *ErrRefused, and notify built nothing (its database was never opened).
 func TestProgram_RefusalBeforeStart(t *testing.T) {
-	opts := program.Options{URL: dagtest.StartSidecar(t), SeedPath: filepath.Join(t.TempDir(), "notify.seed")}
-	stopProgram(t, runProgram(t, otherManifest{}, opts))
+	url := dagtest.StartSidecar(t)
+	stopProgram(t, runProgram(t, otherKey{},
+		program.Options{URL: url, SeedPath: filepath.Join(t.TempDir(), "other.seed")}))
 
 	cfg := programConfig(t)
-	_, err := program.Run(context.Background(), &Program{Config: cfg}, opts)
+	opts := program.Options{URL: url, SeedPath: filepath.Join(t.TempDir(), "notify.seed")}
+	running, err := program.Run(context.Background(), &Program{Config: cfg}, opts)
+	if err == nil {
+		stopProgram(t, running)
+	}
 	var refused *program.ErrRefused
-	if !errors.As(err, &refused) || refused.Code != program.RefusedManifestChanged {
-		t.Fatalf("program.Run = %v, want *ErrRefused %s", err, program.RefusedManifestChanged)
+	if !errors.As(err, &refused) || refused.Code != program.RefusedNameTaken {
+		t.Fatalf("program.Run = %v, want *ErrRefused %s", err, program.RefusedNameTaken)
 	}
 	if _, err := os.Stat(cfg.DBPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("refused notify opened its database (stat err %v)", err)

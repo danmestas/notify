@@ -16,6 +16,16 @@ func WithHostStreams() Option {
 	return func(c *busConfig) { c.hostStreams = true }
 }
 
+// WithProgramOutput says the tasks run on dagnats program name's worker,
+// which publishes step output under stream.p.<name>. instead of stream., so
+// the bus listens there.
+func WithProgramOutput(name string) Option {
+	if name == "" {
+		panic("eventbus: WithProgramOutput: name must not be empty")
+	}
+	return func(c *busConfig) { c.outputPrefix = "stream.p." + name + "." }
+}
+
 // Streams declares notify's own JetStream streams for its program manifest.
 // Subjects and ages match what FromConn creates on its own. Each size is a
 // fraction of the dagnats store budget with a floor: NOTIFY_FEED holds tenant

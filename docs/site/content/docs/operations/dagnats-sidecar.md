@@ -23,10 +23,10 @@ Every task type and workflow name notify registers starts with `notify.`: `notif
 | `NOTIFY_SEED` | `notify.seed` beside the database | notify's NKey seed, created on first start with mode 0600. |
 | `NOTIFY_JOIN_KEY` | empty | Presented at registration. Not needed on a dagnats with no NATS login, such as a loopback sidecar. |
 
-- **First start registers.** dagnats records notify's public key and manifest, creates its streams at the sizes it grants, and returns the grant. Later starts with the same seed and the same notify release get the same grant back.
+- **First start registers.** dagnats records notify's public key and manifest, creates its streams at the sizes it grants, and returns the grant. Later starts with the same seed get the same grant back. notify needs dagnats v0.0.42 or later.
 - **Keep the seed.** It is notify's identity on that dagnats: a new seed under the same name is refused (`name_taken`). Keep it on persistent storage next to `notify.db` and back it up with it.
 - **A refusal stops the start.** notify prints the refusal code (`manifest_changed`, `name_taken`, `join_key_invalid`, `budget_exceeded` and so on) and exits before opening anything.
-- **Upgrades need a dagnats fix.** dagnats v0.0.40 refuses any change to a registered manifest with `manifest_changed`, and every notify release changes it (at least its version). Program mode is therefore not ready for upgrades until dagnats admits manifest changes on re-registration; run notify in standalone mode until then.
+- **Upgrades re-register on their own.** A new notify release starts with the same seed and dagnats re-admits its changed manifest (dagnats v0.0.42 or later).
 - **A lost connection exits.** The program connection reconnects forever; if it closes for good, notify exits non-zero so its supervisor restarts it. `/readyz` reports the connection, not whether the worker is still consuming.
 
 ## Defaults

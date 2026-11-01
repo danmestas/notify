@@ -136,7 +136,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	var busOpts []eventbus.Option
 	if h.handle != nil {
 		engineOpts = append(engineOpts, engine.WithRegistrar(h.handle))
-		busOpts = append(busOpts, eventbus.WithHostStreams())
+		busOpts = append(busOpts, eventbus.WithHostStreams(), eventbus.WithProgramOutput(Manifest().Name))
 	}
 	eng := engine.FromConn(h.NC, engineOpts...)
 	n.eng = eng

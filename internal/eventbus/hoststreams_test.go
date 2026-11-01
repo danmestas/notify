@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danmestas/dagnats/program"
 	"github.com/nats-io/nats.go"
@@ -74,5 +75,37 @@ func TestWithHostStreams_RefusesMissingAndKeepsProvisionedSize(t *testing.T) {
 		if got := stream.CachedInfo().Config.MaxBytes; got != 8<<20 {
 			t.Errorf("stream %s MaxBytes = %d after FromConn, want the provisioned %d", s.Name, got, 8<<20)
 		}
+	}
+}
+
+// TestWithProgramOutput_SubscribesNamespacedBuildStream: a program's worker
+// publishes step output under stream.p.<program>., so the bus must listen
+// there for the AI builder's live events.
+func TestWithProgramOutput_SubscribesNamespacedBuildStream(t *testing.T) {
+	nc, err := nats.Connect(dagtest.StartSidecar(t))
+	if err != nil {
+		t.Fatalf("nats.Connect: %v", err)
+	}
+	defer nc.Close()
+	bus, err := FromConn(context.Background(), nc, WithProgramOutput("notify"))
+	if err != nil {
+		t.Fatalf("FromConn: %v", err)
+	}
+	got := make(chan []byte, 1)
+	unsubscribe, err := bus.SubscribeBuildStream("run1", func(b []byte) { got <- b })
+	if err != nil {
+		t.Fatalf("SubscribeBuildStream: %v", err)
+	}
+	defer func() { _ = unsubscribe() }()
+	if err := nc.Publish("stream.p.notify.run1.build", []byte("event")); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	select {
+	case b := <-got:
+		if string(b) != "event" {
+			t.Fatalf("got %q, want event", b)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no build event on stream.p.notify.run1.build")
 	}
 }
