@@ -21,8 +21,9 @@ func TestLoadConfig_EnvAndFlagPrecedence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("loadConfig: %v", err)
 		}
-		if cfg.natsURL != "nats://127.0.0.1:4222" {
-			t.Fatalf("natsURL default = %q, want nats://127.0.0.1:4222", cfg.natsURL)
+		// Empty: the deprecated flag then defers to program.Run's default.
+		if cfg.natsURL != "" {
+			t.Fatalf("natsURL default = %q, want empty", cfg.natsURL)
 		}
 	})
 
@@ -106,5 +107,54 @@ func TestLoadConfig_SMTPCertAndKeyTogether(t *testing.T) {
 	cfg, err := loadConfig([]string{"-dev", "-smtp-cert", "/etc/ssl/mx.pem", "-smtp-key", "/etc/ssl/mx.key"})
 	if err != nil || cfg.app.SMTPCert != "/etc/ssl/mx.pem" || cfg.app.SMTPKey != "/etc/ssl/mx.key" {
 		t.Fatalf("both set: cfg=%q/%q err=%v", cfg.app.SMTPCert, cfg.app.SMTPKey, err)
+	}
+}
+
+// TestProgramOptions pins where notify finds its dagnats: NOTIFY_DAGNATS_URL,
+// else the deprecated -nats-url/NOTIFY_NATS_URL, else program.Run's default;
+// and the seed beside the database unless NOTIFY_SEED names one.
+func TestProgramOptions(t *testing.T) {
+	t.Setenv("NOTIFY_MASTER_KEY_HEX", hex.EncodeToString(make([]byte, 32)))
+	cases := []struct {
+		name, dagnatsURL, natsURL, seed string
+		args                            []string
+		wantURL, wantSeed               string
+	}{
+		{
+			name: "defaults", args: []string{"-db", "/data/notify.db"},
+			wantURL: "nats://127.0.0.1:4222", wantSeed: "/data/notify.seed",
+		},
+		{
+			name: "deprecated flag", args: []string{"-db", "/data/notify.db", "-nats-url", "nats://flag:4222"},
+			wantURL: "nats://flag:4222", wantSeed: "/data/notify.seed",
+		},
+		{
+			name: "deprecated env", natsURL: "nats://old:4222", args: []string{"-db", "/data/notify.db"},
+			wantURL: "nats://old:4222", wantSeed: "/data/notify.seed",
+		},
+		{
+			name: "NOTIFY_DAGNATS_URL wins", dagnatsURL: "nats://new:4222", seed: "/keys/notify.seed",
+			args:    []string{"-db", "/data/notify.db", "-nats-url", "nats://flag:4222"},
+			wantURL: "nats://new:4222", wantSeed: "/keys/notify.seed",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("NOTIFY_DAGNATS_URL", tc.dagnatsURL)
+			t.Setenv("NOTIFY_NATS_URL", tc.natsURL)
+			t.Setenv("NOTIFY_SEED", tc.seed)
+			cfg, err := loadConfig(tc.args)
+			if err != nil {
+				t.Fatalf("loadConfig: %v", err)
+			}
+			opts := programOptions(cfg)
+			if opts.URL != tc.wantURL || opts.SeedPath != tc.wantSeed {
+				t.Fatalf("programOptions = url %q seed %q, want %q %q",
+					opts.URL, opts.SeedPath, tc.wantURL, tc.wantSeed)
+			}
+			if len(opts.NATSOptions) != 3 {
+				t.Fatalf("NATSOptions = %d, want notify's three connection handlers", len(opts.NATSOptions))
+			}
+		})
 	}
 }

@@ -100,6 +100,10 @@ type Bus struct {
 	digest      jetstream.KeyValue
 	digestClaim jetstream.KeyValue
 	budget      jetstream.KeyValue
+	// outputPrefix roots the dagnats step-output subjects the bus listens
+	// on: "stream." for a standalone worker, "stream.p.<program>." for a
+	// program's.
+	outputPrefix string
 }
 
 // Option configures a Bus at Connect time.
@@ -108,6 +112,8 @@ type Option func(*busConfig)
 // busConfig holds Connect-time tunables resolved from Options.
 type busConfig struct {
 	digestClaimTTL time.Duration
+	hostStreams    bool
+	outputPrefix   string
 }
 
 // WithDigestClaimTTL overrides the digest-claim bucket TTL. Tests use a short
@@ -140,7 +146,7 @@ func Connect(ctx context.Context, natsURL string, opts ...Option) (*Bus, error) 
 // JetStream resources Connect does. The connection stays the caller's: Close
 // does not close it.
 func FromConn(ctx context.Context, nc *nats.Conn, opts ...Option) (*Bus, error) {
-	cfg := busConfig{digestClaimTTL: maxDigestClaimTTL}
+	cfg := busConfig{digestClaimTTL: maxDigestClaimTTL, outputPrefix: "stream."}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
@@ -194,27 +200,11 @@ func FromConn(ctx context.Context, nc *nats.Conn, opts ...Option) (*Bus, error) 
 		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", budgetBucket, err)
 	}
 
-	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name:     analyticsStream,
-		Subjects: []string{analyticsSubject},
-	}); err != nil {
-		return nil, fmt.Errorf("eventbus: ensure stream %q: %w", analyticsStream, err)
-	}
-
-	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name:     deliveryStream,
-		Subjects: []string{deliverySubjectAll},
-		MaxAge:   deliveryStreamMaxAge,
-		Storage:  jetstream.FileStorage,
-	}); err != nil {
-		return nil, fmt.Errorf("eventbus: ensure stream %q: %w", deliveryStream, err)
-	}
-
-	if err := ensureFeedStream(ctx, js); err != nil {
+	if err := ensureStreams(ctx, js, cfg.hostStreams); err != nil {
 		return nil, err
 	}
 
-	return &Bus{nc: nc, js: js, kv: kv, throttle: throttle, digest: digest, digestClaim: digestClaim, budget: budget}, nil
+	return &Bus{nc: nc, js: js, kv: kv, throttle: throttle, digest: digest, digestClaim: digestClaim, budget: budget, outputPrefix: cfg.outputPrefix}, nil
 }
 
 // Close drains and closes the underlying NATS connection.
@@ -361,11 +351,12 @@ func (b *Bus) ConsumeAllDeliveryDurable(ctx context.Context, durable string, han
 }
 
 // buildStreamSubject builds the dagnats run-stream subject the AI workflow
-// builder's agent-loop step publishes its live Events on: stream.<runID>.build.
-// "build" is the builder's single agent-loop step id (aibuilder.AgentLoopStepID);
-// the dagnats streaming convention is stream.<runID>.<stepID>.
-func buildStreamSubject(runID string) string {
-	return "stream." + runID + ".build"
+// builder's agent-loop step publishes its live Events on: stream.<runID>.build,
+// or stream.p.<program>.<runID>.build from a program's worker. "build" is the
+// builder's single agent-loop step id (aibuilder.AgentLoopStepID); the dagnats
+// streaming convention is stream.<runID>.<stepID>.
+func (b *Bus) buildStreamSubject(runID string) string {
+	return b.outputPrefix + runID + ".build"
 }
 
 // SubscribeBuildStream delivers each AI-builder streaming Event for the run to
@@ -376,7 +367,7 @@ func (b *Bus) SubscribeBuildStream(runID string, handler func([]byte)) (unsubscr
 	if runID == "" {
 		return nil, fmt.Errorf("eventbus: SubscribeBuildStream: runID must be non-empty")
 	}
-	sub, err := b.nc.Subscribe(buildStreamSubject(runID), func(m *nats.Msg) {
+	sub, err := b.nc.Subscribe(b.buildStreamSubject(runID), func(m *nats.Msg) {
 		handler(m.Data)
 	})
 	if err != nil {

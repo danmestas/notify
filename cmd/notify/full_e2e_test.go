@@ -299,9 +299,11 @@ func startServe(t *testing.T, dbPath, natsURL, keyHex, apiKey string) (base, aut
 	const attempts = 4
 	for attempt := 1; attempt <= attempts; attempt++ {
 		addr := freeAddr(t)
-		serve := exec.Command(bin, "serve",
-			"--db", dbPath, "--nats-url", natsURL, "--addr", addr)
-		serve.Env = append(os.Environ(), "NOTIFY_MASTER_KEY_HEX="+keyHex)
+		// The seed defaults to notify.seed beside dbPath, so every attempt
+		// registers with the same key and gets the same Grant back.
+		serve := exec.Command(bin, "serve", "--db", dbPath, "--addr", addr)
+		serve.Env = append(envWithout(os.Environ(), "NOTIFY_SEED", "NOTIFY_NATS_URL"),
+			"NOTIFY_MASTER_KEY_HEX="+keyHex, "NOTIFY_DAGNATS_URL="+natsURL)
 		serve.Stdout = os.Stderr
 		serve.Stderr = os.Stderr
 		if err := serve.Start(); err != nil {

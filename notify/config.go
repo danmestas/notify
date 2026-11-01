@@ -7,6 +7,7 @@ import (
 
 	"github.com/danmestas/notify/internal/aibuilder"
 	"github.com/danmestas/notify/internal/blobstore"
+	"github.com/danmestas/notify/internal/engine"
 )
 
 // Host is what the process running notify provides. Everything in it belongs
@@ -22,6 +23,10 @@ type Host struct {
 	// BasePath is the path prefix Handler serves every route under, such as
 	// "/notify". Empty when notify owns the root of its listener.
 	BasePath string
+
+	// handle is set by Program: the host's worker claims notify's tasks,
+	// and the host has provisioned notify's streams.
+	handle engine.Registrar
 }
 
 // Config is notify's interpreted configuration. The host resolves it from

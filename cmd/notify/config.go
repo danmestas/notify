@@ -10,9 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/danmestas/dagnats/program"
+
 	"github.com/danmestas/notify/internal/agents/runtime/mesh"
 	"github.com/danmestas/notify/internal/aibuilder"
 	"github.com/danmestas/notify/internal/blobstore"
+	"github.com/danmestas/notify/internal/eventbus"
 	"github.com/danmestas/notify/notify"
 )
 
@@ -25,6 +28,8 @@ import (
 // app is what the notify package needs; the rest is the process's own: where
 // to dial, where to listen, and the process-wide SSRF and tracing setup.
 type config struct {
+	// natsURL is the deprecated -nats-url/NOTIFY_NATS_URL; programOptions
+	// falls back to it when NOTIFY_DAGNATS_URL is unset.
 	natsURL string
 	// meshNATSURL is the hub mesh agents are dispatched over; empty reuses
 	// natsURL's connection.
@@ -93,7 +98,7 @@ func masterKey(hexKey string, dev bool) ([]byte, error) {
 // single failure point is visible.
 func loadConfig(args []string) (config, error) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	natsURL := fs.String("nats-url", envOr("NOTIFY_NATS_URL", "nats://127.0.0.1:4222"), "NATS client URL of the running dagnats sidecar (notify does not embed it)")
+	natsURL := fs.String("nats-url", envOr("NOTIFY_NATS_URL", ""), "deprecated: set NOTIFY_DAGNATS_URL. Used as the dagnats URL when NOTIFY_DAGNATS_URL is unset; removed in a later release")
 	sendmailCommand := fs.String("sendmail-command", envOr("NOTIFY_SENDMAIL_COMMAND", "/usr/sbin/sendmail -ti"), "command the \"sendmail\" email provider pipes messages to (split on whitespace, run without a shell)")
 	smtpAddr := fs.String("smtp", envOr("NOTIFY_SMTP_ADDR", ""), "address for the embedded SMTP receiver, e.g. 0.0.0.0:25 (empty = off); makes the inbound MX host notify itself")
 	smtpCert := fs.String("smtp-cert", envOr("NOTIFY_SMTP_CERT", ""), "PEM certificate file for the SMTP receiver's STARTTLS (with -smtp-key); reloaded when it changes")
@@ -103,7 +108,7 @@ func loadConfig(args []string) (config, error) {
 	masterKeyHex := fs.String("master-key-hex", os.Getenv("NOTIFY_MASTER_KEY_HEX"), "32-byte AES master key as hex (required unless -dev)")
 	dev := fs.Bool("dev", envBool("NOTIFY_DEV"), "allow booting without -master-key-hex/NOTIFY_MASTER_KEY_HEX by deriving a fixed, insecure dev key (development only)")
 	meshAllow := fs.String("mesh-allow", envOr("NOTIFY_MESH_ALLOW", mesh.DefaultAllowedSubjects), "allowlist pattern for mesh agent dispatch subjects")
-	meshNATSURL := fs.String("mesh-nats-url", envOr("NOTIFY_MESH_NATS_URL", ""), "NATS URL for mesh agent dispatch; empty reuses -nats-url (set when agents live on a different hub than the engine)")
+	meshNATSURL := fs.String("mesh-nats-url", envOr("NOTIFY_MESH_NATS_URL", ""), "NATS URL of a mesh hub that is not a dagnats, for mesh agent dispatch; empty dispatches over the dagnats program connection")
 	ssrfAllow := fs.String("ssrf-allow", envOr("NOTIFY_SSRF_ALLOWED_HOSTS", ""), "comma-separated exact hosts (no wildcards) that outbound HTTP steps may reach despite resolving to an internal address; empty blocks all internal ranges")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
@@ -178,6 +183,23 @@ func loadConfig(args []string) (config, error) {
 			DuckDBPath: envOr("NOTIFY_DUCKDB", "notify-analytics.duckdb"),
 		},
 	}, nil
+}
+
+// programOptions is where program.Run finds dagnats: NOTIFY_DAGNATS_URL,
+// NOTIFY_SEED and NOTIFY_JOIN_KEY, with the deprecated -nats-url standing in
+// for an unset NOTIFY_DAGNATS_URL. The seed defaults to notify.seed beside the
+// database, which persists, rather than in the working directory. The program
+// connection gets notify's own Disconnect, Reconnect and Closed handlers.
+func programOptions(cfg config) program.Options {
+	opts := program.OptionsFromEnv("notify")
+	if os.Getenv("NOTIFY_DAGNATS_URL") == "" && cfg.natsURL != "" {
+		opts.URL = cfg.natsURL
+	}
+	if os.Getenv("NOTIFY_SEED") == "" {
+		opts.SeedPath = filepath.Join(filepath.Dir(cfg.app.DBPath), "notify.seed")
+	}
+	opts.NATSOptions = eventbus.ConnHandlers("notify")
+	return opts
 }
 
 // firstNonEmpty returns the first non-empty string in vals, or "" if all empty.
