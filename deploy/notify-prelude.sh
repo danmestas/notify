@@ -9,7 +9,7 @@
 # child so signals propagate cleanly.
 #
 # Design notes:
-#   * Engine NATS (NOTIFY_NATS_URL) is the in-pod dagnats
+#   * Engine NATS (NOTIFY_DAGNATS_URL) is the in-pod dagnats
 #     sidecar reached over loopback. MESH NATS (NOTIFY_MESH_NATS_URL) is the
 #     EXTERNAL sesh A2A hub where responder agents (pi, gemini, omp, grok)
 #     subscribe. They are deliberately different endpoints.
@@ -33,7 +33,7 @@ log() { printf 'notify-prelude: %s\n' "$*" >&2; }
 # --- 1. Engine (in-pod dagnats sidecar) defaults ------------------------------
 # These match cmd/notify/main.go's envOr() defaults so the container behaves the
 # same whether or not the orchestrator set them.
-export NOTIFY_NATS_URL="${NOTIFY_NATS_URL:-nats://127.0.0.1:4222}"
+export NOTIFY_DAGNATS_URL="${NOTIFY_DAGNATS_URL:-nats://127.0.0.1:4222}"
 export NOTIFY_ADDR="${NOTIFY_ADDR:-0.0.0.0:3000}"
 export NOTIFY_DB="${NOTIFY_DB:-/data/notify.db}"
 
@@ -43,8 +43,8 @@ export NOTIFY_DB="${NOTIFY_DB:-/data/notify.db}"
 # Empty (or engine-equal) NOTIFY_MESH_NATS_URL is now the INTENDED config —
 # notify reuses -nats-url for mesh dispatch and cross-machine routing happens
 # at the NATS leaf layer. Only flag the case where mesh points somewhere else.
-if [[ -z "${NOTIFY_MESH_NATS_URL:-}" || "${NOTIFY_MESH_NATS_URL}" == "${NOTIFY_NATS_URL}" ]]; then
-  log "mesh and engine share the local dagnats hub (${NOTIFY_NATS_URL}) — expected; agents reach it via the root leaf."
+if [[ -z "${NOTIFY_MESH_NATS_URL:-}" || "${NOTIFY_MESH_NATS_URL}" == "${NOTIFY_DAGNATS_URL}" ]]; then
+  log "mesh and engine share the local dagnats hub (${NOTIFY_DAGNATS_URL}) — expected; agents reach it via the root leaf."
 else
   log "mesh NATS overridden to a separate endpoint (${NOTIFY_MESH_NATS_URL}); agents are expected off the local dagnats hub."
 fi
