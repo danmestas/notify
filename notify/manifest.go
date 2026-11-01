@@ -10,7 +10,7 @@ import (
 )
 
 // dagnatsRange is the dagnats release range notify is built and tested against.
-const dagnatsRange = ">=0.0.42 <0.1.0"
+const dagnatsRange = ">=0.0.44 <0.1.0"
 
 // Manifest is what dagnats needs to admit notify as a program. Its task types
 // and workflows come from internal/names, the same constants the wiring
@@ -20,11 +20,13 @@ const dagnatsRange = ">=0.0.42 <0.1.0"
 // "notify.<env>-<trigger>" and "notify.agent-turn-<id>"; they are created at
 // runtime and so are not listed.
 //
-// Streams are the ones the event bus creates itself in standalone mode;
-// dagnats provisions them at registration. Protocols are the mesh subjects,
-// which sit under agents., not notify.: mesh traffic to a dagnats rides the
-// program connection. notify's KV buckets are not declared yet; the event bus
-// still creates them, which open auth allows.
+// Streams and Buckets are the ones the event bus creates itself in standalone
+// mode; dagnats provisions them at registration, since a program's NATS user
+// may not create either. Protocols are the mesh subjects, which sit under
+// agents. and a2a., not notify.: mesh traffic to a dagnats rides the program
+// connection. Since dagnats v0.0.43 notify logs in as its own NKey user with
+// only the permissions this manifest derives (program.PermissionsFor), so
+// anything notify touches must be declared here.
 func Manifest() program.Manifest {
 	return program.Manifest{
 		Name:      "notify",
@@ -33,6 +35,7 @@ func Manifest() program.Manifest {
 		TaskTypes: names.TaskTypes(),
 		Workflows: names.Workflows(),
 		Streams:   eventbus.Streams(),
+		Buckets:   eventbus.Buckets(),
 		Protocols: mesh.Protocols(),
 	}
 }

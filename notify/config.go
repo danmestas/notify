@@ -14,7 +14,9 @@ import (
 // to the host: notify uses the connections but never closes them.
 type Host struct {
 	// NC is notify's connection to dagnats. It carries the engine's control
-	// plane and task worker, and the event bus.
+	// plane and task worker, and the event bus. Dial it with
+	// engine.InboxOption(): dagnats answers notify's control plane only on
+	// notify's own reply inbox.
 	NC *nats.Conn
 	// Mesh is the connection mesh agents are dispatched over. Nil means NC.
 	Mesh *nats.Conn
@@ -25,7 +27,7 @@ type Host struct {
 	BasePath string
 
 	// handle is set by Program: the host's worker claims notify's tasks,
-	// and the host has provisioned notify's streams.
+	// and the host has provisioned notify's streams and buckets.
 	handle engine.Registrar
 }
 

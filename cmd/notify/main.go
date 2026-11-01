@@ -60,6 +60,21 @@ func exitOn(command string, err error, code int) {
 	os.Exit(code)
 }
 
+// runError explains a program.Run failure against the dagnats at url to the
+// operator: a refusal names its code, and a dagnats without the program relay
+// says how to fix it.
+func runError(err error, url string) error {
+	if refused := (*program.ErrRefused)(nil); errors.As(err, &refused) {
+		return fmt.Errorf("dagnats at %s refused to admit notify (%s): %s; nothing was started",
+			url, refused.Code, refused.Detail)
+	}
+	if errors.Is(err, program.ErrRelayUnavailable) {
+		return fmt.Errorf("no dagnats program relay answers at %s; upgrade or start the dagnats server: %w",
+			url, err)
+	}
+	return err
+}
+
 // runServe runs notify under program.Run until SIGTERM, or until its dagnats
 // connection closes for good, which is an error so launchd restarts notify.
 // Process-wide setup (the SSRF allowlist, tracing, the log handler) and the
@@ -106,12 +121,8 @@ func runServe(args []string) error {
 
 	opts := programOptions(cfg)
 	running, err := program.Run(ctx, prog, opts)
-	if refused := (*program.ErrRefused)(nil); errors.As(err, &refused) {
-		return fmt.Errorf("dagnats at %s refused to admit notify (%s): %s; nothing was started",
-			opts.URL, refused.Code, refused.Detail)
-	}
 	if err != nil {
-		return err
+		return runError(err, opts.URL)
 	}
 	defer func() { _ = running.Stop(context.WithoutCancel(ctx)) }()
 

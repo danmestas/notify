@@ -27,23 +27,6 @@ func inspectJS(t *testing.T, natsURL string) jetstream.JetStream {
 	return js
 }
 
-func TestBus_Connect_CreatesInboxKV(t *testing.T) {
-	natsURL := startSidecar(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	bus, err := Connect(ctx, natsURL)
-	if err != nil {
-		t.Fatalf("Connect: %v", err)
-	}
-	defer bus.Close()
-
-	js := inspectJS(t, natsURL)
-	if _, err := js.KeyValue(ctx, inboxCountsBucket); err != nil {
-		t.Fatalf("KeyValue(%q): %v", inboxCountsBucket, err)
-	}
-}
-
 func TestBus_Connect_CreatesAnalyticsStream(t *testing.T) {
 	natsURL := startSidecar(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

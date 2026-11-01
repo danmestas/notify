@@ -14,6 +14,7 @@ import (
 
 	"github.com/danmestas/notify/internal/aibuilder"
 	"github.com/danmestas/notify/internal/dagtest"
+	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/names"
 )
 
@@ -34,7 +35,7 @@ func (noAI) Message(context.Context, aibuilder.MessageRequest) (aibuilder.Messag
 // has a handler, every handler is a manifest task type or its pre-prefix
 // spelling (kept for one release), and nothing else.
 func TestManifest_MatchesRegisteredHandlers(t *testing.T) {
-	nc, err := nats.Connect(dagtest.StartSidecar(t))
+	nc, err := nats.Connect(dagtest.StartSidecar(t), engine.InboxOption())
 	if err != nil {
 		t.Fatalf("nats.Connect: %v", err)
 	}

@@ -30,13 +30,16 @@ import (
 // (e.g. "dagnats sidecar (-nats-url)" vs "mesh hub (-mesh-nats-url)") and is
 // folded into the dial error only, since DialNATS itself is shared across
 // callers whose NATS endpoints can differ.
-func DialNATS(natsURL, name, purpose string) (*nats.Conn, error) {
+//
+// extra options apply after notify's own, such as the engine's reply inbox.
+func DialNATS(natsURL, name, purpose string, extra ...nats.Option) (*nats.Conn, error) {
 	options := append([]nats.Option{
 		nats.Name(name),
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(2 * time.Second),
 		nats.ReconnectJitter(500*time.Millisecond, 2*time.Second),
 	}, ConnHandlers(name)...)
+	options = append(options, extra...)
 	nc, err := nats.Connect(natsURL, options...)
 	if err != nil {
 		return nil, fmt.Errorf("eventbus: dial %s %q (%s): %w", purpose, natsURL, name, err)

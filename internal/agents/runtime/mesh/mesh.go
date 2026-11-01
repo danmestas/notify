@@ -52,16 +52,21 @@ const (
 	settle = 300 * time.Millisecond
 	// streamSubject carries task lifecycle and streamed answer frames.
 	streamSubject = "agents.task.stream.>"
+	// replyRoot prefixes the private inbox a dispatch names in its reply_to
+	// header for the pi-style answer envelope.
+	replyRoot = "a2a.reply"
 )
 
 // Protocols are the shared subject roots mesh dispatch speaks over a dagnats
 // connection, for notify's program manifest: prompts go out under the default
-// allowlist and answers come back on the task stream. An allowlist outside
-// agents.prompt only works over a separate, non-dagnats mesh connection.
+// allowlist, and answers come back on the task stream or the reply inbox. An
+// allowlist outside agents.prompt only works over a separate, non-dagnats mesh
+// connection.
 func Protocols() []string {
 	return []string{
 		strings.TrimSuffix(DefaultAllowedSubjects, ".>"),
 		strings.TrimSuffix(streamSubject, ".>"),
+		replyRoot,
 	}
 }
 
@@ -276,7 +281,7 @@ func (c *Client) Dispatch(ctx context.Context, t domain.Turn) (domain.Reply, err
 		return domain.Reply{}, fmt.Errorf("subscribe %s: %w", streamSubject, err)
 	}
 	defer func() { _ = streamSub.Unsubscribe() }()
-	inbox := "a2a.reply." + randToken()
+	inbox := replyRoot + "." + randToken()
 	replySub, err := c.nc.Subscribe(inbox, col.onReply)
 	if err != nil {
 		return domain.Reply{}, fmt.Errorf("subscribe reply inbox: %w", err)
