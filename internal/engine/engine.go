@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/danmestas/dagnats/dag"
+	"github.com/danmestas/dagnats/program"
 	"github.com/danmestas/dagnats/worker"
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel/attribute"
@@ -202,10 +203,19 @@ func WithRegistrar(register Registrar) Option {
 	return func(e *Engine) { e.register = register }
 }
 
+// inboxPrefix is the reply inbox the engine's connection must dial with:
+// dagnats answers the api.p.notify.* control plane only under the notify
+// program's own inbox and drops any other reply unanswered.
+var inboxPrefix = program.InboxPrefix(strings.TrimSuffix(names.Prefix, "."))
+
+// InboxOption dials a connection with the reply inbox FromConn requires.
+// program.Run already dials notify's program connection so.
+func InboxOption() nats.Option { return nats.CustomInboxPrefix(inboxPrefix) }
+
 // New dials dagnats' NATS endpoint. The engine owns that connection and Stop
 // closes it.
 func New(natsURL string, opts ...Option) (*Engine, error) {
-	nc, err := eventbus.DialNATS(natsURL, "notify-engine", "dagnats sidecar (-nats-url)")
+	nc, err := eventbus.DialNATS(natsURL, "notify-engine", "dagnats sidecar (-nats-url)", InboxOption())
 	if err != nil {
 		return nil, err
 	}
@@ -214,9 +224,14 @@ func New(natsURL string, opts ...Option) (*Engine, error) {
 	return e, nil
 }
 
-// FromConn builds an engine on an existing connection to dagnats. The
-// connection stays the caller's: Stop drains the worker but does not close it.
+// FromConn builds an engine on an existing connection to dagnats, which must
+// have been dialed with InboxOption. The connection stays the caller's: Stop
+// drains the worker but does not close it.
 func FromConn(nc *nats.Conn, opts ...Option) *Engine {
+	if nc != nil && nc.Opts.InboxPrefix != inboxPrefix {
+		panic(fmt.Sprintf("engine.FromConn: connection inbox is %q; dial with engine.InboxOption() (%s)",
+			nc.Opts.InboxPrefix, inboxPrefix))
+	}
 	e := &Engine{
 		nc:            nc,
 		log:           slog.Default(),

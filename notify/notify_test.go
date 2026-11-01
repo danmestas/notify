@@ -15,6 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/danmestas/notify/internal/dagtest"
+	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/notify"
 )
 
@@ -22,7 +23,7 @@ import (
 // connection returned so a test can check notify left it alone.
 func newNotify(t *testing.T, basePath string) (*notify.Notify, *nats.Conn) {
 	t.Helper()
-	nc, err := nats.Connect(dagtest.StartSidecar(t))
+	nc, err := nats.Connect(dagtest.StartSidecar(t), engine.InboxOption())
 	if err != nil {
 		t.Fatalf("nats.Connect: %v", err)
 	}

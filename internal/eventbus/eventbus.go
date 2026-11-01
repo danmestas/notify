@@ -20,9 +20,8 @@ import (
 // Names of notify's private JetStream resources. These belong to notify;
 // dagnats owns its own separate buckets and streams which we never touch.
 const (
-	inboxCountsBucket = "notify_inbox_counts"
-	throttleBucket    = "notify_throttle"
-	digestBucket      = "notify_digest"
+	throttleBucket = "notify_throttle"
+	digestBucket   = "notify_digest"
 
 	// digestClaimBucket holds digest-window claims, separate from digestBucket
 	// so a bucket-wide TTL can expire orphaned claims WITHOUT putting any lifetime
@@ -95,7 +94,6 @@ type Bus struct {
 	// belongs to the caller and Close leaves it open.
 	ownsConn    bool
 	js          jetstream.JetStream
-	kv          jetstream.KeyValue
 	throttle    jetstream.KeyValue
 	digest      jetstream.KeyValue
 	digestClaim jetstream.KeyValue
@@ -112,7 +110,7 @@ type Option func(*busConfig)
 // busConfig holds Connect-time tunables resolved from Options.
 type busConfig struct {
 	digestClaimTTL time.Duration
-	hostStreams    bool
+	hostResources  bool
 	outputPrefix   string
 }
 
@@ -124,10 +122,9 @@ func WithDigestClaimTTL(d time.Duration) Option {
 }
 
 // Connect dials natsURL, waits for the connection to be established, and
-// ensures notify's JetStream resources exist (idempotent): the
-// "notify_inbox_counts" KV bucket and the "NOTIFY_ANALYTICS" stream
-// (subjects "notify.analytics.>"). The returned Bus owns the connection;
-// the caller must Close it.
+// ensures notify's JetStream resources exist (idempotent): the KV buckets
+// Buckets declares and the streams Streams declares. The returned Bus owns the
+// connection; the caller must Close it.
 func Connect(ctx context.Context, natsURL string, opts ...Option) (*Bus, error) {
 	nc, err := DialNATS(natsURL, "notify-eventbus", "dagnats sidecar (-nats-url)")
 	if err != nil {
@@ -156,55 +153,20 @@ func FromConn(ctx context.Context, nc *nats.Conn, opts ...Option) (*Bus, error) 
 		return nil, fmt.Errorf("eventbus: jetstream init: %w", err)
 	}
 
-	kv, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
-		Bucket: inboxCountsBucket,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", inboxCountsBucket, err)
-	}
-
-	throttle, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
-		Bucket:  throttleBucket,
-		History: 1,
-		TTL:     maxThrottleBucketTTL,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", throttleBucket, err)
-	}
-
-	digest, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
-		Bucket:  digestBucket,
-		History: 1,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", digestBucket, err)
-	}
-
 	// Claims live in their own bucket so their bucket-wide TTL expires orphaned
-	// claims without ever touching the accumulating event lists above.
-	digestClaim, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
-		Bucket:  digestClaimBucket,
-		History: 1,
-		TTL:     cfg.digestClaimTTL,
-	})
+	// claims without ever touching the accumulating event lists.
+	kv, err := ensureBuckets(ctx, js, cfg.hostResources, cfg.digestClaimTTL)
 	if err != nil {
-		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", digestClaimBucket, err)
+		return nil, err
 	}
-
-	budget, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
-		Bucket:  budgetBucket,
-		History: 1,
-		TTL:     maxBudgetBucketTTL,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("eventbus: ensure kv %q: %w", budgetBucket, err)
-	}
-
-	if err := ensureStreams(ctx, js, cfg.hostStreams); err != nil {
+	if err := ensureStreams(ctx, js, cfg.hostResources); err != nil {
 		return nil, err
 	}
 
-	return &Bus{nc: nc, js: js, kv: kv, throttle: throttle, digest: digest, digestClaim: digestClaim, budget: budget, outputPrefix: cfg.outputPrefix}, nil
+	return &Bus{
+		nc: nc, js: js, throttle: kv[throttleBucket], digest: kv[digestBucket],
+		digestClaim: kv[digestClaimBucket], budget: kv[budgetBucket], outputPrefix: cfg.outputPrefix,
+	}, nil
 }
 
 // Close drains and closes the underlying NATS connection.

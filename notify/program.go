@@ -18,7 +18,7 @@ import (
 // host that Attaches it. Start builds notify on the program connection and
 // registers every task handler through Host.Handle, so the worker Attach runs
 // claims notify's tasks and the engine runs none of its own. dagnats has
-// already provisioned notify's streams at the Grant's sizes.
+// already provisioned notify's streams at the Grant's sizes, and its buckets.
 //
 // Under Program notify serves only the notify.* task types its Manifest
 // declares. The pre-prefix names the standalone engine still serves for N4's

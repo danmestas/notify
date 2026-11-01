@@ -3,17 +3,20 @@ package eventbus
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/danmestas/dagnats/program"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-// WithHostStreams says the host has already created notify's streams, as
-// dagnats does for a program: registration provisions Streams() at the sizes
-// in the program's Grant. FromConn then creates and reconfigures no stream, so
-// the granted sizes stand, and it fails naming any stream that is missing.
-func WithHostStreams() Option {
-	return func(c *busConfig) { c.hostStreams = true }
+// WithHostResources says the host has already created notify's streams and KV
+// buckets, as dagnats does for a program: registration provisions Streams()
+// at the sizes in the program's Grant and Buckets() at their declared sizes. A
+// program's NATS user may not create or update a stream, so FromConn then
+// creates and reconfigures nothing: it binds what exists and fails naming any
+// stream or bucket that is missing.
+func WithHostResources() Option {
+	return func(c *busConfig) { c.hostResources = true }
 }
 
 // WithProgramOutput says the tasks run on dagnats program name's worker,
@@ -48,10 +51,25 @@ func Streams() []program.StreamSpec {
 	}
 }
 
+// Buckets declares notify's own KV buckets for its program manifest, and is
+// what FromConn creates on its own. A bucket's MaxBytes is a hard cap (a full
+// bucket refuses writes), so each is sized far above what its keys hold: the
+// digest bucket keeps every pending window's events, the others hold small
+// counters and claims that their TTL evicts. dagnats refuses a later manifest
+// that lowers a TTL or History, or caps a bucket below what it holds.
+func Buckets() []program.BucketSpec {
+	return []program.BucketSpec{
+		{Name: throttleBucket, History: 1, TTL: maxThrottleBucketTTL, MaxBytes: 64 << 20},
+		{Name: digestBucket, History: 1, MaxBytes: 256 << 20},
+		{Name: digestClaimBucket, History: 1, TTL: maxDigestClaimTTL, MaxBytes: 16 << 20},
+		{Name: budgetBucket, History: 1, TTL: maxBudgetBucketTTL, MaxBytes: 32 << 20},
+	}
+}
+
 // ensureStreams creates notify's streams or, when the host owns them, checks
 // that each exists.
-func ensureStreams(ctx context.Context, js jetstream.JetStream, hostStreams bool) error {
-	if hostStreams {
+func ensureStreams(ctx context.Context, js jetstream.JetStream, hostResources bool) error {
+	if hostResources {
 		for _, s := range Streams() {
 			if _, err := js.Stream(ctx, s.Name); err != nil {
 				return fmt.Errorf("eventbus: stream %q not provisioned by the host: %w", s.Name, err)
@@ -74,4 +92,39 @@ func ensureStreams(ctx context.Context, js jetstream.JetStream, hostStreams bool
 		return fmt.Errorf("eventbus: ensure stream %q: %w", deliveryStream, err)
 	}
 	return ensureFeedStream(ctx, js)
+}
+
+// ensureBuckets creates notify's buckets or, when the host owns them, binds
+// them, keyed by name. digestClaimTTL is the claim bucket's TTL; only a
+// standalone bus can change it, since a host-provisioned bucket has the TTL
+// Buckets declares.
+func ensureBuckets(
+	ctx context.Context, js jetstream.JetStream, hostResources bool, digestClaimTTL time.Duration,
+) (map[string]jetstream.KeyValue, error) {
+	if hostResources && digestClaimTTL != maxDigestClaimTTL {
+		return nil, fmt.Errorf("eventbus: WithDigestClaimTTL cannot change a host-provisioned bucket")
+	}
+	out := make(map[string]jetstream.KeyValue, len(Buckets()))
+	for _, b := range Buckets() {
+		if hostResources {
+			kv, err := js.KeyValue(ctx, b.Name)
+			if err != nil {
+				return nil, fmt.Errorf("eventbus: bucket %q not provisioned by the host: %w", b.Name, err)
+			}
+			out[b.Name] = kv
+			continue
+		}
+		ttl := b.TTL
+		if b.Name == digestClaimBucket {
+			ttl = digestClaimTTL
+		}
+		kv, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
+			Bucket: b.Name, History: b.History, TTL: ttl, MaxBytes: b.MaxBytes,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("eventbus: ensure kv %q: %w", b.Name, err)
+		}
+		out[b.Name] = kv
+	}
+	return out, nil
 }

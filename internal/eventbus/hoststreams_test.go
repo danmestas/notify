@@ -2,6 +2,7 @@ package eventbus
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -32,10 +33,53 @@ func TestStreams_AreTheStreamsFromConnCreates(t *testing.T) {
 	}
 }
 
-// TestWithHostStreams_RefusesMissingAndKeepsProvisionedSize: in program mode
-// the host creates notify's streams. FromConn must name a stream the host did
-// not create, and must not resize one it did.
-func TestWithHostStreams_RefusesMissingAndKeepsProvisionedSize(t *testing.T) {
+// TestBuckets_AreTheBucketsFromConnCreates pins that the declared bucket specs
+// are the ones the standalone path creates, under notify's own prefix.
+func TestBuckets_AreTheBucketsFromConnCreates(t *testing.T) {
+	nc, err := nats.Connect(dagtest.StartSidecar(t))
+	if err != nil {
+		t.Fatalf("nats.Connect: %v", err)
+	}
+	defer nc.Close()
+	ctx := context.Background()
+	bus, err := FromConn(ctx, nc)
+	if err != nil {
+		t.Fatalf("FromConn: %v", err)
+	}
+	defer func() { _ = bus.Close() }()
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("jetstream.New: %v", err)
+	}
+	want := []string{throttleBucket, digestBucket, digestClaimBucket, budgetBucket}
+	var got []string
+	for _, b := range Buckets() {
+		got = append(got, b.Name)
+		if !strings.HasPrefix(b.Name, "notify_") {
+			t.Errorf("bucket %s is not under notify_", b.Name)
+		}
+		kv, err := js.KeyValue(ctx, b.Name)
+		if err != nil {
+			t.Fatalf("bucket %s: %v", b.Name, err)
+		}
+		status, err := kv.Status(ctx)
+		if err != nil {
+			t.Fatalf("bucket %s status: %v", b.Name, err)
+		}
+		if status.TTL() != b.TTL || status.History() != int64(b.History) {
+			t.Errorf("bucket %s created with ttl %v history %d, declared %v %d",
+				b.Name, status.TTL(), status.History(), b.TTL, b.History)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("Buckets() = %v, want %v", got, want)
+	}
+}
+
+// TestWithHostResources_RefusesMissingAndKeepsProvisionedSize: in program mode
+// the host creates notify's streams and buckets. FromConn must name one the
+// host did not create, and must not resize one it did.
+func TestWithHostResources_RefusesMissingAndKeepsProvisionedSize(t *testing.T) {
 	nc, err := nats.Connect(dagtest.StartSidecar(t))
 	if err != nil {
 		t.Fatalf("nats.Connect: %v", err)
@@ -43,16 +87,19 @@ func TestWithHostStreams_RefusesMissingAndKeepsProvisionedSize(t *testing.T) {
 	defer nc.Close()
 	ctx := context.Background()
 
-	_, err = FromConn(ctx, nc, WithHostStreams())
+	_, err = FromConn(ctx, nc, WithHostResources())
 	if err == nil || !strings.Contains(err.Error(), "not provisioned") {
 		t.Fatalf("FromConn before provisioning: err = %v, want a not-provisioned error", err)
 	}
 
-	m := program.Manifest{Name: "notify", Dagnats: ">=0.0.40", Streams: Streams()}
+	m := program.Manifest{Name: "notify", Dagnats: ">=0.0.40", Streams: Streams(), Buckets: Buckets()}
 	g := program.Grant{Replicas: 1, StreamMaxBytes: map[string]int64{}}
 	for _, s := range m.Streams {
 		g.StreamMaxBytes[s.Name] = 8 << 20
 		g.StoreBudgetBytes += 8 << 20
+	}
+	for _, b := range m.Buckets {
+		g.StoreBudgetBytes += b.MaxBytes
 	}
 	js, err := jetstream.New(nc)
 	if err != nil {
@@ -62,9 +109,18 @@ func TestWithHostStreams_RefusesMissingAndKeepsProvisionedSize(t *testing.T) {
 		t.Fatalf("Provision: %v", err)
 	}
 
-	bus, err := FromConn(ctx, nc, WithHostStreams())
+	bus, err := FromConn(ctx, nc, WithHostResources())
 	if err != nil {
 		t.Fatalf("FromConn after provisioning: %v", err)
+	}
+	for _, b := range m.Buckets {
+		stream, err := js.Stream(ctx, "KV_"+b.Name)
+		if err != nil {
+			t.Fatalf("bucket %s: %v", b.Name, err)
+		}
+		if got := stream.CachedInfo().Config.MaxBytes; got != b.MaxBytes {
+			t.Errorf("bucket %s MaxBytes = %d after FromConn, want the provisioned %d", b.Name, got, b.MaxBytes)
+		}
 	}
 	defer func() { _ = bus.Close() }()
 	for _, s := range m.Streams {
