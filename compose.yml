@@ -57,7 +57,7 @@ services:
       dagnats:
         condition: service_healthy
     environment:
-      NOTIFY_NATS_URL: nats://127.0.0.1:4222
+      NOTIFY_DAGNATS_URL: nats://127.0.0.1:4222
       NOTIFY_ADDR: 0.0.0.0:3000
       NOTIFY_DB: /data/notify.db
       # Browser-facing dagnats console base for activity run deep-links. This

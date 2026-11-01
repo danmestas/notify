@@ -10,17 +10,17 @@ max_duration: "720h"             # ~30d; restart policy keeps it alive between
 
 # Consolidated topology: ONE dagnats is notify's engine NATS, notify's mesh, AND
 # the sesh agents' hub. It runs as a leaf node dialing OUT to a secured root hub.
-# NOTIFY_MESH_NATS_URL is left EMPTY so notify reuses NOTIFY_NATS_URL for mesh
-# dispatch (cmd/notify/main.go:173). DAGNATS_LEAF_REMOTES (SESH_ROOT_LEAF_URL,
+# NOTIFY_MESH_NATS_URL is left EMPTY so notify dispatches mesh turns over its
+# dagnats program connection. DAGNATS_LEAF_REMOTES (SESH_ROOT_LEAF_URL,
 # e.g. tls://root.example:7422) + DAGNATS_LEAF_CREDENTIALS (the mini_leaf_creds
 # file-type secret at /run/secrets/mini-leaf.creds) flip dagnats into leaf mode,
 # which binds 0.0.0.0:4222 for the agents. Leave SESH_ROOT_LEAF_URL unset for a
 # standalone (localhost-only) single-box phase.
 env:
-  NOTIFY_NATS_URL: "nats://127.0.0.1:4222"        # engine + mesh + agent hub
+  NOTIFY_DAGNATS_URL: "nats://127.0.0.1:4222"        # engine + mesh + agent hub
   NOTIFY_ADDR: "0.0.0.0:3000"
   NOTIFY_DB: "/data/notify.db"
-  NOTIFY_MESH_NATS_URL: ""                          # empty → reuse engine NATS
+  NOTIFY_MESH_NATS_URL: ""                          # empty → the dagnats program connection
   DAGNATS_LEAF_REMOTES: "${SESH_ROOT_LEAF_URL}"     # root hub leaf listener
   DAGNATS_LEAF_CREDENTIALS: "/run/secrets/mini-leaf.creds"
   NOTIFY_PUBLIC_BASE_URL: "${NOTIFY_PUBLIC_BASE_URL}"

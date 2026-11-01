@@ -24,7 +24,7 @@ Published ports:
 - `${NOTIFY_HOST_PORT:-3000}:3000`: the notify API and console. Change `NOTIFY_HOST_PORT` if 3000 is taken.
 - `127.0.0.1:${DAGNATS_CONSOLE_HOST_PORT:-8081}:8080`: dagnats' own console. It has no authentication, so it is bound to loopback on purpose. notify links to it from run pages through `NOTIFY_DAGNATS_CONSOLE_URL`.
 
-The `notify` service sets `NOTIFY_NATS_URL`, `NOTIFY_ADDR=0.0.0.0:3000`, `NOTIFY_DB`, `NOTIFY_DAGNATS_CONSOLE_URL` and `NOTIFY_MASTER_KEY_HEX`. Add any other [environment variable](../../configuration) to the `environment:` block.
+The `notify` service sets `NOTIFY_DAGNATS_URL`, `NOTIFY_ADDR=0.0.0.0:3000`, `NOTIFY_DB`, `NOTIFY_DAGNATS_CONSOLE_URL` and `NOTIFY_MASTER_KEY_HEX`. Add any other [environment variable](../../configuration) to the `environment:` block.
 
 Both services have health checks (`/ready` on dagnats, `/healthz` on notify), and notify waits for dagnats to be healthy.
 

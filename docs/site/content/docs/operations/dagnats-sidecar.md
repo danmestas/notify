@@ -30,6 +30,16 @@ Every task type and workflow name notify registers starts with `notify.`: `notif
 - **Upgrades re-register on their own.** A new notify release starts with the same seed and dagnats re-admits its changed manifest (dagnats v0.0.44 or later).
 - **A lost connection exits.** The program connection reconnects forever; if it closes for good, notify exits non-zero so its supervisor restarts it. `/readyz` reports the connection, not whether the worker is still consuming.
 
+## Moving to another dagnats
+
+notify runs the same way on a single dagnats node and on a dagnats cluster. To move it, set `NOTIFY_DAGNATS_URL` (and `NOTIFY_DAGNATS_CONSOLE_URL`, if you set it) to the other server and restart notify. Moving back works the same way.
+
+- **Registration.** The same seed registers on the new server as a first registration. A dagnats with no NATS login admits it without a join key. One with a login needs `NOTIFY_JOIN_KEY`. The old server keeps its record, so moving back needs nothing.
+- **Budget.** The new server must have room in its store budget for notify's streams and buckets. If it doesn't, notify exits with `budget_exceeded` before starting anything.
+- **What moves with notify.** `notify.db` holds workflows, subscribers, messages and credentials. On start notify re-registers every published workflow, up to 8 at a time.
+- **What stays on the old server.** Runs in flight, with their parked delays and digest waits; delivery events outbound webhooks haven't sent yet; feed history; throttle windows and digest buffers. Before moving, check the old server has no active runs (`dagnats run list --status running`).
+- **Mesh agents.** Agent dispatch rides the program connection, so agents that answer `agents.prompt.*` must be reachable on the new server. Move a local responder with notify, unless an agent on the new server already answers its subject; two answers mean two replies.
+
 ## Defaults
 
 `dagnats serve` binds NATS on `127.0.0.1:4222` and its HTTP console on `127.0.0.1:8080`. notify needs only the NATS address, which is its default. In standalone mode NATS binds **loopback only**, so notify must be on the same host (or share a network namespace, as the Compose setup does). Leaf or cluster mode binds `0.0.0.0`. The sidecar's settings are `DAGNATS_*` variables: `DAGNATS_HTTP_ADDR`, `DAGNATS_DATA_DIR`, `DAGNATS_NATS_PORT`, `DAGNATS_LEAF_REMOTES` and `DAGNATS_LEAF_CREDENTIALS` appear in this repository's deploy files; the dagnats documentation has the rest.

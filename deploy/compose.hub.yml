@@ -110,17 +110,16 @@ services:
         condition: service_healthy
     environment:
       # --- engine (in-pod dagnats) ---
-      NOTIFY_NATS_URL: nats://127.0.0.1:4222
+      NOTIFY_DAGNATS_URL: nats://127.0.0.1:4222
       NOTIFY_ADDR: 0.0.0.0:3000
       NOTIFY_DB: /data/notify.db
       NOTIFY_DAGNATS_CONSOLE_URL: ${NOTIFY_DAGNATS_CONSOLE_URL:-http://localhost:8081}
       # --- mesh (now the SAME local dagnats) ---
-      # Consolidated topology: the local dagnats IS the sesh agents' hub, so
-      # mesh dispatch and the engine share one endpoint. Leaving this EMPTY
-      # makes notify reuse -nats-url (NOTIFY_NATS_URL) for mesh dispatch
-      # (cmd/notify/main.go:173). The agents reach the SAME hub leafed into the
-      # root, so cross-machine routing happens at the NATS leaf layer, not via
-      # a separate mesh URL. Override only if agents truly live elsewhere.
+      # Consolidated topology: the local dagnats IS the sesh agents' hub.
+      # Leaving this EMPTY dispatches mesh turns over notify's dagnats program
+      # connection; the agents reach the same hub leafed into the root, so
+      # cross-machine routing happens at the NATS leaf layer. Set it only for
+      # a mesh hub that is not a dagnats.
       NOTIFY_MESH_NATS_URL: ${NOTIFY_MESH_NATS_URL:-}
       NOTIFY_MESH_ALLOW: ${NOTIFY_MESH_ALLOW:-}
       # --- chat default scope (cold inbound routing) ---
