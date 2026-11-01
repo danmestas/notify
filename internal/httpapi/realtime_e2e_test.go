@@ -56,7 +56,7 @@ func TestRealtime_InAppStreamsToSubscriber(t *testing.T) {
 	t.Cleanup(func() { _ = bus.Close() })
 
 	// Register the in_app delivery handler with a live publisher before workers start.
-	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
+	eng.Handle("notify.send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
 	if err := eng.StartWorkers(ctx); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}

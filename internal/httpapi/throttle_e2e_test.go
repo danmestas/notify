@@ -65,7 +65,7 @@ func TestCheckThrottle_StepHandler_SecondRunDropped(t *testing.T) {
 
 	// Register the check.throttle step handler and the in_app channel handler.
 	eng.Handle(delivery.TaskThrottle, delivery.NewThrottleHandler(st, bus).Handle)
-	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
+	eng.Handle("notify.send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
 
 	// LOW guard: assert check.throttle is wired before workers start so that
 	// removing the eng.Handle(delivery.TaskThrottle, ...) line causes an
@@ -221,7 +221,7 @@ func TestThrottle_SecondSendThrottled(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = bus.Close() })
 
-	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).WithThrottle(bus).HandleInApp)
+	eng.Handle("notify.send.in_app", delivery.New(st).WithEventBus(bus).WithThrottle(bus).HandleInApp)
 	if err := eng.StartWorkers(ctx); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}

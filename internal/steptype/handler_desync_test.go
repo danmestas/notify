@@ -29,16 +29,16 @@ func TestHandlerDesyncGuard(t *testing.T) {
 	// that steptype.Default() can produce at compile time. Every entry must have
 	// a matching eng.Handle call in cmd/notify/main.go.
 	expectedNormalTasks := map[string]bool{
-		"send.in_app":     true,
-		"send.email":      true,
-		"send.push":       true,
-		"send.sms":        true,
-		"send.chat":       true,
-		"digest.wait":     true,
-		"check.throttle":  true,
-		"http_request":    true,
-		"delay.scheduled": true,
-		"delay.dynamic":   true,
+		"notify.send.in_app":     true,
+		"notify.send.email":      true,
+		"notify.send.push":       true,
+		"notify.send.sms":        true,
+		"notify.send.chat":       true,
+		"notify.digest.wait":     true,
+		"notify.check.throttle":  true,
+		"notify.http_request":    true,
+		"notify.delay.scheduled": true,
+		"notify.delay.dynamic":   true,
 	}
 
 	// representativeSteps covers each step type and each variant that can

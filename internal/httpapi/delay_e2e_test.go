@@ -52,7 +52,7 @@ func TestDelay_InAppDeliveredAfterSleep(t *testing.T) {
 		t.Fatalf("eventbus.Connect: %v", err)
 	}
 	t.Cleanup(func() { _ = bus.Close() })
-	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
+	eng.Handle("notify.send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
 	if err := eng.StartWorkers(ctx); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}

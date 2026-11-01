@@ -23,7 +23,7 @@ import (
 
 func TestDAGName(t *testing.T) {
 	got := authoring.DAGName(domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "welcome")
-	if want := "env_1-welcome"; got != want {
+	if want := "notify.env_1-welcome"; got != want {
 		t.Fatalf("DAGName = %q, want %q", got, want)
 	}
 }
@@ -38,14 +38,14 @@ func TestCompile_OneStepInApp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	if def.Name != "env_1-welcome" {
-		t.Fatalf("def.Name = %q, want env_1-welcome", def.Name)
+	if def.Name != "notify.env_1-welcome" {
+		t.Fatalf("def.Name = %q, want notify.env_1-welcome", def.Name)
 	}
 	if len(def.Steps) != 1 {
 		t.Fatalf("len(Steps) = %d, want 1", len(def.Steps))
 	}
 	s := def.Steps[0]
-	if s.ID != "S1" || s.Task != "send.in_app" || s.Type != dag.StepTypeNormal {
+	if s.ID != "S1" || s.Task != "notify.send.in_app" || s.Type != dag.StepTypeNormal {
 		t.Fatalf("step = %+v, want {ID:S1 Task:send.in_app Type:normal}", s)
 	}
 	if len(s.DependsOn) != 0 {
@@ -139,7 +139,7 @@ func TestCompile_DelayThenInApp(t *testing.T) {
 		t.Fatalf("root sleep DependsOn = %v, want empty", d.DependsOn)
 	}
 	c := def.Steps[1]
-	if c.ID != "S1" || c.Task != "send.in_app" || c.Type != dag.StepTypeNormal {
+	if c.ID != "S1" || c.Task != "notify.send.in_app" || c.Type != dag.StepTypeNormal {
 		t.Fatalf("channel step = %+v, want {ID:S1 Task:send.in_app Type:normal}", c)
 	}
 	if len(c.DependsOn) != 1 || c.DependsOn[0] != "d1" {
@@ -174,7 +174,7 @@ func TestCompile_DigestThenInApp(t *testing.T) {
 		t.Fatalf("root sleep DependsOn = %v, want empty", d.DependsOn)
 	}
 	c := def.Steps[1]
-	if c.ID != "S1" || c.Task != "send.in_app" || c.Type != dag.StepTypeNormal {
+	if c.ID != "S1" || c.Task != "notify.send.in_app" || c.Type != dag.StepTypeNormal {
 		t.Fatalf("channel step = %+v, want {ID:S1 Task:send.in_app Type:normal}", c)
 	}
 	if len(c.DependsOn) != 1 || c.DependsOn[0] != "dg" {
@@ -199,7 +199,7 @@ func TestCompile_DigestScheduledThenInApp(t *testing.T) {
 		t.Fatalf("Compile: %v", err)
 	}
 	d := def.Steps[0]
-	if d.ID != "dg" || d.Type != dag.StepTypeNormal || d.Task != "digest.wait" {
+	if d.ID != "dg" || d.Type != dag.StepTypeNormal || d.Task != "notify.digest.wait" {
 		t.Fatalf("scheduled digest step = %+v, want {ID:dg Type:normal Task:digest.wait}", d)
 	}
 	if d.Config != nil {
@@ -999,7 +999,7 @@ func TestCompile_ThrottleStep_Valid(t *testing.T) {
 		t.Fatalf("got %d steps, want 1", len(def.Steps))
 	}
 	s := def.Steps[0]
-	if s.Task != "check.throttle" {
+	if s.Task != "notify.check.throttle" {
 		t.Errorf("Task = %q, want check.throttle", s.Task)
 	}
 	if s.Type != dag.StepTypeNormal {
@@ -1064,14 +1064,14 @@ func TestCompile_ThrottleBeforeChannel(t *testing.T) {
 		t.Fatalf("got %d steps, want 2", len(def.Steps))
 	}
 	thr := def.Steps[0]
-	if thr.Task != "check.throttle" || thr.Type != dag.StepTypeNormal {
+	if thr.Task != "notify.check.throttle" || thr.Type != dag.StepTypeNormal {
 		t.Errorf("throttle step = %+v, want {Task:check.throttle Type:normal}", thr)
 	}
 	if len(thr.DependsOn) != 0 {
 		t.Errorf("throttle DependsOn = %v, want empty", thr.DependsOn)
 	}
 	ch := def.Steps[1]
-	if ch.Task != "send.in_app" || ch.Type != dag.StepTypeNormal {
+	if ch.Task != "notify.send.in_app" || ch.Type != dag.StepTypeNormal {
 		t.Errorf("channel step = %+v, want {Task:send.in_app Type:normal}", ch)
 	}
 	if len(ch.DependsOn) != 1 || ch.DependsOn[0] != "T1" {

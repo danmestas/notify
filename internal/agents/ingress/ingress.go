@@ -27,16 +27,17 @@ import (
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/identity"
+	"github.com/danmestas/notify/internal/names"
 	corestore "github.com/danmestas/notify/internal/store"
 )
 
 // TaskMesh is the engine task type for mesh-runtime turns (RFC 0002 §5,
 // Task("agent.turn.<runtime>")).
-const TaskMesh = "agent.turn.mesh"
+const TaskMesh = names.AgentTurnMesh
 
 // TaskManaged is the engine task type for managed-runtime turns: agents
 // notify runs itself on the owner's model settings.
-const TaskManaged = "agent.turn.managed"
+const TaskManaged = names.AgentTurnManaged
 
 // historyWindow bounds the transcript carried into each turn,
 // RFC 0002 §4: last N=20, oldest first).
@@ -456,11 +457,11 @@ func (s *Service) startTurn(ctx context.Context, scope domain.Scope, agent agent
 }
 
 // ensureWorkflow registers the per-agent turn workflow once per process.
-// The name is "agent-turn-<agentID>" — dagnats stores definitions in a NATS
+// The name is "notify.agent-turn-<agentID>" — dagnats stores definitions in a NATS
 // KV bucket whose key charset excludes ':', so the RFC's "agent-turn:<id>"
 // spelling is flattened to a hyphen.
 func (s *Service) ensureWorkflow(ctx context.Context, agent agentdomain.Agent) (string, error) {
-	name := "agent-turn-" + agent.ID
+	name := names.AgentTurnWorkflow(agent.ID)
 	s.mu.Lock()
 	done := s.registered[name]
 	s.mu.Unlock()
@@ -473,7 +474,7 @@ func (s *Service) ensureWorkflow(ctx context.Context, agent agentdomain.Agent) (
 		Singleton:      &engine.SingletonConfig{Mode: "skip", Key: "conversation_id"},
 		Steps: []engine.StepDef{{
 			ID:    "turn",
-			Task:  "agent.turn." + agent.Runtime,
+			Task:  names.AgentTurn(agent.Runtime),
 			Type:  dag.StepTypeNormal,
 			Retry: s.retry,
 		}},
@@ -564,7 +565,7 @@ func parseActivityLimit(s string) int {
 	return v
 }
 
-// HandleTurn is the agent.turn.mesh task handler, registered via
+// HandleTurn is the notify.agent.turn.mesh task handler, registered via
 // engine.Handle(ingress.TaskMesh, svc.HandleTurn). It rebuilds the Turn from
 // the store, dispatches it through the agent's runtime, and on success
 // appends the agent activity, persists the in_app messages row, and publishes

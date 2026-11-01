@@ -22,6 +22,7 @@ import (
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/keypath"
+	"github.com/danmestas/notify/internal/names"
 	"github.com/danmestas/notify/internal/observe"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/steptype"
@@ -430,7 +431,7 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 	// key"). "-" is used rather than "." so the name stays a single NATS
 	// subject token; it is proven end-to-end by the engine smoke workflow.
 	// authoring registers under the identical name (authoring.DAGName).
-	dagName := scope.EnvID + "-" + req.Name
+	dagName := names.Workflow(scope.EnvID, req.Name)
 	runID, err := svc.eng.StartRun(ctx, dagName, envelopeJSON)
 	if err != nil {
 		return "", err

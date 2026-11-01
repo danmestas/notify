@@ -25,8 +25,8 @@ func TestHTTPRequest_Compile_IsNormalTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	if sd.Task != "http_request" {
-		t.Errorf("Task = %q, want http_request", sd.Task)
+	if sd.Task != "notify.http_request" {
+		t.Errorf("Task = %q, want notify.http_request", sd.Task)
 	}
 	if sd.Type != dag.StepTypeNormal {
 		t.Errorf("Type = %q, want normal", sd.Type)

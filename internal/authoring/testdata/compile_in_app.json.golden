@@ -1,10 +1,10 @@
 {
-  "name": "env_golden-wf-in_app",
+  "name": "notify.env_golden-wf-in_app",
   "version": "",
   "steps": [
     {
       "id": "in_app-1",
-      "task": "send.in_app",
+      "task": "notify.send.in_app",
       "timeout": 0,
       "type": "normal"
     }

@@ -56,7 +56,7 @@ type output struct {
 	RunID          string `json:"runId"`
 }
 
-// Handle is registered via engine.Handle("agent_message", h.Handle).
+// Handle is registered via engine.Handle("notify.agent_message", h.Handle).
 //
 // The compose is keyed on the run's transaction, recipient and step, so a
 // retried step or a redelivered trigger returns the message already posted

@@ -60,7 +60,7 @@ func TestAnalytics_DeliveriesByChannel_DuckDB(t *testing.T) {
 	t.Cleanup(func() { _ = bus.Close() })
 
 	// in_app delivery handler publishes delivery-status events on the bus.
-	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
+	eng.Handle("notify.send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
 	if err := eng.StartWorkers(ctx); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}

@@ -1,10 +1,10 @@
 {
-  "name": "env_golden-wf-chat",
+  "name": "notify.env_golden-wf-chat",
   "version": "",
   "steps": [
     {
       "id": "chat-1",
-      "task": "send.chat",
+      "task": "notify.send.chat",
       "timeout": 0,
       "type": "normal"
     }

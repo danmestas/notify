@@ -16,6 +16,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/names"
 	"github.com/danmestas/notify/internal/secretbox"
 	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
@@ -106,7 +107,7 @@ func (s *Service) sealSteps(steps []domain.Step, prior map[string]domain.Step) (
 // rejects ':' (`nats: invalid key`); '-' is KV- and subject-token-safe and is
 // proven end-to-end by the engine e2e (workflow "foundation-smoke").
 func DAGName(scope domain.Scope, triggerIdentifier string) string {
-	return scope.EnvID + "-" + triggerIdentifier
+	return names.Workflow(scope.EnvID, triggerIdentifier)
 }
 
 // triggerIdentifierPattern is the URL-safe slug allowlist for
@@ -183,7 +184,7 @@ func Compile(wf domain.Workflow) (engine.WorkflowDef, error) {
 		return engine.WorkflowDef{}, fmt.Errorf("authoring: unmarshal steps: %w", err)
 	}
 	def := engine.WorkflowDef{
-		Name:           wf.EnvID + "-" + wf.TriggerIdentifier,
+		Name:           names.Workflow(wf.EnvID, wf.TriggerIdentifier),
 		Steps:          make([]engine.StepDef, 0, len(steps)),
 		IdempotencyKey: idempotencyDotPath,
 	}
@@ -198,7 +199,7 @@ func Compile(wf domain.Workflow) (engine.WorkflowDef, error) {
 		} else {
 			// Unknown/legacy type: preserve historical behavior — an
 			// unregistered type compiled to a channel "send.<type>" task.
-			sd = engine.StepDef{ID: step.StepID, Task: "send." + step.Type, Type: dag.StepTypeNormal}
+			sd = engine.StepDef{ID: step.StepID, Task: names.Send(step.Type), Type: dag.StepTypeNormal}
 		}
 		if i > 0 {
 			sd.DependsOn = []string{steps[i-1].StepID}
@@ -320,6 +321,7 @@ func (s *Service) Rollback(ctx context.Context, scope domain.Scope, triggerIdent
 	if err := json.Unmarshal(ver.CompiledDef, &def); err != nil {
 		return fmt.Errorf("authoring: unmarshal version %s: %w", versionID, err)
 	}
+	upgradeDef(&def)
 
 	// steps/payloadSchema/critical default to the LIVE row's current values
 	// and are only overwritten below when ver carries a full-row snapshot;
@@ -418,6 +420,18 @@ func (s *Service) RepublishAll(ctx context.Context) (int, error) {
 	return registered, nil
 }
 
+// upgradeDef gives a definition persisted before the notify. prefix (N4) the
+// names it would have today: its workflow name and every step's task type.
+// Stored compiled_def bytes are left as written; reading them through here is
+// what lets a rollback or a boot re-register an old version under names that
+// match what trigger starts and what the workers handle. Idempotent.
+func upgradeDef(def *engine.WorkflowDef) {
+	def.Name = names.Upgrade(def.Name)
+	for i := range def.Steps {
+		def.Steps[i].Task = names.Upgrade(def.Steps[i].Task)
+	}
+}
+
 // bootDef resolves the WorkflowDef RepublishAll should register for wf at
 // boot. It prefers the latest published version's compiled_def (durable
 // source of truth, unmarshaled byte-for-byte); only a workflow with no
@@ -435,6 +449,7 @@ func (s *Service) bootDef(ctx context.Context, wf domain.Workflow) (engine.Workf
 				"org_id", wf.OrgID, "env_id", wf.EnvID, "version_id", ver.ID, "err", uErr)
 			return engine.WorkflowDef{}, false
 		}
+		upgradeDef(&def)
 		return def, true
 	case errors.Is(vErr, store.ErrNotFound):
 		// No published version yet (pre-migration / never-published): fall

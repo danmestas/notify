@@ -64,14 +64,14 @@ func newHTTPActionHarness(t *testing.T) *httpActionHarness {
 	// NewWithClient with a bare http.Client bypasses the SSRF guard so the
 	// workflow under test can reach httptest servers on loopback. The SSRF guard
 	// itself is exercised in internal/delivery/httpaction/ssrfguard_test.go.
-	eng.Handle("http_request", httpaction.NewWithClient(st, &http.Client{}).Handle)
-	eng.Handle("send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
+	eng.Handle("notify.http_request", httpaction.NewWithClient(st, &http.Client{}).Handle)
+	eng.Handle("notify.send.in_app", delivery.New(st).WithEventBus(bus).HandleInApp)
 
 	// Guard: assert the http_request action handler is wired before workers
-	// start, so removing the eng.Handle("http_request", ...) registration causes
+	// start, so removing the eng.Handle("notify.http_request", ...) registration causes
 	// an immediate, readable failure here rather than a silent engine timeout.
-	if !eng.Handles("http_request") {
-		t.Fatal(`handler desync: "http_request" not registered; add eng.Handle("http_request", ...) before StartWorkers`)
+	if !eng.Handles("notify.http_request") {
+		t.Fatal(`handler desync: "http_request" not registered; add eng.Handle("notify.http_request", ...) before StartWorkers`)
 	}
 	if err := eng.StartWorkers(ctx); err != nil {
 		t.Fatalf("StartWorkers: %v", err)

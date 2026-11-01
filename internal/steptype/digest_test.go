@@ -77,7 +77,7 @@ func TestCompile_DigestScheduled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if def.ID != "dg" || def.Type != dag.StepTypeNormal || def.Task != "digest.wait" {
+	if def.ID != "dg" || def.Type != dag.StepTypeNormal || def.Task != "notify.digest.wait" {
 		t.Fatalf("scheduled digest def = %+v, want {ID:dg Type:normal Task:digest.wait}", def)
 	}
 	if def.Config != nil {

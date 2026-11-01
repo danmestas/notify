@@ -12,6 +12,7 @@ import (
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/keypath"
 	"github.com/danmestas/notify/internal/metrics"
+	"github.com/danmestas/notify/internal/names"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
 )
@@ -20,7 +21,7 @@ import (
 // emits. cmd/notify/main.go must register an eng.Handle for this name; if the
 // handler is absent, the engine permanently fails any run that contains a
 // throttle step with a matching error, making the omission immediately visible.
-const TaskThrottle = "check.throttle"
+const TaskThrottle = names.CheckThrottle
 
 // ThrottleHandler implements the check.throttle engine task. It gates an entire
 // run by a fixed-window counter keyed per (envID, subscriberID, workflowID).

@@ -273,8 +273,13 @@ func TestRollback_Pre0028Version_FallsBackWithoutRestoringRow(t *testing.T) {
 	if len(fake.calls) != 1 {
 		t.Fatalf("RegisterWorkflow calls = %d, want 1", len(fake.calls))
 	}
-	if !reflect.DeepEqual(fake.last(), legacyDef) {
-		t.Fatalf("registered def = %+v, want legacy def %+v", fake.last(), legacyDef)
+	// ...read through the N4 prefix upgrade.
+	upgraded := engine.WorkflowDef{
+		Name:  "notify.env_1-welcome",
+		Steps: []engine.StepDef{{ID: "S1", Task: "notify.send.in_app", Type: dag.StepTypeNormal}},
+	}
+	if !reflect.DeepEqual(fake.last(), upgraded) {
+		t.Fatalf("registered def = %+v, want %+v", fake.last(), upgraded)
 	}
 
 	// The editable row must be UNCHANGED — the fallback leaves it as-is

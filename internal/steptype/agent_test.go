@@ -24,7 +24,7 @@ func TestAgentMessage_Compile_IsNormalTask(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Compile(%s): %v", cv, err)
 		}
-		if sd.ID != "a1" || sd.Task != "agent_message" || sd.Type != dag.StepTypeNormal || sd.Config != nil {
+		if sd.ID != "a1" || sd.Task != "notify.agent_message" || sd.Type != dag.StepTypeNormal || sd.Config != nil {
 			t.Errorf("Compile(%s) = %+v", cv, sd)
 		}
 	}

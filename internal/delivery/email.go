@@ -150,7 +150,7 @@ func (h *EmailHandler) resolveEmailProvider(ctx context.Context, scope domain.Sc
 	return h.resolver.ResolveEmailIntegration(ctx, scope, identifier)
 }
 
-// HandleEmail is registered via engine.Handle("send.email", h.HandleEmail).
+// HandleEmail is registered via engine.Handle("notify.send.email", h.HandleEmail).
 // It unmarshals the run envelope, renders the subject/body templates against the
 // {subscriber, payload} context, resolves the scope's email provider, sends the
 // message, and persists a "sent" email message. On any unmarshal, resolve, send,

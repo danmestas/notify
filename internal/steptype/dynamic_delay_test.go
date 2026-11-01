@@ -43,7 +43,7 @@ func TestCompile_DynamicDelayDottedStepIDKeepsTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if def.Type != dag.StepTypeNormal || def.Task != "delay.dynamic" {
+	if def.Type != dag.StepTypeNormal || def.Task != "notify.delay.dynamic" {
 		t.Fatalf("def = %+v, want the delay.dynamic task", def)
 	}
 	if _, _, ok := steptype.NativeDynamicDelay(step); ok {

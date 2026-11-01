@@ -24,7 +24,7 @@ type DigestWait struct {
 // NewDigestWait constructs a DigestWait backed by s.
 func NewDigestWait(s *store.Store) *DigestWait { return &DigestWait{store: s} }
 
-// HandleDigestWait is registered via engine.Handle("digest.wait", ...). It
+// HandleDigestWait is registered via engine.Handle("notify.digest.wait", ...). It
 // loads the scheduled-digest step's cron expression (by run id + step id),
 // computes the next cron tick, and parks the task until it (waitUntil). A
 // parked digest holds no worker slot, survives a restart, and resumes at the

@@ -86,7 +86,7 @@ func setupDigest(t *testing.T, cv string) (*trigger.Service, domain.Scope, strin
 		t.Fatalf("Workflows().Create: %v", err)
 	}
 	if err := eng.RegisterWorkflow(ctx, engine.WorkflowDef{
-		Name:  scope.EnvID + "-digest-flow",
+		Name:  "notify." + scope.EnvID + "-digest-flow",
 		Steps: []engine.StepDef{{ID: "dg", Type: dag.StepTypeSleep, Config: json.RawMessage(`{"duration":1000000000}`)}},
 	}); err != nil {
 		t.Fatalf("RegisterWorkflow: %v", err)

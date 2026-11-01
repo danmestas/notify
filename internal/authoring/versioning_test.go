@@ -511,8 +511,8 @@ func TestRepublishAll_NoVersionsFallsBackToCompile(t *testing.T) {
 		t.Fatalf("boot RegisterWorkflow calls = %d, want 1", len(bootFake.calls))
 	}
 	// The fallback recompiles the live 1-step workflow.
-	if got := bootFake.calls[0]; got.Name != "env_1-welcome" || len(got.Steps) != 1 {
-		t.Fatalf("fallback registered %+v, want env_1-welcome with 1 step", got)
+	if got := bootFake.calls[0]; got.Name != "notify.env_1-welcome" || len(got.Steps) != 1 {
+		t.Fatalf("fallback registered %+v, want notify.env_1-welcome with 1 step", got)
 	}
 }
 

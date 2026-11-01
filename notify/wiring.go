@@ -4,11 +4,13 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/agents/agentstep"
+	"github.com/danmestas/notify/internal/aibuilder"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/delivery/httpaction"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/eventbus"
+	"github.com/danmestas/notify/internal/names"
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/secretbox"
 	"github.com/danmestas/notify/internal/steptype"
@@ -57,18 +59,18 @@ func wireCommon[T common[T]](h T, d deliveryDeps) T {
 // /v1/analytics/timeseries).
 func registerDeliveryHandlers(eng taskRegistrar, st *store.Store, conn *connectivity.Service, prefs *preferences.Service, bus *eventbus.Bus, armer delivery.ReplyArmer) {
 	d := deliveryDeps{prefs: prefs, bus: bus}
-	eng.Handle("send.in_app", wireCommon(delivery.New(st), d).HandleInApp)
+	handle(eng, names.SendInApp, wireCommon(delivery.New(st), d).HandleInApp)
 	// send.email carries one dependency the other channels do not: the reply
 	// loop, so an email step can opt into reply-to-notification.
-	eng.Handle("send.email", wireCommon(delivery.NewEmail(st, conn), d).WithReplyArmer(armer).HandleEmail)
-	eng.Handle("send.push", wireCommon(delivery.NewPush(st, conn), d).HandlePush)
-	eng.Handle("send.chat", wireCommon(delivery.NewChat(st, conn), d).HandleChat)
-	eng.Handle("send.sms", wireCommon(delivery.NewSMS(st, conn), d).HandleSMS)
+	handle(eng, names.SendEmail, wireCommon(delivery.NewEmail(st, conn), d).WithReplyArmer(armer).HandleEmail)
+	handle(eng, names.SendPush, wireCommon(delivery.NewPush(st, conn), d).HandlePush)
+	handle(eng, names.SendChat, wireCommon(delivery.NewChat(st, conn), d).HandleChat)
+	handle(eng, names.SendSMS, wireCommon(delivery.NewSMS(st, conn), d).HandleSMS)
 	// send.stream carries a 5th dependency (the durable-feed publisher) none
 	// of the other channels need, so it goes through wireCommon for the 4
 	// shared ones and then .WithFeed(bus) on top — *eventbus.Bus satisfies
 	// delivery.FeedPublisher alongside EventPublisher/Throttler/Digester.
-	eng.Handle("send.stream", wireCommon(delivery.NewStream(st), d).WithFeed(bus).HandleStream)
+	handle(eng, names.SendStream, wireCommon(delivery.NewStream(st), d).WithFeed(bus).HandleStream)
 }
 
 // runTimeMargin is added to a task type's own worst case to make its max run
@@ -114,7 +116,7 @@ func registerStepTaskHandlers(eng taskRegistrar, d stepTaskDeps) {
 	// Scheduled (cron) digest window: sleeps until the next tick, then the
 	// downstream channel step self-sources and drains the accumulated events.
 	// Regular (amount+unit) digests use the engine's native sleep -- no handler.
-	eng.Handle("digest.wait", delivery.NewDigestWait(d.store).HandleDigestWait)
+	handle(eng, names.DigestWait, delivery.NewDigestWait(d.store).HandleDigestWait)
 
 	// Scheduled (calendar) and dynamic (payload-sourced) delays: the wait
 	// depends on wall-clock time or the trigger payload, so it cannot be baked
@@ -123,18 +125,36 @@ func registerStepTaskHandlers(eng taskRegistrar, d stepTaskDeps) {
 	// requeues and the wait resumes after restart. Regular delays use the
 	// engine's native sleep.
 	dw := delivery.NewDelayWait(d.store)
-	eng.Handle("delay.scheduled", dw.HandleScheduled)
-	eng.Handle("delay.dynamic", dw.HandleDynamic)
+	handle(eng, names.DelayScheduled, dw.HandleScheduled)
+	handle(eng, names.DelayDynamic, dw.HandleDynamic)
 
 	// check.throttle: gate a run by a fixed-window counter.
-	eng.Handle(delivery.TaskThrottle, delivery.NewThrottleHandler(d.store, d.bus).Handle)
+	handle(eng, names.CheckThrottle, delivery.NewThrottleHandler(d.store, d.bus).Handle)
 
 	// http_request: outbound HTTP action step. Makes the interpolated call, then
 	// captures statusCode/body/headers into step_outputs for downstream steps.
-	eng.Handle("http_request", httpaction.New(d.store, httpaction.WithSecretBox(d.secrets)).Handle,
+	handle(eng, names.HTTPRequest, httpaction.New(d.store, httpaction.WithSecretBox(d.secrets)).Handle,
 		engine.WithMaxRunTime(steptype.HTTPMaxTimeoutSec*time.Second+runTimeMargin))
 
 	// agent_message: post the rendered text to an agent conversation and
 	// start the agent's turn, in process (#4).
-	eng.Handle("agent_message", agentstep.New(d.store, d.composer, d.drafts).Handle)
+	handle(eng, names.AgentMessage, agentstep.New(d.store, d.composer, d.drafts).Handle)
+}
+
+// handle registers fn for taskType and, for this release only, for taskType's
+// pre-prefix spelling too, so runs started before the notify. prefix existed
+// (their stored step definitions name the old task types) drain after deploy.
+// The old names are deliberately absent from Manifest.
+//
+// Remove in the release after N4: delete the second Handle call and
+// registerLegacyAgentLoop.
+func handle(eng taskRegistrar, taskType string, fn engine.HandlerFunc, opts ...engine.HandleOption) {
+	eng.Handle(taskType, fn, opts...)
+	eng.Handle(names.Legacy(taskType), fn, opts...)
+}
+
+// registerLegacyAgentLoop is handle's counterpart for the AI-builder agent
+// loop. Remove in the release after N4.
+func registerLegacyAgentLoop(b *aibuilder.AgentLoopBuilder) {
+	b.RegisterAs(names.Legacy(aibuilder.AgentLoopTask))
 }
