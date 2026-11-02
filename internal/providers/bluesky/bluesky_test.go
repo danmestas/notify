@@ -28,6 +28,13 @@ type xrpcServer struct {
 	// 401 (simulating an expired accessJwt).
 	failCreateRecordUnauthorized int64
 	refreshFails                 bool
+	// expiredStatus is the status an expired accessJwt is answered with:
+	// 401 when zero. Bluesky's PDS answers 400 {"error":"ExpiredToken"}.
+	expiredStatus int
+	// failListUnauthorized fails the next N listNotifications calls as an
+	// expired accessJwt.
+	failListUnauthorized int64
+	lists                atomic.Int64
 
 	lastRecordBody map[string]any
 }
@@ -76,8 +83,7 @@ func (x *xrpcServer) handle(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(r.URL.Path, "com.atproto.repo.createRecord"):
 		n := x.createRecords.Add(1)
 		if n <= x.failCreateRecordUnauthorized {
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"ExpiredToken","message":"Token has expired"}`))
+			x.expired(w)
 			return
 		}
 		var body map[string]any
@@ -88,9 +94,26 @@ func (x *xrpcServer) handle(w http.ResponseWriter, r *http.Request) {
 			"uri": "at://did:plc:test123/app.bsky.feed.post/abc123",
 			"cid": "bafyabc123",
 		})
+	case strings.HasSuffix(r.URL.Path, "app.bsky.notification.listNotifications"):
+		if x.lists.Add(1) <= x.failListUnauthorized {
+			x.expired(w)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"notifications":[]}`))
 	default:
 		x.t.Fatalf("unexpected path: %s", r.URL.Path)
 	}
+}
+
+// expired answers as the PDS does for an expired accessJwt.
+func (x *xrpcServer) expired(w http.ResponseWriter) {
+	status := x.expiredStatus
+	if status == 0 {
+		status = http.StatusUnauthorized
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(`{"error":"ExpiredToken","message":"Token has expired"}`))
 }
 
 func TestClient_Send_MintsSessionOnFirstSend(t *testing.T) {
@@ -148,6 +171,37 @@ func TestClient_Send_ExpiredAccessJwt_RefreshesAndRetries(t *testing.T) {
 	if res.ProviderMessageID == "" {
 		t.Error("ProviderMessageID empty after successful retry")
 	}
+}
+
+// TestClient_ExpiredToken400_Refreshes: Bluesky's PDS answers an expired
+// accessJwt with 400 {"error":"ExpiredToken"}, not 401. Treating it as
+// permanent left the mention poller failing every poll from about two hours
+// after login until notify restarted.
+func TestClient_ExpiredToken400_Refreshes(t *testing.T) {
+	t.Run("Send", func(t *testing.T) {
+		x := newXRPCServer(t)
+		x.expiredStatus = http.StatusBadRequest
+		x.failCreateRecordUnauthorized = 1
+		c := &Client{PDSURL: x.srv.URL, Identifier: "alice.bsky.social", AppPassword: "app-pw-123"}
+		if _, err := c.Send(context.Background(), providers.ChatMessage{Content: "hi"}); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		if x.refreshes.Load() != 1 {
+			t.Errorf("refreshes = %d, want 1", x.refreshes.Load())
+		}
+	})
+	t.Run("AuthedRequest", func(t *testing.T) {
+		x := newXRPCServer(t)
+		x.expiredStatus = http.StatusBadRequest
+		x.failListUnauthorized = 1
+		c := &Client{PDSURL: x.srv.URL, Identifier: "alice.bsky.social", AppPassword: "app-pw-123"}
+		if _, err := c.AuthedRequest(context.Background(), http.MethodGet, "app.bsky.notification.listNotifications", nil, nil); err != nil {
+			t.Fatalf("AuthedRequest: %v", err)
+		}
+		if x.refreshes.Load() != 1 {
+			t.Errorf("refreshes = %d, want 1", x.refreshes.Load())
+		}
+	})
 }
 
 func TestClient_Send_RefreshFails_FallsBackToFullLogin(t *testing.T) {

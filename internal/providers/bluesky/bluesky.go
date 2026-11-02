@@ -223,6 +223,7 @@ func (c *Client) doXRPC(ctx context.Context, hc *http.Client, pds, method, nsid 
 	}
 	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.StatusCode = authStatus(resp.StatusCode, respBody)
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
@@ -326,6 +327,7 @@ func (c *Client) doSessionRequest(ctx context.Context, hc *http.Client, endpoint
 	}
 	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	resp.StatusCode = authStatus(resp.StatusCode, respBody)
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
@@ -379,6 +381,7 @@ func (c *Client) createPost(ctx context.Context, hc *http.Client, pds, text stri
 	}
 	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	resp.StatusCode = authStatus(resp.StatusCode, respBody)
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
@@ -390,12 +393,28 @@ func (c *Client) createPost(ctx context.Context, hc *http.Client, pds, text stri
 			fmt.Errorf("bluesky: create record: status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))),
 		))
 	default:
-		// Includes 401 (expired accessJwt), which Send retries after a
+		// Includes 401 (expired accessJwt, see authStatus), which Send retries after a
 		// refresh/re-login; any other 4xx is permanent.
 		return "", resp.StatusCode, c.redact(
 			fmt.Errorf("bluesky: create record: status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))),
 		)
 	}
+}
+
+// authStatus reports an expired accessJwt as 401, the status Send and
+// AuthedRequest refresh on. Bluesky's PDS answers one with 400
+// {"error":"ExpiredToken"} instead.
+func authStatus(status int, body []byte) int {
+	if status != http.StatusBadRequest {
+		return status
+	}
+	var e struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &e) == nil && e.Error == "ExpiredToken" {
+		return http.StatusUnauthorized
+	}
+	return status
 }
 
 // redact strips AppPassword and any cached JWTs out of err's message.
