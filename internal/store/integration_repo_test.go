@@ -11,8 +11,8 @@ import (
 func TestMigrate_0002_AppliesIntegrations(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 44 {
-		t.Fatalf("expected 35 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 45 {
+		t.Fatalf("expected 45 recorded migrations, got %d", n)
 	}
 
 	var name string
