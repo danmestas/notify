@@ -162,8 +162,31 @@ func TestDispatch_SynadiaV03ServiceError4xxPermanent(t *testing.T) {
 	}
 }
 
-// TestDispatch_SynadiaV03CachesDetection: detection scans $SRV.INFO once per
-// subject per TTL, not once per turn, and an a2a agent beside a v0.3 one still works.
+// scanCounter counts $SRV.INFO.agents requests seen on the hub.
+func scanCounter(t *testing.T, nc *nats.Conn) *atomic.Int32 {
+	t.Helper()
+	var n atomic.Int32
+	sub, err := nc.Subscribe("$SRV.INFO.agents", func(*nats.Msg) { n.Add(1) })
+	if err != nil {
+		t.Fatalf("count subscribe: %v", err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+	_ = nc.Flush()
+	return &n
+}
+
+func dialWith(t *testing.T, natsURL string, opts ...mesh.Option) *mesh.Client {
+	t.Helper()
+	c, err := mesh.Dial(natsURL, append([]mesh.Option{mesh.WithTimeout(5 * time.Second)}, opts...)...)
+	if err != nil {
+		t.Fatalf("mesh.Dial: %v", err)
+	}
+	t.Cleanup(c.Close)
+	return c
+}
+
+// TestDispatch_SynadiaV03CachesDetection: after the first turn per subject,
+// repeat turns never scan, and an a2a agent beside a v0.3 one still works.
 func TestDispatch_SynadiaV03CachesDetection(t *testing.T) {
 	natsURL := dagtest.StartSidecar(t)
 	nc := connect(t, natsURL)
@@ -173,19 +196,11 @@ func TestDispatch_SynadiaV03CachesDetection(t *testing.T) {
 		return [][]byte{chunk("response", "v03")}
 	})
 	stubAgent(t, nc, a2aSubject, pong)
-	var scans atomic.Int32
-	sub, err := nc.Subscribe("$SRV.INFO.agents", func(*nats.Msg) { scans.Add(1) })
-	if err != nil {
-		t.Fatalf("count subscribe: %v", err)
-	}
-	defer func() { _ = sub.Unsubscribe() }()
-	c, err := mesh.Dial(natsURL, mesh.WithTimeout(5*time.Second), mesh.WithDiscoveryWindow(200*time.Millisecond))
-	if err != nil {
-		t.Fatalf("mesh.Dial: %v", err)
-	}
-	defer c.Close()
+	scans := scanCounter(t, nc)
+	c := dialWith(t, natsURL, mesh.WithDiscoveryWindow(200*time.Millisecond))
 
-	for i := 0; i < 3; i++ {
+	dispatch := func(i int) {
+		t.Helper()
 		r, err := c.Dispatch(context.Background(), turn(v03Subject, "hi"))
 		if err != nil || r.Parts[0].Text != "v03" {
 			t.Fatalf("v0.3 dispatch %d = %+v, %v", i, r, err)
@@ -195,9 +210,105 @@ func TestDispatch_SynadiaV03CachesDetection(t *testing.T) {
 			t.Fatalf("a2a dispatch %d = %+v, %v", i, r, err)
 		}
 	}
-	// One scan per distinct subject (the a2a one is absent from the first
-	// scan's results, and a new agent must be found), none on repeat turns.
-	if n := scans.Load(); n != 2 {
-		t.Errorf("$SRV.INFO.agents scans = %d, want 2", n)
+	dispatch(0)
+	_ = nc.Flush()
+	before := scans.Load()
+	for i := 1; i < 4; i++ {
+		dispatch(i)
+		// The a2a path has its own settle delay; time the v0.3 turn alone.
+		start := time.Now()
+		if _, err := c.Dispatch(context.Background(), turn(v03Subject, "hi")); err != nil {
+			t.Fatalf("v0.3 dispatch %d: %v", i, err)
+		}
+		if d := time.Since(start); d > 150*time.Millisecond {
+			t.Errorf("repeat turn %d took %v, want no scan wait", i, d)
+		}
+	}
+	_ = nc.Flush()
+	if n := scans.Load(); n != before {
+		t.Errorf("repeat turns scanned: %d -> %d", before, n)
+	}
+}
+
+// TestDispatch_SynadiaV03ExpiredEntryRefreshesInBackground: past the TTL a
+// turn is answered from the stale entry at once and one scan refreshes it.
+func TestDispatch_SynadiaV03ExpiredEntryRefreshesInBackground(t *testing.T) {
+	natsURL := dagtest.StartSidecar(t)
+	nc := connect(t, natsURL)
+	const subject = "agents.prompt.stub.t.expiry"
+	v03Agent(t, nc, subject, func(micro.Request) [][]byte { return [][]byte{chunk("response", "v03")} })
+	scans := scanCounter(t, nc)
+	const window = time.Second
+	c := dialWith(t, natsURL, mesh.WithDiscoveryWindow(window), mesh.WithDiscoveryTTL(100*time.Millisecond))
+	if _, err := c.Dispatch(context.Background(), turn(subject, "hi")); err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	time.Sleep(window + 200*time.Millisecond) // warm-up scan done, entry expired
+	_ = nc.Flush()
+	before := scans.Load()
+
+	start := time.Now()
+	r, err := c.Dispatch(context.Background(), turn(subject, "hi"))
+	if elapsed := time.Since(start); err != nil || r.Parts[0].Text != "v03" || elapsed >= window {
+		t.Fatalf("expired dispatch = %+v, %v after %v; want v03 well under %v", r, err, elapsed, window)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for scans.Load() == before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := scans.Load(); n != before+1 {
+		t.Errorf("refresh scans = %d, want 1", n-before)
+	}
+}
+
+// TestDispatch_SynadiaV03ConcurrentColdMissesScanOnce: many turns for one
+// unseen subject share a single scan.
+func TestDispatch_SynadiaV03ConcurrentColdMissesScanOnce(t *testing.T) {
+	natsURL := dagtest.StartSidecar(t)
+	nc := connect(t, natsURL)
+	const subject = "agents.prompt.test.cold"
+	stubAgent(t, nc, subject, pong)
+	scans := scanCounter(t, nc)
+	const window = 200 * time.Millisecond
+	c := dialWith(t, natsURL, mesh.WithDiscoveryWindow(window))
+	time.Sleep(window + 150*time.Millisecond) // warm-up scan done
+	_ = nc.Flush()
+	before := scans.Load()
+
+	const n = 8
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := c.Dispatch(context.Background(), turn(subject, "hi")); err != nil {
+				t.Errorf("Dispatch: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	_ = nc.Flush()
+	if got := scans.Load() - before; got != 1 {
+		t.Errorf("scans for %d concurrent cold misses = %d, want 1", n, got)
+	}
+}
+
+// TestDispatch_SynadiaV03WarmUp: an agent already serving at Dial is detected
+// by the warm-up scan, so the first turn does not wait out the window.
+func TestDispatch_SynadiaV03WarmUp(t *testing.T) {
+	natsURL := dagtest.StartSidecar(t)
+	nc := connect(t, natsURL)
+	const subject = "agents.prompt.stub.t.warm"
+	seen := v03Agent(t, nc, subject, func(micro.Request) [][]byte { return [][]byte{chunk("response", "v03")} })
+	const window = 2 * time.Second
+	c := dialWith(t, natsURL, mesh.WithDiscoveryWindow(window))
+
+	start := time.Now()
+	r, err := c.Dispatch(context.Background(), turn(subject, "hi"))
+	if elapsed := time.Since(start); err != nil || r.Parts[0].Text != "v03" || elapsed >= window/2 {
+		t.Fatalf("first dispatch = %+v, %v after %v; want v03 without the window", r, err, elapsed)
+	}
+	if len(seen()) != 1 {
+		t.Errorf("agent saw %d requests, want 1", len(seen()))
 	}
 }
