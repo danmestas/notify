@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danmestas/notify/internal/a2a"
 	"github.com/danmestas/notify/internal/a2aauth"
 	"github.com/danmestas/notify/internal/a2areceiver"
 	"github.com/danmestas/notify/internal/blobstore"
@@ -125,6 +126,9 @@ type Deps struct {
 	// route authenticates the receiver key itself, so it sits outside the
 	// API-key group.
 	Receiver *a2areceiver.Service
+	// A2A serves /a2a/{agentId} and its card. Nil leaves them unmounted. It
+	// needs A2AAuth: without it the routes are not mounted either.
+	A2A *a2a.Service
 }
 
 // New builds the notify HTTP handler from d. All authenticated routes are
@@ -205,6 +209,14 @@ func New(d Deps) http.Handler {
 	// Middleware above, which means a session token is simply not a valid
 	// credential anywhere else -- structurally, rather than by every handler
 	// remembering to refuse it (#332).
+	// A2A channel (#75): authenticated by a client key or subscriber session,
+	// never by the tenant API key, so it sits in its own group.
+	if d.A2A != nil && d.A2AAuth != nil {
+		r.Group(func(ar chi.Router) {
+			ar.Use(d.A2AAuth.Authenticate)
+			d.A2A.Routes(ar)
+		})
+	}
 	r.Group(func(sr chi.Router) {
 		sr.Use(id.SubscriberMiddleware)
 		inbox.Routes(sr)

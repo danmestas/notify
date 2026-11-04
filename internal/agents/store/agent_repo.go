@@ -17,6 +17,9 @@ import (
 type AgentRepo interface {
 	Create(ctx context.Context, scope domain.Scope, a agentdomain.Agent) (agentdomain.Agent, error)
 	GetByIdentifier(ctx context.Context, scope domain.Scope, identifier string) (agentdomain.Agent, error)
+	// GetByID finds an agent by its opaque id within the scope; an id in
+	// another org or environment is ErrNotFound, same as an unknown one.
+	GetByID(ctx context.Context, scope domain.Scope, id string) (agentdomain.Agent, error)
 	List(ctx context.Context, scope domain.Scope) ([]agentdomain.Agent, error)
 	Update(ctx context.Context, scope domain.Scope, a agentdomain.Agent) (agentdomain.Agent, error)
 	Delete(ctx context.Context, scope domain.Scope, identifier string) error
@@ -59,6 +62,20 @@ func (repo *agentRepo) GetByIdentifier(ctx context.Context, scope domain.Scope, 
 		`SELECT `+agentColumns+`
 		 FROM agents WHERE org_id = ? AND environment_id = ? AND identifier = ?`,
 		scope.OrgID, scope.EnvID, identifier,
+	)
+	a, err := scanAgent(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return agentdomain.Agent{}, ErrNotFound
+	}
+	return a, err
+}
+
+func (repo *agentRepo) GetByID(ctx context.Context, scope domain.Scope, id string) (agentdomain.Agent, error) {
+	row := repo.r.QueryRowContext(
+		ctx,
+		`SELECT `+agentColumns+`
+		 FROM agents WHERE org_id = ? AND environment_id = ? AND id = ?`,
+		scope.OrgID, scope.EnvID, id,
 	)
 	a, err := scanAgent(row)
 	if errors.Is(err, sql.ErrNoRows) {
