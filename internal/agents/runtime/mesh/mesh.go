@@ -119,7 +119,7 @@ type Client struct {
 	// configTimeout bounds one config relay.
 	configTimeout time.Duration
 	// disc detects each agent's wire protocol (a2a or Synadia v0.3).
-	disc discovery
+	disc *discovery
 }
 
 // WithConfigTimeout replaces the per-relay config deadline.
@@ -167,11 +167,13 @@ func FromConn(nc *nats.Conn, opts ...Option) *Client {
 	for _, opt := range opts {
 		opt(c)
 	}
+	c.disc.warm(nc)
 	return c
 }
 
 // Close releases the NATS connection when the client dialed it.
 func (c *Client) Close() {
+	c.disc.close()
 	if c.ownsConn {
 		c.nc.Close()
 	}
