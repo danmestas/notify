@@ -22,14 +22,13 @@ import (
 
 // JSON-RPC 2.0 and A2A error codes.
 const (
-	codeParse           = -32700
-	codeInvalidRequest  = -32600
-	codeInvalidParams   = -32602
-	codeInternal        = -32603
-	codeTaskNotFound    = -32001
-	codeUnsupportedOp   = -32004
-	maxContextIDLen     = 128
-	maxIdempotencyChars = 64
+	codeParse          = -32700
+	codeInvalidRequest = -32600
+	codeInvalidParams  = -32602
+	codeInternal       = -32603
+	codeTaskNotFound   = -32001
+	codeUnsupportedOp  = -32004
+	maxContextIDLen    = 128
 )
 
 type rpcRequest struct {
@@ -92,11 +91,11 @@ func (s *Service) rpc(w http.ResponseWriter, r *http.Request) {
 		result any
 		rerr   *rpcError
 	)
+	if !s.allow(w, r, p, agent) {
+		return
+	}
 	switch req.Method {
 	case "message/send":
-		if !s.allow(w, r, p, agent) {
-			return
-		}
 		result, rerr = s.messageSend(r.Context(), p, agent, req.Params)
 	case "tasks/get":
 		result, rerr = s.tasksGet(r.Context(), p, agent, req.Params)
@@ -208,7 +207,7 @@ func (s *Service) messageSend(ctx context.Context, p a2aauth.Principal, agent ag
 		return nil, rerr
 	}
 
-	key := idempotencyKey(m.MessageID)
+	key := idempotencyKey(p.CredentialID, m.MessageID)
 	ctxID := m.ContextID
 	switch {
 	case ctxID == "":
@@ -408,20 +407,12 @@ func textual(mime string) bool {
 
 func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
 
-// idempotencyKey maps a caller's messageId to a client_message_id: itself when
-// it fits the key charset, else a digest of it.
-func idempotencyKey(messageID string) string {
-	ok := len(messageID) > 0 && len(messageID) <= maxIdempotencyChars
-	for _, r := range messageID {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
-		default:
-			ok = false
-		}
-	}
-	if ok {
-		return messageID
-	}
-	sum := sha256.Sum256([]byte(messageID))
-	return "h" + hex.EncodeToString(sum[:])[:40]
+// idempotencyKey maps a caller's messageId to a client_message_id. It is
+// always a digest of the credential and the messageId, never the caller's
+// text: client_message_id is also the key other parts of notify match on
+// (review-mode drafts, per environment), so a caller must not be able to
+// choose one.
+func idempotencyKey(credentialID, messageID string) string {
+	sum := sha256.Sum256([]byte("a2a\x00" + credentialID + "\x00" + messageID))
+	return "a" + hex.EncodeToString(sum[:])[:40]
 }

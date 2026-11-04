@@ -156,8 +156,8 @@ func threadPrefix(credentialID string) string {
 
 // card serves the agent card.
 func (s *Service) card(w http.ResponseWriter, r *http.Request) {
-	_, agent, ok := s.caller(w, r)
-	if !ok {
+	p, agent, ok := s.caller(w, r)
+	if !ok || !s.allow(w, r, p, agent) {
 		return
 	}
 	raw, err := s.buildCard(agent, s.baseURL(r))
@@ -206,6 +206,12 @@ func (s *Service) buildCard(a agentdomain.Agent, base string) ([]byte, error) {
 	setDefault("defaultOutputModes", []string{"text/plain"})
 	setDefault("skills", []struct{}{})
 
+	// notify is the only endpoint: drop what would advertise another
+	// transport or an extended card it doesn't serve, and signatures the
+	// rewrite below would invalidate.
+	for _, k := range []string{"additionalInterfaces", "supportsAuthenticatedExtendedCard", "signatures"} {
+		delete(card, k)
+	}
 	card["url"] = mustJSON(base + "/a2a/" + a.ID)
 	card["preferredTransport"] = mustJSON("JSONRPC")
 	card["securitySchemes"] = mustJSON(map[string]any{"bearer": map[string]string{"type": "http", "scheme": "bearer"}})
