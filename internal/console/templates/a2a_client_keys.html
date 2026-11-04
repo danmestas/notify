@@ -1,0 +1,76 @@
+{{define "content"}}{{$page := .Page}}
+{{/*
+  A2A Client Keys — machine credentials for the A2A channel. Server-rendered:
+  native POST → 303 forms (no data-on:submit — the L5 regression guard). The
+  secret appears once, in the reveal card, with a copy button.
+*/}}
+<section class="console-section">
+  {{template "page-header" $page.Header}}
+
+  {{if $page.CreateError}}
+  <p class="console-form-error" role="alert" id="a2a-key-create-error">{{$page.CreateError}}</p>
+  {{end}}
+
+  {{if $page.NewSecret}}
+  <div class="console-alert console-alert-success" role="alert" id="a2a-key-reveal-card">
+    <strong>Client key created.</strong>
+    Copy this key now — it will not be shown again. Send it as <code>Authorization: Bearer &lt;key&gt;</code>.
+    <div class="console-secret-reveal">
+      <code id="a2a-key-secret" class="console-secret-value">{{$page.NewSecret}}</code>
+      <button type="button" class="btn btn-outline btn-sm"
+              data-on:click="navigator.clipboard.writeText(document.getElementById('a2a-key-secret').textContent)">Copy</button>
+    </div>
+  </div>
+  {{end}}
+
+  {{if not $page.ReadOnly}}
+  <form method="POST" action="/console/a2a-keys" class="console-filter-bar" id="a2a-key-create-form">
+    <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+    <label class="form-inline-label" for="new-a2a-key-name">Name
+      <input class="console-input" type="text" id="new-a2a-key-name" name="name" placeholder="billing-agent" required aria-required="true" maxlength="64"></label>
+    <label class="form-inline-label" for="new-a2a-key-subscriber">Speak as subscriber (optional)
+      <input class="console-input" type="text" id="new-a2a-key-subscriber" name="subscriber_id" placeholder="subscriber id"></label>
+    <button type="submit" class="btn btn-primary">Mint key</button>
+  </form>
+  {{end}}
+
+  {{if eq (len $page.Rows) 0}}
+  {{template "empty-state" $page.Empty}}
+  {{else}}
+  <table class="console-table" id="a2a-keys-table">
+    <thead>
+      <tr><th>Name</th><th>Subscriber</th><th>Created</th><th>Last used</th><th>Status</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+      {{range $page.Rows}}
+      {{if and (eq $page.ConfirmRevoke .ID) (not .Revoked)}}
+      <tr id="a2a-key-row-{{.ID}}" class="confirm-row">
+        <td colspan="4"><span class="console-confirm-label">Revoke <code>{{.Name}}</code>? It stops working immediately and this cannot be undone.</span></td>
+        <td colspan="2">
+          <a class="btn btn-outline btn-sm" href="/console/a2a-keys">Cancel</a>
+          <form method="POST" action="/console/a2a-keys/{{.ID}}/revoke" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+            <button type="submit" class="btn btn-danger btn-sm">Confirm revoke</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr id="a2a-key-row-{{.ID}}">
+        <td><span class="chip chip-default">{{.Name}}</span></td>
+        <td>{{if .SubscriberID}}<code>{{.SubscriberID}}</code>{{else}}<span class="console-muted">—</span>{{end}}</td>
+        <td><span class="console-muted">{{.CreatedAt}}</span></td>
+        <td>{{if .LastUsedAt}}<span class="console-muted">{{.LastUsedAt}}</span>{{else}}<span class="console-muted">never</span>{{end}}</td>
+        <td>{{if .Revoked}}<span class="chip chip-warning" title="{{.RevokedAt}}">Revoked</span>{{else}}<span class="chip chip-success">Active</span>{{end}}</td>
+        <td class="console-action-row">
+          {{if and (not $page.ReadOnly) (not .Revoked)}}
+          <a class="btn btn-outline btn-sm btn-danger" href="/console/a2a-keys?confirmRevoke={{.ID | urlquery}}">Revoke</a>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</section>
+{{end}}

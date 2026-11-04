@@ -128,6 +128,7 @@ var uiIconFS embed.FS
 //go:embed templates/partials/integration_detail.html
 //go:embed templates/partials/integration_provider_form.html
 //go:embed templates/stream_sources.html
+//go:embed templates/a2a_client_keys.html
 //go:embed templates/partials/stream_sources_tbody.html
 //go:embed templates/subscribers.html
 //go:embed templates/subscriber_detail.html
