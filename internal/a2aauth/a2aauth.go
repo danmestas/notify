@@ -31,6 +31,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/identity"
@@ -57,6 +58,9 @@ const (
 	KindSession Kind = "session"
 )
 
+// touchEvery bounds how often a key's last-used time is written.
+const touchEvery = time.Minute
+
 // ErrInvalidName is returned by Mint for an empty or over-long name.
 var ErrInvalidName = fmt.Errorf("a2aauth: name must be 1-%d characters", maxNameLen)
 
@@ -69,8 +73,9 @@ type Principal struct {
 	// Scope is the org and environment the credential belongs to. Handlers
 	// must resolve every agent and task inside it.
 	Scope domain.Scope
-	// SubscriberID is the external id the caller speaks as; empty for an
-	// unbound client key.
+	// SubscriberID is the external id the caller speaks as. It is empty for
+	// an unbound client key, which speaks as no subscriber (an anonymous
+	// caller), never as any subscriber it names.
 	SubscriberID string
 	// CredentialID identifies the credential for audit: the key's ULID, or
 	// "session:<subscriber>" for a session token (which has no stored row).
@@ -169,7 +174,14 @@ func (svc *Service) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 		svc.audit(r.Context(), "a2a.credential.use", p.CredentialID, p.Scope, "kind", string(p.Kind))
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
+		// The scope and pinned subscriber go in the same slots the other auth
+		// middlewares use, so handlers built on those helpers work unchanged.
+		ctx := context.WithValue(r.Context(), principalKey{}, p)
+		ctx = domain.ContextWithScope(ctx, p.Scope)
+		if p.SubscriberID != "" {
+			ctx = domain.ContextWithPinnedSubscriber(ctx, p.SubscriberID)
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -204,8 +216,11 @@ func (svc *Service) resolveKey(ctx context.Context, secretHex string) (Principal
 	if key.RevokedAt != "" {
 		return Principal{}, errors.New("revoked")
 	}
-	// Best-effort: a failed activity write must never fail the request.
-	_ = svc.store.A2AClientKeys().Touch(ctx, key.ID, timestamp.Now())
+	// Best-effort and throttled: a failed activity write must never fail the
+	// request, and SQLite's single writer shouldn't take a write per call.
+	if last, err := timestamp.Parse(key.LastUsedAt); err != nil || time.Since(last) >= touchEvery {
+		_ = svc.store.A2AClientKeys().Touch(ctx, key.ID, timestamp.Now())
+	}
 	return Principal{
 		Scope:        domain.Scope{OrgID: key.OrgID, EnvID: key.EnvID},
 		SubscriberID: key.SubscriberID,

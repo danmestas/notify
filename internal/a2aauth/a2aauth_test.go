@@ -254,3 +254,28 @@ func TestMint_ValidatesName(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthenticate_SetsSharedScopeAndPin(t *testing.T) {
+	f := newFixture(t)
+	_, bound, _ := f.svc.Mint(context.Background(), f.scopeA, "as-alice", "alice")
+	_, unbound, _ := f.svc.Mint(context.Background(), f.scopeA, "machine", "")
+	for _, tc := range []struct {
+		tok, wantPin string
+	}{{bound, "alice"}, {unbound, ""}} {
+		var gotScope domain.Scope
+		var gotPin string
+		h := f.svc.Authenticate(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			gotScope, _ = domain.ScopeFromContext(r.Context())
+			gotPin, _ = domain.PinnedSubscriberFromContext(r.Context())
+		}))
+		r := httptest.NewRequest(http.MethodPost, "/a2a/agent", nil)
+		r.Header.Set("Authorization", "Bearer "+tc.tok)
+		h.ServeHTTP(httptest.NewRecorder(), r)
+		if gotScope != f.scopeA {
+			t.Errorf("scope = %+v, want %+v", gotScope, f.scopeA)
+		}
+		if gotPin != tc.wantPin {
+			t.Errorf("pinned subscriber = %q, want %q", gotPin, tc.wantPin)
+		}
+	}
+}

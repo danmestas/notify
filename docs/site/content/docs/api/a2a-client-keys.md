@@ -24,3 +24,7 @@ Tenant API keys are not accepted on the A2A routes, and client keys are not acce
 ## Audit
 
 Minting, revoking and every use of a credential is written to the log with the credential id, environment and kind. The token is never logged. Each key also records `lastUsedAt`.
+
+## Rotating the API key
+
+Client keys are separate credentials and survive an API key rotation. Anyone who held the old API key could have minted client keys, so after rotating a key you suspect leaked, list the env's client keys and revoke any you don't recognise.
