@@ -332,6 +332,10 @@ type Reply struct {
 	Parts   []Part
 	Actions []SuggestedAction
 	Sources []Source
+	// Status holds the progress texts a runtime saw while the turn ran (a
+	// Synadia v0.3 agent's status chunks), in arrival order. Empty for
+	// runtimes that stream no progress.
+	Status []string
 }
 
 // Runtime executes one conversation turn. Implementations (mesh, bridge,

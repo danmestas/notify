@@ -6,8 +6,11 @@
 // both delivery paths seen in the wild — a single answer envelope on the
 // inbox (pi-style) and role:"agent" message frames on agents.task.stream.>
 // terminated by a TASK_STATE_* terminal (claude-style). Service errors
-// surface via the Nats-Service-Error-Code reply header; v0.3 agents (acked
-// but never speak v2) are detected by heuristic and reported distinguishably.
+// surface via the Nats-Service-Error-Code reply header. Agents registered as
+// a Synadia Agent Protocol v0.3 micro service (found via $SRV.INFO.agents, see
+// discovery.go and synadia.go) are spoken to in that dialect instead; an agent
+// that acks but never speaks v2 and was not detected as v0.3 is reported
+// distinguishably by heuristic.
 //
 // The whole A2A mess — dual reply paths, version skew, terminal states —
 // stays behind Dispatch; nothing above this package sees NATS subjects or
@@ -80,6 +83,12 @@ func Protocols() []string {
 	}
 }
 
+// Discovers is the micro service notify discovers agents through, for the
+// program manifest: detecting a Synadia v0.3 agent sends $SRV.INFO.agents.
+func Discovers() []string {
+	return []string{serviceName}
+}
+
 // ErrAckedNoV2Answer reports the v0.3 case: the agent acked the prompt request
 // but never opened a v2 task stream or published a reply envelope. It is
 // permanent — redelivering the same prompt to the same agent cannot help.
@@ -109,6 +118,8 @@ type Client struct {
 	timeout  time.Duration
 	// configTimeout bounds one config relay.
 	configTimeout time.Duration
+	// disc detects each agent's wire protocol (a2a or Synadia v0.3).
+	disc discovery
 }
 
 // WithConfigTimeout replaces the per-relay config deadline.
@@ -130,6 +141,13 @@ func WithTimeout(d time.Duration) Option {
 	return func(c *Client) { c.timeout = d }
 }
 
+// WithDiscoveryWindow replaces how long protocol detection listens for
+// $SRV.INFO.agents replies. An agent that does not answer within the window
+// is treated as an a2a agent.
+func WithDiscoveryWindow(d time.Duration) Option {
+	return func(c *Client) { c.disc.window = d }
+}
+
 // Dial connects to the hub and returns a ready Client.
 func Dial(natsURL string, opts ...Option) (*Client, error) {
 	nc, err := eventbus.DialNATS(natsURL, "notify-mesh", "mesh hub (-mesh-nats-url)")
@@ -145,6 +163,7 @@ func Dial(natsURL string, opts ...Option) (*Client, error) {
 // connection stays the caller's: Close does not close it.
 func FromConn(nc *nats.Conn, opts ...Option) *Client {
 	c := &Client{nc: nc, allow: DefaultAllowedSubjects, timeout: DefaultTimeout, configTimeout: DefaultConfigTimeout}
+	c.disc = newDiscovery(DefaultDiscoveryWindow, discoveryTTL)
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -300,6 +319,10 @@ func (c *Client) Dispatch(ctx context.Context, t domain.Turn) (domain.Reply, err
 		return domain.Reply{}, domain.NewPermanentError(
 			fmt.Errorf("mesh subject %q outside allowlist %q", subj, c.allow),
 		)
+	}
+
+	if c.disc.protocolFor(ctx, c.nc, subj) == protoSynadia {
+		return c.dispatchSynadia(ctx, t)
 	}
 
 	messageID := t.Message.ID
