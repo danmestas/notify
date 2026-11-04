@@ -14,7 +14,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/nats-io/nats.go/jetstream"
+
 	agentsapi "github.com/danmestas/notify/internal/agents/api"
+	"github.com/danmestas/notify/internal/agents/cards"
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	"github.com/danmestas/notify/internal/agents/ingress"
 	"github.com/danmestas/notify/internal/agents/runtime/managed"
@@ -66,6 +69,7 @@ type Notify struct {
 	credVerify *credverify.Service
 	aiLoop     *aibuilder.AgentLoopBuilder
 	chat       *chatloop.Service
+	cards      *cards.Source
 	chatScope  domain.Scope
 	webhooks   *webhooksout.Consumer
 	an         *analytics.Service
@@ -269,6 +273,12 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// batches into the durable feed.
 	srcSvc := streamsource.New(st, mk)
 	ag := agentsapi.New(ags).WithSecretBox(secrets).WithLoopbackMCP(cfg.Dev)
+	if js, err := jetstream.New(h.NC); err != nil {
+		log.Warn("agent cards disabled", "err", err)
+	} else {
+		n.cards = cards.New(js, log)
+		ag = ag.WithCards(n.cards)
+	}
 
 	ev, err := envvars.New(st, mk)
 	if err != nil {
@@ -450,6 +460,11 @@ func (n *Notify) start(ctx context.Context) error {
 	n.goLoop(func() { runChatInboundPurge(ctx, n.log, n.st) })
 	// agent_drafts would otherwise keep every draft no one fetched.
 	n.goLoop(func() { runDraftPurge(ctx, n.log, n.ags) })
+
+	// Agent cards: watch chat_cards for mesh agents' published A2A cards.
+	if n.cards != nil {
+		n.goLoop(func() { n.cards.Run(ctx) })
+	}
 
 	if err := n.eng.StartWorkers(ctx); err != nil {
 		return err

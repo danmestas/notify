@@ -3,6 +3,7 @@ package notify
 import (
 	"github.com/danmestas/dagnats/program"
 
+	"github.com/danmestas/notify/internal/agents/cards"
 	"github.com/danmestas/notify/internal/agents/runtime/mesh"
 	"github.com/danmestas/notify/internal/eventbus"
 	"github.com/danmestas/notify/internal/names"
@@ -26,7 +27,9 @@ const dagnatsRange = ">=0.0.44 <0.1.0"
 // agents. and a2a., not notify.: mesh traffic to a dagnats rides the program
 // connection. Since dagnats v0.0.43 notify logs in as its own NKey user with
 // only the permissions this manifest derives (program.PermissionsFor), so
-// anything notify touches must be declared here.
+// anything notify touches must be declared here. Reads is the chat program's
+// agent-card bucket; dagnats does not check that the owner program exists, so
+// registration succeeds without it and the card source retries until it does.
 func Manifest() program.Manifest {
 	return program.Manifest{
 		Name:      "notify",
@@ -37,5 +40,6 @@ func Manifest() program.Manifest {
 		Streams:   eventbus.Streams(),
 		Buckets:   eventbus.Buckets(),
 		Protocols: mesh.Protocols(),
+		Reads:     []string{cards.Bucket},
 	}
 }

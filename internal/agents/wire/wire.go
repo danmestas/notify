@@ -28,8 +28,13 @@ type Agent struct {
 	Labels         map[string]string `json:"labels"`
 	Logo           string            `json:"logo"`
 	History        string            `json:"history"`
-	CreatedAt      string            `json:"createdAt"`
-	UpdatedAt      string            `json:"updatedAt"`
+	// Card is the agent's A2A card, passed through as stored; null when the
+	// agent has none. CardUpdatedAt is when it was last written, present only
+	// for a stored card.
+	Card          json.RawMessage `json:"card"`
+	CardUpdatedAt string          `json:"cardUpdatedAt,omitempty"`
+	CreatedAt     string          `json:"createdAt"`
+	UpdatedAt     string          `json:"updatedAt"`
 }
 
 // FromAgent maps a stored agent.

@@ -26,6 +26,11 @@
   },
   "logo": "",
   "history": "inline",
+  "card": {
+    "name": "Vault",
+    "protocolVersion": "0.3.0"
+  },
+  "cardUpdatedAt": "2026-10-22T00:00:00Z",
   "createdAt": "2026-10-21T00:00:00Z",
   "updatedAt": "2026-10-21T00:00:00Z"
 }

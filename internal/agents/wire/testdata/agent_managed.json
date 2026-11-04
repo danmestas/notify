@@ -19,6 +19,11 @@
   },
   "logo": "",
   "history": "inline",
+  "card": {
+    "name": "Ember",
+    "protocolVersion": "0.3.0"
+  },
+  "cardUpdatedAt": "2026-10-22T00:00:00Z",
   "createdAt": "2026-10-18T00:00:00Z",
   "updatedAt": "2026-10-18T00:00:00Z"
 }

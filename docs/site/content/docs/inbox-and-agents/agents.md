@@ -40,7 +40,7 @@ An agent object:
 ```json
 { "id": "…", "identifier": "support", "name": "Support", "description": "", "runtime": "mesh",
   "active": true, "meshSubject": "agents.prompt.support", "bridgeUrl": "",
-  "welcomeMessage": "", "labels": {"owner": "lou"}, "logo": "", "history": "inline", "createdAt": "…", "updatedAt": "…" }
+  "welcomeMessage": "", "labels": {"owner": "lou"}, "logo": "", "history": "inline", "card": null, "createdAt": "…", "updatedAt": "…" }
 ```
 
 `managed` is included for managed agents; organization and environment ids are never part of the format.
