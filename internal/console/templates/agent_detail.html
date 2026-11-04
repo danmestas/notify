@@ -66,6 +66,13 @@
             {{end}}
           </dd>
         </div>
+        <div class="wf-meta-row">
+          <dt>Answered by</dt>
+          <dd id="agent-answered-by">
+            {{if $page.Receiver.Live}}<span class="chip chip-success">{{$page.Receiver.AnsweredBy}}</span>
+            {{else}}<span class="chip chip-default">{{$page.Receiver.AnsweredBy}}</span>{{end}}
+          </dd>
+        </div>
         {{if $page.Agent.Description}}
         <div class="wf-meta-row">
           <dt>Description</dt>
@@ -82,6 +89,55 @@
         </div>
       </dl>
     </section>
+
+    {{if $page.Receiver.Enabled}}
+    <section class="console-card" aria-labelledby="agent-receiver-heading">
+      <h2 id="agent-receiver-heading" class="console-card-title">Live receiver keys</h2>
+      <p class="console-muted">A harness connects to <code>/a2a/{{$page.Agent.ID}}/receive</code> with one of these keys to answer this agent's turns.</p>
+      {{if $page.Receiver.Error}}
+      <p class="console-form-error" role="alert">{{$page.Receiver.Error}}</p>
+      {{end}}
+      {{if $page.Receiver.NewSecret}}
+      <div class="console-alert console-alert-success" role="alert" id="receiver-key-reveal-card">
+        <strong>Receiver key created.</strong>
+        Copy this key now — it will not be shown again. Send it as <code>Authorization: Bearer &lt;key&gt;</code>.
+        <div class="console-secret-reveal">
+          <code id="receiver-key-secret" class="console-secret-value">{{$page.Receiver.NewSecret}}</code>
+          <button type="button" class="btn btn-outline btn-sm"
+                  data-on:click="navigator.clipboard.writeText(document.getElementById('receiver-key-secret').textContent)">Copy</button>
+        </div>
+      </div>
+      {{end}}
+      {{if not $page.ReadOnly}}
+      <form method="POST" action="/console/agents/{{$page.Agent.Identifier}}/receiver-keys" class="console-filter-bar" id="receiver-key-create-form">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <label class="form-inline-label" for="new-receiver-key-name">Name
+          <input class="console-input" type="text" id="new-receiver-key-name" name="name" placeholder="my-laptop" required aria-required="true" maxlength="64"></label>
+        <button type="submit" class="btn btn-primary">Mint key</button>
+      </form>
+      {{end}}
+      {{if $page.Receiver.Keys}}
+      <table class="console-table" id="receiver-keys-table">
+        <thead><tr><th>Name</th><th>Created</th><th>Last used</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+          {{range $page.Receiver.Keys}}
+          <tr id="receiver-key-row-{{.ID}}">
+            <td><span class="chip chip-default">{{.Name}}</span></td>
+            <td class="console-muted">{{.CreatedAt}}</td>
+            <td class="console-muted">{{if .LastUsedAt}}{{.LastUsedAt}}{{else}}never{{end}}</td>
+            <td>{{if .Revoked}}<span class="chip chip-default">revoked</span>{{else}}<span class="chip chip-success">active</span>{{end}}</td>
+            <td>{{if and (not .Revoked) (not $page.ReadOnly)}}
+              <form method="POST" action="/console/agents/{{$page.Agent.Identifier}}/receiver-keys/{{.ID}}/revoke" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <button type="submit" class="btn btn-outline btn-danger btn-sm">Revoke</button>
+              </form>{{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{end}}
+    </section>
+    {{end}}
 
     {{if not $page.ReadOnly}}
     <section class="console-card" aria-labelledby="agent-edit-heading">

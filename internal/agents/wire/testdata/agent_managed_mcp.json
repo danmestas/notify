@@ -30,6 +30,10 @@
     "name": "Vault",
     "protocolVersion": "0.3.0"
   },
+  "receiver": {
+    "kind": "live",
+    "since": "2026-10-23T00:00:00Z"
+  },
   "cardUpdatedAt": "2026-10-22T00:00:00Z",
   "createdAt": "2026-10-21T00:00:00Z",
   "updatedAt": "2026-10-21T00:00:00Z"

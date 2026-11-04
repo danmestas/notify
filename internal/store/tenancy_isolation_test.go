@@ -61,6 +61,7 @@ func tenantCases() []tenantCase {
 		{name: "InboundMessages", check: checkInboundMessages},
 		{name: "StreamSources", check: checkStreamSources},
 		{name: "A2AClientKeys", check: checkA2AClientKeys},
+		{name: "A2AReceiverKeys", check: checkA2AReceiverKeys},
 		{name: "EmailThreads", check: checkEmailThreads},
 		{
 			name: "WebhookDeliveries",
@@ -810,6 +811,29 @@ func checkA2AClientKeys(t *testing.T, ctx context.Context, s *Store, a, b domain
 	requireID(t, "A2AClientKeys.List", kB.ID, ids)
 	// Revoke from the wrong scope must not touch the row.
 	mustNotFound(t, "A2AClientKeys.Revoke", repo.Revoke(ctx, b, kA.ID, "2026-01-01T00:00:00Z"))
+}
+
+func checkA2AReceiverKeys(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
+	repo := s.A2AReceiverKeys()
+	kA, err := repo.Create(ctx, a, domain.A2AReceiverKey{AgentID: "ag-1", Name: "K-A", SecretHash: "rhash-a"})
+	if err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+	kB, err := repo.Create(ctx, b, domain.A2AReceiverKey{AgentID: "ag-1", Name: "K-B", SecretHash: "rhash-b"})
+	if err != nil {
+		t.Fatalf("seed B: %v", err)
+	}
+	list, err := repo.List(ctx, b, "ag-1")
+	if err != nil {
+		t.Fatalf("List(b): %v", err)
+	}
+	var ids []string
+	for _, k := range list {
+		ids = append(ids, k.ID)
+	}
+	forbidID(t, "A2AReceiverKeys.List", kA.ID, ids)
+	requireID(t, "A2AReceiverKeys.List", kB.ID, ids)
+	mustNotFound(t, "A2AReceiverKeys.Revoke", repo.Revoke(ctx, b, kA.ID, "2026-01-01T00:00:00Z"))
 }
 
 func checkEmailThreads(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {

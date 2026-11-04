@@ -351,6 +351,29 @@ func (c *Client) Dispatch(ctx context.Context, t domain.Turn) (domain.Reply, err
 	return reply, err
 }
 
+// TurnMessage returns the strict A2A message the mesh would publish for the
+// turn, history carried inline, plus its messageId. Other receivers of the same
+// turn (the WebSocket receiver) send exactly this, so every receiver sees one
+// envelope shape whatever carries it. The messageId is the user activity id,
+// stable across redeliveries; it is minted only for an activity with no id.
+func TurnMessage(t domain.Turn) (messageID string, msg json.RawMessage) {
+	messageID = t.Message.ID
+	if messageID == "" {
+		messageID = randToken()
+	}
+	body, err := json.Marshal(envelope{
+		MessageID: messageID,
+		ContextID: t.Conversation.ID,
+		Role:      "user",
+		Parts:     []domain.Part{{Text: Prompt(t)}},
+		Metadata:  &metadata{History: domain.HistoryInline, SubscriberID: t.Conversation.SubscriberID},
+	})
+	if err != nil {
+		panic(err) // fixed shape of strings; cannot fail
+	}
+	return messageID, body
+}
+
 // errHistoryRequired marks the agent's "no state, resend with history" reply.
 var errHistoryRequired = errors.New("agent requires history for this conversation")
 

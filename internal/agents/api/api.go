@@ -49,6 +49,19 @@ type Service struct {
 	// configurer relays config changes to mesh agents.
 	configurer Configurer
 	log        *slog.Logger
+	// live, when set, says whether a live receiver is answering an agent.
+	live LiveLookup
+}
+
+// LiveLookup reports a connected live receiver for an agent (agents.id).
+type LiveLookup interface {
+	Live(agentID string) (time.Time, bool)
+}
+
+// WithLiveReceivers reports live receivers on the agent read.
+func (svc *Service) WithLiveReceivers(l LiveLookup) *Service {
+	svc.live = l
+	return svc
 }
 
 // WithCards serves mesh agents' published A2A cards from c.
@@ -63,6 +76,11 @@ func (svc *Service) WithCards(c cards.Lookup) *Service {
 // a managed agent gets one derived from its record. Neither is stored.
 func (svc *Service) present(a agentdomain.Agent) wire.Agent {
 	out := wire.FromAgent(a)
+	if svc.live != nil {
+		if since, ok := svc.live.Live(a.ID); ok {
+			out.Receiver = wire.Receiver{Kind: "live", Since: timestamp.Format(since)}
+		}
+	}
 	switch a.Runtime {
 	case agentdomain.RuntimeMesh:
 		key := cards.Key(a.MeshSubject)

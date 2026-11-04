@@ -151,6 +151,7 @@ func sortedKeys[V any](m map[string]V) []string {
 func withCard(a wire.Agent) wire.Agent {
 	a.Card = json.RawMessage(`{"name":"` + a.Name + `","protocolVersion":"0.3.0"}`)
 	a.CardUpdatedAt = "2026-10-22T00:00:00Z"
+	a.Receiver = wire.Receiver{Kind: "live", Since: "2026-10-23T00:00:00Z"}
 	return a
 }
 
