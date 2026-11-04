@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/a2aauth"
+	"github.com/danmestas/notify/internal/a2areceiver"
 	"github.com/danmestas/notify/internal/blobstore"
 
 	"github.com/go-chi/chi/v5"
@@ -119,6 +120,11 @@ type Deps struct {
 	// leaves them unmounted. The /a2a/* routes themselves (#75) sit behind
 	// A2AAuth.Authenticate, never behind the API-key middleware.
 	A2AAuth *a2aauth.Service
+	// Receiver backs the WebSocket receiver (/a2a/{agentId}/receive) and the
+	// per-agent receiver key routes. Nil leaves them unmounted. The socket
+	// route authenticates the receiver key itself, so it sits outside the
+	// API-key group.
+	Receiver *a2areceiver.Service
 }
 
 // New builds the notify HTTP handler from d. All authenticated routes are
@@ -181,6 +187,12 @@ func New(d Deps) http.Handler {
 	if eml != nil {
 		r.Post("/v1/inbound/email", eml.HandleInbound)
 	}
+	// WebSocket receiver: a live harness answers an agent's turns. A receiver key
+	// (not an API key) authenticates the upgrade, so it is mounted outside the
+	// API-key group.
+	if d.Receiver != nil {
+		r.Get("/a2a/{agentId}/receive", d.Receiver.ServeReceive)
+	}
 	// Inbound webhook-push ingest. Mounted OUTSIDE the API-key group: an external
 	// producer holds a per-source SourceKey, not a console ApiKey, and the
 	// handler authenticates that scheme itself. A nil gateway leaves the route
@@ -210,6 +222,12 @@ func New(d Deps) http.Handler {
 			pr.Post("/v1/a2a/client-keys", postA2AClientKey(d.A2AAuth))
 			pr.Get("/v1/a2a/client-keys", getA2AClientKeys(d.A2AAuth))
 			pr.Delete("/v1/a2a/client-keys/{id}", deleteA2AClientKey(d.A2AAuth))
+		}
+		// Receiver keys (#77): per-agent credentials for a live harness.
+		if d.Receiver != nil {
+			pr.Post("/v1/agents/{identifier}/receiver-keys", postReceiverKey(d.Receiver))
+			pr.Get("/v1/agents/{identifier}/receiver-keys", getReceiverKeys(d.Receiver))
+			pr.Delete("/v1/agents/{identifier}/receiver-keys/{id}", deleteReceiverKey(d.Receiver))
 		}
 		pr.Put("/v1/subscribers/{subscriberId}/credentials", putSubscriberCredentials(aud))
 		// Per-device Web Push delete (#305 stage 3): a browser unsubscribe

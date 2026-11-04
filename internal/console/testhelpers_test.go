@@ -23,6 +23,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/danmestas/notify/internal/a2aauth"
+	"github.com/danmestas/notify/internal/a2areceiver"
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/analytics"
@@ -176,6 +177,7 @@ func newTestConsole(t *testing.T) *testConsole {
 		Connectivity:     conn,
 		StreamSources:    streamsource.New(st, masterKey),
 		A2AAuth:          a2aauth.New(st, id, nil),
+		Receiver:         a2areceiver.New(st, ags, nil),
 		Audience:         audience.New(st),
 		Webhooks:         webhooksout.NewManagement(st, nil),
 		Contexts:         contexts.New(st),

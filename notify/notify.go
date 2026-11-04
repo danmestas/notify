@@ -17,6 +17,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/danmestas/notify/internal/a2aauth"
+	"github.com/danmestas/notify/internal/a2areceiver"
 	agentsapi "github.com/danmestas/notify/internal/agents/api"
 	"github.com/danmestas/notify/internal/agents/cards"
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
@@ -172,7 +173,9 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	n.push(func() error { meshClient.Close(); return nil })
 	ags := agentstore.New(st)
 	n.ags = ags
+	receiver := a2areceiver.New(st, ags, log)
 	ing := ingress.New(ags, st, eng, bus).
+		WithLiveReceivers(receiver).
 		WithRuntime(agentdomain.RuntimeMesh, meshClient).
 		// Dev mode lets managed agents reach MCP servers on loopback over http.
 		WithRuntime(agentdomain.RuntimeManaged, managed.New(secrets, managed.DefaultClient).WithMCP(cfg.Dev))
@@ -273,7 +276,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// gateway that authenticates SourceKeys, limits, normalizes, and publishes
 	// batches into the durable feed.
 	srcSvc := streamsource.New(st, mk)
-	ag := agentsapi.New(ags).WithSecretBox(secrets).WithLoopbackMCP(cfg.Dev).
+	ag := agentsapi.New(ags).WithLiveReceivers(receiver).WithSecretBox(secrets).WithLoopbackMCP(cfg.Dev).
 		WithConfigurer(meshClient).WithLogger(log)
 	if js, err := jetstream.New(h.NC); err != nil {
 		log.Warn("agent cards disabled", "err", err)
@@ -297,6 +300,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	a2a := a2aauth.New(st, id, log)
 	api := httpapi.New(httpapi.Deps{
 		A2AAuth:  a2a,
+		Receiver: receiver,
 		Identity: id, Audience: aud, Trigger: trg, Inbox: inboxapi.New(st),
 		Realtime: realtime.New(bus), Feed: feedapi.New(bus), Inbound: inbound.New(trg),
 		Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, Store: st, EnvVars: ev,
@@ -322,6 +326,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 		// gateway authenticates against).
 		StreamSources:  srcSvc,
 		A2AAuth:        a2a,
+		Receiver:       receiver,
 		Audience:       aud,
 		Webhooks:       webhooksout.NewManagement(st, secrets),
 		Contexts:       contexts.New(st),

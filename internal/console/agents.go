@@ -94,6 +94,7 @@ type agentDetailView struct {
 	ShowLink      bool                       // channels tab: render the link picker (?link=true)
 	ConvsFragment agentConvsListView         // conversations tab
 	CSRF          string
+	Receiver      agentReceiverView // overview tab: answered by + receiver keys
 }
 
 // LinkableSelectOptions adapts the linkable integrations into the
@@ -365,6 +366,7 @@ func (c *Console) serveAgentDetailPage(w http.ResponseWriter, r *http.Request) {
 		ShowLink:      !c.deps.ReadOnly && r.URL.Query().Get("link") == "true",
 		ConvsFragment: convsFragment,
 		CSRF:          s.CSRF,
+		Receiver:      c.buildAgentReceiverView(r, scope, agent),
 	}
 	c.renderPage(w, r, http.StatusOK, "agent-detail", agentTitle(agent), pd)
 }

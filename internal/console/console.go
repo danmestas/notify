@@ -28,6 +28,7 @@ import (
 	"github.com/danmestas/notify/internal/preferences"
 
 	"github.com/danmestas/notify/internal/a2aauth"
+	"github.com/danmestas/notify/internal/a2areceiver"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
@@ -149,6 +150,9 @@ type Deps struct {
 	// A2AAuth backs the A2A Client Keys page: mint (reveal-once), list,
 	// revoke. Required.
 	A2AAuth *a2aauth.Service
+	// Receiver backs the agent page's "answered by" row and receiver keys.
+	// Optional: nil hides the receiver key card.
+	Receiver *a2areceiver.Service
 	// Audience is the audience service for subscriber and topic management
 	// (W2-C3, W2-C4, W2-C5). Nil is allowed only when no subscriber/topic
 	// routes are mounted; in practice New panics when Audience is nil.
@@ -654,6 +658,10 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/agents", c.handleAgentCreate)
 		pr.Post("/console/agents/{identifier}/save", c.handleAgentSave)
 		pr.Post("/console/agents/{identifier}/delete", c.handleAgentDelete)
+		if c.deps.Receiver != nil {
+			pr.Post("/console/agents/{identifier}/receiver-keys", c.handleReceiverKeyCreate)
+			pr.Post("/console/agents/{identifier}/receiver-keys/{id}/revoke", c.handleReceiverKeyRevoke)
+		}
 		pr.Post("/console/agents/{identifier}/activate", c.handleAgentToggleActive)
 		// #104: link/unlink channel integrations from the console (native form
 		// POST → 303 back to the channels tab). Thin wrappers over the agents

@@ -68,6 +68,7 @@ type Service struct {
 	replyHook ReplyHook
 	retry     *engine.RetryPolicy
 	runtimes  map[string]agentdomain.Runtime
+	live      LiveReceivers
 
 	mu         sync.Mutex
 	registered map[string]bool
@@ -105,6 +106,28 @@ func New(agents *agentstore.Store, core *corestore.Store, eng *engine.Engine, bu
 func (s *Service) WithRuntime(name string, rt agentdomain.Runtime) *Service {
 	s.runtimes[name] = rt
 	return s
+}
+
+// LiveReceivers answers a turn with a live receiver when one is connected for
+// the agent, and otherwise hands it to fallback, the agent's configured
+// runtime. It is the one place takeover is decided, so every channel's turns
+// are covered.
+type LiveReceivers interface {
+	Dispatch(ctx context.Context, t agentdomain.Turn, fallback agentdomain.Runtime) (agentdomain.Reply, error)
+}
+
+// WithLiveReceivers consults l before an agent's configured runtime.
+func (s *Service) WithLiveReceivers(l LiveReceivers) *Service {
+	s.live = l
+	return s
+}
+
+// dispatch is the seam where an agent turn reaches whatever answers it.
+func (s *Service) dispatch(ctx context.Context, rt agentdomain.Runtime, t agentdomain.Turn) (agentdomain.Reply, error) {
+	if s.live != nil {
+		return s.live.Dispatch(ctx, t, rt)
+	}
+	return rt.Dispatch(ctx, t)
 }
 
 // WithRetry overrides the turn step's retry policy and returns the service
@@ -596,7 +619,7 @@ func (s *Service) HandleTurn(ctx context.Context, t engine.TaskPayload) (json.Ra
 	if !ok {
 		return nil, engine.NewNonRetryableError(fmt.Errorf("no executor for runtime %q", agent.Runtime))
 	}
-	reply, err := rt.Dispatch(ctx, agentdomain.Turn{
+	reply, err := s.dispatch(ctx, rt, agentdomain.Turn{
 		Agent:        agent,
 		Conversation: conv,
 		History:      history,

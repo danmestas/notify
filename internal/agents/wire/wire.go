@@ -31,10 +31,19 @@ type Agent struct {
 	// Card is the agent's A2A card, passed through as stored; null when the
 	// agent has none. CardUpdatedAt is when it was last written, present only
 	// for a stored card.
-	Card          json.RawMessage `json:"card"`
-	CardUpdatedAt string          `json:"cardUpdatedAt,omitempty"`
-	CreatedAt     string          `json:"createdAt"`
-	UpdatedAt     string          `json:"updatedAt"`
+	Card json.RawMessage `json:"card"`
+	// Receiver says what answers the agent's turns now: its configured
+	// runtime, or a live receiver (with when it connected).
+	Receiver      Receiver `json:"receiver"`
+	CardUpdatedAt string   `json:"cardUpdatedAt,omitempty"`
+	CreatedAt     string   `json:"createdAt"`
+	UpdatedAt     string   `json:"updatedAt"`
+}
+
+// Receiver is what currently answers an agent's turns.
+type Receiver struct {
+	Kind  string `json:"kind"` // "live", or the agent's runtime
+	Since string `json:"since,omitempty"`
 }
 
 // FromAgent maps a stored agent.
@@ -45,6 +54,7 @@ func FromAgent(a agentdomain.Agent) Agent {
 		Name:           a.Name,
 		Description:    a.Description,
 		Runtime:        a.Runtime,
+		Receiver:       Receiver{Kind: a.Runtime},
 		Active:         a.Active,
 		MeshSubject:    a.MeshSubject,
 		BridgeURL:      a.BridgeURL,

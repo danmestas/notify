@@ -139,6 +139,22 @@ type A2AClientKey struct {
 	RevokedAt    string `db:"revoked_at"` // empty = active
 }
 
+// A2AReceiverKey is a credential for a live harness to answer one agent's
+// turns over the WebSocket receiver. It is bound to a single agent (AgentID is
+// agents.id) and is a different credential from an A2AClientKey. Only the
+// SHA-256 hash of the secret is stored.
+type A2AReceiverKey struct {
+	ID         string `db:"id"` // ULID
+	OrgID      string `db:"org_id"`
+	EnvID      string `db:"environment_id"`
+	AgentID    string `db:"agent_id"`
+	Name       string `db:"name"`
+	SecretHash string `db:"secret_hash"`
+	CreatedAt  string `db:"created_at"`
+	LastUsedAt string `db:"last_used_at"`
+	RevokedAt  string `db:"revoked_at"` // empty = active
+}
+
 type Workflow struct {
 	ID                string          `db:"id"`
 	OrgID             string          `db:"org_id"`
