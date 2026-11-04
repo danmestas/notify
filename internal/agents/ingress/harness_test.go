@@ -36,6 +36,7 @@ import (
 	"github.com/danmestas/notify/internal/agents/runtime/managed"
 	"github.com/danmestas/notify/internal/agents/runtime/mesh"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
+	"github.com/danmestas/notify/internal/agents/tasks"
 	"github.com/danmestas/notify/internal/dagtest"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
@@ -65,6 +66,7 @@ type harness struct {
 	retry   *engine.RetryPolicy
 	srv     *httptest.Server
 	agent   agentdomain.Agent
+	tasks   *tasks.Service
 }
 
 func newHarness(t *testing.T) *harness {
@@ -193,7 +195,9 @@ func newRetryHarness(t *testing.T) *harness {
 	}
 	t.Cleanup(func() { _ = eng2.Stop() })
 
+	h.tasks = tasks.New(h.agents.TaskStatuses(), nil)
 	ing2 := ingress.New(h.agents, h.store, eng2, h.bus).
+		WithTasks(h.tasks).
 		WithRuntime(agentdomain.RuntimeMesh, meshClient).
 		WithRetry(ladderRetry)
 	eng2.Handle(ingress.TaskMesh, ing2.HandleTurn)

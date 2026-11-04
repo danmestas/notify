@@ -195,6 +195,33 @@ type metadata struct {
 	History         string `json:"history,omitempty"`
 	SubscriberID    string `json:"subscriberId,omitempty"`
 	HistoryRequired bool   `json:"historyRequired,omitempty"`
+	// Stream asks the agent to send status-update and artifact-update frames
+	// on the reply inbox ahead of the final message. An agent that does not
+	// know it sends the final message alone.
+	Stream bool `json:"stream,omitempty"`
+}
+
+// inboxFrame is what a reply inbox message might be: a streamed
+// status-update or artifact-update, or (anything else) the final message.
+// Kind is empty on a bare envelope.
+type inboxFrame struct {
+	Kind   string `json:"kind"`
+	Status *struct {
+		State   string `json:"state"`
+		Message *struct {
+			Parts []domain.Part `json:"parts"`
+		} `json:"message"`
+	} `json:"status"`
+	Metadata struct {
+		Usage json.RawMessage `json:"usage"`
+	} `json:"metadata"`
+}
+
+// normalState maps a wire task state ("working", "TASK_STATE_INPUT_REQUIRED")
+// to the A2A spelling ("working", "input-required").
+func normalState(s string) string {
+	s = strings.TrimPrefix(strings.ToUpper(s), "TASK_STATE_")
+	return strings.ReplaceAll(strings.ToLower(s), "_", "-")
 }
 
 // frame is one agents.task.stream.> lifecycle/answer message. Both the
@@ -237,6 +264,8 @@ type collector struct {
 	historyRequired bool
 	closed          bool
 	done            chan struct{}
+	// sink receives the progress frames of the reply inbox.
+	sink domain.StatusSink
 }
 
 // finish signals completion exactly once. Callers must hold mu.
@@ -272,6 +301,17 @@ func (col *collector) onStreamFrame(m *nats.Msg) {
 // (pi-style path). An undecodable body degrades to its raw bytes, as in
 // the TS reference.
 func (col *collector) onReply(m *nats.Msg) {
+	var f inboxFrame
+	if json.Unmarshal(m.Data, &f) == nil {
+		switch f.Kind {
+		case "status-update":
+			col.onStatusUpdate(f)
+			return
+		case "artifact-update":
+			// The answer is the final message; the artifact repeats it.
+			return
+		}
+	}
 	text := string(m.Data)
 	var env envelope
 	if err := json.Unmarshal(m.Data, &env); err == nil {
@@ -284,6 +324,36 @@ func (col *collector) onReply(m *nats.Msg) {
 		col.historyRequired = len(env.Parts) == 0 && env.Metadata != nil && env.Metadata.HistoryRequired
 	}
 	col.finish()
+}
+
+// onStatusUpdate routes a status-update frame: a working note carries
+// progress text; a final state carries the usage metadata.
+func (col *collector) onStatusUpdate(f inboxFrame) { reportStatus(col.sink, f) }
+
+// ReportStatusFrame routes one A2A status-update frame (a reply-inbox message
+// or a live receiver's frame) to sink; any other frame is ignored. A working
+// state's message text becomes a note, a final state its Final call.
+func ReportStatusFrame(sink domain.StatusSink, data []byte) {
+	var f inboxFrame
+	if json.Unmarshal(data, &f) == nil && f.Kind == "status-update" {
+		reportStatus(sink, f)
+	}
+}
+
+func reportStatus(sink domain.StatusSink, f inboxFrame) {
+	if f.Status == nil {
+		return
+	}
+	state := normalState(f.Status.State)
+	if state == domain.TaskWorking {
+		if f.Status.Message != nil {
+			if text := strings.TrimSpace(joinParts(f.Status.Message.Parts)); text != "" {
+				sink.Note(text)
+			}
+		}
+		return
+	}
+	sink.Final(state, f.Metadata.Usage)
 }
 
 // quiet reports whether nothing v2 has been heard yet (no reply envelope, no
@@ -335,7 +405,7 @@ func (c *Client) Dispatch(ctx context.Context, t domain.Turn) (domain.Reply, err
 		MessageID: messageID,
 		ContextID: t.Conversation.ID,
 		Role:      "user",
-		Metadata:  &metadata{History: t.Agent.HistoryMode(), SubscriberID: t.Conversation.SubscriberID},
+		Metadata:  &metadata{History: t.Agent.HistoryMode(), SubscriberID: t.Conversation.SubscriberID, Stream: true},
 	}
 	if env.Metadata.History == domain.HistoryNone {
 		env.Parts = []domain.Part{{Text: contentText(t.Message.Content)}}
@@ -344,6 +414,7 @@ func (c *Client) Dispatch(ctx context.Context, t domain.Turn) (domain.Reply, err
 			return reply, err
 		}
 		env.Metadata.History = domain.HistoryInline
+		domain.StatusSinkFrom(ctx).Note("Resending with the conversation history")
 	}
 	env.Parts = []domain.Part{{Text: Prompt(t)}}
 	reply, err := c.attempt(ctx, subj, env)
@@ -368,7 +439,7 @@ func TurnMessage(t domain.Turn) (messageID string, msg json.RawMessage) {
 		ContextID: t.Conversation.ID,
 		Role:      "user",
 		Parts:     []domain.Part{{Text: Prompt(t)}},
-		Metadata:  &metadata{History: domain.HistoryInline, SubscriberID: t.Conversation.SubscriberID},
+		Metadata:  &metadata{History: domain.HistoryInline, SubscriberID: t.Conversation.SubscriberID, Stream: true},
 	})
 	if err != nil {
 		panic(err) // fixed shape of strings; cannot fail
@@ -386,7 +457,7 @@ func (c *Client) attempt(ctx context.Context, subj string, env envelope) (domain
 		return domain.Reply{}, domain.NewPermanentError(fmt.Errorf("marshal envelope: %w", err))
 	}
 
-	col := &collector{done: make(chan struct{})}
+	col := &collector{done: make(chan struct{}), sink: domain.StatusSinkFrom(ctx)}
 	streamSub, err := c.nc.Subscribe(streamSubject, col.onStreamFrame)
 	if err != nil {
 		return domain.Reply{}, fmt.Errorf("subscribe %s: %w", streamSubject, err)

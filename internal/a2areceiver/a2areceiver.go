@@ -15,8 +15,8 @@
 // Wire (JSON text frames):
 //
 //	notify -> harness   {"type":"turn","message":<strict A2A message>}
-//	harness -> notify   {"kind":"status-update","replyTo":"<messageId>",...}   (ignored for now)
-//	                    {"kind":"artifact-update","replyTo":"<messageId>",...} (ignored for now)
+//	harness -> notify   {"kind":"status-update","replyTo":"<messageId>",...}   (progress note / final state)
+//	                    {"kind":"artifact-update","replyTo":"<messageId>",...} (accepted, ignored: the final reply carries the text)
 //	                    {"kind":"message","role":"agent","replyTo":"<messageId>",
 //	                     "contextId":"...","parts":[{"text":"..."}]}           (final reply)
 //	                    {"kind":"error","replyTo":"<messageId>","message":"..."} (turn failed)
@@ -332,9 +332,15 @@ type session struct {
 	since   time.Time
 
 	mu      sync.Mutex
-	pending map[string]chan result
+	pending map[string]pendingTurn
 	done    chan struct{}
 	once    sync.Once
+}
+
+// pendingTurn is a turn waiting on its reply, and where its progress goes.
+type pendingTurn struct {
+	ch   chan result
+	sink agentdomain.StatusSink
 }
 
 type result struct {
@@ -345,7 +351,7 @@ type result struct {
 func newSession(ws *websocket.Conn, key domain.A2AReceiverKey) *session {
 	return &session{
 		ws: ws, agentID: key.AgentID, keyID: key.ID, since: time.Now().UTC(),
-		pending: map[string]chan result{}, done: make(chan struct{}),
+		pending: map[string]pendingTurn{}, done: make(chan struct{}),
 	}
 }
 
@@ -362,11 +368,11 @@ func (sess *session) finish() { sess.once.Do(func() { close(sess.done) }) }
 func (sess *session) ask(ctx context.Context, messageID string, frame []byte) (agentdomain.Reply, error) {
 	ch := make(chan result, 1)
 	sess.mu.Lock()
-	sess.pending[messageID] = ch
+	sess.pending[messageID] = pendingTurn{ch: ch, sink: agentdomain.StatusSinkFrom(ctx)}
 	sess.mu.Unlock()
 	defer func() {
 		sess.mu.Lock()
-		if sess.pending[messageID] == ch {
+		if sess.pending[messageID].ch == ch {
 			delete(sess.pending, messageID)
 		}
 		sess.mu.Unlock()
@@ -397,11 +403,20 @@ type inbound struct {
 	Message json.RawMessage    `json:"message"`
 }
 
-// deliver routes a final frame to the turn it answers. Status and artifact
-// updates are accepted and ignored (streaming is a separate feature).
-func (sess *session) deliver(f inbound) {
+// deliver routes a frame to the turn it answers. A status update reports
+// progress to the turn's sink; an artifact update is ignored (the final reply
+// carries the text); a final message or error ends the turn.
+func (sess *session) deliver(f inbound, raw []byte) {
 	var r result
 	switch {
+	case f.Kind == "status-update":
+		sess.mu.Lock()
+		p, ok := sess.pending[f.ReplyTo]
+		sess.mu.Unlock()
+		if ok {
+			mesh.ReportStatusFrame(p.sink, raw)
+		}
+		return
 	case f.Kind == "message" && f.Role == "agent":
 		var text strings.Builder
 		for _, p := range f.Parts {
@@ -421,7 +436,7 @@ func (sess *session) deliver(f inbound) {
 		return
 	}
 	sess.mu.Lock()
-	ch := sess.pending[f.ReplyTo]
+	ch := sess.pending[f.ReplyTo].ch
 	sess.mu.Unlock()
 	if ch != nil {
 		select {
@@ -477,7 +492,7 @@ func (s *Service) ServeReceive(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal(data, &f) != nil {
 			continue
 		}
-		sess.deliver(f)
+		sess.deliver(f, data)
 	}
 }
 

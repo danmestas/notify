@@ -4,10 +4,14 @@
 // subscriber session (package a2aauth); this package never sees a tenant API
 // key.
 //
-// There is no task table. A task is the user activity a message/send wrote:
-// its id is the activity id (also the mesh messageId), and its state is read
-// off the conversation -- completed once the turn's reply activity exists,
-// failed once the turn's engine run ended unsuccessfully, working otherwise.
+// A task is the user activity a message/send wrote: its id is the activity id
+// (also the mesh messageId), and its state is read off the conversation --
+// completed once the turn's reply activity exists, failed once the turn's
+// engine run ended unsuccessfully, working otherwise. A small status record
+// (package tasks) adds the progress notes the agent reported and any final
+// state it chose (input-required, canceled). message/stream and
+// tasks/resubscribe deliver the task's changes as server-sent events, and
+// GET /a2a/{agentId}/ws carries the same events over a WebSocket.
 // A message/send goes through ingress.Compose, the path every other inbound
 // channel uses, so the conversation shows in notify's transcript like any
 // other.
@@ -70,6 +74,14 @@ type Runs interface {
 	GetRun(ctx context.Context, runID string) (engine.RunSnapshot, error)
 }
 
+// Tasks is the turn status record (package tasks): its stored state and notes,
+// and a signal when they change in this process. Optional; without it tasks
+// carry no notes and streams follow the activity log by polling.
+type Tasks interface {
+	Get(ctx context.Context, scope domain.Scope, taskID string) (agentdomain.TaskStatus, bool)
+	Watch(scope domain.Scope, taskID string) (<-chan struct{}, func())
+}
+
 // Limiter is the shared per-key budget (eventbus.Bus.BudgetAllow).
 type Limiter interface {
 	BudgetAllow(key string, cost, limit int64, window time.Duration) (bool, error)
@@ -82,6 +94,7 @@ type Service struct {
 	runs    Runs
 	cards   cards.Lookup
 	limiter Limiter
+	tasks   Tasks
 	base    string
 	wait    time.Duration
 	log     *slog.Logger
@@ -95,6 +108,9 @@ func New(agents *agentstore.Store, compose Composer, runs Runs) *Service {
 
 // WithCards serves mesh agents' published cards as the base of their A2A card.
 func (s *Service) WithCards(c cards.Lookup) *Service { s.cards = c; return s }
+
+// WithTasks reads task status notes from t and wakes streams when they change.
+func (s *Service) WithTasks(t Tasks) *Service { s.tasks = t; return s }
 
 // WithLimiter rate-limits message/send per credential and per agent.
 func (s *Service) WithLimiter(l Limiter) *Service { s.limiter = l; return s }
@@ -123,6 +139,7 @@ func (s *Service) WithLogger(l *slog.Logger) *Service {
 func (s *Service) Routes(r chi.Router) {
 	r.Post("/a2a/{agentId}", s.rpc)
 	r.Get("/a2a/{agentId}/.well-known/agent-card.json", s.card)
+	r.Get("/a2a/{agentId}/ws", s.serveWS)
 }
 
 // caller resolves the principal and the agent it may address. ok is false once
@@ -224,7 +241,7 @@ func (s *Service) buildCard(a agentdomain.Agent, base string) ([]byte, error) {
 			caps = map[string]json.RawMessage{}
 		}
 	}
-	caps["streaming"] = mustJSON(false)
+	caps["streaming"] = mustJSON(true)
 	card["capabilities"] = mustJSON(caps)
 	return json.Marshal(card)
 }

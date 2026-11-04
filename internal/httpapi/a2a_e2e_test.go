@@ -221,7 +221,7 @@ func TestA2AEndpoint_E2E(t *testing.T) {
 			t.Errorf("receiver fields lost: %s", body)
 		}
 		caps, _ := c["capabilities"].(map[string]any)
-		if caps["streaming"] != false {
+		if caps["streaming"] != true {
 			t.Errorf("streaming = %v", caps["streaming"])
 		}
 		if !strings.Contains(body, `"securitySchemes":{"bearer":{"scheme":"bearer","type":"http"}}`) || !strings.Contains(body, `"security":[{"bearer":[]}]`) {
@@ -339,7 +339,7 @@ func TestA2AEndpoint_E2E(t *testing.T) {
 	})
 
 	t.Run("unsupported and malformed", func(t *testing.T) {
-		for _, m := range []string{"message/stream", "tasks/resubscribe", "tasks/cancel", "nope"} {
+		for _, m := range []string{"tasks/cancel", "nope"} {
 			_, out := a2aRPC(t, url, keyA1, m, map[string]any{})
 			if rpcErrCode(out) != -32004 {
 				t.Errorf("%s = %v, want -32004", m, out)

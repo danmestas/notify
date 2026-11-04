@@ -77,7 +77,7 @@ func (c *Client) dispatchSynadia(ctx context.Context, t domain.Turn) (domain.Rep
 
 	dctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	return readSynadiaStream(dctx, chunks, subj, c.timeout)
+	return readSynadiaStream(dctx, chunks, subj, c.timeout, domain.StatusSinkFrom(ctx))
 }
 
 // setHeader sets a header only when the value is non-empty.
@@ -89,11 +89,8 @@ func setHeader(m *nats.Msg, k, v string) {
 
 // readSynadiaStream consumes chunks until the terminator, a service error,
 // the deadline, or an unsupported chunk.
-func readSynadiaStream(ctx context.Context, chunks <-chan *nats.Msg, subj string, timeout time.Duration) (domain.Reply, error) {
-	var (
-		answer strings.Builder
-		status []string
-	)
+func readSynadiaStream(ctx context.Context, chunks <-chan *nats.Msg, subj string, timeout time.Duration, sink domain.StatusSink) (domain.Reply, error) {
+	var answer strings.Builder
 	for {
 		select {
 		case <-ctx.Done():
@@ -110,7 +107,7 @@ func readSynadiaStream(ctx context.Context, chunks <-chan *nats.Msg, subj string
 				return domain.Reply{}, fmt.Errorf("mesh dispatch %s: %w", subj, se)
 			}
 			if len(m.Data) == 0 && len(m.Header) == 0 {
-				return finishSynadia(answer.String(), status, subj)
+				return finishSynadia(answer.String(), subj)
 			}
 			var ch synadiaChunk
 			if json.Unmarshal(m.Data, &ch) != nil {
@@ -122,7 +119,7 @@ func readSynadiaStream(ctx context.Context, chunks <-chan *nats.Msg, subj string
 			case "status":
 				var s string
 				if json.Unmarshal(ch.Data, &s) == nil && s != "" && s != "ack" {
-					status = append(status, s)
+					sink.Note(s)
 				}
 			case "query":
 				return domain.Reply{}, domain.NewPermanentError(errors.New(
@@ -134,14 +131,14 @@ func readSynadiaStream(ctx context.Context, chunks <-chan *nats.Msg, subj string
 }
 
 // finishSynadia turns a terminated stream into a Reply.
-func finishSynadia(answer string, status []string, subj string) (domain.Reply, error) {
+func finishSynadia(answer string, subj string) (domain.Reply, error) {
 	text := strings.TrimSpace(answer)
 	if text == "" {
 		return domain.Reply{}, domain.NewPermanentError(
 			fmt.Errorf("agent %s ended the stream with no response", subj),
 		)
 	}
-	return domain.Reply{Parts: []domain.Part{{Text: text}}, Status: status}, nil
+	return domain.Reply{Parts: []domain.Part{{Text: text}}}, nil
 }
 
 // chunkText reads a response chunk's data: a bare string or {text} (§6.3).

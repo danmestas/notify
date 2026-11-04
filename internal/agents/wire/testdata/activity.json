@@ -28,6 +28,9 @@
         "ref": "rec_1",
         "error": true
       }
+    ],
+    "notes": [
+      "Running get_record: rec_1"
     ]
   },
   "runId": "r1",

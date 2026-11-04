@@ -428,3 +428,53 @@ func TestMintValidation(t *testing.T) {
 		t.Fatalf("unknown agent err = %v", err)
 	}
 }
+
+// recSink records a turn's notes and final state.
+type recSink struct {
+	mu    sync.Mutex
+	notes []string
+	state string
+	usage string
+}
+
+func (s *recSink) Note(t string) { s.mu.Lock(); s.notes = append(s.notes, t); s.mu.Unlock() }
+func (s *recSink) Final(state string, usage json.RawMessage) {
+	s.mu.Lock()
+	s.state, s.usage = state, string(usage)
+	s.mu.Unlock()
+}
+
+func TestReceiverStatusFramesReachTheSink(t *testing.T) {
+	f := newFixture(t)
+	ws := f.dial(t, f.secret)
+	sink := &recSink{}
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.svc.Dispatch(agentdomain.WithStatusSink(context.Background(), sink), f.turn("act-s"), f.fb)
+		done <- err
+	}()
+	_, msg := readTurn(t, ws)
+	if md, _ := msg["metadata"].(map[string]any); md["stream"] != true {
+		t.Fatalf("turn lacks metadata.stream: %v", msg["metadata"])
+	}
+	status := func(state, note string, meta any) map[string]any {
+		st := map[string]any{"state": state}
+		if note != "" {
+			st["message"] = map[string]any{"parts": []map[string]string{{"text": note}}}
+		}
+		return map[string]any{"kind": "status-update", "replyTo": "act-s", "status": st, "metadata": meta}
+	}
+	send(t, ws, status("working", "Running a", nil))
+	send(t, ws, map[string]any{"kind": "artifact-update", "replyTo": "act-s", "artifact": map[string]any{}})
+	send(t, ws, status("working", "Running b", nil))
+	send(t, ws, status("completed", "", map[string]any{"usage": map[string]int{"tokens": 3}}))
+	answer(t, ws, "act-s", "done")
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if strings.Join(sink.notes, "|") != "Running a|Running b" || sink.usage != `{"tokens":3}` {
+		t.Errorf("notes %v usage %s", sink.notes, sink.usage)
+	}
+}

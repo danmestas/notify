@@ -47,7 +47,7 @@ Harness to notify, for each turn it answers. `replyTo` is the `messageId` of the
 {"kind":"message","role":"agent","replyTo":"01J…","contextId":"01J…","parts":[{"text":"Hi Alice."}]}
 ```
 
-- `status-update` and `artifact-update` frames are accepted and currently ignored.
+- The turn message carries `metadata.stream: true`. A `status-update` frame with `status.state: "working"` and a `status.message` text becomes a progress note on the task (streamed to A2A callers, shown in the transcript); a frame with a final state (`input-required`, `failed`, `canceled`) sets the task's end state, and `metadata.usage` on it is kept. `artifact-update` frames are accepted and ignored: the final `message` carries the text.
 - The final `message` frame ends the turn; its text parts are joined and delivered as the agent's reply.
 - `{"kind":"error","replyTo":"01J…","message":"why"}` fails the turn without retrying.
 

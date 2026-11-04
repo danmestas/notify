@@ -1049,3 +1049,44 @@ func TestActivityRepo_ClientMessageIDIsUniquePerConversation(t *testing.T) {
 		t.Fatalf("lookup from another tenant: %v, want ErrNotFound", err)
 	}
 }
+
+func TestTaskStatusRepo_NotesStateAndScope(t *testing.T) {
+	ctx := context.Background()
+	repo := openTemp(t).TaskStatuses()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	if _, err := repo.Get(ctx, scope, "t1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing record: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := repo.Submit(ctx, scope, "t1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, n := range []string{"one", "two"} {
+		if err := repo.Note(ctx, scope, "t1", n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := repo.Get(ctx, scope, "t1")
+	if err != nil || got.State != agentdomain.TaskWorking || len(got.Notes) != 2 || got.Notes[0].Text != "one" || got.Notes[1].Text != "two" {
+		t.Fatalf("after notes = %+v, %v", got, err)
+	}
+	if err := repo.Close(ctx, scope, "t1", agentdomain.TaskInputRequired, json.RawMessage(`{"tokens":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	// A closed task keeps its state; usage and notes still land.
+	if err := repo.Close(ctx, scope, "t1", agentdomain.TaskCompleted, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Note(ctx, scope, "t1", "three"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = repo.Get(ctx, scope, "t1")
+	if got.State != agentdomain.TaskInputRequired || string(got.Usage) != `{"tokens":1}` || len(got.Notes) != 3 {
+		t.Fatalf("closed = %+v", got)
+	}
+	if _, err := repo.Get(ctx, domain.Scope{OrgID: "o1", EnvID: "e2"}, "t1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other environment: %v", err)
+	}
+}

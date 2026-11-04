@@ -26,6 +26,7 @@ import (
 	"github.com/danmestas/notify/internal/agents/runtime/managed"
 	"github.com/danmestas/notify/internal/agents/runtime/mesh"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
+	"github.com/danmestas/notify/internal/agents/tasks"
 	"github.com/danmestas/notify/internal/aibuilder"
 	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/audience"
@@ -175,7 +176,9 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	ags := agentstore.New(st)
 	n.ags = ags
 	receiver := a2areceiver.New(st, ags, log)
+	taskStatus := tasks.New(ags.TaskStatuses(), log)
 	ing := ingress.New(ags, st, eng, bus).
+		WithTasks(taskStatus).
 		WithLiveReceivers(receiver).
 		WithRuntime(agentdomain.RuntimeMesh, meshClient).
 		// Dev mode lets managed agents reach MCP servers on loopback over http.
@@ -300,7 +303,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 
 	a2a := a2aauth.New(st, id, log)
 	a2aSvc := a2achan.New(ags, ing, eng).
-		WithPublicBaseURL(cfg.PublicBaseURL).WithLimiter(bus).WithLogger(log)
+		WithPublicBaseURL(cfg.PublicBaseURL).WithLimiter(bus).WithLogger(log).WithTasks(taskStatus)
 	if n.cards != nil {
 		a2aSvc = a2aSvc.WithCards(n.cards)
 	}
