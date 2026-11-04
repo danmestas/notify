@@ -13,6 +13,7 @@ Every route notify serves, from `internal/httpapi` and the services it mounts. T
   {{< card link="agents" title="Agents and conversations" subtitle="/v1/agents, /v1/inbox/conversations, /v1/inbox/drafts" >}}
   {{< card link="inbound" title="Inbound email" subtitle="/v1/inbound/email, domains, archive" >}}
   {{< card link="streams-and-webhooks" title="Streams and webhooks" subtitle="/v1/feed/stream, /v1/sources, /v1/webhooks/endpoints" >}}
+  {{< card link="a2a-client-keys" title="A2A client keys" subtitle="/v1/a2a/client-keys" >}}
   {{< card link="resources" title="Other resources" subtitle="Layouts, translations, contexts, env vars, analytics" >}}
   {{< card link="system" title="Health and metrics" subtitle="/healthz, /readyz, /metrics" >}}
 {{< /cards >}}
@@ -29,6 +30,7 @@ All API routes are under `/v1`. **Every `/v1` response, errors included, carries
 |---|---|---|
 | API key | `Authorization: ApiKey <key>` | Everything under `/v1` unless noted. |
 | Subscriber session | `Authorization: Bearer <token>` | The four inbox message routes only (an API key also works there). |
+| A2A caller | `Authorization: Bearer <token>` | The A2A routes: an A2A client key or a subscriber session. Never an API key. |
 | Source key | `Authorization: SourceKey <key>` | `POST /v1/sources/{sourceID}/events`. |
 | Inbound secret | `X-Inbound-Secret: <secret>` | `POST /v1/inbound/email`. |
 

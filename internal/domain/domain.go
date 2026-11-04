@@ -124,6 +124,21 @@ type StreamSource struct {
 	CreatedAt       string `db:"created_at"`
 }
 
+// A2AClientKey is a credential for a machine caller of the A2A channel: per
+// environment, optionally bound to one subscriber (external id) so the caller
+// speaks as that person. Only the SHA-256 hash of the secret is stored.
+type A2AClientKey struct {
+	ID           string `db:"id"` // ULID
+	OrgID        string `db:"org_id"`
+	EnvID        string `db:"environment_id"`
+	Name         string `db:"name"`
+	SubscriberID string `db:"subscriber_id"` // external id; empty = unbound
+	SecretHash   string `db:"secret_hash"`
+	CreatedAt    string `db:"created_at"`
+	LastUsedAt   string `db:"last_used_at"`
+	RevokedAt    string `db:"revoked_at"` // empty = active
+}
+
 type Workflow struct {
 	ID                string          `db:"id"`
 	OrgID             string          `db:"org_id"`

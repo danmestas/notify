@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danmestas/notify/internal/a2aauth"
 	"github.com/danmestas/notify/internal/blobstore"
 
 	"github.com/go-chi/chi/v5"
@@ -114,6 +115,10 @@ type Deps struct {
 	// Blobs holds the original bytes of accepted inbound mail. Nil leaves the
 	// inbound message read routes unmounted.
 	Blobs blobstore.Store
+	// A2AAuth backs the A2A client key routes (/v1/a2a/client-keys). Nil
+	// leaves them unmounted. The /a2a/* routes themselves (#75) sit behind
+	// A2AAuth.Authenticate, never behind the API-key middleware.
+	A2AAuth *a2aauth.Service
 }
 
 // New builds the notify HTTP handler from d. All authenticated routes are
@@ -200,6 +205,12 @@ func New(d Deps) http.Handler {
 		// already authenticated. The token it returns is the only credential
 		// a browser may hold.
 		pr.Post("/v1/subscribers/{subscriberId}/session", id.PostSubscriberSession)
+		// A2A client keys (#74): machine credentials for the A2A channel.
+		if d.A2AAuth != nil {
+			pr.Post("/v1/a2a/client-keys", postA2AClientKey(d.A2AAuth))
+			pr.Get("/v1/a2a/client-keys", getA2AClientKeys(d.A2AAuth))
+			pr.Delete("/v1/a2a/client-keys/{id}", deleteA2AClientKey(d.A2AAuth))
+		}
 		pr.Put("/v1/subscribers/{subscriberId}/credentials", putSubscriberCredentials(aud))
 		// Per-device Web Push delete (#305 stage 3): a browser unsubscribe
 		// removes just that endpoint's row, leaving the subscriber's other

@@ -46,6 +46,7 @@ var pageContentFiles = map[string]string{
 	"workflow-activity": "templates/workflow_activity.html",
 	"integrations":      "templates/integrations.html",
 	"stream-sources":    "templates/stream_sources.html",
+	"a2a-keys":          "templates/a2a_client_keys.html",
 	"subscribers":       "templates/subscribers.html",
 	"subscriber-detail": "templates/subscriber_detail.html",
 	"topics":            "templates/topics.html",
@@ -259,6 +260,7 @@ func navIconSVG(key string) template.HTML {
 		"topics":         `<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>`,
 		"integrations":   `<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M7 14v2a2 2 0 0 0 2 2h2M14 7h2a2 2 0 0 1 2 2v2"/>`,
 		"stream-sources": `<path d="M4.9 19.1a10 10 0 0 1 0-14.2"/><path d="M7.8 16.2a6 6 0 0 1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.5"/><path d="M19.1 4.9a10 10 0 0 1 0 14.2"/>`,
+		"a2a-keys":       `<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2M16 7l3 3M14 9l2 2"/>`,
 		"webhooks":       `<path d="M18 16.98a4 4 0 1 0-2.5-7.4M6.5 9.5A4 4 0 1 0 9 16.98M12 8v4l3 3"/>`,
 		"agents":         `<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 2v4M9 13h.01M15 13h.01M2 14h2M20 14h2"/>`,
 		"conversations":  `<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`,
@@ -404,6 +406,7 @@ var navGroups = []navGroup{
 	{Label: "AGENTS", Entries: []navEntry{
 		{Label: "Agents", Href: "/console/agents", Section: "agents", Icon: "agents", BadgeKey: "agents"},
 		{Label: "Conversations", Href: "/console/conversations", Section: "conversations", Icon: "conversations"},
+		{Label: "A2A Client Keys", Href: "/console/a2a-keys", Section: "a2a-keys", Icon: "a2a-keys"},
 		{Label: "Chat Inbound", Href: "/console/chat", Section: "chat", Icon: "chat"},
 		{Label: "Inbound Email", Href: "/console/inbound-email", Section: "inbound-email", Icon: "inbound-email"},
 	}},

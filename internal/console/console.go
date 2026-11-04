@@ -27,6 +27,7 @@ import (
 	"github.com/danmestas/notify/internal/inbounddomains"
 	"github.com/danmestas/notify/internal/preferences"
 
+	"github.com/danmestas/notify/internal/a2aauth"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
@@ -145,6 +146,9 @@ type Deps struct {
 	// other core services, because the stream-sources routes are always
 	// mounted and would nil-panic on first request otherwise.
 	StreamSources *streamsource.Service
+	// A2AAuth backs the A2A Client Keys page: mint (reveal-once), list,
+	// revoke. Required.
+	A2AAuth *a2aauth.Service
 	// Audience is the audience service for subscriber and topic management
 	// (W2-C3, W2-C4, W2-C5). Nil is allowed only when no subscriber/topic
 	// routes are mounted; in practice New panics when Audience is nil.
@@ -317,6 +321,9 @@ func New(deps Deps) *Console {
 	}
 	if deps.StreamSources == nil {
 		panic("console.New: deps.StreamSources is nil")
+	}
+	if deps.A2AAuth == nil {
+		panic("console.New: deps.A2AAuth is nil")
 	}
 	if deps.Audience == nil {
 		panic("console.New: deps.Audience is nil")
@@ -521,6 +528,10 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/stream-sources/{id}/delete", c.handleStreamSourceDelete)
 		pr.Post("/console/stream-sources/{id}/active", c.handleStreamSourceToggleActive)
 		pr.Get("/console/api/fragments/stream-sources-list", c.serveFragmentStreamSourcesList)
+		// A2A client keys (#74): machine credentials; secret revealed once.
+		pr.Get("/console/a2a-keys", c.serveA2AKeysPage)
+		pr.Post("/console/a2a-keys", c.handleA2AKeyCreate)
+		pr.Post("/console/a2a-keys/{id}/revoke", c.handleA2AKeyRevoke)
 		// W2-C3: subscriber management
 		pr.Get("/console/subscribers", c.serveSubscribersPage)
 		pr.Get("/console/subscribers/new", c.serveSubscriberNew)
