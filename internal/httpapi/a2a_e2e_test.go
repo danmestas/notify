@@ -114,7 +114,7 @@ func TestA2AEndpoint_E2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = bus.Close() })
-	meshClient, err := mesh.Dial(natsURL, mesh.WithTimeout(10*time.Second))
+	meshClient, err := mesh.Dial(natsURL, mesh.WithTimeout(10*time.Second), mesh.WithDiscoveryWindow(20*time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
 	}
