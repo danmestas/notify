@@ -55,6 +55,15 @@ const (
 	// replyRoot prefixes the private inbox a dispatch names in its reply_to
 	// header for the pi-style answer envelope.
 	replyRoot = "a2a.reply"
+	// promptRoot and configRoot are the subject roots of an agent's prompt and
+	// config endpoints; an agent's config subject is its prompt subject's tail
+	// under configRoot.
+	promptRoot = "agents.prompt."
+	configRoot = "agents.config."
+	// DefaultConfigTimeout bounds one config relay.
+	DefaultConfigTimeout = 10 * time.Second
+	// MaxConfigBytes caps a relayed config body.
+	MaxConfigBytes = 64 << 10
 )
 
 // Protocols are the shared subject roots mesh dispatch speaks over a dagnats
@@ -67,6 +76,7 @@ func Protocols() []string {
 		strings.TrimSuffix(DefaultAllowedSubjects, ".>"),
 		strings.TrimSuffix(streamSubject, ".>"),
 		replyRoot,
+		strings.TrimSuffix(configRoot, "."),
 	}
 }
 
@@ -97,6 +107,13 @@ type Client struct {
 	ownsConn bool
 	allow    string
 	timeout  time.Duration
+	// configTimeout bounds one config relay.
+	configTimeout time.Duration
+}
+
+// WithConfigTimeout replaces the per-relay config deadline.
+func WithConfigTimeout(d time.Duration) Option {
+	return func(c *Client) { c.configTimeout = d }
 }
 
 // Option customises a Client at Dial time.
@@ -127,7 +144,7 @@ func Dial(natsURL string, opts ...Option) (*Client, error) {
 // FromConn returns a Client that dispatches over an existing connection. The
 // connection stays the caller's: Close does not close it.
 func FromConn(nc *nats.Conn, opts ...Option) *Client {
-	c := &Client{nc: nc, allow: DefaultAllowedSubjects, timeout: DefaultTimeout}
+	c := &Client{nc: nc, allow: DefaultAllowedSubjects, timeout: DefaultTimeout, configTimeout: DefaultConfigTimeout}
 	for _, opt := range opts {
 		opt(c)
 	}
