@@ -240,6 +240,39 @@ func TestProgram_EnforcedMeshTurn(t *testing.T) {
 	v.none(t)
 }
 
+// TestProgram_EnforcedMeshConfig relays an agent config change over notify's
+// program connection: the request goes out on agents.config, which the manifest
+// lists as a protocol root next to agents.prompt.
+func TestProgram_EnforcedMeshConfig(t *testing.T) {
+	p, v, url := runEnforced(t)
+	agent, err := nats.Connect(url)
+	if err != nil {
+		t.Fatalf("nats.Connect: %v", err)
+	}
+	t.Cleanup(agent.Close)
+	sub, err := agent.Subscribe("agents.config.enforce", func(m *nats.Msg) {
+		_ = m.Respond([]byte(`{"ok":true,"card":{"name":"enforced"}}`))
+	})
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+	if err := agent.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	card, err := mesh.FromConn(p.conn).Configure(ctx, "agents.prompt.enforce", []byte(`{"model":"m"}`))
+	if err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	if string(card) != `{"name":"enforced"}` {
+		t.Fatalf("card = %s", card)
+	}
+	v.none(t)
+}
+
 // TestProgram_EnforcedBuildStream: the AI builder's console subscribes to the
 // builder step's live output, which a program's worker publishes under
 // stream.p.notify.<run>.build. Since dagnats v0.0.44 a program may subscribe

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -45,6 +46,9 @@ type Service struct {
 	loopbackMCP bool
 	// cards, when set, supplies mesh agents' published A2A cards.
 	cards cards.Lookup
+	// configurer relays config changes to mesh agents.
+	configurer Configurer
+	log        *slog.Logger
 }
 
 // WithCards serves mesh agents' published A2A cards from c.
@@ -117,6 +121,7 @@ func (svc *Service) Routes(r chi.Router) {
 	r.Get("/v1/agents/{identifier}", svc.getAgent)
 	r.Patch("/v1/agents/{identifier}", svc.patchAgent)
 	r.Delete("/v1/agents/{identifier}", svc.deleteAgent)
+	r.Patch("/v1/agents/{identifier}/config", svc.configAgent)
 	r.Post("/v1/agents/{identifier}/integrations", svc.linkIntegration)
 	r.Get("/v1/agents/{identifier}/integrations", svc.listIntegrations)
 	r.Delete("/v1/agents/{identifier}/integrations/{integrationID}", svc.unlinkIntegration)

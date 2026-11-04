@@ -272,7 +272,8 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// gateway that authenticates SourceKeys, limits, normalizes, and publishes
 	// batches into the durable feed.
 	srcSvc := streamsource.New(st, mk)
-	ag := agentsapi.New(ags).WithSecretBox(secrets).WithLoopbackMCP(cfg.Dev)
+	ag := agentsapi.New(ags).WithSecretBox(secrets).WithLoopbackMCP(cfg.Dev).
+		WithConfigurer(meshClient).WithLogger(log)
 	if js, err := jetstream.New(h.NC); err != nil {
 		log.Warn("agent cards disabled", "err", err)
 	} else {
