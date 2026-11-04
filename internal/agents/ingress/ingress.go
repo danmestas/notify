@@ -294,6 +294,10 @@ type ComposeInput struct {
 	// Set by workflow steps, which wake an agent with no person watching;
 	// the inbox and reply loops leave it off and keep today's behaviour.
 	RequireActive bool
+	// Anonymous allows an empty SubscriberID: a machine caller bound to no
+	// subscriber (an A2A client key) speaks as nobody, and the conversation
+	// has no subscriber. Every other caller still must name one.
+	Anonymous bool
 }
 
 // ErrIdempotencyConflict reports a key reused for a different message: a
@@ -309,7 +313,7 @@ func (s *Service) Compose(ctx context.Context, scope domain.Scope, in ComposeInp
 	if in.Text == "" {
 		return ComposeResult{}, fmt.Errorf("text is required")
 	}
-	if in.SubscriberID == "" {
+	if in.SubscriberID == "" && !in.Anonymous {
 		return ComposeResult{}, fmt.Errorf("subscriberId is required")
 	}
 	if err := agentdomain.ValidateAttachments(in.Attachments); err != nil {

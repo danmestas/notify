@@ -26,6 +26,8 @@ type ActivityRepo interface {
 	// GetByClientMessageID finds a composed message by its caller-supplied
 	// idempotency key within a conversation. ErrNotFound when absent.
 	GetByClientMessageID(ctx context.Context, scope domain.Scope, conversationID, clientMessageID string) (agentdomain.Activity, error)
+	// Get returns one activity by id within the scope, or ErrNotFound.
+	Get(ctx context.Context, scope domain.Scope, id string) (agentdomain.Activity, error)
 	// SetRunID records the turn run a composed message started.
 	SetRunID(ctx context.Context, scope domain.Scope, id, runID string) error
 	// History returns the last n activities of the conversation oldest-first
@@ -116,6 +118,30 @@ func (repo *activityRepo) GetByClientMessageID(ctx context.Context, scope domain
 	}
 	a.Content = json.RawMessage(content)
 	a.RunID = runID.String
+	return a, nil
+}
+
+// Get returns the activity with the given id, or ErrNotFound.
+func (repo *activityRepo) Get(ctx context.Context, scope domain.Scope, id string) (agentdomain.Activity, error) {
+	var a agentdomain.Activity
+	var content string
+	var runID, clientID sql.NullString
+	err := repo.r.QueryRowContext(
+		ctx,
+		`SELECT id, org_id, environment_id, conversation_id, role, content, run_id, client_message_id, created_at
+		 FROM conversation_activities
+		 WHERE org_id = ? AND environment_id = ? AND id = ?`,
+		scope.OrgID, scope.EnvID, id,
+	).Scan(&a.ID, &a.OrgID, &a.EnvID, &a.ConversationID, &a.Role, &content, &runID, &clientID, &a.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return agentdomain.Activity{}, ErrNotFound
+	}
+	if err != nil {
+		return agentdomain.Activity{}, err
+	}
+	a.Content = json.RawMessage(content)
+	a.RunID = runID.String
+	a.ClientMessageID = clientID.String
 	return a, nil
 }
 

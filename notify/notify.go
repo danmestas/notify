@@ -16,6 +16,7 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 
+	a2achan "github.com/danmestas/notify/internal/a2a"
 	"github.com/danmestas/notify/internal/a2aauth"
 	"github.com/danmestas/notify/internal/a2areceiver"
 	agentsapi "github.com/danmestas/notify/internal/agents/api"
@@ -298,9 +299,15 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	n.push(anClose)
 
 	a2a := a2aauth.New(st, id, log)
+	a2aSvc := a2achan.New(ags, ing, eng).
+		WithPublicBaseURL(cfg.PublicBaseURL).WithLimiter(bus).WithLogger(log)
+	if n.cards != nil {
+		a2aSvc = a2aSvc.WithCards(n.cards)
+	}
 	api := httpapi.New(httpapi.Deps{
 		A2AAuth:  a2a,
 		Receiver: receiver,
+		A2A:      a2aSvc,
 		Identity: id, Audience: aud, Trigger: trg, Inbox: inboxapi.New(st),
 		Realtime: realtime.New(bus), Feed: feedapi.New(bus), Inbound: inbound.New(trg),
 		Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, Store: st, EnvVars: ev,
