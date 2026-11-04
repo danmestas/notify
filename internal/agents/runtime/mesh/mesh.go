@@ -83,6 +83,12 @@ func Protocols() []string {
 	}
 }
 
+// Discovers is the micro service notify discovers agents through, for the
+// program manifest: detecting a Synadia v0.3 agent sends $SRV.INFO.agents.
+func Discovers() []string {
+	return []string{serviceName}
+}
+
 // ErrAckedNoV2Answer reports the v0.3 case: the agent acked the prompt request
 // but never opened a v2 task stream or published a reply envelope. It is
 // permanent — redelivering the same prompt to the same agent cannot help.

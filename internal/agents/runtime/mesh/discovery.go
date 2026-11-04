@@ -28,8 +28,10 @@ const (
 	// discoveryTTL bounds how long a detected protocol is trusted, so an
 	// agent that restarts as a different dialect is noticed.
 	discoveryTTL = 60 * time.Second
+	// serviceName is the micro service every Synadia agent registers as.
+	serviceName = "agents"
 	// infoSubject lists every micro service named "agents" (spec §4.1).
-	infoSubject = "$SRV.INFO.agents"
+	infoSubject = "$SRV.INFO." + serviceName
 	// synadiaVersion is the protocol_version metadata value of v0.3 agents.
 	synadiaVersion = "0.3"
 )

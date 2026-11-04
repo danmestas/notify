@@ -40,6 +40,7 @@ func Manifest() program.Manifest {
 		Streams:   eventbus.Streams(),
 		Buckets:   eventbus.Buckets(),
 		Protocols: mesh.Protocols(),
+		Discovers: mesh.Discovers(),
 		Reads:     []string{cards.Bucket},
 	}
 }
