@@ -368,6 +368,11 @@ func TestRevokeDisconnectsLiveReceiver(t *testing.T) {
 	if err := f.svc.Revoke(context.Background(), f.scope, "bot", keys[0].ID); err != nil {
 		t.Fatal(err)
 	}
+	// Revoke drops the session before the close handshake, so no reply read
+	// during it is delivered and new turns fall back at once.
+	if _, ok := f.svc.Live(f.agent.ID); ok {
+		t.Fatal("receiver still live straight after Revoke")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, _, err := ws.Read(ctx); err == nil {

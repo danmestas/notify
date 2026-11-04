@@ -92,6 +92,9 @@ type Service struct {
 
 	mu   sync.Mutex
 	live map[string]*session // by agents.id
+	// revoked holds key ids revoked in this process, so a socket that
+	// authenticated just before its key was revoked can't install itself.
+	revoked map[string]bool
 }
 
 // New builds a Service. log receives audit records (key ids, never tokens);
@@ -103,7 +106,8 @@ func New(st *store.Store, agents *agentstore.Store, log *slog.Logger) *Service {
 	return &Service{
 		store: st, agents: agents, log: log,
 		timeout: DefaultTimeout, pingEvery: DefaultPingEvery, pingTimeout: DefaultPingTimeout,
-		live: map[string]*session{},
+		live:    map[string]*session{},
+		revoked: map[string]bool{},
 	}
 }
 
@@ -189,9 +193,13 @@ func (s *Service) Revoke(ctx context.Context, scope domain.Scope, agentIdentifie
 	}
 	s.audit(ctx, "a2a.receiver_key.revoke", *key)
 	s.mu.Lock()
+	s.revoked[id] = true
 	sess := s.live[key.AgentID]
 	s.mu.Unlock()
 	if sess != nil && sess.keyID == id {
+		// Drop first, so no reply read during the close handshake is
+		// delivered and in-flight turns fall back now.
+		s.drop(sess)
 		sess.closeAsync("key revoked")
 	}
 	return nil
@@ -288,15 +296,21 @@ func (s *Service) session(agentID string) *session {
 	return s.live[agentID]
 }
 
-// install makes sess the agent's live receiver, closing any previous one.
-func (s *Service) install(sess *session) {
+// install makes sess the agent's live receiver, closing any previous one. It
+// refuses a session whose key was revoked after it authenticated.
+func (s *Service) install(sess *session) bool {
 	s.mu.Lock()
+	if s.revoked[sess.keyID] {
+		s.mu.Unlock()
+		return false
+	}
 	old := s.live[sess.agentID]
 	s.live[sess.agentID] = sess
 	s.mu.Unlock()
 	if old != nil {
 		old.closeAsync(closeReplaced)
 	}
+	return true
 }
 
 // drop forgets sess (if it is still the live one) and fails its pending turns.
@@ -436,7 +450,10 @@ func (s *Service) ServeReceive(w http.ResponseWriter, r *http.Request) {
 	}
 	ws.SetReadLimit(readLimit)
 	sess := newSession(ws, key)
-	s.install(sess)
+	if !s.install(sess) {
+		_ = ws.Close(websocket.StatusPolicyViolation, "key revoked")
+		return
+	}
 	s.audit(r.Context(), "a2a.receiver.connect", key)
 	defer func() {
 		s.drop(sess)
