@@ -27,6 +27,7 @@ type Agent struct {
 	WelcomeMessage string            `json:"welcomeMessage"`
 	Labels         map[string]string `json:"labels"`
 	Logo           string            `json:"logo"`
+	History        string            `json:"history"`
 	CreatedAt      string            `json:"createdAt"`
 	UpdatedAt      string            `json:"updatedAt"`
 }
@@ -46,6 +47,7 @@ func FromAgent(a agentdomain.Agent) Agent {
 		WelcomeMessage: a.WelcomeMessage,
 		Labels:         orEmptyLabels(a.Labels),
 		Logo:           a.Logo,
+		History:        a.HistoryMode(),
 		CreatedAt:      a.CreatedAt,
 		UpdatedAt:      a.UpdatedAt,
 	}

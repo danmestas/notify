@@ -144,8 +144,19 @@ func (c *Client) Close() {
 // envelope is the v2 wire message, both directions.
 type envelope struct {
 	MessageID string        `json:"messageId"`
+	ContextID string        `json:"contextId,omitempty"`
 	Role      string        `json:"role"`
 	Parts     []domain.Part `json:"parts"`
+	Metadata  *metadata     `json:"metadata,omitempty"`
+}
+
+// metadata is the envelope's A2A metadata. A request carries history and
+// subscriberId; an agent that has no state for a history:"none" turn answers
+// with historyRequired and no parts.
+type metadata struct {
+	History         string `json:"history,omitempty"`
+	SubscriberID    string `json:"subscriberId,omitempty"`
+	HistoryRequired bool   `json:"historyRequired,omitempty"`
 }
 
 // frame is one agents.task.stream.> lifecycle/answer message. Both the
@@ -183,8 +194,11 @@ type collector struct {
 	states []string
 	stream strings.Builder
 	reply  *string
-	closed bool
-	done   chan struct{}
+	// historyRequired is set when the reply envelope is the agent's "no
+	// state, resend with history" answer.
+	historyRequired bool
+	closed          bool
+	done            chan struct{}
 }
 
 // finish signals completion exactly once. Callers must hold mu.
@@ -229,6 +243,7 @@ func (col *collector) onReply(m *nats.Msg) {
 	defer col.mu.Unlock()
 	if col.reply == nil {
 		col.reply = &text
+		col.historyRequired = len(env.Parts) == 0 && env.Metadata != nil && env.Metadata.HistoryRequired
 	}
 	col.finish()
 }
@@ -254,10 +269,14 @@ func (col *collector) answer() (string, []string) {
 }
 
 // Dispatch publishes the turn to the agent's mesh subject and aggregates the
-// answer from both v2 delivery paths. History is prepended into the prompt
-// text (the v1 wire has no history field). Errors are classified: permanent
-// failures are wrapped with domain.NewPermanentError; everything else is
-// transient and safe to retry.
+// answer from both v2 delivery paths. The envelope carries the turn's
+// conversation id as contextId, the user activity id as messageId (stable
+// across redeliveries) and the subscriber id in metadata. With history
+// inline (the default) the transcript is prepended into the prompt text; with
+// none only the new message is sent, and an agent that holds no state for the
+// conversation answers historyRequired, which resends the turn once, inline.
+// Errors are classified: permanent failures are wrapped with
+// domain.NewPermanentError; everything else is transient and safe to retry.
 func (c *Client) Dispatch(ctx context.Context, t domain.Turn) (domain.Reply, error) {
 	subj := t.Agent.MeshSubject
 	if !SubjectAllowed(c.allow, subj) {
@@ -266,11 +285,38 @@ func (c *Client) Dispatch(ctx context.Context, t domain.Turn) (domain.Reply, err
 		)
 	}
 
-	body, err := json.Marshal(envelope{
-		MessageID: randToken(),
+	messageID := t.Message.ID
+	if messageID == "" {
+		messageID = randToken()
+	}
+	env := envelope{
+		MessageID: messageID,
+		ContextID: t.Conversation.ID,
 		Role:      "user",
-		Parts:     []domain.Part{{Text: Prompt(t)}},
-	})
+		Metadata:  &metadata{History: t.Agent.HistoryMode(), SubscriberID: t.Conversation.SubscriberID},
+	}
+	if env.Metadata.History == domain.HistoryNone {
+		env.Parts = []domain.Part{{Text: contentText(t.Message.Content)}}
+		reply, err := c.attempt(ctx, subj, env)
+		if !errors.Is(err, errHistoryRequired) {
+			return reply, err
+		}
+		env.Metadata.History = domain.HistoryInline
+	}
+	env.Parts = []domain.Part{{Text: Prompt(t)}}
+	reply, err := c.attempt(ctx, subj, env)
+	if errors.Is(err, errHistoryRequired) {
+		return domain.Reply{}, domain.NewPermanentError(err)
+	}
+	return reply, err
+}
+
+// errHistoryRequired marks the agent's "no state, resend with history" reply.
+var errHistoryRequired = errors.New("agent requires history for this conversation")
+
+// attempt publishes one envelope and waits for the aggregated answer.
+func (c *Client) attempt(ctx context.Context, subj string, env envelope) (domain.Reply, error) {
+	body, err := json.Marshal(env)
 	if err != nil {
 		return domain.Reply{}, domain.NewPermanentError(fmt.Errorf("marshal envelope: %w", err))
 	}
@@ -346,6 +392,12 @@ wait:
 	time.Sleep(settle) // absorb trailing frames, as the TS reference does
 
 	text, states := col.answer()
+	col.mu.Lock()
+	needHistory := col.historyRequired
+	col.mu.Unlock()
+	if needHistory {
+		return domain.Reply{}, errHistoryRequired
+	}
 	ackMu.Lock()
 	rerr := reqErr
 	ackMu.Unlock()

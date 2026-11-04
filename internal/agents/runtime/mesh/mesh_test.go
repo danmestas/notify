@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -364,5 +365,211 @@ func TestSubjectAllowed(t *testing.T) {
 		if got := mesh.SubjectAllowed(c.pattern, c.subject); got != c.want {
 			t.Errorf("SubjectAllowed(%q, %q) = %v, want %v", c.pattern, c.subject, got, c.want)
 		}
+	}
+}
+
+// stubAgent acks every prompt on subject and answers via reply_to with
+// answer(n, env), where n counts requests from 1. It returns the envelopes
+// received, in order.
+func stubAgent(t *testing.T, nc *nats.Conn, subject string, answer func(n int, env map[string]any) map[string]any) func() []map[string]any {
+	t.Helper()
+	var (
+		mu   sync.Mutex
+		envs []map[string]any
+	)
+	sub, err := nc.Subscribe(subject, func(m *nats.Msg) {
+		var env map[string]any
+		_ = json.Unmarshal(m.Data, &env)
+		mu.Lock()
+		envs = append(envs, env)
+		n := len(envs)
+		mu.Unlock()
+		_ = m.Respond([]byte(`{}`))
+		out, _ := json.Marshal(answer(n, env))
+		_ = nc.Publish(m.Header.Get("reply_to"), out)
+	})
+	if err != nil {
+		t.Fatalf("stub subscribe: %v", err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+	return func() []map[string]any {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]map[string]any(nil), envs...)
+	}
+}
+
+func pong(int, map[string]any) map[string]any {
+	return map[string]any{"messageId": "ans", "role": "agent", "parts": []map[string]string{{"text": "PONG"}}}
+}
+
+func needHistory(int, map[string]any) map[string]any {
+	return map[string]any{
+		"messageId": "ans", "role": "agent", "contextId": "c1", "parts": []any{},
+		"metadata": map[string]any{"historyRequired": true},
+	}
+}
+
+func partText(env map[string]any) string {
+	parts, _ := env["parts"].([]any)
+	if len(parts) != 1 {
+		return fmt.Sprintf("<%d parts>", len(parts))
+	}
+	p, _ := parts[0].(map[string]any)
+	s, _ := p["text"].(string)
+	return s
+}
+
+func metaOf(env map[string]any) map[string]any {
+	m, _ := env["metadata"].(map[string]any)
+	return m
+}
+
+func historyTurn(subject string) domain.Turn {
+	tn := turn(subject, "next")
+	tn.Conversation = domain.Conversation{ID: "conv-1", SubscriberID: "sub-1"}
+	tn.Message.ID = "act-1"
+	tn.History = []domain.Activity{{Role: "user", Content: json.RawMessage(`{"parts":[{"text":"hello"}]}`)}}
+	return tn
+}
+
+func dialShort(t *testing.T, natsURL string) *mesh.Client {
+	t.Helper()
+	c, err := mesh.Dial(natsURL, mesh.WithTimeout(5*time.Second))
+	if err != nil {
+		t.Fatalf("mesh.Dial: %v", err)
+	}
+	t.Cleanup(c.Close)
+	return c
+}
+
+// TestDispatch_TurnFields pins the A2A turn fields: messageId is the user
+// activity id and survives a second dispatch of the same turn, contextId is
+// the conversation id, subscriberId rides in metadata, and the default
+// history setting pastes the transcript.
+func TestDispatch_TurnFields(t *testing.T) {
+	natsURL := dagtest.StartSidecar(t)
+	nc := connect(t, natsURL)
+	const subject = "agents.prompt.test.fields"
+	got := stubAgent(t, nc, subject, pong)
+	c := dialShort(t, natsURL)
+
+	tn := historyTurn(subject)
+	for i := 0; i < 2; i++ {
+		if _, err := c.Dispatch(context.Background(), tn); err != nil {
+			t.Fatalf("Dispatch %d: %v", i, err)
+		}
+	}
+	envs := got()
+	if len(envs) != 2 {
+		t.Fatalf("got %d envelopes, want 2", len(envs))
+	}
+	for _, env := range envs {
+		if env["messageId"] != "act-1" || env["contextId"] != "conv-1" {
+			t.Errorf("ids = %v/%v, want act-1/conv-1", env["messageId"], env["contextId"])
+		}
+		if m := metaOf(env); m["history"] != "inline" || m["subscriberId"] != "sub-1" {
+			t.Errorf("metadata = %v", m)
+		}
+		if want := mesh.Prompt(tn); partText(env) != want {
+			t.Errorf("text = %q, want %q", partText(env), want)
+		}
+	}
+
+	// Unknown subscriber is omitted from the wire.
+	tn.Conversation.SubscriberID = ""
+	if _, err := c.Dispatch(context.Background(), tn); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if m := metaOf(got()[2]); m["subscriberId"] != nil {
+		t.Errorf("subscriberId = %v, want omitted", m["subscriberId"])
+	}
+}
+
+// TestDispatch_HistoryNoneSendsOnlyMessage pins history none: the envelope
+// carries just the new message text and metadata.history:"none".
+func TestDispatch_HistoryNoneSendsOnlyMessage(t *testing.T) {
+	natsURL := dagtest.StartSidecar(t)
+	nc := connect(t, natsURL)
+	const subject = "agents.prompt.test.none"
+	got := stubAgent(t, nc, subject, pong)
+	c := dialShort(t, natsURL)
+
+	tn := historyTurn(subject)
+	tn.Agent.History = domain.HistoryNone
+	reply, err := c.Dispatch(context.Background(), tn)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if len(reply.Parts) != 1 || reply.Parts[0].Text != "PONG" {
+		t.Errorf("reply = %+v", reply)
+	}
+	envs := got()
+	if len(envs) != 1 {
+		t.Fatalf("got %d envelopes, want 1", len(envs))
+	}
+	if partText(envs[0]) != "next" || metaOf(envs[0])["history"] != "none" {
+		t.Errorf("envelope = %v, want bare text and history none", envs[0])
+	}
+}
+
+// TestDispatch_HistoryRequiredResendsOnceInline pins the no-state handshake:
+// the empty historyRequired reply is never delivered; the turn is resent once
+// with the same ids, inline.
+func TestDispatch_HistoryRequiredResendsOnceInline(t *testing.T) {
+	natsURL := dagtest.StartSidecar(t)
+	nc := connect(t, natsURL)
+	const subject = "agents.prompt.test.resend"
+	got := stubAgent(t, nc, subject, func(n int, env map[string]any) map[string]any {
+		if n == 1 {
+			return needHistory(n, env)
+		}
+		return pong(n, env)
+	})
+	c := dialShort(t, natsURL)
+
+	tn := historyTurn(subject)
+	tn.Agent.History = domain.HistoryNone
+	reply, err := c.Dispatch(context.Background(), tn)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if len(reply.Parts) != 1 || reply.Parts[0].Text != "PONG" {
+		t.Errorf("reply = %+v, want PONG", reply)
+	}
+	envs := got()
+	if len(envs) != 2 {
+		t.Fatalf("got %d envelopes, want exactly 2", len(envs))
+	}
+	if metaOf(envs[0])["history"] != "none" || metaOf(envs[1])["history"] != "inline" {
+		t.Errorf("histories = %v, %v", metaOf(envs[0]), metaOf(envs[1]))
+	}
+	if partText(envs[1]) != mesh.Prompt(tn) {
+		t.Errorf("resend text = %q, want pasted transcript", partText(envs[1]))
+	}
+	for _, env := range envs {
+		if env["messageId"] != "act-1" || env["contextId"] != "conv-1" {
+			t.Errorf("resend changed ids: %v", env)
+		}
+	}
+}
+
+// TestDispatch_HistoryRequiredTwicePermanent pins that a second
+// historyRequired reply ends in a permanent error, after exactly two sends.
+func TestDispatch_HistoryRequiredTwicePermanent(t *testing.T) {
+	natsURL := dagtest.StartSidecar(t)
+	nc := connect(t, natsURL)
+	const subject = "agents.prompt.test.twice"
+	got := stubAgent(t, nc, subject, needHistory)
+	c := dialShort(t, natsURL)
+
+	tn := historyTurn(subject)
+	tn.Agent.History = domain.HistoryNone
+	_, err := c.Dispatch(context.Background(), tn)
+	if err == nil || !domain.IsPermanent(err) {
+		t.Fatalf("err = %v, want permanent", err)
+	}
+	if n := len(got()); n != 2 {
+		t.Errorf("got %d envelopes, want 2", n)
 	}
 }

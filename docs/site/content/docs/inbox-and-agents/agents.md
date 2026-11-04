@@ -31,6 +31,7 @@ curl -X POST localhost:3000/v1/agents \
 | `managed` | For `managed`: the model settings. See [Managed agents](../managed-agents). |
 | `labels` | Free-form tags. See below. |
 | `logo` | Optional. A `data:` URI (`image/png`, `image/jpeg` or `image/webp`, base64), at most 96 KB decoded; anything else, SVG included, is `422`. `PATCH` with `""` clears it. |
+| `history` | For `mesh`: `inline` (default) pastes the conversation into each prompt; `none` sends only the new message and relies on the agent keeping its own state, resending once with the transcript if the agent reports it has none. Anything else is `422`. |
 
 `GET /v1/agents`, `GET /v1/agents/{identifier}`, `PATCH /v1/agents/{identifier}` (a partial update: only the fields you send change) and `DELETE /v1/agents/{identifier}` (`204`) complete the CRUD. `bridgeUrl` appears in responses and is accepted, but there is no `bridge` runtime: only `mesh` and `managed` can be created or switched to.
 
@@ -39,7 +40,7 @@ An agent object:
 ```json
 { "id": "…", "identifier": "support", "name": "Support", "description": "", "runtime": "mesh",
   "active": true, "meshSubject": "agents.prompt.support", "bridgeUrl": "",
-  "welcomeMessage": "", "labels": {"owner": "lou"}, "logo": "", "createdAt": "…", "updatedAt": "…" }
+  "welcomeMessage": "", "labels": {"owner": "lou"}, "logo": "", "history": "inline", "createdAt": "…", "updatedAt": "…" }
 ```
 
 `managed` is included for managed agents; organization and environment ids are never part of the format.

@@ -101,6 +101,7 @@ type agentRequest struct {
 	WelcomeMessage string            `json:"welcomeMessage"`
 	Labels         map[string]string `json:"labels"`
 	Logo           string            `json:"logo"`
+	History        string            `json:"history"`
 }
 
 // createAgent persists a new agent within the request Scope and returns the
@@ -138,6 +139,10 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	if err := agentdomain.ValidateHistory(req.History); err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
 	if err := svc.checkManaged(req.Runtime, req.Managed); err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -156,6 +161,7 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 	agent, err := svc.store.Agents().Create(r.Context(), scope, agentdomain.Agent{
 		Labels:         req.Labels,
 		Logo:           req.Logo,
+		History:        req.History,
 		Identifier:     req.Identifier,
 		Name:           req.Name,
 		Description:    req.Description,
@@ -397,6 +403,9 @@ type agentPatch struct {
 	Labels *map[string]string `json:"labels"`
 	// Logo, when present, replaces the agent's logo; "" clears it.
 	Logo *string `json:"logo"`
+	// History, when present, sets how mesh turns carry the conversation:
+	// "inline" or "none".
+	History *string `json:"history"`
 }
 
 // patchAgent applies a partial update to the agent addressed by {identifier}
@@ -468,6 +477,13 @@ func (svc *Service) patchAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		agent.Logo = *req.Logo
+	}
+	if req.History != nil {
+		if err := agentdomain.ValidateHistory(*req.History); err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		agent.History = *req.History
 	}
 	updated, err := svc.store.Agents().Update(r.Context(), scope, agent)
 	if err != nil {

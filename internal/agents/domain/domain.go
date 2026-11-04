@@ -121,6 +121,28 @@ func ValidateLogo(logo string) error {
 	return fmt.Errorf("logo data is not a %s image", mediaType)
 }
 
+// Mesh history modes (Agent.History).
+const (
+	HistoryInline = "inline"
+	HistoryNone   = "none"
+)
+
+// ValidateHistory checks an agent history setting: empty, inline or none.
+func ValidateHistory(h string) error {
+	if h == "" || h == HistoryInline || h == HistoryNone {
+		return nil
+	}
+	return fmt.Errorf("history must be %q or %q", HistoryInline, HistoryNone)
+}
+
+// HistoryMode returns the agent's history setting, defaulting to inline.
+func (a Agent) HistoryMode() string {
+	if a.History == "" {
+		return HistoryInline
+	}
+	return a.History
+}
+
 // Agent is a conversational endpoint registered with the platform, uniquely
 // identified by (environment_id, identifier). Exactly one of MeshSubject,
 // BridgeURL, or Managed is meaningful, selected by Runtime.
@@ -140,6 +162,10 @@ type Agent struct {
 	// Logo is a data: URI of a png, jpeg or webp image (see ValidateLogo);
 	// empty means none.
 	Logo string `db:"logo"`
+	// History is how a mesh turn carries the conversation: HistoryInline
+	// pastes the transcript into the prompt, HistoryNone sends only the new
+	// message and relies on the agent's own state. Empty means inline.
+	History string `db:"history"`
 	// Labels are free-form key/value tags, e.g. {"owner":"lou"}, a client uses
 	// to scope which agents a user may pick. notify gives none a meaning.
 	Labels    map[string]string `db:"labels"`
