@@ -15,12 +15,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/danmestas/notify/internal/agents/cards"
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	"github.com/danmestas/notify/internal/agents/runtime/managed"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/agents/wire"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/secretbox"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // runtimeErrMsg enumerates the runtimes a caller may actually create — those
@@ -41,6 +43,45 @@ type Service struct {
 	// loopbackMCP admits managed agents' MCP servers on loopback, over http
 	// too. Development only.
 	loopbackMCP bool
+	// cards, when set, supplies mesh agents' published A2A cards.
+	cards cards.Lookup
+}
+
+// WithCards serves mesh agents' published A2A cards from c.
+func (svc *Service) WithCards(c cards.Lookup) *Service {
+	svc.cards = c
+	return svc
+}
+
+// present maps a stored agent to its response, with its A2A card. The agent
+// has already been found in the caller's scope, which is what makes its card
+// visible. A mesh agent gets the card its subject names, if one is published;
+// a managed agent gets one derived from its record. Neither is stored.
+func (svc *Service) present(a agentdomain.Agent) wire.Agent {
+	out := wire.FromAgent(a)
+	switch a.Runtime {
+	case agentdomain.RuntimeMesh:
+		key := cards.Key(a.MeshSubject)
+		if key == "" || svc.cards == nil {
+			return out
+		}
+		if c, ok := svc.cards.Card(key); ok {
+			out.Card = json.RawMessage(c.Raw)
+			out.CardUpdatedAt = timestamp.Format(c.UpdatedAt)
+		}
+	case agentdomain.RuntimeManaged:
+		out.Card = cards.Derive(a)
+	}
+	return out
+}
+
+// presentAll maps a list with present.
+func (svc *Service) presentAll(in []agentdomain.Agent) []wire.Agent {
+	out := make([]wire.Agent, 0, len(in))
+	for _, a := range in {
+		out = append(out, svc.present(a))
+	}
+	return out
 }
 
 // WithLoopbackMCP admits MCP servers on loopback when allow is set.
@@ -209,7 +250,7 @@ func (svc *Service) listAgents(w http.ResponseWriter, r *http.Request) {
 			matched = append(matched, a)
 		}
 	}
-	writeJSON(w, http.StatusOK, wire.Agents(matched))
+	writeJSON(w, http.StatusOK, svc.presentAll(matched))
 }
 
 // checkManaged refuses managed settings a managed agent could not run with,
@@ -384,7 +425,7 @@ func (svc *Service) getAgent(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, wire.FromAgent(agent))
+	writeJSON(w, http.StatusOK, svc.present(agent))
 }
 
 // agentPatch is the PATCH /v1/agents/{identifier} body. Pointer fields
