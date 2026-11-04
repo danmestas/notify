@@ -379,7 +379,7 @@ func TestA2AStreaming_E2E(t *testing.T) {
 		defer wcancel()
 		// No credential: refused at the upgrade.
 		c0, resp0, err := websocket.Dial(wctx, wsURL, nil)
-		if resp0 != nil {
+		if resp0 != nil && resp0.Body != nil {
 			_ = resp0.Body.Close()
 		}
 		if err == nil {
@@ -387,7 +387,7 @@ func TestA2AStreaming_E2E(t *testing.T) {
 			t.Fatal("dial without credential succeeded")
 		}
 		c, resp1, err := websocket.Dial(wctx, wsURL, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {keyA1}}})
-		if resp1 != nil {
+		if resp1 != nil && resp1.Body != nil {
 			_ = resp1.Body.Close()
 		}
 		if err != nil {
