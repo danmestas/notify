@@ -171,6 +171,7 @@ func loadConfig(args []string) (config, error) {
 			ConsoleReadOnly:   os.Getenv("NOTIFY_CONSOLE_READ_ONLY") == "1",
 			PublicBaseURL:     os.Getenv("NOTIFY_PUBLIC_BASE_URL"),
 			HTTPAddr:          *addr,
+			AgentCardsDomain:  os.Getenv("NOTIFY_AGENT_CARDS_DOMAIN"),
 
 			// Provider selection (in priority order):
 			//   NOTIFY_AI_API_KEY → OpenRouter (default) or any OpenAI-compatible endpoint

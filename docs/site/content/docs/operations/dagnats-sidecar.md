@@ -38,6 +38,7 @@ notify runs the same way on a single dagnats node and on a dagnats cluster. To m
 - **Budget.** The new server must have room in its store budget for notify's streams and buckets. If it doesn't, notify exits with `budget_exceeded` before starting anything.
 - **What moves with notify.** `notify.db` holds workflows, subscribers, messages and credentials. On start notify re-registers every published workflow, up to 8 at a time.
 - **What stays on the old server.** Runs in flight, with their parked delays and digest waits; delivery events outbound webhooks haven't sent yet; feed history; throttle windows and digest buffers. Before moving, check the old server has no active runs (`dagnats run list --status running`).
+- **Agent cards in another region.** If the `chat_cards` bucket stays in another region's JetStream, set `NOTIFY_AGENT_CARDS_DOMAIN` to that region's domain (for example `eu`) so notify reads and watches the cards through `$JS.<domain>.API.*`. The link must pass `$JS.<domain>.API.>`, `$JS.ACK.>`, `$JS.FC.>` and `_INBOX.>`.
 - **Mesh agents.** Agent dispatch rides the program connection, so agents that answer `agents.prompt.*` must be reachable on the new server. Move a local responder with notify, unless an agent on the new server already answers its subject; two answers mean two replies.
 
 ## Defaults

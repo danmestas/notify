@@ -30,6 +30,13 @@ const LoopStateMaxBytes = 512 << 10
 // NATS client URL. The server is stopped when the test ends.
 func StartSidecar(t *testing.T) (natsURL string) {
 	t.Helper()
+	return StartSidecarDomain(t, "")
+}
+
+// StartSidecarDomain is StartSidecar with the server's JetStream domain set,
+// so a client can address it as $JS.<domain>.API. "" means no domain.
+func StartSidecarDomain(t *testing.T, domain string) (natsURL string) {
+	t.Helper()
 
 	cfg := server.DefaultConfig()
 	cfg.DataDir = dataDir(t)
@@ -37,6 +44,7 @@ func StartSidecar(t *testing.T) (natsURL string) {
 	cfg.NATSHost = "127.0.0.1"
 	cfg.NATSPort = -1
 	cfg.LoopStateMaxBytes = LoopStateMaxBytes
+	cfg.JetStreamDomain = domain
 	// An unset store budget is half the free disk (dagnats #687), and
 	// dagnats' own streams reserve 8 GiB of it, so below ~20 GB free
 	// notify's streams are refused. Pin dagnats' 10 GiB ceiling.
