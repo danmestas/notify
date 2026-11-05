@@ -99,7 +99,12 @@ func (h *Handler) Handle(ctx context.Context, t engine.TaskPayload) (json.RawMes
 	if cfg.ReviewDraft {
 		// Recorded before composing, so the turn always finds it: an agent
 		// can answer before Compose returns.
-		if err := h.requestDraft(ctx, scope, key, env.SubscriberID, env.Payload); err != nil && cfg.FailurePolicy != "continue" {
+		// The draft is for this agent in this conversation. A step with no
+		// conversation opens one named by the run, so the request can name it.
+		if conversation == "" {
+			conversation = reviewThreadID(agent, env.SubscriberID, key)
+		}
+		if err := h.requestDraft(ctx, scope, key, agent, conversation, env.SubscriberID, env.Payload); err != nil && cfg.FailurePolicy != "continue" {
 			return nil, engine.NewNonRetryableError(fmt.Errorf("agent_message: %w", err))
 		}
 	}
@@ -151,7 +156,7 @@ type mailEvent struct {
 
 // requestDraft records the draft the agent's reply becomes. Recipients,
 // subject and threading are advisory: the mailbox owner recomputes them.
-func (h *Handler) requestDraft(ctx context.Context, scope domain.Scope, key, subscriberID string, payload json.RawMessage) error {
+func (h *Handler) requestDraft(ctx context.Context, scope domain.Scope, key, agent, conversation, subscriberID string, payload json.RawMessage) error {
 	if h.drafts == nil {
 		return errors.New("review drafts are not available on this server")
 	}
@@ -169,6 +174,8 @@ func (h *Handler) requestDraft(ctx context.Context, scope domain.Scope, key, sub
 	}
 	return h.drafts.Request(ctx, scope, key, agentdomain.Draft{
 		SubscriberID:    subscriberID,
+		AgentIdentifier: agent,
+		ConversationID:  conversation,
 		Mailbox:         ev.Mailbox,
 		SourceMessageID: ev.MessageID,
 		InReplyTo:       ev.RFCMessageID,
@@ -190,11 +197,21 @@ func replySubject(s string) string {
 }
 
 // composeKey derives the compose idempotency key from the run's transaction,
-// recipient and step: hex SHA-256, which fits the 64-character key format. The
-// step id keeps two agent_message steps in one workflow apart.
+// recipient and step: "w" and 63 hex digits of the SHA-256, which fits the
+// 64-character key format. The step id keeps two agent_message steps in one
+// workflow apart. The "w" keeps these keys apart from ids a channel supplies
+// (a draft request is found by this key); requests recorded under the old
+// bare-hex key are still found by it until they expire.
 func composeKey(transactionID, subscriberID, stepID string) string {
 	sum := sha256.Sum256([]byte(transactionID + "\x00" + subscriberID + "\x00" + stepID))
-	return hex.EncodeToString(sum[:])
+	return "w" + hex.EncodeToString(sum[:])[:63]
+}
+
+// reviewThreadID names the conversation a review step with none opens: derived
+// from the agent, recipient and key so a retry lands in the same thread.
+func reviewThreadID(agent, subscriberID, key string) string {
+	sum := sha256.Sum256([]byte(agent + "\x00" + subscriberID + "\x00" + key))
+	return "w" + hex.EncodeToString(sum[:])[:31]
 }
 
 // loadConfig reads the step's control values from its workflow.
