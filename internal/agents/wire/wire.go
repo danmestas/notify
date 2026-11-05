@@ -173,6 +173,9 @@ type Content struct {
 	// Sources are what an agent reply drew on: the tool calls it made and the
 	// attachments it read.
 	Sources []agentdomain.Source `json:"sources,omitempty"`
+	// Notes are the progress lines the turn reported while it ran
+	// ("Running search_vault: ...").
+	Notes []string `json:"notes,omitempty"`
 }
 
 // PartText is the type of a text part, the only kind written today.
@@ -195,6 +198,7 @@ func decodeContent(activityID string, raw json.RawMessage) Content {
 		Action      *agentdomain.SuggestedAction `json:"action"`
 		Attachments []agentdomain.Attachment     `json:"attachments"`
 		Sources     []agentdomain.Source         `json:"sources"`
+		Notes       []string                     `json:"notes"`
 	}
 	out := Content{Parts: []Part{}}
 	if len(raw) == 0 {
@@ -214,6 +218,7 @@ func decodeContent(activityID string, raw json.RawMessage) Content {
 	out.Action = stored.Action
 	out.Attachments = stored.Attachments
 	out.Sources = stored.Sources
+	out.Notes = stored.Notes
 	return out
 }
 

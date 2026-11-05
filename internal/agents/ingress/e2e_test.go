@@ -5,6 +5,7 @@ package ingress_test
 // in hardening_e2e_test.go.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -173,6 +174,19 @@ func TestTurnRetryLadder_E2E(t *testing.T) {
 	letters := h.waitDLQ(t, out.RunID, 30*time.Second)
 	if len(letters) == 0 {
 		t.Fatal("no DLQ entry after retry ladder")
+	}
+
+	// The retries are visible as notes, and the exhausted turn as failed.
+	rec, ok := h.tasks.Get(context.Background(), testScope, out.ActivityID)
+	if !ok || rec.State != agentdomain.TaskFailed {
+		t.Fatalf("task record after DLQ = %+v (found %v), want failed", rec, ok)
+	}
+	var texts []string
+	for _, n := range rec.Notes {
+		texts = append(texts, n.Text)
+	}
+	if got := strings.Join(texts, "|"); got != "Retrying (1 of 2)|Retrying (2 of 2)" {
+		t.Errorf("retry notes = %q", got)
 	}
 
 	// Replay on a live stub confirms the conversation resumes normally.

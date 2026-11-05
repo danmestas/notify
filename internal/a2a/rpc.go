@@ -87,30 +87,49 @@ func (s *Service) rpc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var (
-		result any
-		rerr   *rpcError
-	)
 	if !s.allow(w, r, p, agent) {
 		return
 	}
+	if req.Method == "message/stream" || req.Method == "tasks/resubscribe" {
+		s.serveSSE(w, r, p, agent, req)
+		return
+	}
+	result, rerr := s.call(r.Context(), p, agent, req)
+	writeRPC(w, http.StatusOK, req.ID, result, rerr)
+}
+
+// call runs a request that answers once: message/send and tasks/get.
+func (s *Service) call(ctx context.Context, p a2aauth.Principal, agent agentdomain.Agent, req rpcRequest) (any, *rpcError) {
 	switch req.Method {
 	case "message/send":
-		result, rerr = s.messageSend(r.Context(), p, agent, req.Params)
+		return s.messageSend(ctx, p, agent, req.Params)
 	case "tasks/get":
-		result, rerr = s.tasksGet(r.Context(), p, agent, req.Params)
+		return s.tasksGet(ctx, p, agent, req.Params)
 	default:
-		// message/stream and tasks/resubscribe arrive with streaming (#76).
-		rerr = &rpcError{Code: codeUnsupportedOp, Message: "unsupported operation: " + req.Method}
+		return nil, &rpcError{Code: codeUnsupportedOp, Message: "unsupported operation: " + req.Method}
 	}
-	writeRPC(w, http.StatusOK, req.ID, result, rerr)
 }
 
 // allow spends the per-credential and per-agent budgets. false means a
 // response has been written.
 func (s *Service) allow(w http.ResponseWriter, r *http.Request, p a2aauth.Principal, a agentdomain.Agent) bool {
-	if s.limiter == nil {
+	switch s.spend(r.Context(), p, a) {
+	case http.StatusOK:
 		return true
+	case http.StatusTooManyRequests:
+		w.Header().Set("Retry-After", "60")
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+	default:
+		http.Error(w, "rate limiter unavailable", http.StatusServiceUnavailable)
+	}
+	return false
+}
+
+// spend takes one request from the per-credential and per-agent budgets and
+// returns 200, 429 when one is empty, or 503 when the limiter fails.
+func (s *Service) spend(ctx context.Context, p a2aauth.Principal, a agentdomain.Agent) int {
+	if s.limiter == nil {
+		return http.StatusOK
 	}
 	for _, b := range []struct {
 		key   string
@@ -121,17 +140,14 @@ func (s *Service) allow(w http.ResponseWriter, r *http.Request, p a2aauth.Princi
 	} {
 		ok, err := s.limiter.BudgetAllow(b.key, 1, b.limit, limitWindow)
 		if err != nil {
-			s.log.ErrorContext(r.Context(), "a2a: limiter", "err", err)
-			http.Error(w, "rate limiter unavailable", http.StatusServiceUnavailable)
-			return false
+			s.log.ErrorContext(ctx, "a2a: limiter", "err", err)
+			return http.StatusServiceUnavailable
 		}
 		if !ok {
-			w.Header().Set("Retry-After", "60")
-			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
-			return false
+			return http.StatusTooManyRequests
 		}
 	}
-	return true
+	return http.StatusOK
 }
 
 // A2A wire types (v0.3).
@@ -177,6 +193,8 @@ type task struct {
 	ContextID string     `json:"contextId"`
 	Status    taskStatus `json:"status"`
 	Artifacts []artifact `json:"artifacts,omitempty"`
+	// Metadata carries the turn's progress notes and usage.
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 const (
@@ -185,26 +203,45 @@ const (
 	stateFailed    = "failed"
 )
 
+// finalState reports whether an agent-reported state ends the task.
+func finalState(st string) bool {
+	switch st {
+	case agentdomain.TaskFailed, agentdomain.TaskCanceled, agentdomain.TaskInputRequired:
+		return true
+	}
+	return false
+}
+
 func (s *Service) messageSend(ctx context.Context, p a2aauth.Principal, agent agentdomain.Agent, params json.RawMessage) (any, *rpcError) {
+	ctxID, conv, user, rerr := s.start(ctx, p, agent, params)
+	if rerr != nil {
+		return nil, rerr
+	}
+	return s.waitTask(ctx, p.Scope, ctxID, conv, user), nil
+}
+
+// start composes the message of a message/send or message/stream and returns
+// the turn it started.
+func (s *Service) start(ctx context.Context, p a2aauth.Principal, agent agentdomain.Agent, params json.RawMessage) (string, agentdomain.Conversation, agentdomain.Activity, *rpcError) {
 	var in struct {
 		Message *message `json:"message"`
 	}
 	if err := json.Unmarshal(params, &in); err != nil || in.Message == nil {
-		return nil, invalidParams("params.message is required")
+		return "", agentdomain.Conversation{}, agentdomain.Activity{}, invalidParams("params.message is required")
 	}
 	m := in.Message
 	if m.MessageID == "" {
-		return nil, invalidParams("message.messageId is required")
+		return "", agentdomain.Conversation{}, agentdomain.Activity{}, invalidParams("message.messageId is required")
 	}
 	if m.Role != "" && m.Role != "user" {
-		return nil, invalidParams("message.role must be user")
+		return "", agentdomain.Conversation{}, agentdomain.Activity{}, invalidParams("message.role must be user")
 	}
 	if m.TaskID != "" {
-		return nil, invalidParams("continuing a task is not supported; send a new message in the same contextId")
+		return "", agentdomain.Conversation{}, agentdomain.Activity{}, invalidParams("continuing a task is not supported; send a new message in the same contextId")
 	}
 	text, atts, rerr := convertParts(m.Parts)
 	if rerr != nil {
-		return nil, rerr
+		return "", agentdomain.Conversation{}, agentdomain.Activity{}, rerr
 	}
 
 	key := idempotencyKey(p.CredentialID, m.MessageID)
@@ -216,7 +253,7 @@ func (s *Service) messageSend(ctx context.Context, p a2aauth.Principal, agent ag
 		sum := sha256.Sum256([]byte(p.CredentialID + "\x00" + m.MessageID))
 		ctxID = "c" + hex.EncodeToString(sum[:])[:31]
 	case len(ctxID) > maxContextIDLen || strings.ContainsFunc(ctxID, isControl):
-		return nil, invalidParams("message.contextId must be 1-%d printable characters", maxContextIDLen)
+		return "", agentdomain.Conversation{}, agentdomain.Activity{}, invalidParams("message.contextId must be 1-%d printable characters", maxContextIDLen)
 	}
 
 	res, err := s.compose.Compose(ctx, p.Scope, ingress.ComposeInput{
@@ -231,23 +268,23 @@ func (s *Service) messageSend(ctx context.Context, p a2aauth.Principal, agent ag
 	})
 	switch {
 	case errors.Is(err, ingress.ErrIdempotencyConflict):
-		return nil, invalidParams("messageId %q was already used for a different message", m.MessageID)
+		return "", agentdomain.Conversation{}, agentdomain.Activity{}, invalidParams("messageId %q was already used for a different message", m.MessageID)
 	case errors.Is(err, ingress.ErrInvalidAttachments):
-		return nil, invalidParams("%v", err)
+		return "", agentdomain.Conversation{}, agentdomain.Activity{}, invalidParams("%v", err)
 	case errors.Is(err, ingress.ErrAgentInactive), errors.Is(err, ingress.ErrUnknownRuntime):
-		return nil, &rpcError{Code: codeInternal, Message: "agent cannot take messages"}
+		return "", agentdomain.Conversation{}, agentdomain.Activity{}, &rpcError{Code: codeInternal, Message: "agent cannot take messages"}
 	case err != nil:
 		s.log.ErrorContext(ctx, "a2a: compose", "err", err)
-		return nil, &rpcError{Code: codeInternal, Message: "internal error"}
+		return "", agentdomain.Conversation{}, agentdomain.Activity{}, &rpcError{Code: codeInternal, Message: "internal error"}
 	}
 
 	conv, err := s.agents.Conversations().GetByThread(ctx, p.Scope, agent.ID, "", threadPrefix(p.CredentialID)+ctxID)
 	if err != nil {
 		s.log.ErrorContext(ctx, "a2a: load conversation", "err", err)
-		return nil, &rpcError{Code: codeInternal, Message: "internal error"}
+		return "", agentdomain.Conversation{}, agentdomain.Activity{}, &rpcError{Code: codeInternal, Message: "internal error"}
 	}
 	user := agentdomain.Activity{ID: res.ActivityID, ConversationID: conv.ID, RunID: res.RunID}
-	return s.waitTask(ctx, p.Scope, ctxID, conv, user), nil
+	return ctxID, conv, user, nil
 }
 
 // waitTask polls for the turn's outcome for up to the configured wait.
@@ -277,29 +314,41 @@ func (s *Service) waitTask(ctx context.Context, scope domain.Scope, ctxID string
 }
 
 func (s *Service) tasksGet(ctx context.Context, p a2aauth.Principal, agent agentdomain.Agent, params json.RawMessage) (any, *rpcError) {
+	ctxID, conv, user, rerr := s.owned(ctx, p, agent, params)
+	if rerr != nil {
+		return nil, rerr
+	}
+	return s.task(ctx, p.Scope, ctxID, conv, user, true), nil
+}
+
+// owned resolves params.id to a task the credential may reach: a user
+// activity of one of its own conversations with this agent. Any other id, in
+// any other environment or credential, is the same "task not found".
+func (s *Service) owned(ctx context.Context, p a2aauth.Principal, agent agentdomain.Agent, params json.RawMessage) (string, agentdomain.Conversation, agentdomain.Activity, *rpcError) {
 	var in struct {
 		ID string `json:"id"`
 	}
+	var none agentdomain.Conversation
 	if err := json.Unmarshal(params, &in); err != nil || in.ID == "" {
-		return nil, invalidParams("params.id is required")
+		return "", none, agentdomain.Activity{}, invalidParams("params.id is required")
 	}
 	notFound := &rpcError{Code: codeTaskNotFound, Message: "task not found"}
 	user, err := s.agents.Activities().Get(ctx, p.Scope, in.ID)
 	if errors.Is(err, agentstore.ErrNotFound) || (err == nil && user.Role != "user") {
-		return nil, notFound
+		return "", none, agentdomain.Activity{}, notFound
 	}
 	if err != nil {
-		return nil, s.internal(ctx, "load task", err)
+		return "", none, agentdomain.Activity{}, s.internal(ctx, "load task", err)
 	}
 	conv, err := s.agents.Conversations().Get(ctx, p.Scope, user.ConversationID)
 	if err != nil {
-		return nil, s.internal(ctx, "load task conversation", err)
+		return "", none, agentdomain.Activity{}, s.internal(ctx, "load task conversation", err)
 	}
 	prefix := threadPrefix(p.CredentialID)
 	if conv.AgentID != agent.ID || conv.IntegrationID != "" || !strings.HasPrefix(conv.PlatformThreadID, prefix) {
-		return nil, notFound
+		return "", none, agentdomain.Activity{}, notFound
 	}
-	return s.task(ctx, p.Scope, strings.TrimPrefix(conv.PlatformThreadID, prefix), conv, user, true), nil
+	return strings.TrimPrefix(conv.PlatformThreadID, prefix), conv, user, nil
 }
 
 func (s *Service) internal(ctx context.Context, what string, err error) *rpcError {
@@ -312,6 +361,12 @@ func (s *Service) internal(ctx context.Context, what string, err error) *rpcErro
 // consulted when checkRun), working otherwise.
 func (s *Service) task(ctx context.Context, scope domain.Scope, ctxID string, conv agentdomain.Conversation, user agentdomain.Activity, checkRun bool) task {
 	t := task{Kind: "task", ID: user.ID, ContextID: ctxID, Status: taskStatus{State: stateWorking}}
+	rec := s.record(ctx, scope, user.ID)
+	t.Metadata = taskMetadata(rec)
+	if n := len(rec.Notes); n > 0 {
+		t.Status.Timestamp = rec.Notes[n-1].At
+		t.Status.Message = agentMessage(user.ID+".note", ctxID, user.ID, rec.Notes[n-1].Text)
+	}
 	if user.RunID == "" {
 		return t
 	}
@@ -324,8 +379,12 @@ func (s *Service) task(ctx context.Context, scope domain.Scope, ctxID string, co
 		for _, bp := range body.Parts {
 			parts = append(parts, part{Kind: "text", Text: bp.Text})
 		}
+		state := stateCompleted
+		if finalState(rec.State) {
+			state = rec.State
+		}
 		t.Status = taskStatus{
-			State:     stateCompleted,
+			State:     state,
 			Timestamp: reply.CreatedAt,
 			Message: &message{
 				Kind: "message", MessageID: reply.ID, Role: "agent", Parts: parts,
@@ -333,6 +392,11 @@ func (s *Service) task(ctx context.Context, scope domain.Scope, ctxID string, co
 			},
 		}
 		t.Artifacts = []artifact{{ArtifactID: reply.ID, Name: "answer", Parts: parts}}
+		return t
+	}
+	if finalState(rec.State) {
+		t.Status.State = rec.State
+		t.Status.Timestamp = rec.UpdatedAt
 		return t
 	}
 	if checkRun && s.runs != nil {
@@ -415,4 +479,36 @@ func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
 func idempotencyKey(credentialID, messageID string) string {
 	sum := sha256.Sum256([]byte("a2a\x00" + credentialID + "\x00" + messageID))
 	return "a" + hex.EncodeToString(sum[:])[:40]
+}
+
+// record reads the turn's status record; none (or no task store) is the zero
+// record.
+func (s *Service) record(ctx context.Context, scope domain.Scope, taskID string) agentdomain.TaskStatus {
+	if s.tasks == nil {
+		return agentdomain.TaskStatus{}
+	}
+	rec, _ := s.tasks.Get(ctx, scope, taskID)
+	return rec
+}
+
+// taskMetadata is the task's metadata: its progress notes and usage.
+func taskMetadata(rec agentdomain.TaskStatus) map[string]any {
+	m := map[string]any{}
+	if len(rec.Notes) > 0 {
+		m["notes"] = rec.Notes
+	}
+	if len(rec.Usage) > 0 {
+		m["usage"] = rec.Usage
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+func agentMessage(id, ctxID, taskID, text string) *message {
+	return &message{
+		Kind: "message", MessageID: id, Role: "agent", Parts: []part{{Kind: "text", Text: text}},
+		ContextID: ctxID, TaskID: taskID,
+	}
 }

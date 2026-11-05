@@ -75,15 +75,16 @@ func TestDispatch_SynadiaV03(t *testing.T) {
 	})
 	c := dialShort(t, natsURL)
 
-	reply, err := c.Dispatch(context.Background(), historyTurn(subject))
+	sink := &recSink{}
+	reply, err := c.Dispatch(domain.WithStatusSink(context.Background(), sink), historyTurn(subject))
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
 	if len(reply.Parts) != 1 || reply.Parts[0].Text != "PONG" {
 		t.Errorf("reply parts = %+v, want PONG", reply.Parts)
 	}
-	if len(reply.Status) != 1 || reply.Status[0] != "thinking" {
-		t.Errorf("reply status = %v, want [thinking]", reply.Status)
+	if got := sink.notes(); len(got) != 1 || got[0] != "thinking" {
+		t.Errorf("notes = %v, want [thinking]", got)
 	}
 	reqs := seen()
 	if len(reqs) != 1 {

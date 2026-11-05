@@ -69,6 +69,7 @@ type Service struct {
 	retry     *engine.RetryPolicy
 	runtimes  map[string]agentdomain.Runtime
 	live      LiveReceivers
+	tasks     TaskRecorder
 
 	mu         sync.Mutex
 	registered map[string]bool
@@ -119,6 +120,23 @@ type LiveReceivers interface {
 // WithLiveReceivers consults l before an agent's configured runtime.
 func (s *Service) WithLiveReceivers(l LiveReceivers) *Service {
 	s.live = l
+	return s
+}
+
+// TaskRecorder keeps the status record of each turn (package tasks). The turn
+// worker marks a task submitted when it is accepted, hands runtimes a sink for
+// progress notes, closes it when the turn ends, and copies the notes onto the
+// stored reply.
+type TaskRecorder interface {
+	Submitted(ctx context.Context, scope domain.Scope, taskID string)
+	Close(ctx context.Context, scope domain.Scope, taskID, state string)
+	Sink(scope domain.Scope, taskID string) agentdomain.StatusSink
+	Get(ctx context.Context, scope domain.Scope, taskID string) (agentdomain.TaskStatus, bool)
+}
+
+// WithTasks records each turn's status through t.
+func (s *Service) WithTasks(t TaskRecorder) *Service {
+	s.tasks = t
 	return s
 }
 
@@ -240,6 +258,8 @@ type userContent struct {
 type agentContent struct {
 	Parts   []agentdomain.Part   `json:"parts"`
 	Sources []agentdomain.Source `json:"sources,omitempty"`
+	// Notes are the progress lines the turn reported while it ran.
+	Notes []string `json:"notes,omitempty"`
 }
 
 // ComposeResult is the outcome of a composed turn: the conversation thread
@@ -384,6 +404,7 @@ func (s *Service) Compose(ctx context.Context, scope domain.Scope, in ComposeInp
 	if err != nil {
 		return ComposeResult{}, err
 	}
+	s.submitted(ctx, scope, act.ID)
 	if in.IdempotencyKey != "" {
 		if err := s.agents.Activities().SetRunID(ctx, scope, act.ID, runID); err != nil {
 			return ComposeResult{}, err
@@ -417,11 +438,20 @@ func (s *Service) replay(ctx context.Context, scope domain.Scope, agent agentdom
 			return ComposeResult{}, err
 		}
 	}
+	s.submitted(ctx, scope, prior.ID)
 	return ComposeResult{
 		ConversationID: conv.PlatformThreadID,
 		ActivityID:     prior.ID,
 		RunID:          runID,
 	}, nil
+}
+
+// submitted records the accepted turn's task, when tasks are kept. It is a
+// no-op for a task that already has a record.
+func (s *Service) submitted(ctx context.Context, scope domain.Scope, activityID string) {
+	if s.tasks != nil {
+		s.tasks.Submitted(ctx, scope, activityID)
+	}
 }
 
 // keyedThreadID derives a new thread's id from the agent, subscriber and
@@ -623,7 +653,8 @@ func (s *Service) HandleTurn(ctx context.Context, t engine.TaskPayload) (json.Ra
 	if !ok {
 		return nil, engine.NewNonRetryableError(fmt.Errorf("no executor for runtime %q", agent.Runtime))
 	}
-	reply, err := s.dispatch(ctx, rt, agentdomain.Turn{
+	dctx := s.withStatus(ctx, scope, in.ActivityID, t.Attempt)
+	reply, err := s.dispatch(dctx, rt, agentdomain.Turn{
 		Agent:        agent,
 		Conversation: conv,
 		History:      history,
@@ -631,17 +662,22 @@ func (s *Service) HandleTurn(ctx context.Context, t engine.TaskPayload) (json.Ra
 	})
 	if err != nil {
 		if agentdomain.IsPermanent(err) {
+			s.closeTask(ctx, scope, in.ActivityID, agentdomain.TaskFailed)
 			return nil, engine.NewNonRetryableError(err)
+		}
+		if t.Attempt > s.maxRetries() {
+			s.closeTask(ctx, scope, in.ActivityID, agentdomain.TaskFailed)
 		}
 		return nil, engine.NewRetryableError(err)
 	}
 
-	out, replyAct, err := s.deliverReply(ctx, scope, conv, t.RunID, reply)
+	out, replyAct, err := s.deliverReply(ctx, scope, conv, t.RunID, in.ActivityID, reply)
 	if err != nil {
 		// The reply exists but persisting it failed; retrying re-runs the
 		// whole turn, which beats silently dropping the answer.
 		return nil, engine.NewRetryableError(err)
 	}
+	s.closeTask(ctx, scope, in.ActivityID, agentdomain.TaskCompleted)
 	// A message composed by an agent_message step in review mode asks for
 	// the reply to become a draft for the mailbox owner (#4). Produce is a
 	// no-op for every other message, and for a retried turn.
@@ -657,6 +693,49 @@ func (s *Service) HandleTurn(ctx context.Context, t engine.TaskPayload) (json.Ra
 		}
 	}
 	return out, nil
+}
+
+// withStatus hands the runtime the turn's status sink and, on a retry, says
+// so: attempt is the engine's 1-based dispatch count.
+func (s *Service) withStatus(ctx context.Context, scope domain.Scope, taskID string, attempt int) context.Context {
+	if s.tasks == nil {
+		return ctx
+	}
+	sink := s.tasks.Sink(scope, taskID)
+	if attempt > 1 {
+		sink.Note(fmt.Sprintf("Retrying (%d of %d)", attempt-1, s.maxRetries()))
+	}
+	return agentdomain.WithStatusSink(ctx, sink)
+}
+
+// maxRetries is how many retries the turn step gets after the first attempt.
+func (s *Service) maxRetries() int {
+	if s.retry == nil {
+		return 0
+	}
+	return s.retry.MaxAttempts
+}
+
+func (s *Service) closeTask(ctx context.Context, scope domain.Scope, taskID, state string) {
+	if s.tasks != nil {
+		s.tasks.Close(ctx, scope, taskID, state)
+	}
+}
+
+// notes returns the progress lines the turn reported, for the stored reply.
+func (s *Service) notes(ctx context.Context, scope domain.Scope, taskID string) []string {
+	if s.tasks == nil {
+		return nil
+	}
+	st, ok := s.tasks.Get(ctx, scope, taskID)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(st.Notes))
+	for _, n := range st.Notes {
+		out = append(out, n.Text)
+	}
+	return out
 }
 
 // replyText joins a reply's text parts.
@@ -715,8 +794,8 @@ func splitMessage(acts []agentdomain.Activity, activityID string) ([]agentdomain
 // and publishes the realtime inbox event (the same write+publish path the
 // send.in_app handler uses). Returns the persisted message JSON as the task
 // output.
-func (s *Service) deliverReply(ctx context.Context, scope domain.Scope, conv agentdomain.Conversation, runID string, reply agentdomain.Reply) (json.RawMessage, agentdomain.Activity, error) {
-	content, err := json.Marshal(agentContent{Parts: reply.Parts, Sources: reply.Sources})
+func (s *Service) deliverReply(ctx context.Context, scope domain.Scope, conv agentdomain.Conversation, runID, taskID string, reply agentdomain.Reply) (json.RawMessage, agentdomain.Activity, error) {
+	content, err := json.Marshal(agentContent{Parts: reply.Parts, Sources: reply.Sources, Notes: s.notes(ctx, scope, taskID)})
 	if err != nil {
 		return nil, agentdomain.Activity{}, fmt.Errorf("marshal reply content: %w", err)
 	}
