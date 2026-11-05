@@ -79,3 +79,64 @@ func TestNotificationRepo_DigestKey_RoundTrips(t *testing.T) {
 		t.Fatalf("expected empty digest key, got %q", plain.DigestKey)
 	}
 }
+
+// TestNotificationRepo_TriggerLifecycle covers the rows the trigger writes
+// ahead of a run (#66): found again by (workflow, subscriber, transaction),
+// given a run id exactly once, and marked failed only while it has none.
+func TestNotificationRepo_TriggerLifecycle(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Notifications()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	other := domain.Scope{OrgID: "o1", EnvID: "e2"}
+
+	if _, err := repo.GetByTrigger(ctx, scope, "wf1", "sub1", "tx1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetByTrigger before create: err = %v, want ErrNotFound", err)
+	}
+	n, err := repo.Create(ctx, scope, domain.Notification{
+		WorkflowID: "wf1", SubscriberID: "sub1", TransactionID: "tx1", Status: domain.NotificationPending,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, err := repo.GetByTrigger(ctx, scope, "wf1", "sub1", "tx1")
+	if err != nil || got.ID != n.ID || got.Status != domain.NotificationPending {
+		t.Fatalf("GetByTrigger = %+v, %v; want %s pending", got, err, n.ID)
+	}
+	for _, miss := range [][3]string{{"wf2", "sub1", "tx1"}, {"wf1", "sub2", "tx1"}, {"wf1", "sub1", "tx2"}} {
+		if _, err := repo.GetByTrigger(ctx, scope, miss[0], miss[1], miss[2]); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("GetByTrigger(%v): err = %v, want ErrNotFound", miss, err)
+		}
+	}
+	if _, err := repo.GetByTrigger(ctx, other, "wf1", "sub1", "tx1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetByTrigger in another env: err = %v, want ErrNotFound", err)
+	}
+
+	if err := repo.MarkFailed(ctx, scope, n.ID); err != nil {
+		t.Fatalf("MarkFailed: %v", err)
+	}
+	if got, _ := repo.Get(ctx, scope, n.ID); got.Status != domain.NotificationFailed {
+		t.Fatalf("status after MarkFailed = %q, want failed", got.Status)
+	}
+	if ok, err := repo.AttachRun(ctx, other, n.ID, "r1"); err != nil || ok {
+		t.Fatalf("AttachRun in another env = %v, %v; want false", ok, err)
+	}
+	if ok, err := repo.AttachRun(ctx, scope, n.ID, "r1"); err != nil || !ok {
+		t.Fatalf("AttachRun = %v, %v; want true", ok, err)
+	}
+	if ok, err := repo.AttachRun(ctx, scope, n.ID, "r2"); err != nil || ok {
+		t.Fatalf("second AttachRun = %v, %v; want false", ok, err)
+	}
+	if err := repo.MarkFailed(ctx, scope, n.ID); err != nil {
+		t.Fatalf("MarkFailed after run: %v", err)
+	}
+	got, err = repo.Get(ctx, scope, n.ID)
+	if err != nil || got.RunID != "r1" || got.Status != domain.NotificationStarted {
+		t.Fatalf("row = %+v, %v; want r1 started", got, err)
+	}
+
+	legacy, err := repo.Create(ctx, scope, domain.Notification{WorkflowID: "wf1", RunID: "r9"})
+	if err != nil || legacy.Status != domain.NotificationStarted {
+		t.Fatalf("create without status = %+v, %v; want started", legacy, err)
+	}
+}

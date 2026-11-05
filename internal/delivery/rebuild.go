@@ -25,16 +25,16 @@ func (h *Handler) rebuildEnvelope(ctx context.Context, t engine.TaskPayload) (ru
 // RebuildEnvelope is the shared self-source logic backing every channel handler
 // (each holds a *store.Store) and the httpaction action handler (which reads the
 // returned Subscriber/Payload for variable interpolation, ignoring the Step
-// field). It resolves the notification by run id, loads the authored step config
+// field). It resolves the notification (NotificationForTask), loads the authored step config
 // and subscriber, rebuilds the envelope, and returns the run's captured step
 // outputs so callers can thread them into template data and conditionMet.
 //
 // It is exported so internal/delivery/httpaction can reuse it without a parent
 // package import cycle; the channel handlers in this package call it directly.
 func RebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) (runenv.InAppEnvelope, string, map[string]map[string]any, error) {
-	notif, err := NotificationByRun(ctx, s, t.RunID)
+	notif, err := NotificationForTask(ctx, s, t)
 	if err != nil {
-		return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: notification by run %q: %w", t.RunID, err)
+		return runenv.InAppEnvelope{}, "", nil, fmt.Errorf("rebuild: notification for run %q: %w", t.RunID, err)
 	}
 	scope := domain.Scope{OrgID: notif.OrgID, EnvID: notif.EnvID}
 
@@ -163,14 +163,15 @@ func isRunEnvelope(data []byte) bool {
 }
 
 // stepCron loads the cron expression authored on a scheduled-digest step,
-// keyed by run id + step id. It is the digest.wait handler's narrow lookup —
+// keyed by the task's notification + step id. It is the digest.wait handler's narrow lookup —
 // RebuildEnvelope returns the channel-handler envelope (a cron string is useless
 // to it), so this standalone helper resolves the
 // notification -> workflow -> step controlValues and returns controlValues.cron.
-func stepCron(ctx context.Context, s *store.Store, runID, stepID string) (string, error) {
-	notif, err := NotificationByRun(ctx, s, runID)
+func stepCron(ctx context.Context, s *store.Store, t engine.TaskPayload) (string, error) {
+	stepID := t.StepID
+	notif, err := NotificationForTask(ctx, s, t)
 	if err != nil {
-		return "", fmt.Errorf("stepCron: notification by run %q: %w", runID, err)
+		return "", fmt.Errorf("stepCron: notification for run %q: %w", t.RunID, err)
 	}
 	scope := domain.Scope{OrgID: notif.OrgID, EnvID: notif.EnvID}
 	wf, err := s.Workflows().GetByID(ctx, scope, notif.WorkflowID)

@@ -134,7 +134,7 @@ func (h *Handler) Handle(ctx context.Context, t engine.TaskPayload) (json.RawMes
 	}
 	scope := domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
 
-	cfg, err := loadConfig(ctx, h.store, h.box, t.RunID, t.StepID)
+	cfg, err := loadConfig(ctx, h.store, h.box, t)
 	if err != nil {
 		return nil, engine.NewNonRetryableError(fmt.Errorf("http_request: load step config: %w", err))
 	}
@@ -219,10 +219,11 @@ func (h *Handler) onFailure(ctx context.Context, scope domain.Scope, t engine.Ta
 // loadConfig resolves the http_request step's control values by run id + step
 // id (notification -> workflow -> step), applying the same defaults the registry
 // validates: method GET, timeoutSec 30, failurePolicy fail_closed.
-func loadConfig(ctx context.Context, s *store.Store, box *secretbox.Box, runID, stepID string) (stepConfig, error) {
-	notif, err := delivery.NotificationByRun(ctx, s, runID)
+func loadConfig(ctx context.Context, s *store.Store, box *secretbox.Box, t engine.TaskPayload) (stepConfig, error) {
+	stepID := t.StepID
+	notif, err := delivery.NotificationForTask(ctx, s, t)
 	if err != nil {
-		return stepConfig{}, fmt.Errorf("notification by run %q: %w", runID, err)
+		return stepConfig{}, fmt.Errorf("notification for run %q: %w", t.RunID, err)
 	}
 	scope := domain.Scope{OrgID: notif.OrgID, EnvID: notif.EnvID}
 	wf, err := s.Workflows().GetByID(ctx, scope, notif.WorkflowID)

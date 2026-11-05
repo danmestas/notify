@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/nats-io/nats.go"
@@ -40,22 +41,36 @@ func (e *Engine) RegisterWorkflow(ctx context.Context, def WorkflowDef) error {
 	return decodeError(reply)
 }
 
+// ErrStartRefused marks a StartRun error after which no run exists: the
+// request was never sent, nothing received it, or dagnats answered with an
+// error. Test it with StartRefused.
+var ErrStartRefused = errors.New("engine: start refused")
+
+// StartRefused reports whether a StartRun error means the run certainly did
+// not start. Any other error (a timeout, a cancelled context, a dropped
+// connection, an unreadable reply) leaves it unknown: dagnats may have started
+// the run and the reply was lost.
+func StartRefused(err error) bool {
+	return errors.Is(err, ErrStartRefused) || errors.Is(err, nats.ErrNoResponders)
+}
+
 // StartRun triggers a run of the named workflow with the given input and
-// returns the new run ID.
+// returns the new run ID. See StartRefused for telling a refused start from
+// one whose outcome is unknown.
 func (e *Engine) StartRun(ctx context.Context, workflow string, input json.RawMessage) (string, error) {
 	body, err := json.Marshal(struct {
 		Workflow string          `json:"workflow"`
 		Input    json.RawMessage `json:"input,omitempty"`
 	}{Workflow: workflow, Input: input})
 	if err != nil {
-		return "", fmt.Errorf("marshal start-run request: %w", err)
+		return "", fmt.Errorf("%w: marshal start-run request: %w", ErrStartRefused, err)
 	}
 	reply, err := e.request(ctx, subjStartRun, body)
 	if err != nil {
 		return "", err
 	}
 	if err := decodeError(reply); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", ErrStartRefused, err)
 	}
 	var res struct {
 		RunID string `json:"run_id"`

@@ -197,7 +197,21 @@ type Notification struct {
 	Payload       json.RawMessage `db:"payload"`
 	CreatedAt     string          `db:"created_at"`
 	DigestKey     string          `db:"digest_key"`
+	// Status is one of the NotificationStatus* values. Empty on Create means
+	// NotificationStarted, the meaning every row had before the trigger began
+	// writing rows ahead of their runs.
+	Status string `db:"status"`
 }
+
+// Notification statuses. The trigger writes a row as pending before it starts
+// the row's run, so a crash or a timed-out start never leaves a row that looks
+// sent; it moves to started once the run id is recorded, and to failed when
+// the engine refused the start outright.
+const (
+	NotificationPending = "pending"
+	NotificationStarted = "started"
+	NotificationFailed  = "failed"
+)
 
 type Message struct {
 	ID         string `db:"id"`

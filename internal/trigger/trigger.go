@@ -1,7 +1,7 @@
 // Package trigger implements POST /v1/events/trigger: it upserts the recipient,
-// resolves the named workflow's first step, builds the runenv.InAppEnvelope
-// (the StartRun input the delivery worker consumes), kicks off an engine run,
-// and records the notification. It is the producer side of the wire contracts
+// resolves the named workflow's first step, records the notification, builds
+// the runenv.InAppEnvelope (the StartRun input the delivery worker consumes)
+// and kicks off an engine run. It is the producer side of the wire contracts
 // pinned in internal/runenv.
 package trigger
 
@@ -31,11 +31,11 @@ import (
 )
 
 // Service orchestrates a trigger: audience upsert -> workflow lookup ->
-// envelope build -> engine StartRun -> notification persist.
+// notification persist -> envelope build -> engine StartRun.
 type Service struct {
 	aud      *audience.Service
 	s        *store.Store
-	eng      *engine.Engine
+	eng      RunStarter
 	digester Digester
 	windows  DigestWindowResolver
 }
@@ -57,8 +57,14 @@ type Digester interface {
 	DigestClaim(key string) (bool, error)
 }
 
+// RunStarter starts engine runs. *engine.Engine satisfies it; its errors are
+// read with engine.StartRefused.
+type RunStarter interface {
+	StartRun(ctx context.Context, workflow string, input json.RawMessage) (string, error)
+}
+
 // New builds a trigger Service over its collaborators.
-func New(aud *audience.Service, s *store.Store, eng *engine.Engine) *Service {
+func New(aud *audience.Service, s *store.Store, eng RunStarter) *Service {
 	return &Service{aud: aud, s: s, eng: eng}
 }
 
@@ -288,9 +294,9 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 }
 
 // ingestForSubscriber performs the per-recipient work: resolve the persisted
-// subscriber profile, build the envelope from the workflow's first step, honour
-// digest coordination, start the engine run, and persist the notification. It
-// assumes req.TransactionID is already minted and wf has at least one step.
+// subscriber profile, honour digest coordination, record the notification,
+// build the envelope from the workflow's first step and start the engine run.
+// It assumes req.TransactionID is already minted and wf has at least one step.
 // A digest-merged event returns an empty runID with no error (no run started).
 func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope, wf domain.Workflow, subscriberID string, req TriggerRequest) (string, error) {
 	var steps []domain.Step
@@ -372,7 +378,15 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 			return "", fmt.Errorf("trigger: unmarshal data_json for step %s: %w", step.StepID, err)
 		}
 	}
-	notificationID := store.NewULID()
+	notif, err := svc.notificationFor(ctx, scope, wf.ID, subscriberID, req, digestKey)
+	if err != nil {
+		return "", err
+	}
+	if notif.RunID != "" {
+		// An earlier attempt of this same trigger started the run and recorded
+		// it; a retry starts nothing.
+		return notif.RunID, nil
+	}
 
 	envelope := runenv.InAppEnvelope{
 		Scope:              runenv.Scope{OrgID: scope.OrgID, EnvID: scope.EnvID},
@@ -380,7 +394,7 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 		WorkflowID:         wf.ID,
 		WorkflowCritical:   wf.Critical,
 		WorkflowIdentifier: wf.TriggerIdentifier,
-		NotificationID:     notificationID,
+		NotificationID:     notif.ID,
 		SubscriberID:       subscriberID,
 		Subscriber:         subscriberJSON,
 		Payload:            req.Payload,
@@ -432,24 +446,57 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 	// subject token; it is proven end-to-end by the engine smoke workflow.
 	// authoring registers under the identical name (authoring.DAGName).
 	dagName := names.Workflow(scope.EnvID, req.Name)
-	runID, err := svc.eng.StartRun(ctx, dagName, envelopeJSON)
-	if err != nil {
-		return "", err
-	}
+	return svc.start(ctx, scope, notif.ID, dagName, envelopeJSON)
+}
 
-	if _, err := svc.s.Notifications().Create(ctx, scope, domain.Notification{
-		ID:            notificationID,
-		OrgID:         scope.OrgID,
-		EnvID:         scope.EnvID,
-		WorkflowID:    wf.ID,
+// notificationFor returns the notification row this trigger delivers under,
+// writing it as pending if no earlier attempt of the same trigger (same
+// workflow, subscriber and transaction) left one. The row is written before
+// the run starts so that the run's steps always find it (#66); reusing it on a
+// retry keeps one row per trigger, and the run's idempotency key (the
+// envelope's IdempotencyKey, the same transaction and subscriber) keeps one run.
+func (svc *Service) notificationFor(ctx context.Context, scope domain.Scope, workflowID, subscriberID string, req TriggerRequest, digestKey string) (domain.Notification, error) {
+	n, err := svc.s.Notifications().GetByTrigger(ctx, scope, workflowID, subscriberID, req.TransactionID)
+	if !errors.Is(err, store.ErrNotFound) {
+		return n, err
+	}
+	return svc.s.Notifications().Create(ctx, scope, domain.Notification{
+		ID:            store.NewULID(),
+		WorkflowID:    workflowID,
 		SubscriberID:  subscriberID,
 		TransactionID: req.TransactionID,
-		RunID:         runID,
 		Payload:       req.Payload,
 		DigestKey:     digestKey,
 		CreatedAt:     timestamp.Now(),
-	}); err != nil {
+		Status:        domain.NotificationPending,
+	})
+}
+
+// start starts the run for notification notificationID and records its run id.
+//
+// A start the engine refused leaves no run, so the row is marked failed. Any
+// other error (a timeout, a cancelled request) leaves it unknown whether
+// dagnats started the run, so the row stays pending: the run's first step
+// records its run id if it did start, and a retried trigger reuses the row and
+// asks again, which dagnats answers with the same run.
+//
+// The writes after StartRun outlive a cancelled request: the run exists or
+// was refused whether or not the caller is still waiting.
+func (svc *Service) start(ctx context.Context, scope domain.Scope, notificationID, dagName string, envelope json.RawMessage) (string, error) {
+	runID, err := svc.eng.StartRun(ctx, dagName, envelope)
+	wctx := context.WithoutCancel(ctx)
+	if err != nil {
+		if engine.StartRefused(err) {
+			if mErr := svc.s.Notifications().MarkFailed(wctx, scope, notificationID); mErr != nil {
+				return "", errors.Join(err, fmt.Errorf("trigger: mark notification %s failed: %w", notificationID, mErr))
+			}
+		}
 		return "", err
+	}
+	// false means a step of the run recorded the id first; the row is right
+	// either way.
+	if _, err := svc.s.Notifications().AttachRun(wctx, scope, notificationID, runID); err != nil {
+		return "", fmt.Errorf("trigger: record run %s on notification %s: %w", runID, notificationID, err)
 	}
 	return runID, nil
 }
