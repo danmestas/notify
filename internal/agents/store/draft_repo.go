@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -30,12 +31,17 @@ type DraftRepo interface {
 	List(ctx context.Context, scope domain.Scope, subscriberID string, mailboxes []string, afterSeq int64, limit int) ([]agentdomain.Draft, error)
 	// Request records that the agent's reply to the message composed under
 	// clientMessageID must become a draft carrying d's mail context. It is
-	// saved before the message is composed, so the turn always finds it.
+	// saved before the message is composed, so the turn always finds it. The
+	// request is for d.AgentIdentifier in conversation d.ConversationID (its
+	// platform thread id); Produce honours whichever is set.
 	Request(ctx context.Context, scope domain.Scope, clientMessageID string, d agentdomain.Draft) error
 	// Produce turns the reply to the message composed under clientMessageID
 	// into a draft, if a request for it exists and has no draft yet. It
 	// reports false when there is nothing to do. A retried turn produces no
-	// second draft.
+	// second draft. A request that names an agent or conversation is produced
+	// only by a reply from that agent in that conversation: any other
+	// activity carrying the same key leaves it pending. A request recorded
+	// without them (legacy rows) matches on the key alone.
 	Produce(ctx context.Context, scope domain.Scope, clientMessageID string, reply agentdomain.Draft) (agentdomain.Draft, bool, error)
 	// PurgeOlderThan deletes drafts and draft requests created before cutoff
 	// and reports how many drafts it removed.
@@ -143,11 +149,12 @@ func (repo *draftRepo) Request(ctx context.Context, scope domain.Scope, clientMe
 	// A retried step re-records the same request; the first one stands.
 	_, err = repo.w.ExecContext(ctx,
 		`INSERT INTO agent_draft_requests (org_id, environment_id, client_message_id, subscriber_id, mailbox,
-			source_message_id, in_reply_to, refs, subject, recipients, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			source_message_id, in_reply_to, refs, subject, recipients, agent_identifier, conversation_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?)
 		 ON CONFLICT(org_id, environment_id, client_message_id) DO NOTHING`,
 		scope.OrgID, scope.EnvID, clientMessageID, d.SubscriberID, d.Mailbox,
-		d.SourceMessageID, d.InReplyTo, string(refs), d.Subject, string(to), timestamp.Now())
+		d.SourceMessageID, d.InReplyTo, string(refs), d.Subject, string(to),
+		d.AgentIdentifier, d.ConversationID, timestamp.Now())
 	if err != nil {
 		return fmt.Errorf("agents: record draft request: %w", err)
 	}
@@ -166,18 +173,32 @@ func (repo *draftRepo) Produce(ctx context.Context, scope domain.Scope, clientMe
 
 	var d agentdomain.Draft
 	var refs, to string
-	var draftID sql.NullString
+	var draftID, wantAgent, wantConv sql.NullString
 	err = tx.QueryRowContext(
 		ctx,
-		`SELECT subscriber_id, mailbox, source_message_id, in_reply_to, refs, subject, recipients, draft_id
+		`SELECT subscriber_id, mailbox, source_message_id, in_reply_to, refs, subject, recipients, draft_id,
+			agent_identifier, conversation_id
 		 FROM agent_draft_requests WHERE org_id = ? AND environment_id = ? AND client_message_id = ?`,
 		scope.OrgID, scope.EnvID, clientMessageID,
-	).Scan(&d.SubscriberID, &d.Mailbox, &d.SourceMessageID, &d.InReplyTo, &refs, &d.Subject, &to, &draftID)
+	).Scan(&d.SubscriberID, &d.Mailbox, &d.SourceMessageID, &d.InReplyTo, &refs, &d.Subject, &to, &draftID, &wantAgent, &wantConv)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && draftID.Valid) {
 		return agentdomain.Draft{}, false, nil // no request, or already produced
 	}
 	if err != nil {
 		return agentdomain.Draft{}, false, fmt.Errorf("agents: load draft request: %w", err)
+	}
+	// The key alone is not the turn the request is for: a channel can supply
+	// any client_message_id, and a thread id can be guessed and opened first.
+	// So a request that names its conversation also needs that conversation
+	// to belong to the request's subscriber (reply.SubscriberID is the
+	// conversation's owner). A mismatch is not an error and leaves the
+	// request pending for the real turn.
+	if (wantAgent.Valid && wantAgent.String != reply.AgentIdentifier) ||
+		(wantConv.Valid && (wantConv.String != reply.ConversationID || reply.SubscriberID != d.SubscriberID)) {
+		slog.DebugContext(ctx, "draft request not produced: reply is for another agent or conversation",
+			"org_id", scope.OrgID, "environment_id", scope.EnvID, "client_message_id", clientMessageID,
+			"agent", reply.AgentIdentifier, "conversation", reply.ConversationID, "owner", reply.SubscriberID)
+		return agentdomain.Draft{}, false, nil
 	}
 	d.ID = corestore.NewULID()
 	d.AgentIdentifier, d.AgentName = reply.AgentIdentifier, reply.AgentName

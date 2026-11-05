@@ -683,6 +683,7 @@ func (s *Service) HandleTurn(ctx context.Context, t engine.TaskPayload) (json.Ra
 	// no-op for every other message, and for a retried turn.
 	if msg.ClientMessageID != "" {
 		if _, _, err := s.agents.Drafts().Produce(ctx, scope, msg.ClientMessageID, agentdomain.Draft{
+			SubscriberID:    conv.SubscriberID, // the conversation's owner
 			AgentIdentifier: agent.Identifier,
 			AgentName:       agent.Name,
 			ConversationID:  conv.PlatformThreadID,
