@@ -35,6 +35,7 @@ Flags use Go's `flag` package, so `-addr` and `--addr` are the same. Variables m
 | `-sendmail-command` | `NOTIFY_SENDMAIL_COMMAND` | `/usr/sbin/sendmail -ti` | Command the `sendmail` email provider pipes each message to. Split on whitespace, run without a shell. |
 | `-ssrf-allow` | `NOTIFY_SSRF_ALLOWED_HOSTS` | empty | Comma-separated exact hosts that outbound HTTP may reach even though they resolve to an internal address. No wildcards. Empty blocks every internal range. A malformed entry stops start. |
 | (env only) | `NOTIFY_PUBLIC_BASE_URL` | empty | The server's public origin. Used to derive the default Web Push VAPID subject (`https://<host>`; localhost and IPs yield none), and passed to the console for rendered webhook URLs. |
+| (env only) | `NOTIFY_AGENT_CARDS_DOMAIN` | empty | JetStream domain that holds the `chat_cards` bucket of agent cards. Empty reads the bucket from the connected dagnats' own domain. Set it when the bucket lives in another region (see [Moving to another dagnats](../operations/dagnats-sidecar#moving-to-another-dagnats)). |
 | (env only) | `NOTIFY_CONSOLE_READ_ONLY` | off | Exactly `1` disables every mutation in the console. |
 | (env only) | `NOTIFY_DAGNATS_CONSOLE_URL` | empty | Base URL of dagnats' console, as your browser sees it, for run deep-links in Activity. |
 

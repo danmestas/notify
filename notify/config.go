@@ -82,6 +82,9 @@ type Config struct {
 	AIConsoleKey    string
 	ConsoleReadOnly bool
 	PublicBaseURL   string
+	// AgentCardsDomain is the JetStream domain holding the chat_cards bucket.
+	// Empty uses the connection's own domain.
+	AgentCardsDomain string
 	// HTTPAddr is the address the host serves Handler on. The console shows
 	// it as the API URL; notify does not listen on it.
 	HTTPAddr string

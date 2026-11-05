@@ -88,3 +88,51 @@ func TestSource_WatchesBucketCreatedLate(t *testing.T) {
 	}
 	eventually(t, "deleted card", func() bool { _, ok := src.Card("a.b"); return !ok })
 }
+
+// TestSource_ReadsAndWatchesThroughDomain covers a card bucket in a named
+// JetStream domain, as when it stays in another region: the source opened
+// with NewWithDomain reads an existing card and sees a later write. The
+// empty domain is the local, domainless path.
+func TestSource_ReadsAndWatchesThroughDomain(t *testing.T) {
+	for _, domain := range []string{"eu", ""} {
+		t.Run("domain="+domain, func(t *testing.T) {
+			nc, err := nats.Connect(dagtest.StartSidecarDomain(t, domain))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(nc.Close)
+
+			var js jetstream.JetStream
+			if domain == "" {
+				js, err = jetstream.New(nc)
+			} else {
+				js, err = jetstream.NewWithDomain(nc, domain)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: Bucket})
+			if err != nil {
+				t.Fatal(err)
+			}
+			first := []byte(`{"name":"A"}`)
+			if _, err := kv.Put(ctx, "a.b", first); err != nil {
+				t.Fatal(err)
+			}
+
+			src := New(js, nil)
+			runCtx, cancel := context.WithCancel(ctx)
+			done := make(chan struct{})
+			go func() { src.Run(runCtx); close(done) }()
+			t.Cleanup(func() { cancel(); <-done })
+
+			eventually(t, "existing card", func() bool { c, ok := src.Card("a.b"); return ok && string(c.Raw) == string(first) })
+			second := []byte(`{"name":"B"}`)
+			if _, err := kv.Put(ctx, "a.b", second); err != nil {
+				t.Fatal(err)
+			}
+			eventually(t, "watched update", func() bool { c, _ := src.Card("a.b"); return string(c.Raw) == string(second) })
+		})
+	}
+}

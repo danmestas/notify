@@ -282,7 +282,12 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	srcSvc := streamsource.New(st, mk)
 	ag := agentsapi.New(ags).WithLiveReceivers(receiver).WithSecretBox(secrets).WithLoopbackMCP(cfg.Dev).
 		WithConfigurer(meshClient).WithLogger(log)
-	if js, err := jetstream.New(h.NC); err != nil {
+	// The card bucket may live in another JetStream domain (another region).
+	js, err := jetstream.New(h.NC)
+	if cfg.AgentCardsDomain != "" {
+		js, err = jetstream.NewWithDomain(h.NC, cfg.AgentCardsDomain)
+	}
+	if err != nil {
 		log.Warn("agent cards disabled", "err", err)
 	} else {
 		n.cards = cards.New(js, log)
