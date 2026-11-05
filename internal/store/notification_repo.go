@@ -19,6 +19,9 @@ type NotificationFilter struct {
 	WorkflowID    string
 	SubscriberID  string
 	TransactionID string
+	// Status keeps one domain.NotificationStatus* value. Empty lists every
+	// status, including rows still pending or whose start failed.
+	Status string
 	// Since filters to notifications created at or after this time (inclusive).
 	// A zero Time disables the filter.
 	Since time.Time
@@ -74,12 +77,33 @@ type NotificationRepo interface {
 	Create(ctx context.Context, scope domain.Scope, n domain.Notification) (domain.Notification, error)
 	Get(ctx context.Context, scope domain.Scope, id string) (domain.Notification, error)
 	GetByRunID(ctx context.Context, runID string) (domain.Notification, error)
+	// GetByTrigger returns the newest row an earlier trigger wrote for the same
+	// (workflow, subscriber, transaction), or ErrNotFound. A retried trigger
+	// reuses that row rather than writing a second one.
+	GetByTrigger(ctx context.Context, scope domain.Scope, workflowID, subscriberID, transactionID string) (domain.Notification, error)
+	// AttachRun records runID on a row that has none yet and marks it started.
+	// It reports whether it changed the row: false when the row already names
+	// a run (or does not exist), which it leaves as it is.
+	AttachRun(ctx context.Context, scope domain.Scope, id, runID string) (bool, error)
+	// MarkFailed marks a row whose run never started as failed. A row that
+	// already names a run is left alone.
+	MarkFailed(ctx context.Context, scope domain.Scope, id string) error
+	// FailStalePending marks failed every pending row with no run id created
+	// before cutoff, across all scopes, and reports how many. Such a row is a
+	// trigger whose start timed out and was never retried, and whose run (if
+	// any) never reached a step: left alone it would read pending forever. A
+	// run that does turn up later still records itself (AttachRun).
+	FailStalePending(ctx context.Context, cutoff time.Time) (int64, error)
 	// List returns a keyset-paginated page of notifications within scope,
 	// filtered by f and ordered by (created_at DESC, id DESC). Pass limit ≤ 0
 	// to use the default of 50; the hard cap is 200. Pass cursor = "" for the
 	// first page; subsequent pages use the Cursor returned by the prior call.
 	List(ctx context.Context, scope domain.Scope, f NotificationFilter, cursor string, limit int) (NotificationPage, error)
 }
+
+// notificationCols is the column list every read selects, in the order its
+// Scan reads them.
+const notificationCols = `id, org_id, environment_id, workflow_id, subscriber_id, transaction_id, run_id, payload, created_at, digest_key, status`
 
 type notificationRepo struct {
 	w *sql.DB
@@ -95,13 +119,16 @@ func (repo *notificationRepo) Create(ctx context.Context, scope domain.Scope, n 
 	if n.CreatedAt == "" {
 		n.CreatedAt = timestamp.Now()
 	}
+	if n.Status == "" {
+		n.Status = domain.NotificationStarted
+	}
 	_, err := repo.w.ExecContext(
 		ctx,
 		`INSERT INTO notifications
-		   (id, org_id, environment_id, workflow_id, subscriber_id, transaction_id, run_id, payload, created_at, digest_key)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   (id, org_id, environment_id, workflow_id, subscriber_id, transaction_id, run_id, payload, created_at, digest_key, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.OrgID, n.EnvID, n.WorkflowID, n.SubscriberID, n.TransactionID, n.RunID,
-		[]byte(n.Payload), n.CreatedAt, n.DigestKey,
+		[]byte(n.Payload), n.CreatedAt, n.DigestKey, n.Status,
 	)
 	if err != nil {
 		return domain.Notification{}, err
@@ -116,11 +143,11 @@ func (repo *notificationRepo) Get(ctx context.Context, scope domain.Scope, id st
 	)
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, org_id, environment_id, workflow_id, subscriber_id, transaction_id, run_id, payload, created_at, digest_key
+		`SELECT `+notificationCols+`
 		 FROM notifications WHERE org_id = ? AND environment_id = ? AND id = ?`,
 		scope.OrgID, scope.EnvID, id,
 	).Scan(&n.ID, &n.OrgID, &n.EnvID, &n.WorkflowID, &n.SubscriberID, &n.TransactionID, &n.RunID,
-		&payload, &n.CreatedAt, &n.DigestKey)
+		&payload, &n.CreatedAt, &n.DigestKey, &n.Status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Notification{}, ErrNotFound
 	}
@@ -141,11 +168,11 @@ func (repo *notificationRepo) GetByRunID(ctx context.Context, runID string) (dom
 	)
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, org_id, environment_id, workflow_id, subscriber_id, transaction_id, run_id, payload, created_at, digest_key
+		`SELECT `+notificationCols+`
 		 FROM notifications WHERE run_id = ? ORDER BY created_at DESC LIMIT 1`,
 		runID,
 	).Scan(&n.ID, &n.OrgID, &n.EnvID, &n.WorkflowID, &n.SubscriberID, &n.TransactionID, &n.RunID,
-		&payload, &n.CreatedAt, &n.DigestKey)
+		&payload, &n.CreatedAt, &n.DigestKey, &n.Status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Notification{}, ErrNotFound
 	}
@@ -154,6 +181,76 @@ func (repo *notificationRepo) GetByRunID(ctx context.Context, runID string) (dom
 	}
 	n.Payload = payload
 	return n, nil
+}
+
+func (repo *notificationRepo) GetByTrigger(ctx context.Context, scope domain.Scope, workflowID, subscriberID, transactionID string) (domain.Notification, error) {
+	var (
+		n       domain.Notification
+		payload []byte
+	)
+	err := repo.r.QueryRowContext(
+		ctx,
+		`SELECT `+notificationCols+`
+		 FROM notifications
+		 WHERE org_id = ? AND environment_id = ? AND transaction_id = ? AND workflow_id = ? AND subscriber_id = ?
+		 ORDER BY created_at DESC, id DESC LIMIT 1`,
+		scope.OrgID, scope.EnvID, transactionID, workflowID, subscriberID,
+	).Scan(&n.ID, &n.OrgID, &n.EnvID, &n.WorkflowID, &n.SubscriberID, &n.TransactionID, &n.RunID,
+		&payload, &n.CreatedAt, &n.DigestKey, &n.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Notification{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Notification{}, err
+	}
+	n.Payload = payload
+	return n, nil
+}
+
+func (repo *notificationRepo) AttachRun(ctx context.Context, scope domain.Scope, id, runID string) (bool, error) {
+	if runID == "" {
+		return false, errors.New("store: AttachRun: empty run id")
+	}
+	res, err := repo.w.ExecContext(
+		ctx,
+		`UPDATE notifications SET run_id = ?, status = ?
+		 WHERE org_id = ? AND environment_id = ? AND id = ? AND run_id = ''`,
+		runID, domain.NotificationStarted, scope.OrgID, scope.EnvID, id,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+func (repo *notificationRepo) MarkFailed(ctx context.Context, scope domain.Scope, id string) error {
+	_, err := repo.w.ExecContext(
+		ctx,
+		`UPDATE notifications SET status = ?
+		 WHERE org_id = ? AND environment_id = ? AND id = ? AND run_id = ''`,
+		domain.NotificationFailed, scope.OrgID, scope.EnvID, id,
+	)
+	return err
+}
+
+// FailStalePending compares created_at as a string, which is correct because
+// it is written through the fixed-width timestamp layout (see
+// internal/timestamp).
+func (repo *notificationRepo) FailStalePending(ctx context.Context, cutoff time.Time) (int64, error) {
+	res, err := repo.w.ExecContext(
+		ctx,
+		`UPDATE notifications SET status = ?
+		 WHERE status = ? AND run_id = '' AND created_at < ?`,
+		domain.NotificationFailed, domain.NotificationPending, timestamp.Format(cutoff),
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 const (
@@ -193,6 +290,10 @@ func (repo *notificationRepo) List(ctx context.Context, scope domain.Scope, f No
 		conds = append(conds, "transaction_id = ?")
 		args = append(args, f.TransactionID)
 	}
+	if f.Status != "" {
+		conds = append(conds, "status = ?")
+		args = append(args, f.Status)
+	}
 	if !f.Since.IsZero() {
 		conds = append(conds, "created_at >= ?")
 		args = append(args, timestamp.Format(f.Since))
@@ -222,7 +323,7 @@ func (repo *notificationRepo) List(ctx context.Context, scope domain.Scope, f No
 	pageArgs = append(pageArgs, limit+1)
 	rows, err := repo.r.QueryContext(
 		ctx,
-		`SELECT id, org_id, environment_id, workflow_id, subscriber_id, transaction_id, run_id, payload, created_at, digest_key
+		`SELECT `+notificationCols+`
 		 FROM notifications
 		 WHERE `+pageWhere+`
 		 ORDER BY created_at DESC, id DESC
@@ -241,7 +342,7 @@ func (repo *notificationRepo) List(ctx context.Context, scope domain.Scope, f No
 			payload []byte
 		)
 		if err := rows.Scan(&n.ID, &n.OrgID, &n.EnvID, &n.WorkflowID, &n.SubscriberID,
-			&n.TransactionID, &n.RunID, &payload, &n.CreatedAt, &n.DigestKey); err != nil {
+			&n.TransactionID, &n.RunID, &payload, &n.CreatedAt, &n.DigestKey, &n.Status); err != nil {
 			return NotificationPage{}, err
 		}
 		n.Payload = payload

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -53,7 +54,7 @@ func TestSubscriberLocation_UsesStoredTimezone(t *testing.T) {
 	st := tzStore(t)
 	runID := seedRunForSubscriber(t, st, "Asia/Tokyo")
 
-	got := NewDelayWait(st).subscriberLocation(context.Background(), runID)
+	got := NewDelayWait(st).subscriberLocation(context.Background(), engine.TaskPayload{RunID: runID})
 	if got == time.UTC {
 		t.Fatal("a subscriber with Asia/Tokyo resolved to UTC: the stored timezone is not reaching the scheduler")
 	}
@@ -69,7 +70,7 @@ func TestSubscriberLocation_EmptyTimezoneIsUTC(t *testing.T) {
 	st := tzStore(t)
 	runID := seedRunForSubscriber(t, st, "")
 
-	if got := NewDelayWait(st).subscriberLocation(context.Background(), runID); got != time.UTC {
+	if got := NewDelayWait(st).subscriberLocation(context.Background(), engine.TaskPayload{RunID: runID}); got != time.UTC {
 		t.Errorf("empty timezone = %v, want UTC", got)
 	}
 }
@@ -80,7 +81,7 @@ func TestSubscriberLocation_BadTimezoneIsUTC(t *testing.T) {
 	st := tzStore(t)
 	runID := seedRunForSubscriber(t, st, "Mars/Olympus_Mons")
 
-	if got := NewDelayWait(st).subscriberLocation(context.Background(), runID); got != time.UTC {
+	if got := NewDelayWait(st).subscriberLocation(context.Background(), engine.TaskPayload{RunID: runID}); got != time.UTC {
 		t.Errorf("unparseable timezone = %v, want UTC", got)
 	}
 }
@@ -90,7 +91,7 @@ func TestSubscriberLocation_BadTimezoneIsUTC(t *testing.T) {
 func TestSubscriberLocation_UnknownRunIsUTC(t *testing.T) {
 	st := tzStore(t)
 
-	if got := NewDelayWait(st).subscriberLocation(context.Background(), "no-such-run"); got != time.UTC {
+	if got := NewDelayWait(st).subscriberLocation(context.Background(), engine.TaskPayload{RunID: "no-such-run"}); got != time.UTC {
 		t.Errorf("unknown run = %v, want UTC", got)
 	}
 }

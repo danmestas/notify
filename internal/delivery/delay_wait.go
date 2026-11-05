@@ -37,7 +37,7 @@ func (d *DelayWait) HandleScheduled(ctx context.Context, t engine.TaskPayload) (
 	if !t.ResumeAt.IsZero() {
 		return waitUntil(t.ResumeAt)
 	}
-	cv, _, _, err := d.stepInputs(ctx, t.RunID, t.StepID)
+	cv, _, _, err := d.stepInputs(ctx, t)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +51,7 @@ func (d *DelayWait) HandleScheduled(ctx context.Context, t engine.TaskPayload) (
 	// where they are. A subscriber with no timezone (the column has defaulted to
 	// empty since the first migration) or an unparseable one resolves to UTC, so
 	// scheduling is unchanged for everyone who has never had one set.
-	fire, err := steptype.NextScheduledFireIn(cfg, time.Now(), d.subscriberLocation(ctx, t.RunID))
+	fire, err := steptype.NextScheduledFireIn(cfg, time.Now(), d.subscriberLocation(ctx, t))
 	if err != nil {
 		return nil, fmt.Errorf("delay.scheduled: %w", err)
 	}
@@ -65,7 +65,7 @@ func (d *DelayWait) HandleScheduled(ctx context.Context, t engine.TaskPayload) (
 // deadline row so the common path does not accumulate one. Every dispatch,
 // resumed or not, re-reads the payload and the deadline row.
 func (d *DelayWait) HandleDynamic(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
-	cv, payload, scope, err := d.stepInputs(ctx, t.RunID, t.StepID)
+	cv, payload, scope, err := d.stepInputs(ctx, t)
 	if err != nil {
 		return nil, err
 	}
@@ -205,10 +205,11 @@ func resolveDynamicDuration(payload json.RawMessage, dynamicKey, dynamicKind str
 // nor the raw payload these handlers need, so this narrow lookup resolves
 // them directly. Scope is returned alongside so HandleDynamic can pass it to
 // DelayDeadlines().Save without a second notification lookup.
-func (d *DelayWait) stepInputs(ctx context.Context, runID, stepID string) (json.RawMessage, json.RawMessage, domain.Scope, error) {
-	notif, err := NotificationByRun(ctx, d.store, runID)
+func (d *DelayWait) stepInputs(ctx context.Context, t engine.TaskPayload) (json.RawMessage, json.RawMessage, domain.Scope, error) {
+	stepID := t.StepID
+	notif, err := NotificationForTask(ctx, d.store, t)
 	if err != nil {
-		return nil, nil, domain.Scope{}, fmt.Errorf("delay: notification by run %q: %w", runID, err)
+		return nil, nil, domain.Scope{}, fmt.Errorf("delay: notification for run %q: %w", t.RunID, err)
 	}
 	scope := domain.Scope{OrgID: notif.OrgID, EnvID: notif.EnvID}
 	wf, err := d.store.Workflows().GetByID(ctx, scope, notif.WorkflowID)
@@ -235,8 +236,8 @@ func (d *DelayWait) stepInputs(ctx context.Context, runID, stepID string) (json.
 // send fires, and a lookup problem must not turn a scheduled delivery into a
 // dropped one. The previous behaviour was UTC for everyone, so UTC is also the
 // correct thing to fall back to.
-func (d *DelayWait) subscriberLocation(ctx context.Context, runID string) *time.Location {
-	notif, err := NotificationByRun(ctx, d.store, runID)
+func (d *DelayWait) subscriberLocation(ctx context.Context, t engine.TaskPayload) *time.Location {
+	notif, err := NotificationForTask(ctx, d.store, t)
 	if err != nil {
 		return time.UTC
 	}

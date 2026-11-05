@@ -341,6 +341,23 @@ func TestConsole_GetNotifications_FiltersAndCursorWalk(t *testing.T) {
 	if resp.TotalCount != 7 {
 		t.Fatalf("totalCount for tx-1 = %d, want 7", resp.TotalCount)
 	}
+
+	// Filter by status: the seeded rows all started, none is pending.
+	for q, want := range map[string]int{"started": 7, "pending": 0} {
+		status, body = doGet(t, srv.URL+"/v1/notifications?transactionId=tx-1&status="+q, authHeader)
+		if status != 200 {
+			t.Fatalf("filter status=%s: status=%d body=%s", q, status, body)
+		}
+		if err := json.Unmarshal([]byte(body), &resp); err != nil {
+			t.Fatalf("decode status=%s: %v", q, err)
+		}
+		if resp.TotalCount != want {
+			t.Fatalf("totalCount for status=%s = %d, want %d", q, resp.TotalCount, want)
+		}
+	}
+	if status, body = doGet(t, srv.URL+"/v1/notifications?status=done", authHeader); status != 400 {
+		t.Fatalf("status=done: status=%d body=%s, want 400", status, body)
+	}
 }
 
 // TestConsole_GetNotifications_InvalidCursor returns 400 for a malformed cursor.

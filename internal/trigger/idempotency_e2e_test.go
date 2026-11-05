@@ -97,37 +97,58 @@ func runIDsForTransaction(t *testing.T, dbPath, transactionID string) []string {
 	return runIDs
 }
 
-// TestIngest_SameTransactionID_DedupesToOneRun proves the fix end-to-end
-// against a real dagnats sidecar: two Ingest calls carrying the SAME
-// TransactionID AND the same recipient each persist their own notification
-// row (Ingest's own bookkeeping is unconditional), but dagnats's StartRun
-// admission check — keyed on the composite "idempotencyKey" field
-// authoring.Compile now targets — returns the SAME run id for both, instead
-// of starting a duplicate run.
+// TestIngest_SameTransactionID_DedupesToOneRun proves the retry path of #66
+// end-to-end against a real dagnats sidecar. The first Ingest starts the run;
+// the row is then put back to how a timed-out start leaves it (pending, no run
+// id). The retry finds that row, starts again under the same notification, and
+// dagnats's StartRun admission check -- keyed on the composite
+// "idempotencyKey" field authoring.Compile targets -- answers with the first
+// run instead of starting a duplicate. One row, one run.
 func TestIngest_SameTransactionID_DedupesToOneRun(t *testing.T) {
 	svc, scope, dbPath := setupIdempotency(t)
 	ctx := context.Background()
-
-	for i := 0; i < 2; i++ {
+	ingest := func() {
+		t.Helper()
 		if _, err := svc.Ingest(ctx, scope, trigger.TriggerRequest{
 			Name:          idempotencyTestTrigger,
 			To:            trigger.ToField{SubscriberID: "user_dedup"},
 			Payload:       json.RawMessage(`{}`),
 			TransactionID: "tx-dedup",
 		}); err != nil {
-			t.Fatalf("Ingest[%d]: %v", i, err)
+			t.Fatalf("Ingest: %v", err)
 		}
 	}
 
+	ingest()
+	first := runIDsForTransaction(t, dbPath, "tx-dedup")
+	if len(first) != 1 || first[0] == "" {
+		t.Fatalf("run ids after first Ingest = %v, want one non-empty", first)
+	}
+	forgetRun(t, dbPath, "tx-dedup")
+
+	ingest()
 	runIDs := runIDsForTransaction(t, dbPath, "tx-dedup")
-	if len(runIDs) != 2 {
-		t.Fatalf("got %d notification rows for tx-dedup, want 2 (each Ingest call persists its own row): %v", len(runIDs), runIDs)
+	if len(runIDs) != 1 {
+		t.Fatalf("got %d notification rows for tx-dedup, want 1 (a retried trigger reuses its row): %v", len(runIDs), runIDs)
 	}
-	if runIDs[0] == "" || runIDs[1] == "" {
-		t.Fatalf("run ids = %v, want both non-empty", runIDs)
+	if runIDs[0] != first[0] {
+		t.Fatalf("run id after retry = %q, want %q (dagnats must answer the retry with the first run)", runIDs[0], first[0])
 	}
-	if runIDs[0] != runIDs[1] {
-		t.Fatalf("run ids = %v, want equal (retried trigger must dedupe to one dagnats run)", runIDs)
+}
+
+// forgetRun puts transactionID's rows back to how a start that timed out
+// leaves them: pending, with no run id.
+func forgetRun(t *testing.T, dbPath, transactionID string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)", dbPath))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(
+		`UPDATE notifications SET run_id = '', status = 'pending' WHERE transaction_id = ?`, transactionID,
+	); err != nil {
+		t.Fatalf("forget run: %v", err)
 	}
 }
 

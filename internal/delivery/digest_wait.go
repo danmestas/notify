@@ -35,7 +35,7 @@ func (d *DigestWait) HandleDigestWait(ctx context.Context, t engine.TaskPayload)
 	if !t.ResumeAt.IsZero() {
 		return waitUntil(t.ResumeAt)
 	}
-	cronExpr, err := stepCron(ctx, d.store, t.RunID, t.StepID)
+	cronExpr, err := stepCron(ctx, d.store, t)
 	if err != nil {
 		return nil, err
 	}
