@@ -188,13 +188,16 @@ func (repo *draftRepo) Produce(ctx context.Context, scope domain.Scope, clientMe
 		return agentdomain.Draft{}, false, fmt.Errorf("agents: load draft request: %w", err)
 	}
 	// The key alone is not the turn the request is for: a channel can supply
-	// any client_message_id. A mismatch is not an error and leaves the
+	// any client_message_id, and a thread id can be guessed and opened first.
+	// So a request that names its conversation also needs that conversation
+	// to belong to the request's subscriber (reply.SubscriberID is the
+	// conversation's owner). A mismatch is not an error and leaves the
 	// request pending for the real turn.
 	if (wantAgent.Valid && wantAgent.String != reply.AgentIdentifier) ||
-		(wantConv.Valid && wantConv.String != reply.ConversationID) {
+		(wantConv.Valid && (wantConv.String != reply.ConversationID || reply.SubscriberID != d.SubscriberID)) {
 		slog.DebugContext(ctx, "draft request not produced: reply is for another agent or conversation",
 			"org_id", scope.OrgID, "environment_id", scope.EnvID, "client_message_id", clientMessageID,
-			"agent", reply.AgentIdentifier, "conversation", reply.ConversationID)
+			"agent", reply.AgentIdentifier, "conversation", reply.ConversationID, "owner", reply.SubscriberID)
 		return agentdomain.Draft{}, false, nil
 	}
 	d.ID = corestore.NewULID()

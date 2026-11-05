@@ -27,11 +27,16 @@ func TestDrafts_ProduceMatchesTheTurnNotTheKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	reply := func(agent, conv, act string) agentdomain.Draft {
-		return agentdomain.Draft{AgentIdentifier: agent, ConversationID: conv, ActivityID: act, Text: act}
+		return agentdomain.Draft{SubscriberID: subscriber, AgentIdentifier: agent, ConversationID: conv, ActivityID: act, Text: act}
 	}
+	// A thread the attacker opened first under the right id is owned by
+	// them, so the right agent and thread id still don't produce the draft.
+	hijack := reply("stub", "conv-a", "act-h")
+	hijack.SubscriberID = "attacker"
 	for name, r := range map[string]agentdomain.Draft{
-		"other conversation": reply("stub", "conv-b", "act-b"),
-		"other agent":        reply("other", "conv-a", "act-c"),
+		"other conversation":        reply("stub", "conv-b", "act-b"),
+		"other agent":               reply("other", "conv-a", "act-c"),
+		"conversation someone owns": hijack,
 	} {
 		if _, ok, err := drafts.Produce(ctx, testScope, "k1", r); err != nil || ok {
 			t.Fatalf("%s: ok=%v err=%v, want no draft and no error", name, ok, err)
