@@ -144,22 +144,8 @@ func (h *SMSHandler) resolveSMSProvider(ctx context.Context, scope domain.Scope,
 // records an "error" message (with ErrorText) and returns its JSON with a nil
 // error — a failed message, not a crashed run.
 func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
-	var env runenv.InAppEnvelope
-	var digestKey string
-	var stepOutputs map[string]map[string]any
-	if len(t.Input) == 0 || !isRunEnvelope(t.Input) {
-		// Self-source: an empty input means an upstream step (e.g. a delay)
-		// produced no output; a non-envelope input means an upstream action step
-		// (e.g. http_request) produced non-envelope output. Either way, rebuild
-		// the envelope from the store by run id.
-		rebuilt, dk, so, err := RebuildEnvelope(ctx, h.store, t)
-		if err != nil {
-			return h.persistSMSError(ctx, env, t, "", "", err)
-		}
-		env = rebuilt
-		digestKey = dk
-		stepOutputs = so
-	} else if err := json.Unmarshal(t.Input, &env); err != nil {
+	env, digestKey, stepOutputs, err := taskEnvelope(ctx, h.store, t)
+	if err != nil {
 		return h.persistSMSError(ctx, env, t, "", "", err)
 	}
 

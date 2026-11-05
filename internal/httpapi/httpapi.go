@@ -1828,6 +1828,7 @@ func postWorkflowDuplicate(au *authoring.Service) http.HandlerFunc {
 //   - workflowId    – filter to a specific workflow (optional)
 //   - subscriberId  – filter to a specific subscriber (optional)
 //   - transactionId – filter to a specific transaction (optional)
+//   - status        – pending, started or failed (optional; default all)
 //   - since         – RFC3339 lower-bound on created_at (optional)
 //   - limit         – page size, 1–200, default 50 (optional)
 //   - cursor        – opaque keyset cursor from a prior response (optional)
@@ -1861,6 +1862,13 @@ func getNotifications(st *store.Store) http.HandlerFunc {
 			WorkflowID:    q.Get("workflowId"),
 			SubscriberID:  q.Get("subscriberId"),
 			TransactionID: q.Get("transactionId"),
+			Status:        q.Get("status"),
+		}
+		switch f.Status {
+		case "", domain.NotificationPending, domain.NotificationStarted, domain.NotificationFailed:
+		default:
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "status must be pending, started or failed")
+			return
 		}
 		if sinceStr := q.Get("since"); sinceStr != "" {
 			t, err := time.Parse(time.RFC3339, sinceStr)

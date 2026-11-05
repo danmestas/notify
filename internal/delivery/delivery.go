@@ -108,24 +108,8 @@ func (h *Handler) WithDigester(d Digester) *Handler {
 // unmarshal or persist error it records a "error" message (with ErrorText) and
 // returns its JSON with a nil error — a failed message, not a crashed run.
 func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
-	var env runenv.InAppEnvelope
-	var digestKey string
-	var stepOutputs map[string]map[string]any
-	if len(t.Input) == 0 || !isRunEnvelope(t.Input) {
-		// Self-source: an empty input means an upstream step (e.g. a delay)
-		// produced no output, and a non-envelope input means an upstream action
-		// step (e.g. http_request) produced output that is not an InAppEnvelope.
-		// Either way, rebuild the envelope from the store by run id.
-		rebuilt, dk, so, err := h.rebuildEnvelope(ctx, t)
-		if err != nil {
-			return h.persistError(ctx, env, t, err)
-		}
-		env = rebuilt
-		digestKey = dk
-		stepOutputs = so
-	} else if err := json.Unmarshal(t.Input, &env); err != nil {
-		// Envelope undecodable: scope/subscriber are unknown (empty); still
-		// record a failed message so the failure is observable.
+	env, digestKey, stepOutputs, err := taskEnvelope(ctx, h.store, t)
+	if err != nil {
 		return h.persistError(ctx, env, t, err)
 	}
 

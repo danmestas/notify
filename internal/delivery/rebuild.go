@@ -12,14 +12,25 @@ import (
 	"github.com/danmestas/notify/internal/store"
 )
 
-// rebuildEnvelope reconstructs the run envelope for a channel step from the
-// store, keyed by the run id. It is the self-source fallback used when a step's
-// TaskPayload.Input is empty (e.g. it DependsOn a delay/sleep step, whose nil
-// output leaves the downstream input empty) OR carries a non-envelope output
-// (e.g. an upstream http_request whose output is not an InAppEnvelope). The
-// envelope-input path never calls this.
-func (h *Handler) rebuildEnvelope(ctx context.Context, t engine.TaskPayload) (runenv.InAppEnvelope, string, map[string]map[string]any, error) {
-	return RebuildEnvelope(ctx, h.store, t)
+// taskEnvelope returns the envelope a channel step delivers from. A task whose
+// input is the trigger's envelope uses it as is and records its run on the
+// envelope's notification (recordRun); any other task self-sources it with
+// RebuildEnvelope, which also returns the digest key and step outputs. On an
+// undecodable envelope the error comes back with whatever decoded, so the
+// caller can still record a failed message.
+func taskEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) (runenv.InAppEnvelope, string, map[string]map[string]any, error) {
+	if len(t.Input) == 0 || !isRunEnvelope(t.Input) {
+		// An empty input means an upstream step (e.g. a delay) produced no
+		// output; a non-envelope input means an upstream action step (e.g.
+		// http_request) produced output that is not an InAppEnvelope.
+		return RebuildEnvelope(ctx, s, t)
+	}
+	var env runenv.InAppEnvelope
+	if err := json.Unmarshal(t.Input, &env); err != nil {
+		return env, "", nil, err
+	}
+	recordRun(ctx, s, t, env)
+	return env, "", nil, nil
 }
 
 // RebuildEnvelope is the shared self-source logic backing every channel handler

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -35,19 +36,68 @@ func NotificationForTask(ctx context.Context, s *store.Store, t engine.TaskPaylo
 	n, err := waitForRow(ctx, func() (domain.Notification, error) {
 		return s.Notifications().Get(ctx, scope, id)
 	})
-	if err != nil || n.RunID != "" || t.RunID == "" {
+	if err != nil {
 		return n, err
 	}
-	attached, err := s.Notifications().AttachRun(ctx, scope, id, t.RunID)
+	return bindRun(ctx, s, scope, n, t.RunID)
+}
+
+// recordRun records the task's run id on the notification its envelope names,
+// for the channel and throttle handlers, which deliver straight from the
+// envelope and never otherwise read the row. Without it, a run whose start
+// timed out in the trigger and whose first step is one of these would leave
+// the row without a run id, and every later step without an envelope (one
+// after a delay) would fail to find it (#66).
+//
+// It is best effort: the step it runs in has what it needs from the envelope,
+// so a failure here is logged and delivery goes on. It does not wait for a
+// missing row; one written by an older trigger after StartRun carries its run
+// id already.
+func recordRun(ctx context.Context, s *store.Store, t engine.TaskPayload, env runenv.InAppEnvelope) {
+	if env.NotificationID == "" || t.RunID == "" {
+		return
+	}
+	scope := domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
+	n, err := s.Notifications().Get(ctx, scope, env.NotificationID)
+	if errors.Is(err, store.ErrNotFound) {
+		return
+	}
+	if err == nil {
+		_, err = bindRun(ctx, s, scope, n, t.RunID)
+	}
 	if err != nil {
-		return domain.Notification{}, err
+		slog.Default().Warn("delivery: could not record the run on its notification",
+			"notification_id", env.NotificationID, "run_id", t.RunID, "step_id", t.StepID, "err", err)
 	}
-	if !attached {
+}
+
+// bindRun makes sure notification n names runID: it records runID on a row
+// that has no run yet, and returns the row as stored. A row that already names
+// another run is returned unchanged, with a warning: two runs delivering one
+// notification is a duplicate start the engine should have refused.
+func bindRun(ctx context.Context, s *store.Store, scope domain.Scope, n domain.Notification, runID string) (domain.Notification, error) {
+	if runID == "" {
+		return n, nil
+	}
+	if n.RunID == "" {
+		attached, err := s.Notifications().AttachRun(ctx, scope, n.ID, runID)
+		if err != nil {
+			return domain.Notification{}, err
+		}
+		if attached {
+			n.RunID = runID
+			n.Status = domain.NotificationStarted
+			return n, nil
+		}
 		// Another task of the run (or the trigger) recorded it first.
-		return s.Notifications().Get(ctx, scope, id)
+		if n, err = s.Notifications().Get(ctx, scope, n.ID); err != nil {
+			return domain.Notification{}, err
+		}
 	}
-	n.RunID = t.RunID
-	n.Status = domain.NotificationStarted
+	if n.RunID != runID {
+		slog.Default().Warn("delivery: notification already belongs to another run; this run is a duplicate start",
+			"notification_id", n.ID, "notification_run_id", n.RunID, "task_run_id", runID)
+	}
 	return n, nil
 }
 

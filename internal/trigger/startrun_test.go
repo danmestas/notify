@@ -172,19 +172,30 @@ func TestIngest_StartTimesOutAfterRunStarted(t *testing.T) {
 		t.Fatalf("row after timeout = %+v, want pending with no run id", row)
 	}
 
-	// The run's first step: its input is the envelope.
-	env, _, _, err := delivery.RebuildEnvelope(ctx, fx.st, engine.TaskPayload{
+	// The run's first step is a channel step, which delivers straight from its
+	// envelope input; it must still record its run on the row.
+	inApp := delivery.New(fx.st)
+	if _, err := inApp.HandleInApp(ctx, engine.TaskPayload{
 		RunID: "run-1", StepID: "S1", Input: fx.eng.input("run-1"),
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("first step: %v", err)
 	}
-	if env.NotificationID != row.ID {
-		t.Fatalf("first step notification = %q, want %q", env.NotificationID, row.ID)
-	}
-	// A later step whose input carries no envelope (it follows a delay).
-	if _, _, _, err := delivery.RebuildEnvelope(ctx, fx.st, engine.TaskPayload{RunID: "run-1", StepID: "S2"}); err != nil {
+	// A later step whose input carries no envelope (it follows a delay) finds
+	// the row by run id.
+	if _, err := inApp.HandleInApp(ctx, engine.TaskPayload{RunID: "run-1", StepID: "S2"}); err != nil {
 		t.Fatalf("later step: %v", err)
+	}
+	msgs, err := fx.st.Messages().List(ctx, fx.scope, "user_1", "in_app")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("got %d in-app messages, want 2: %+v", len(msgs), msgs)
+	}
+	for _, m := range msgs {
+		if m.Status == "error" || m.NotificationID != row.ID {
+			t.Fatalf("message %+v: want delivered under notification %s", m, row.ID)
+		}
 	}
 
 	fx.eng.setFail(nil)

@@ -181,3 +181,45 @@ func runDraftPurge(ctx context.Context, log *slog.Logger, ags *agentstore.Store)
 		}
 	}
 }
+
+const (
+	// pendingNotificationTimeout is how long a notification may stay pending
+	// with no run before the sweep marks it failed. The trigger records the run
+	// id as soon as the start returns, and a run whose start reply was lost
+	// records it at its first step, so a row still without one this long after
+	// its trigger is a start that never took and was never retried (#66).
+	pendingNotificationTimeout = 15 * time.Minute
+
+	// pendingNotificationSweepInterval keeps a stale row's wait for the sweep
+	// small against the timeout.
+	pendingNotificationSweepInterval = 5 * time.Minute
+)
+
+// runPendingNotificationSweep marks stale pending notifications failed, once
+// at boot and then on an interval, in the same shape as the purges above.
+// Failures are logged and the loop continues.
+func runPendingNotificationSweep(ctx context.Context, log *slog.Logger, st *store.Store) {
+	sweep := func() {
+		cutoff := time.Now().Add(-pendingNotificationTimeout)
+		n, err := st.Notifications().FailStalePending(ctx, cutoff)
+		switch {
+		case err != nil:
+			log.Error("retention: pending notification sweep failed", "err", err, "cutoff", cutoff)
+		case n > 0:
+			log.Warn("retention: marked pending notifications with no run failed",
+				"rows", n, "olderThan", pendingNotificationTimeout.String())
+		}
+	}
+
+	sweep()
+	t := time.NewTicker(pendingNotificationSweepInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			sweep()
+		}
+	}
+}

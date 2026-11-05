@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 func TestNotificationRepo_GetByRunID(t *testing.T) {
@@ -138,5 +140,53 @@ func TestNotificationRepo_TriggerLifecycle(t *testing.T) {
 	legacy, err := repo.Create(ctx, scope, domain.Notification{WorkflowID: "wf1", RunID: "r9"})
 	if err != nil || legacy.Status != domain.NotificationStarted {
 		t.Fatalf("create without status = %+v, %v; want started", legacy, err)
+	}
+}
+
+// TestNotificationRepo_FailStalePendingAndStatusFilter: the sweep fails only
+// pending rows with no run that are older than the cutoff, and List filters on
+// status while listing every status by default.
+func TestNotificationRepo_FailStalePendingAndStatusFilter(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Notifications()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	now := time.Now()
+	old := timestamp.Format(now.Add(-time.Hour))
+	rows := []domain.Notification{
+		{ID: "stale", TransactionID: "tx", Status: domain.NotificationPending, CreatedAt: old},
+		{ID: "fresh", TransactionID: "tx", Status: domain.NotificationPending, CreatedAt: timestamp.Format(now)},
+		{ID: "has-run", TransactionID: "tx", Status: domain.NotificationPending, RunID: "r1", CreatedAt: old},
+		{ID: "started", TransactionID: "tx", Status: domain.NotificationStarted, RunID: "r2", CreatedAt: old},
+	}
+	for _, n := range rows {
+		if _, err := repo.Create(ctx, scope, n); err != nil {
+			t.Fatalf("create %s: %v", n.ID, err)
+		}
+	}
+
+	n, err := repo.FailStalePending(ctx, now.Add(-15*time.Minute))
+	if err != nil || n != 1 {
+		t.Fatalf("FailStalePending = %d, %v; want 1", n, err)
+	}
+	want := map[string]string{
+		"stale":   domain.NotificationFailed,
+		"fresh":   domain.NotificationPending,
+		"has-run": domain.NotificationPending,
+		"started": domain.NotificationStarted,
+	}
+	for id, status := range want {
+		if got, _ := repo.Get(ctx, scope, id); got.Status != status {
+			t.Fatalf("%s: status = %q, want %q", id, got.Status, status)
+		}
+	}
+
+	all, err := repo.List(ctx, scope, NotificationFilter{TransactionID: "tx"}, "", 0)
+	if err != nil || len(all.Items) != 4 {
+		t.Fatalf("List all = %d rows, %v; want 4", len(all.Items), err)
+	}
+	pending, err := repo.List(ctx, scope, NotificationFilter{TransactionID: "tx", Status: domain.NotificationPending}, "", 0)
+	if err != nil || len(pending.Items) != 2 || pending.TotalCount != 2 {
+		t.Fatalf("List pending = %d rows (total %d), %v; want 2", len(pending.Items), pending.TotalCount, err)
 	}
 }

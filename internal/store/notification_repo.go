@@ -19,6 +19,9 @@ type NotificationFilter struct {
 	WorkflowID    string
 	SubscriberID  string
 	TransactionID string
+	// Status keeps one domain.NotificationStatus* value. Empty lists every
+	// status, including rows still pending or whose start failed.
+	Status string
 	// Since filters to notifications created at or after this time (inclusive).
 	// A zero Time disables the filter.
 	Since time.Time
@@ -85,6 +88,12 @@ type NotificationRepo interface {
 	// MarkFailed marks a row whose run never started as failed. A row that
 	// already names a run is left alone.
 	MarkFailed(ctx context.Context, scope domain.Scope, id string) error
+	// FailStalePending marks failed every pending row with no run id created
+	// before cutoff, across all scopes, and reports how many. Such a row is a
+	// trigger whose start timed out and was never retried, and whose run (if
+	// any) never reached a step: left alone it would read pending forever. A
+	// run that does turn up later still records itself (AttachRun).
+	FailStalePending(ctx context.Context, cutoff time.Time) (int64, error)
 	// List returns a keyset-paginated page of notifications within scope,
 	// filtered by f and ordered by (created_at DESC, id DESC). Pass limit ≤ 0
 	// to use the default of 50; the hard cap is 200. Pass cursor = "" for the
@@ -228,6 +237,22 @@ func (repo *notificationRepo) MarkFailed(ctx context.Context, scope domain.Scope
 	return err
 }
 
+// FailStalePending compares created_at as a string, which is correct because
+// it is written through the fixed-width timestamp layout (see
+// internal/timestamp).
+func (repo *notificationRepo) FailStalePending(ctx context.Context, cutoff time.Time) (int64, error) {
+	res, err := repo.w.ExecContext(
+		ctx,
+		`UPDATE notifications SET status = ?
+		 WHERE status = ? AND run_id = '' AND created_at < ?`,
+		domain.NotificationFailed, domain.NotificationPending, timestamp.Format(cutoff),
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 const (
 	notificationListDefaultLimit = 50
 	notificationListMaxLimit     = 200
@@ -264,6 +289,10 @@ func (repo *notificationRepo) List(ctx context.Context, scope domain.Scope, f No
 	if f.TransactionID != "" {
 		conds = append(conds, "transaction_id = ?")
 		args = append(args, f.TransactionID)
+	}
+	if f.Status != "" {
+		conds = append(conds, "status = ?")
+		args = append(args, f.Status)
 	}
 	if !f.Since.IsZero() {
 		conds = append(conds, "created_at >= ?")
