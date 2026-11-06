@@ -22,6 +22,18 @@ func TestManifest_Validates(t *testing.T) {
 	if err := program.Validate(Manifest()); err != nil {
 		t.Fatalf("program.Validate(Manifest()): %v", err)
 	}
+	// A cards domain names the read "<domain>:chat_cards", which dagnats
+	// grants as $JS.<domain>.API reads.
+	m := ManifestFor("eu")
+	if err := program.Validate(m); err != nil {
+		t.Fatalf("program.Validate(ManifestFor(eu)): %v", err)
+	}
+	if len(m.Reads) != 1 || m.Reads[0] != "eu:chat_cards" {
+		t.Fatalf("ManifestFor(eu).Reads = %v, want [eu:chat_cards]", m.Reads)
+	}
+	if r := Manifest().Reads; len(r) != 1 || r[0] != "chat_cards" {
+		t.Fatalf("Manifest().Reads = %v, want [chat_cards]", r)
+	}
 }
 
 type noAI struct{}

@@ -30,7 +30,18 @@ const dagnatsRange = ">=0.0.44 <0.1.0"
 // anything notify touches must be declared here. Reads is the chat program's
 // agent-card bucket; dagnats does not check that the owner program exists, so
 // registration succeeds without it and the card source retries until it does.
-func Manifest() program.Manifest {
+// Manifest reads the cards on this server's own JetStream domain.
+func Manifest() program.Manifest { return ManifestFor("") }
+
+// ManifestFor is Manifest with the cards read in cardsDomain, the JetStream
+// domain Config.AgentCardsDomain names: "<domain>:chat_cards" grants the
+// $JS.<domain>.API reads the card source sends (dagnats v0.0.53). Empty is
+// this server's own domain.
+func ManifestFor(cardsDomain string) program.Manifest {
+	read := cards.Bucket
+	if cardsDomain != "" {
+		read = cardsDomain + ":" + cards.Bucket
+	}
 	return program.Manifest{
 		Name:      "notify",
 		Version:   version.Version,
@@ -41,6 +52,6 @@ func Manifest() program.Manifest {
 		Buckets:   eventbus.Buckets(),
 		Protocols: mesh.Protocols(),
 		Discovers: mesh.Discovers(),
-		Reads:     []string{cards.Bucket},
+		Reads:     []string{read},
 	}
 }
