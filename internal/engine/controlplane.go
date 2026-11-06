@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel/attribute"
@@ -52,6 +53,23 @@ var ErrStartRefused = errors.New("engine: start refused")
 // the run and the reply was lost.
 func StartRefused(err error) bool {
 	return errors.Is(err, ErrStartRefused) || errors.Is(err, nats.ErrNoResponders)
+}
+
+// IsTransient reports whether err is a timeout-shaped failure worth retrying:
+// a context deadline, a NATS timeout, or no responders. dagnats reports its own
+// KV read deadlines as a flattened "engine: ..." string (see decodeError), so
+// the message is matched too. A cancelled context is not transient.
+func IsTransient(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, nats.ErrTimeout) ||
+		errors.Is(err, nats.ErrNoResponders) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "i/o timeout") || strings.Contains(msg, "no responders")
 }
 
 // StartRun triggers a run of the named workflow with the given input and

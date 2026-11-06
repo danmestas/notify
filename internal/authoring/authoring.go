@@ -11,8 +11,11 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/danmestas/dagnats/dag"
 
@@ -367,6 +370,40 @@ func (s *Service) Rollback(ctx context.Context, scope domain.Scope, triggerIdent
 // republishConcurrency bounds RepublishAll's in-flight registrations.
 const republishConcurrency = 8
 
+// Boot-time registration retries a transient engine error (a KV read deadline
+// on a loaded mesh, a NATS timeout, no responders) a few times before giving
+// up on the workflow. republishBackoff is the first wait; it doubles per
+// attempt up to republishBackoffMax. A var so tests can shrink it.
+const (
+	republishAttempts   = 3
+	republishBackoffMax = 4 * time.Second
+)
+
+var republishBackoff = 500 * time.Millisecond
+
+// registerWithRetry registers def, retrying engine.IsTransient errors. It
+// returns the last error, stopping early if ctx ends while waiting.
+func (s *Service) registerWithRetry(ctx context.Context, def engine.WorkflowDef) error {
+	wait := republishBackoff
+	var err error
+	for attempt := 1; ; attempt++ {
+		if err = s.eng.RegisterWorkflow(ctx, def); err == nil {
+			return nil
+		}
+		if attempt >= republishAttempts || !engine.IsTransient(err) || ctx.Err() != nil {
+			return err
+		}
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return err
+		case <-t.C:
+		}
+		wait = min(wait*2, republishBackoffMax)
+	}
+}
+
 // RepublishAll re-registers every persisted workflow with the engine. It is
 // called once at boot: the dagnats engine holds its workflow registry in
 // memory and loses it on restart, so a workflow that was only registered at
@@ -408,6 +445,8 @@ func (s *Service) RepublishAll(ctx context.Context) (int, error) {
 		wg         sync.WaitGroup
 		registered atomic.Int32
 		slots      = make(chan struct{}, republishConcurrency)
+		failMu     sync.Mutex
+		failed     []string
 	)
 	for _, wf := range wfs {
 		def, ok := s.bootDef(ctx, wf)
@@ -427,16 +466,24 @@ func (s *Service) RepublishAll(ctx context.Context) (int, error) {
 		wg.Add(1)
 		go func() {
 			defer func() { <-slots; wg.Done() }()
-			if rErr := s.eng.RegisterWorkflow(ctx, def); rErr != nil {
+			if rErr := s.registerWithRetry(ctx, def); rErr != nil {
 				slog.Default().Error("authoring: republish skip (register failed)",
 					"workflow_id", wf.ID, "trigger_identifier", wf.TriggerIdentifier,
 					"org_id", wf.OrgID, "env_id", wf.EnvID, "err", rErr)
+				failMu.Lock()
+				failed = append(failed, wf.ID+" ("+wf.TriggerIdentifier+")")
+				failMu.Unlock()
 				return
 			}
 			registered.Add(1)
 		}()
 	}
 	wg.Wait()
+	if len(failed) > 0 {
+		sort.Strings(failed)
+		slog.Default().Error("authoring: republish incomplete: workflows left unregistered until restart",
+			"failed_count", len(failed), "workflows", strings.Join(failed, ", "))
+	}
 	return int(registered.Load()), nil
 }
 
