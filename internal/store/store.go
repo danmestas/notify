@@ -15,6 +15,7 @@ import (
 type Store struct {
 	writer *sql.DB
 	reader *sql.DB
+	msgObs *messageObserverSlot
 }
 
 // Open opens both pools against path with WAL + busy-timeout + foreign-keys
@@ -49,7 +50,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 
-	return &Store{writer: writer, reader: reader}, nil
+	return &Store{writer: writer, reader: reader, msgObs: &messageObserverSlot{}}, nil
 }
 
 // Close closes both pools.
@@ -82,8 +83,10 @@ func (s *Store) WorkflowVersions() WorkflowVersionRepo {
 }
 
 func (s *Store) Notifications() NotificationRepo { return &notificationRepo{w: s.writer, r: s.reader} }
-func (s *Store) Messages() MessageRepo           { return &messageRepo{w: s.writer, r: s.reader} }
-func (s *Store) Integrations() IntegrationRepo   { return &integrationRepo{w: s.writer, r: s.reader} }
+
+func (s *Store) Messages() MessageRepo { return &messageRepo{w: s.writer, r: s.reader, obs: s.msgObs} }
+
+func (s *Store) Integrations() IntegrationRepo { return &integrationRepo{w: s.writer, r: s.reader} }
 
 // WebPushSubscriptions vends the per-device Web Push subscription repository
 // (browser PushSubscription endpoint + keys), distinct from Integrations,

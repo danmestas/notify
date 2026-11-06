@@ -15,6 +15,7 @@ import (
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/metrics"
+	"github.com/danmestas/notify/internal/providers"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
 )
@@ -321,6 +322,7 @@ func (h *Handler) persistError(ctx context.Context, env runenv.InAppEnvelope, t 
 		ProviderID:     env.Step.ProviderID,
 		Status:         "error",
 		ErrorText:      cause.Error(),
+		ErrorClass:     string(providers.ClassifyError(cause)),
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}

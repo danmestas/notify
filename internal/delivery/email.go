@@ -439,6 +439,7 @@ func (h *EmailHandler) persistEmailError(ctx context.Context, env runenv.InAppEn
 		IntegrationID:  integrationID,
 		Status:         "error",
 		ErrorText:      cause.Error(),
+		ErrorClass:     string(providers.ClassifyError(cause)),
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}

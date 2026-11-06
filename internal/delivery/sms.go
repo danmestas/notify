@@ -368,6 +368,7 @@ func (h *SMSHandler) persistSMSError(ctx context.Context, env runenv.InAppEnvelo
 		IntegrationID:  integrationID,
 		Status:         "error",
 		ErrorText:      cause.Error(),
+		ErrorClass:     string(providers.ClassifyError(cause)),
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}

@@ -103,6 +103,25 @@ type Integration struct {
 	Identifier     string          `db:"identifier"`
 }
 
+// IntegrationHealth is the persisted delivery health of one integration
+// (#100): its state, when that state began, and the latest counted error.
+// internal/deliveryhealth computes it; WindowFloor is that package's
+// bookkeeping (the messages rowid its evaluation window starts after).
+type IntegrationHealth struct {
+	IntegrationID    string `db:"integration_id"`
+	OrgID            string `db:"org_id"`
+	EnvID            string `db:"environment_id"`
+	State            string `db:"state"`
+	Since            string `db:"since"`
+	WindowFloor      int64  `db:"window_floor"`
+	LastErrorClass   string `db:"last_error_class"`
+	LastErrorMessage string `db:"last_error_message"`
+	LastErrorAt      string `db:"last_error_at"`
+	LastCheckAt      string `db:"last_check_at"`
+	LastCheckOK      bool   `db:"last_check_ok"`
+	UpdatedAt        string `db:"updated_at"`
+}
+
 // StreamSource is an inbound webhook-push source: an external producer
 // authorized (by a per-source secret) to POST event batches into one
 // environment's durable feed, scoped to a single topic prefix.
@@ -244,6 +263,10 @@ type Message struct {
 	Archived      bool   `db:"archived"`
 	TransactionID string `db:"transaction_id"`
 	ErrorText     string `db:"error_text"`
+	// ErrorClass says why a failed message failed: "auth", "rate_limited",
+	// "provider_down", "rejected_message" or "recipient"
+	// (providers.ClassifyError). Empty unless Status is "error".
+	ErrorClass string `db:"error_class"`
 	// SkipReason names the gate that skipped this message when Status is
 	// "skipped". Empty for every other status. Kept separate from ErrorText
 	// because a skip is not an error -- a honoured subscriber preference is the

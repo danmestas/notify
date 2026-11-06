@@ -7,6 +7,7 @@ import (
 
 	"github.com/danmestas/notify/internal/aibuilder"
 	"github.com/danmestas/notify/internal/blobstore"
+	"github.com/danmestas/notify/internal/deliveryhealth"
 	"github.com/danmestas/notify/internal/engine"
 )
 
@@ -95,4 +96,8 @@ type Config struct {
 	// DuckDBPath is the analytics database in a `-tags duckdb` build; other
 	// builds ignore it.
 	DuckDBPath string
+
+	// Health holds the integration health thresholds. The zero value means
+	// deliveryhealth.DefaultSettings.
+	Health deliveryhealth.Settings
 }

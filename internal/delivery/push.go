@@ -529,6 +529,7 @@ func (h *PushHandler) persistPushErrorWithExtras(ctx context.Context, env runenv
 		IntegrationID:  integrationID,
 		Status:         "error",
 		ErrorText:      cause.Error(),
+		ErrorClass:     string(providers.ClassifyError(cause)),
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 		Extras:         extras,

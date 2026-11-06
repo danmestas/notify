@@ -38,6 +38,9 @@ Flags use Go's `flag` package, so `-addr` and `--addr` are the same. Variables m
 | (env only) | `NOTIFY_AGENT_CARDS_DOMAIN` | empty | JetStream domain that holds the `chat_cards` bucket of agent cards. Empty reads the bucket from the connected dagnats' own domain. Set it when the bucket lives in another region (see [Moving to another dagnats](../operations/dagnats-sidecar#moving-to-another-dagnats)). |
 | (env only) | `NOTIFY_CONSOLE_READ_ONLY` | off | Exactly `1` disables every mutation in the console. |
 | (env only) | `NOTIFY_DAGNATS_CONSOLE_URL` | empty | Base URL of dagnats' console, as your browser sees it, for run deep-links in Activity. |
+| (env only) | `NOTIFY_HEALTH_DEGRADED_RATE` | `0.20` | Integration health: an integration is `degraded` when more than this share of its deliveries in the window failed. Recipient errors do not count. |
+| (env only) | `NOTIFY_HEALTH_FAILING_ERRORS` | `3` | Integration health: this many failed deliveries in the window with no success make an integration `failing`, as does a credential check the provider rejects. |
+| (env only) | `NOTIFY_HEALTH_WINDOW` | `1h` | Integration health: how far back delivery results count, as a Go duration. A bad value in any of the three stops start. |
 
 ## serve: agents
 
