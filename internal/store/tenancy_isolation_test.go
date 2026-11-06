@@ -45,6 +45,7 @@ func tenantCases() []tenantCase {
 		{name: "Workflows", check: checkWorkflows},
 		{name: "WorkflowVersions", check: checkWorkflowVersions},
 		{name: "Integrations", check: checkIntegrations},
+		{name: "IntegrationHealth", check: checkIntegrationHealth},
 		{name: "Notifications", check: checkNotifications},
 		{name: "Messages", check: checkMessages},
 		{name: "Preferences", check: checkPreferences},
@@ -275,6 +276,47 @@ func checkIntegrations(t *testing.T, ctx context.Context, s *Store, a, b domain.
 	if active.ID == intA.ID {
 		t.Errorf("Integrations.GetActiveByChannel: cross-tenant leak — returned scope-A integration %q", intA.ID)
 	}
+}
+
+func checkIntegrationHealth(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
+	intA, err := s.Integrations().Create(ctx, a, domain.Integration{ProviderID: "p", Channel: "email", Identifier: "health-a", Active: true})
+	if err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+	repo := s.IntegrationHealth()
+	if err := repo.Put(ctx, a, domain.IntegrationHealth{
+		IntegrationID: intA.ID, State: "failing", Since: "t", UpdatedAt: "t",
+	}); err != nil {
+		t.Fatalf("seed A health: %v", err)
+	}
+	if _, err := s.Messages().Create(ctx, a, domain.Message{IntegrationID: intA.ID, Status: "sent", ID: "msg-health-a"}); err != nil {
+		t.Fatalf("seed A message: %v", err)
+	}
+
+	_, err = repo.Get(ctx, b, intA.ID)
+	mustNotFound(t, "IntegrationHealth.Get", err)
+	list, err := repo.List(ctx, b)
+	if err != nil {
+		t.Fatalf("List(b): %v", err)
+	}
+	for _, h := range list {
+		if h.IntegrationID == intA.ID {
+			t.Errorf("IntegrationHealth.List: cross-tenant leak of %q", intA.ID)
+		}
+	}
+	// A write from scope B cannot overwrite scope A's row.
+	if err := repo.Put(ctx, b, domain.IntegrationHealth{IntegrationID: intA.ID, State: "healthy", Since: "t", UpdatedAt: "t"}); err != nil {
+		t.Fatalf("Put(b): %v", err)
+	}
+	if h, err := repo.Get(ctx, a, intA.ID); err != nil || h.State != "failing" {
+		t.Errorf("IntegrationHealth.Put: scope B changed scope A's row: %+v %v", h, err)
+	}
+	sent, failed, err := repo.WindowCounts(ctx, b, intA.ID, "", 0)
+	if err != nil || sent != 0 || failed != 0 {
+		t.Errorf("IntegrationHealth.WindowCounts: cross-tenant leak: sent=%d failed=%d err=%v", sent, failed, err)
+	}
+	_, err = repo.MessageSeq(ctx, b, "msg-health-a")
+	mustNotFound(t, "IntegrationHealth.MessageSeq", err)
 }
 
 func checkWebPushSubscriptions(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
