@@ -51,8 +51,9 @@ var (
 	_ program.HTTPHandler = (*Program)(nil)
 )
 
-// Manifest is notify's Manifest.
-func (p *Program) Manifest() program.Manifest { return Manifest() }
+// Manifest is notify's Manifest, with the cards read in the domain the
+// Config names.
+func (p *Program) Manifest() program.Manifest { return ManifestFor(p.Config.AgentCardsDomain) }
 
 // Start builds and starts notify on h.Conn. It is idempotent: a second call
 // returns nil without doing anything.
