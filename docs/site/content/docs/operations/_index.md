@@ -6,7 +6,7 @@ weight: 12
 Running notify for real.
 
 {{< cards cols="2" >}}
-  {{< card link="deploy" title="Deploy" subtitle="Native under launchd or systemd, Docker Compose, and the hub compose file" >}}
+  {{< card link="deploy" title="Deploy" subtitle="Program mode (native or Docker Compose) and the combined binary" >}}
   {{< card link="dagnats-sidecar" title="The dagnats sidecar" subtitle="What it is, how notify connects, auth, and versions" >}}
   {{< card link="blob-storage" title="Blob storage" subtitle="The fs and s3 adapters, with Garage" >}}
   {{< card link="backups-and-retention" title="Backups and retention" subtitle="What to back up and what is purged" >}}

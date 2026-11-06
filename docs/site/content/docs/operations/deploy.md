@@ -3,13 +3,12 @@ title: Deploy
 weight: 1
 ---
 
-There are three ways to run notify. They all run the same two processes, notify and the [dagnats sidecar](../dagnats-sidecar).
+notify runs on [dagnats](../dagnats-sidecar) in one of two shapes:
 
-| | Use it for |
+| Shape | Use it for |
 |---|---|
-| [Native](#native-launchd-or-systemd) | A single machine you control. The reference deployment: notify and dagnats as supervised processes on a Mac mini under launchd. |
-| [Docker Compose](../../get-started/docker) | Trying it out, CI, or a host where you prefer containers. |
-| [The hub compose file](#the-hub-compose-file) | A public-facing deployment that fronts notify with a Cloudflare tunnel and leafs dagnats into a NATS hub. |
+| [Program mode](#program-mode) | notify is its own process, connected to a dagnats server or mesh node. This is how production runs, natively under launchd or systemd or in containers. |
+| [Combined binary](#combined-binary) | An application embeds dagnats' server and runs notify in the same process. |
 
 ## Native (launchd or systemd)
 
@@ -66,19 +65,20 @@ If you receive mail on notify's own SMTP receiver, it must be reachable on port 
 
 `compose.yml` is covered in [Docker Compose](../../get-started/docker). Two properties to remember: notify shares the dagnats container's network namespace, and the data lives in two named volumes (`dagnats-data`, `notify-data`) that you must back up.
 
-## The hub compose file
+## Program mode
 
-`deploy/compose.hub.yml` (project `notify-hub`) is the public-facing variant. It runs three services in one shared network namespace owned by `dagnats`:
+notify registers with dagnats as a program named `notify` and runs over one connection of its own. Everything in this section is covered in detail by [The dagnats sidecar](../dagnats-sidecar#running-notify-as-a-program); the short version:
 
-- `dagnats`, publishing `127.0.0.1:3000` (for notify) and `127.0.0.1:4222` (the NATS port, for agents running on the host).
-- `notify`, built from the `hub` Docker target, whose entrypoint is `deploy/notify-prelude.sh`.
-- `cloudflared`, which runs a named Cloudflare tunnel (`TUNNEL_TOKEN`) to `127.0.0.1:3000`.
+- Point `NOTIFY_DAGNATS_URL` at a dagnats server or a node of a dagnats mesh. The default is `nats://127.0.0.1:4222`.
+- notify creates its NKey seed on first start (`NOTIFY_SEED`, default `notify.seed` beside the database). The seed is notify's identity on that server: keep it next to `notify.db` and back it up with it.
+- Set `NOTIFY_JOIN_KEY` only if the server has a NATS login. A loopback server with no login admits notify without one.
+- To move notify to another server or mesh node, change `NOTIFY_DAGNATS_URL` and restart. The same seed registers there as a first registration; [Moving to another dagnats](../dagnats-sidecar#moving-to-another-dagnats) lists what stays behind.
 
-Setting `DAGNATS_LEAF_REMOTES` (from `SESH_ROOT_LEAF_URL`) puts dagnats in **leaf mode**: it dials out to a root NATS hub, binds NATS on `0.0.0.0:4222` instead of loopback, and authenticates with the credentials file named by `DAGNATS_LEAF_CREDENTIALS` if the root uses one. Because the local dagnats then is both the engine and the agents' hub, `NOTIFY_MESH_NATS_URL` is left empty so mesh dispatch reuses the engine NATS.
+The native and Compose sections below are both program mode: the dagnats server is a separate process and notify connects to it.
 
-The prelude `notify-prelude.sh` runs before `notify serve`. It applies the same defaults notify uses, checks that `NOTIFY_MASTER_KEY_HEX` is 64 hex characters (and warns loudly when it is empty), turns a mounted Firebase service-account file into `FIREBASE_SERVICE_ACCOUNT_B64`, logs which provider credentials are present (names only, never values), warns when a chat bot token is set with no `NOTIFY_CHAT_DEFAULT_AGENT`, and then `exec`s `notify serve`.
+## Combined binary
 
-Secrets come from the process environment: `doppler run -p notify -c dev -- docker compose -f deploy/compose.hub.yml up -d`. `deploy/stage-creds.sh` pushes them into a scion hub secret store instead, and `deploy/scion-agent.yaml` is the matching agent template. `deploy/root-hub/` holds the root hub's NATS configuration (Tailscale-private, or public TLS with nsc-issued credentials). These are specific to one operator's mesh; most deployments do not need them.
+An application can run dagnats' server and notify in one process. It imports `github.com/danmestas/notify/notify` and runs `notify.Program` in-process under the same host that embeds dagnats, instead of starting `notify serve` and dialing a URL. There is no `NOTIFY_DAGNATS_URL` to set and no second process to supervise; you give up running notify and dagnats at different versions or on different machines. `cmd/notify/main.go` shows how `notify.Program` is built and run, and the dagnats documentation covers embedding its server.
 
 ## Smoke tests
 
