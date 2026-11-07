@@ -49,10 +49,18 @@ const durableName = "notify-analytics"
 // environment's delivery-status events that inserts one AnalyticsDelivery
 // scoped to the event's OrgID/EnvID. Events published while notify is down are
 // delivered on the next Start. The returned stop func drains the consumer.
+//
+// The durable is created at the stream's tail (FromNewMessages), not its
+// start. Before this consumer existed a core-NATS subscription fed the store,
+// so the retained NOTIFY_DELIVERY backlog is already in analytics_deliveries
+// with no event_key and cannot be deduplicated; replaying it would count the
+// past week twice. The only events skipped are those published during the one
+// upgrade restart, which the old projector would have lost too. After the
+// durable exists its acked position takes over.
 func (svc *Service) Start(ctx context.Context) (stop func() error, err error) {
 	return svc.bus.ConsumeAllDeliveryDurable(ctx, durableName, func(data []byte) error {
 		return svc.ingest(ctx, data)
-	})
+	}, eventbus.FromNewMessages())
 }
 
 // ingest unmarshals one delivery-status event (a domain.Message JSON) and

@@ -227,3 +227,67 @@ func TestConsumeAllDeliveryDurable_NakRedelivers(t *testing.T) {
 		t.Fatalf("attempts = %d, want >= 2", attempts)
 	}
 }
+
+// TestConsumeAllDeliveryDurable_FromNew asserts a consumer created with
+// FromNewMessages skips the stream's existing backlog, receives later events,
+// and that restarting with the same durable name (now existing) still works
+// and resumes without replaying.
+func TestConsumeAllDeliveryDurable_FromNew(t *testing.T) {
+	natsURL := startSidecar(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	bus, err := Connect(ctx, natsURL)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer bus.Close()
+
+	if err := bus.PublishDelivery("env1", []byte(`{"event":"old"}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	got := make(chan string, 8)
+	handler := func(data []byte) error { got <- string(data); return nil }
+	stop, err := bus.ConsumeAllDeliveryDurable(ctx, "fromnew", handler, FromNewMessages())
+	if err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	if err := bus.PublishDelivery("env1", []byte(`{"event":"new1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if v := recvWithin(t, got); v != `{"event":"new1"}` {
+		t.Fatalf("first event = %s, want new1 (backlog must be skipped)", v)
+	}
+	if err := stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Published while down, then restart on the existing durable.
+	if err := bus.PublishDelivery("env1", []byte(`{"event":"new2"}`)); err != nil {
+		t.Fatal(err)
+	}
+	stop2, err := bus.ConsumeAllDeliveryDurable(ctx, "fromnew", handler, FromNewMessages())
+	if err != nil {
+		t.Fatalf("restart on existing durable: %v", err)
+	}
+	defer func() { _ = stop2() }()
+	if v := recvWithin(t, got); v != `{"event":"new2"}` {
+		t.Fatalf("after restart = %s, want new2", v)
+	}
+	select {
+	case v := <-got:
+		t.Fatalf("unexpected extra delivery %s", v)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func recvWithin(t *testing.T, ch <-chan string) string {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for delivery")
+		return ""
+	}
+}

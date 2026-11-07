@@ -165,3 +165,30 @@ func TestIngest_StoreErrorIsRetried(t *testing.T) {
 		t.Fatal("ingest on a closed store = nil, want error so the message is Nak'd")
 	}
 }
+
+// TestProjector_FirstStartSkipsBacklog covers the upgrade from the core-NATS
+// projector: the stream already holds events that projector wrote to the
+// store (without event keys), so a brand-new durable must not replay them.
+func TestProjector_FirstStartSkipsBacklog(t *testing.T) {
+	bus, st := newBus(t), newStore(t)
+	ctx := context.Background()
+	for _, id := range []string{"old1", "old2"} {
+		if err := bus.PublishDelivery("e1", event(t, id, "sent")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := New(st, bus)
+	stop, err := svc.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = stop() }()
+	if err := bus.PublishDelivery("e1", event(t, "new1", "sent")); err != nil {
+		t.Fatal(err)
+	}
+	waitTotal(t, svc, 1)
+	settle()
+	if got := total(t, svc); got != 1 {
+		t.Fatalf("total = %d, want 1 (backlog skipped)", got)
+	}
+}

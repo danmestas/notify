@@ -281,6 +281,17 @@ func (b *Bus) SubscribeAllDelivery(handler func([]byte)) (unsubscribe func() err
 	return sub.Unsubscribe, nil
 }
 
+// DurableOption tweaks the config a ConsumeAllDeliveryDurable consumer is
+// created with.
+type DurableOption func(*jetstream.ConsumerConfig)
+
+// FromNewMessages makes a durable that does not exist yet start at the stream's
+// tail, skipping the retained backlog. It has no effect on an existing durable,
+// which resumes from its acked position.
+func FromNewMessages() DurableOption {
+	return func(c *jetstream.ConsumerConfig) { c.DeliverPolicy = jetstream.DeliverNewPolicy }
+}
+
 // ConsumeAllDeliveryDurable starts (or resumes) a durable JetStream consumer
 // named durable on the NOTIFY_DELIVERY stream, delivering every
 // environment's delivery-status events (subject notify.delivery.>) to
@@ -298,18 +309,37 @@ func (b *Bus) SubscribeAllDelivery(handler func([]byte)) (unsubscribe func() err
 //
 // The returned stop func drains the consumer: it stops pulling new messages
 // but lets any message already handed to handler finish before returning.
-func (b *Bus) ConsumeAllDeliveryDurable(ctx context.Context, durable string, handler func(data []byte) error) (stop func() error, err error) {
+//
+// By default a durable that does not exist yet starts at the beginning of the
+// stream (DeliverAll), replaying the retained backlog. FromNewMessages starts
+// it at the stream's tail instead.
+func (b *Bus) ConsumeAllDeliveryDurable(ctx context.Context, durable string, handler func(data []byte) error, opts ...DurableOption) (stop func() error, err error) {
 	if durable == "" {
 		return nil, fmt.Errorf("eventbus: ConsumeAllDeliveryDurable: durable must be non-empty")
 	}
 
-	cons, err := b.js.CreateOrUpdateConsumer(ctx, deliveryStream, jetstream.ConsumerConfig{
+	cfg := jetstream.ConsumerConfig{
 		Durable:        durable,
 		FilterSubjects: []string{deliverySubjectAll},
 		AckPolicy:      jetstream.AckExplicitPolicy,
 		AckWait:        30 * time.Second,
 		MaxDeliver:     5,
-	})
+	}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	var cons jetstream.Consumer
+	if cfg.DeliverPolicy != jetstream.DeliverAllPolicy {
+		// DeliverPolicy only applies at creation and JetStream rejects an
+		// update that changes it, so an existing durable is used as is.
+		cons, err = b.js.Consumer(ctx, deliveryStream, durable)
+		if errors.Is(err, jetstream.ErrConsumerNotFound) {
+			cons, err = b.js.CreateConsumer(ctx, deliveryStream, cfg)
+		}
+	} else {
+		cons, err = b.js.CreateOrUpdateConsumer(ctx, deliveryStream, cfg)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("eventbus: ConsumeAllDeliveryDurable: ensure consumer %q: %w", durable, err)
 	}
