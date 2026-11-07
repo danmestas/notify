@@ -181,7 +181,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 		return nil, err
 	}
 	health := deliveryhealth.New(st, healthSettings, log)
-	st.SetMessageObserver(health)
+	st.SetDeliveryObserver(health)
 	n.credVerify = credverify.New(eng, conn).WithObserver(health)
 	reg.Handle(credverify.TaskVerify, n.credVerify.Handler)
 	conn.OnCredentialsChanged(n.credVerify.CheckSoon)

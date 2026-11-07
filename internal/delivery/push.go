@@ -276,7 +276,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 		if providers.IsTransient(err) {
 			// Transient (5xx/timeout): let the engine retry the task per its
 			// policy instead of recording a terminal failed message.
-			return nil, engine.NewRetryableError(err)
+			return nil, retryTransient(ctx, h.store, scope, integrationID, err)
 		}
 		return h.persistPushError(ctx, env, t, providerID, integrationID, err)
 	}
@@ -368,7 +368,7 @@ func (h *PushHandler) handleWebPushSend(ctx context.Context, env runenv.InAppEnv
 			// failure, matching the single-address path's classification. A
 			// retry never re-sends to a device that already succeeded,
 			// because sent == 0 is required to take this branch.
-			return nil, engine.NewRetryableError(fmt.Errorf("webpush: 0/%d subscriptions delivered: %w", len(subs), lastErr))
+			return nil, retryTransient(ctx, h.store, scope, integrationID, fmt.Errorf("webpush: 0/%d subscriptions delivered: %w", len(subs), lastErr))
 		}
 		extras, _ := json.Marshal(map[string]any{"devices": outcomes})
 		return h.persistPushErrorWithExtras(ctx, env, t, webPushProviderID, integrationID, fmt.Errorf("webpush: 0/%d subscriptions delivered: %w", len(subs), lastErr), extras)

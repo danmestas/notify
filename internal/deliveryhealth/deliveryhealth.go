@@ -105,8 +105,8 @@ type Transition struct {
 const maxMessageLen = 500
 
 // Tracker evaluates and persists integration health. It is a
-// store.MessageObserver: install it with Store.SetMessageObserver and every
-// delivery result reaches it. Credential checks report through
+// store.DeliveryObserver: install it with Store.SetDeliveryObserver and every
+// delivery outcome reaches it. Credential checks report through
 // CredentialChecked.
 type Tracker struct {
 	st  *store.Store
@@ -147,17 +147,30 @@ func (t *Tracker) OnTransition(fn func(Transition)) {
 // of an integration (no integration id, or a status other than sent or
 // error) and recipient errors are ignored.
 func (t *Tracker) MessageCreated(ctx context.Context, scope domain.Scope, m domain.Message) {
-	if m.IntegrationID == "" {
+	switch m.Status {
+	case "sent":
+		t.record(ctx, scope, m.IntegrationID, true, "", "")
+	case "error":
+		t.record(ctx, scope, m.IntegrationID, false, providers.ErrorClass(m.ErrorClass), m.ErrorText)
+	}
+}
+
+// AttemptFailed records a failed attempt that wrote no message: a transient
+// provider failure the engine will retry. It counts like a failed message, so
+// an outage on a channel that retries still reaches health; the retry that
+// finally succeeds writes a sent message and counts as the success.
+func (t *Tracker) AttemptFailed(ctx context.Context, scope domain.Scope, integrationID, errorClass, errorText string) {
+	t.record(ctx, scope, integrationID, false, providers.ErrorClass(errorClass), errorText)
+}
+
+// record folds one delivery outcome into the integration's health. Outcomes
+// with no integration, and recipient errors, are ignored.
+func (t *Tracker) record(ctx context.Context, scope domain.Scope, integrationID string, ok bool, class providers.ErrorClass, text string) {
+	if integrationID == "" || (!ok && class == providers.ClassRecipient) {
 		return
 	}
-	switch {
-	case m.Status == "sent":
-	case m.Status == "error" && m.ErrorClass != string(providers.ClassRecipient):
-	default:
-		return
-	}
-	t.update(ctx, scope, m.IntegrationID, func(h *domain.IntegrationHealth, now time.Time) error {
-		return t.applyResult(ctx, scope, h, m, now)
+	t.update(ctx, scope, integrationID, func(h *domain.IntegrationHealth, now time.Time) error {
+		return t.applyResult(ctx, scope, h, ok, class, text, now)
 	})
 }
 
@@ -172,9 +185,11 @@ func (t *Tracker) CredentialChecked(ctx context.Context, scope domain.Scope, int
 		h.LastCheckOK = ok
 		if ok {
 			if State(h.State) == Failing || State(h.State) == Unverified {
-				return restore(h, func() (int64, error) {
-					return t.st.IntegrationHealth().LatestMessageSeq(ctx)
-				})
+				floor, err := t.st.IntegrationHealth().LatestResultSeq(ctx)
+				if err != nil {
+					return fmt.Errorf("window floor: %w", err)
+				}
+				restore(h, floor)
 			}
 			return nil
 		}
@@ -188,25 +203,29 @@ func (t *Tracker) CredentialChecked(ctx context.Context, scope domain.Scope, int
 	})
 }
 
-// applyResult folds one delivery result into h.
-func (t *Tracker) applyResult(ctx context.Context, scope domain.Scope, h *domain.IntegrationHealth, m domain.Message, now time.Time) error {
-	if m.Status == "error" {
-		setLastError(h, providers.ErrorClass(m.ErrorClass), m.ErrorText, now)
+// applyResult appends one delivery outcome to the integration's results and
+// folds it into h.
+func (t *Tracker) applyResult(ctx context.Context, scope domain.Scope, h *domain.IntegrationHealth, ok bool, class providers.ErrorClass, text string, now time.Time) error {
+	repo := t.st.IntegrationHealth()
+	since := timestamp.Format(now.Add(-t.set.Window))
+	seq, err := repo.RecordResult(ctx, scope, h.IntegrationID, ok, string(class), timestamp.Format(now), since)
+	if err != nil {
+		return fmt.Errorf("record result: %w", err)
+	}
+	if !ok {
+		setLastError(h, class, text, now)
 	}
 	state := State(h.State)
-	if m.Status == "sent" && (state == Failing || state == Unverified) {
-		return restore(h, func() (int64, error) {
-			seq, err := t.st.IntegrationHealth().MessageSeq(ctx, scope, m.ID)
-			// The window restarts with this success, so it counts.
-			return seq - 1, err
-		})
+	if ok && (state == Failing || state == Unverified) {
+		// The window restarts with this success, so it counts.
+		restore(h, seq-1)
+		return nil
 	}
 	if state == Failing {
 		// Only a success or a passing check ends failing.
 		return nil
 	}
-	since := now.Add(-t.set.Window).UTC().Format(time.RFC3339)
-	sent, failed, err := t.st.IntegrationHealth().WindowCounts(ctx, scope, h.IntegrationID, since, h.WindowFloor)
+	sent, failed, err := repo.WindowCounts(ctx, scope, h.IntegrationID, since, h.WindowFloor)
 	if err != nil {
 		return fmt.Errorf("window counts: %w", err)
 	}
@@ -228,15 +247,10 @@ func (t *Tracker) evaluate(current State, sent, failed int) State {
 	}
 }
 
-// restore sets h healthy and restarts its window after floor.
-func restore(h *domain.IntegrationHealth, floor func() (int64, error)) error {
-	f, err := floor()
-	if err != nil {
-		return fmt.Errorf("window floor: %w", err)
-	}
-	h.WindowFloor = f
+// restore sets h healthy and restarts its window after the result seq floor.
+func restore(h *domain.IntegrationHealth, floor int64) {
+	h.WindowFloor = floor
 	h.State = string(Healthy)
-	return nil
 }
 
 func setLastError(h *domain.IntegrationHealth, class providers.ErrorClass, message string, now time.Time) {

@@ -48,7 +48,7 @@ func TestStore_Migrate_IsIdempotent(t *testing.T) {
 
 	want := []string{
 		"a2a_client_keys", "a2a_receiver_keys", "agent_draft_requests", "agent_drafts", "agent_links", "agents", "analytics_deliveries", "api_keys", "builder_checkpoints", "builder_messages", "builder_sessions", "chat_inbound_handled", "chat_poll_cursors", "chat_threads", "contexts", "conversation_activities", "conversations",
-		"delay_deadlines", "email_threads", "env_var_values", "env_vars",
+		"delay_deadlines", "delivery_results", "email_threads", "env_var_values", "env_vars",
 		"environments", "inbound_domains", "inbound_messages", "integration_health", "integrations", "layouts", "messages", "notifications",
 		"organizations", "preferences", "step_outputs", "stream_sources", "subscriber_channels", "subscribers", "task_status", "topic_subscribers", "topic_triggers", "topics", "translations", "webhook_deliveries", "webhook_endpoints", "webpush_subscriptions", "workflow_versions", "workflows",
 	}

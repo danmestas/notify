@@ -46,7 +46,7 @@ func newRig(t *testing.T) *rig {
 		defer r.mu.Unlock()
 		r.transitions = append(r.transitions, tr)
 	})
-	st.SetMessageObserver(r.tr)
+	st.SetDeliveryObserver(r.tr)
 	return r
 }
 
@@ -267,6 +267,29 @@ func TestMessagesWithoutAnIntegrationAreIgnored(t *testing.T) {
 	rows, err := r.st.IntegrationHealth().List(context.Background(), scope)
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("rows = %v, err = %v", rows, err)
+	}
+}
+
+func TestFailedAttemptsWithoutMessagesAreFailing(t *testing.T) {
+	r := newRig(t)
+	for range 3 {
+		r.st.ReportFailedAttempt(context.Background(), scope, r.integ, "provider_down", "twilio: status 503: unavailable")
+	}
+	h := r.health()
+	if State(h.State) != Failing || h.LastErrorClass != "provider_down" {
+		t.Fatalf("health = %+v", h)
+	}
+	r.sent() // the retry that finally gets through
+	r.wantState(Healthy)
+}
+
+func TestRecipientAttemptsChangeNothing(t *testing.T) {
+	r := newRig(t)
+	for range 5 {
+		r.st.ReportFailedAttempt(context.Background(), scope, r.integ, "recipient", "chat not found")
+	}
+	if _, err := r.st.IntegrationHealth().Get(context.Background(), scope, r.integ); err != store.ErrNotFound {
+		t.Fatalf("health row written for recipient attempts: %v", err)
 	}
 }
 

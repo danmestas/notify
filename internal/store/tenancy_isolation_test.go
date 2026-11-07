@@ -289,8 +289,8 @@ func checkIntegrationHealth(t *testing.T, ctx context.Context, s *Store, a, b do
 	}); err != nil {
 		t.Fatalf("seed A health: %v", err)
 	}
-	if _, err := s.Messages().Create(ctx, a, domain.Message{IntegrationID: intA.ID, Status: "sent", ID: "msg-health-a"}); err != nil {
-		t.Fatalf("seed A message: %v", err)
+	if _, err := repo.RecordResult(ctx, a, intA.ID, false, "auth", "2026-01-01T00:00:00Z", ""); err != nil {
+		t.Fatalf("seed A result: %v", err)
 	}
 
 	_, err = repo.Get(ctx, b, intA.ID)
@@ -315,8 +315,9 @@ func checkIntegrationHealth(t *testing.T, ctx context.Context, s *Store, a, b do
 	if err != nil || sent != 0 || failed != 0 {
 		t.Errorf("IntegrationHealth.WindowCounts: cross-tenant leak: sent=%d failed=%d err=%v", sent, failed, err)
 	}
-	_, err = repo.MessageSeq(ctx, b, "msg-health-a")
-	mustNotFound(t, "IntegrationHealth.MessageSeq", err)
+	if sent, failed, err := repo.WindowCounts(ctx, a, intA.ID, "", 0); err != nil || sent != 0 || failed != 1 {
+		t.Errorf("IntegrationHealth.WindowCounts(a): sent=%d failed=%d err=%v, want the seeded failure", sent, failed, err)
+	}
 }
 
 func checkWebPushSubscriptions(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
