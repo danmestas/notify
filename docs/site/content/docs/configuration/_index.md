@@ -41,6 +41,7 @@ Flags use Go's `flag` package, so `-addr` and `--addr` are the same. Variables m
 | (env only) | `NOTIFY_HEALTH_DEGRADED_RATE` | `0.20` | Integration health: an integration is `degraded` when more than this share of its deliveries in the window failed. Recipient errors do not count. |
 | (env only) | `NOTIFY_HEALTH_FAILING_ERRORS` | `3` | Integration health: this many failed deliveries in the window with no success make an integration `failing`, as does a credential check the provider rejects. |
 | (env only) | `NOTIFY_HEALTH_WINDOW` | `1h` | Integration health: how far back delivery results count, as a Go duration. A bad value in any of the three stops start. |
+| (env only) | `NOTIFY_HEALTH_VERIFY_CRON` | `17 6 * * *` | When the daily credential check runs: a 5-field cron expression, read in UTC. `off` turns it off and removes its trigger. A malformed value stops start. See [Delivery health](../operations/observability#delivery-health). |
 
 ## serve: agents
 

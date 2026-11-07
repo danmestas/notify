@@ -415,3 +415,33 @@ func TestIntegrationRepo_GetByIdentifier_FoundAndNotFound(t *testing.T) {
 		t.Fatalf("wrong scope: error = %v, want ErrNotFound", err)
 	}
 }
+
+func TestStore_ActiveIntegrationScopes_SpansTenantsAndSkipsInactive(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Integrations()
+	mk := func(scope domain.Scope, ident string, active bool) string {
+		in, err := repo.Create(ctx, scope, domain.Integration{
+			ProviderID: "capture", Channel: "email", Active: active, Identifier: ident,
+		})
+		if err != nil {
+			t.Fatalf("create %s: %v", ident, err)
+		}
+		return in.ID
+	}
+	a := mk(domain.Scope{OrgID: "o1", EnvID: "e1"}, "a", true)
+	mk(domain.Scope{OrgID: "o1", EnvID: "e1"}, "off", false)
+	b := mk(domain.Scope{OrgID: "o2", EnvID: "e2"}, "b", true)
+
+	got, err := s.ActiveIntegrationScopes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ScopedIntegration{
+		{Scope: domain.Scope{OrgID: "o1", EnvID: "e1"}, IntegrationID: a},
+		{Scope: domain.Scope{OrgID: "o2", EnvID: "e2"}, IntegrationID: b},
+	}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}

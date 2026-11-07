@@ -44,3 +44,24 @@ func TestLoadConfig_HealthSettingsRejectsBadValues(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadConfig_HealthVerifyCron(t *testing.T) {
+	cfg, err := loadConfig([]string{"-dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.app.HealthVerifyCron != "" {
+		t.Fatalf("default = %q, want empty (the package default)", cfg.app.HealthVerifyCron)
+	}
+	for _, v := range []string{"off", "30 3 * * *"} {
+		t.Setenv("NOTIFY_HEALTH_VERIFY_CRON", v)
+		cfg, err = loadConfig([]string{"-dev"})
+		if err != nil || cfg.app.HealthVerifyCron != v {
+			t.Fatalf("%q: cron %q err %v", v, cfg.app.HealthVerifyCron, err)
+		}
+	}
+	t.Setenv("NOTIFY_HEALTH_VERIFY_CRON", "every day")
+	if _, err := loadConfig([]string{"-dev"}); err == nil {
+		t.Fatal("a malformed schedule was accepted")
+	}
+}

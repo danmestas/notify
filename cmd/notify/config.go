@@ -122,6 +122,10 @@ func loadConfig(args []string) (config, error) {
 	if err != nil {
 		return config{}, err
 	}
+	verifyCron, err := healthVerifyCron()
+	if err != nil {
+		return config{}, err
+	}
 	if (*smtpCert == "") != (*smtpKey == "") {
 		return config{}, errors.New("-smtp-cert and -smtp-key must be set together")
 	}
@@ -187,7 +191,8 @@ func loadConfig(args []string) (config, error) {
 
 			DuckDBPath: envOr("NOTIFY_DUCKDB", "notify-analytics.duckdb"),
 
-			Health: health,
+			Health:           health,
+			HealthVerifyCron: verifyCron,
 		},
 	}, nil
 }

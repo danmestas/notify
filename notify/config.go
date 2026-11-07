@@ -100,4 +100,10 @@ type Config struct {
 	// Health holds the integration health thresholds. The zero value means
 	// deliveryhealth.DefaultSettings.
 	Health deliveryhealth.Settings
+
+	// HealthVerifyCron schedules the daily credential check (#100): a
+	// standard 5-field cron expression in UTC. Empty means
+	// credverify.DefaultVerifyCron; "off" does not schedule it and removes the
+	// trigger if one exists.
+	HealthVerifyCron string
 }

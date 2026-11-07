@@ -51,6 +51,7 @@ import (
 	"github.com/danmestas/notify/internal/inbounddomains"
 	"github.com/danmestas/notify/internal/inboxapi"
 	"github.com/danmestas/notify/internal/metrics"
+	"github.com/danmestas/notify/internal/names"
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/replyhook"
@@ -72,14 +73,17 @@ type Notify struct {
 	au  *authoring.Service
 
 	credVerify *credverify.Service
-	aiLoop     *aibuilder.AgentLoopBuilder
-	chat       *chatloop.Service
-	cards      *cards.Source
-	chatScope  domain.Scope
-	webhooks   *webhooksout.Consumer
-	an         *analytics.Service
-	smtp       *smtpin.Server
-	smtpAddr   string
+	// healthVerifyCron is the daily credential check's schedule (see
+	// Config.HealthVerifyCron).
+	healthVerifyCron string
+	aiLoop           *aibuilder.AgentLoopBuilder
+	chat             *chatloop.Service
+	cards            *cards.Source
+	chatScope        domain.Scope
+	webhooks         *webhooksout.Consumer
+	an               *analytics.Service
+	smtp             *smtpin.Server
+	smtpAddr         string
 
 	handler http.Handler
 
@@ -180,10 +184,15 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	if err := healthSettings.Validate(); err != nil {
 		return nil, err
 	}
+	if err := credverify.ValidateVerifyCron(cfg.HealthVerifyCron); err != nil {
+		return nil, err
+	}
+	n.healthVerifyCron = cfg.HealthVerifyCron
 	health := deliveryhealth.New(st, healthSettings, log)
 	st.SetDeliveryObserver(health)
-	n.credVerify = credverify.New(eng, conn).WithObserver(health)
+	n.credVerify = credverify.New(eng, conn).WithObserver(health).WithLister(st)
 	reg.Handle(credverify.TaskVerify, n.credVerify.Handler)
+	reg.Handle(names.VerifyAll, n.credVerify.VerifyAllHandler)
 	conn.OnCredentialsChanged(n.credVerify.CheckSoon)
 
 	meshClient := mesh.FromConn(meshConn, mesh.WithAllowedSubjects(cfg.MeshAllow))
@@ -522,6 +531,10 @@ func (n *Notify) start(ctx context.Context) error {
 	// disabled if the run later cannot start, rather than refusing to boot.
 	if err := n.credVerify.Register(ctx); err != nil {
 		n.log.Error("credverify: register workflow", "err", err)
+	} else {
+		// Daily credential check (#100): assert its cron trigger with dagnats.
+		// Never fails start; see ScheduleDaily.
+		n.credVerify.ScheduleDaily(ctx, n.eng, n.healthVerifyCron)
 	}
 
 	// Declare the AI-builder agent-loop workflow now that the engine is live. A
