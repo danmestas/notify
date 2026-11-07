@@ -17,6 +17,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/danmestas/dagnats/dag"
 
@@ -63,6 +65,41 @@ type runInput struct {
 type Service struct {
 	eng Engine
 	ver Verifier
+	obs Observer
+	log *slog.Logger
+}
+
+// Observer hears the verdict of every completed credential check: ok when
+// the provider accepted the credentials, otherwise detail says why not. A
+// check whose provider has no probe is not reported. *deliveryhealth.Tracker
+// satisfies it.
+type Observer interface {
+	CredentialChecked(ctx context.Context, scope domain.Scope, integrationID string, ok bool, detail string)
+}
+
+// WithObserver attaches o to hear every check's verdict and returns s.
+func (s *Service) WithObserver(o Observer) *Service {
+	s.obs = o
+	return s
+}
+
+// startTimeout bounds CheckSoon's start request.
+const startTimeout = 30 * time.Second
+
+// CheckSoon starts a check of integration id in the background and returns
+// at once. It is what runs right after an integration's credentials change
+// (connectivity.Service.OnCredentialsChanged): the caller is an HTTP request
+// that must not wait on the engine, nor cancel the start when it returns. A
+// start that fails is logged.
+func (s *Service) CheckSoon(ctx context.Context, scope domain.Scope, integrationID string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), startTimeout)
+	go func() {
+		defer cancel()
+		if _, err := s.Start(ctx, scope, integrationID); err != nil {
+			s.log.Warn("credverify: check after credential change did not start",
+				"integration", integrationID, "err", err)
+		}
+	}()
 }
 
 // New builds a credverify Service over the engine and the credential verifier.
@@ -73,7 +110,7 @@ func New(eng Engine, ver Verifier) *Service {
 	if ver == nil {
 		panic("credverify.New: verifier is nil")
 	}
-	return &Service{eng: eng, ver: ver}
+	return &Service{eng: eng, ver: ver, log: slog.Default()}
 }
 
 // Register declares the one-step verify workflow with the engine. It is
@@ -112,6 +149,9 @@ func (s *Service) Handler(ctx context.Context, t engine.TaskPayload) (json.RawMe
 	out, err := json.Marshal(res)
 	if err != nil {
 		return nil, fmt.Errorf("credverify: encode result: %w", err)
+	}
+	if s.obs != nil && !res.Unsupported {
+		s.obs.CredentialChecked(ctx, scope, in.IntegrationID, res.OK, res.Detail)
 	}
 	// A rejected credential is a completed run with ok=false — a definite,
 	// non-retryable answer the operator can act on. Returning the result as

@@ -37,6 +37,7 @@ import (
 	"github.com/danmestas/notify/internal/console"
 	"github.com/danmestas/notify/internal/contexts"
 	"github.com/danmestas/notify/internal/credverify"
+	"github.com/danmestas/notify/internal/deliveryhealth"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/emailloop"
 	"github.com/danmestas/notify/internal/engine"
@@ -168,8 +169,22 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// W4 ADR-013 (#55): durable credential-verify action. The verify task runs
 	// in this worker pool (registered before StartWorkers); the workflow is
 	// declared with the engine in Start.
-	n.credVerify = credverify.New(eng, conn)
+	//
+	// Delivery health (#100): every sent or failed message reaches the tracker
+	// through the store, every completed check through credverify, and a
+	// credential change starts a check right away.
+	healthSettings := cfg.Health
+	if healthSettings == (deliveryhealth.Settings{}) {
+		healthSettings = deliveryhealth.DefaultSettings()
+	}
+	if err := healthSettings.Validate(); err != nil {
+		return nil, err
+	}
+	health := deliveryhealth.New(st, healthSettings, log)
+	st.SetDeliveryObserver(health)
+	n.credVerify = credverify.New(eng, conn).WithObserver(health)
 	reg.Handle(credverify.TaskVerify, n.credVerify.Handler)
+	conn.OnCredentialsChanged(n.credVerify.CheckSoon)
 
 	meshClient := mesh.FromConn(meshConn, mesh.WithAllowedSubjects(cfg.MeshAllow))
 	n.push(func() error { meshClient.Close(); return nil })

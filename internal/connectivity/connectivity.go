@@ -6,6 +6,7 @@
 package connectivity
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -296,6 +297,10 @@ type Service struct {
 	// server has no usable public URL, in which case Web Push refuses to
 	// send rather than sign with a contact Apple rejects (#358).
 	defaultVAPIDSubject string
+
+	// onCredentialsChanged, when set, hears every credential change
+	// (OnCredentialsChanged).
+	onCredentialsChanged func(ctx context.Context, scope domain.Scope, integrationID string)
 }
 
 // Option customises a Service at construction. Options exist for tests that
@@ -386,7 +391,27 @@ func (svc *Service) createIntegration(ctx context.Context, scope domain.Scope, i
 	if !identifierPattern.MatchString(in.Identifier) {
 		return domain.Integration{}, ErrInvalidIdentifier
 	}
-	return svc.store.Integrations().Create(ctx, scope, in)
+	created, err := svc.store.Integrations().Create(ctx, scope, in)
+	if err != nil {
+		return created, err
+	}
+	svc.credentialsChanged(ctx, scope, created.ID)
+	return created, nil
+}
+
+// OnCredentialsChanged registers fn to run whenever an integration is
+// created or its credentials are updated, with that integration's id. The
+// delivery health wiring uses it to check the new credentials right away
+// (#100). fn runs on the caller's goroutine and must not block; set it while
+// wiring, before the service is used.
+func (svc *Service) OnCredentialsChanged(fn func(ctx context.Context, scope domain.Scope, integrationID string)) {
+	svc.onCredentialsChanged = fn
+}
+
+func (svc *Service) credentialsChanged(ctx context.Context, scope domain.Scope, integrationID string) {
+	if svc.onCredentialsChanged != nil {
+		svc.onCredentialsChanged(ctx, scope, integrationID)
+	}
 }
 
 // CreateSMTP stores an SMTP email integration for the Scope: it AES-GCM-encrypts
@@ -1657,6 +1682,9 @@ func (svc *Service) Update(ctx context.Context, scope domain.Scope, id string, i
 	if err := svc.store.Integrations().Update(ctx, scope, updated); err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: update: store: %w", err)
 	}
+	if !bytes.Equal(newEnc, existing.EncCredentials) {
+		svc.credentialsChanged(ctx, scope, id)
+	}
 	// Return without enc_credentials so callers get a safe DTO.
 	updated.EncCredentials = nil
 	return updated, nil
@@ -1672,6 +1700,9 @@ type VerifyResult struct {
 	ProviderID string `json:"providerId"`
 	Channel    string `json:"channel"`
 	Detail     string `json:"detail"`
+	// Unsupported is set when the provider has no credential probe: the
+	// result is no verdict on the credentials.
+	Unsupported bool `json:"unsupported,omitempty"`
 }
 
 // VerifyByID performs a real credentials probe against the provider configured
@@ -1762,6 +1793,7 @@ func (svc *Service) VerifyByID(ctx context.Context, scope domain.Scope, id strin
 		return res, nil
 	default:
 		res.OK = false
+		res.Unsupported = true
 		res.Detail = "unsupported provider for verification: " + providerID
 		return res, nil
 	}

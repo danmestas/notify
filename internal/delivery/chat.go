@@ -263,7 +263,7 @@ func (h *ChatHandler) HandleChat(ctx context.Context, t engine.TaskPayload) (jso
 		if providers.IsTransient(err) {
 			// Transient (5xx/timeout): let the engine retry the task per its
 			// policy instead of recording a terminal failed message.
-			return nil, engine.NewRetryableError(err)
+			return nil, retryTransient(ctx, h.store, scope, integrationID, err)
 		}
 		return h.persistChatError(ctx, env, t, providerID, integrationID, err)
 	}
@@ -405,6 +405,7 @@ func (h *ChatHandler) persistChatError(ctx context.Context, env runenv.InAppEnve
 		IntegrationID:  integrationID,
 		Status:         "error",
 		ErrorText:      cause.Error(),
+		ErrorClass:     string(providers.ClassifyError(cause)),
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}

@@ -226,7 +226,7 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 		if providers.IsTransient(err) {
 			// Transient (5xx/timeout): let the engine retry the task per its
 			// policy instead of recording a terminal failed message.
-			return nil, engine.NewRetryableError(err)
+			return nil, retryTransient(ctx, h.store, scope, integrationID, err)
 		}
 		return h.persistSMSError(ctx, env, t, providerID, integrationID, err)
 	}
@@ -368,6 +368,7 @@ func (h *SMSHandler) persistSMSError(ctx context.Context, env runenv.InAppEnvelo
 		IntegrationID:  integrationID,
 		Status:         "error",
 		ErrorText:      cause.Error(),
+		ErrorClass:     string(providers.ClassifyError(cause)),
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}

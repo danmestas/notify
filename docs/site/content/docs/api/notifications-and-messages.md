@@ -54,6 +54,7 @@ Serialized with Go field names, plus a lowercase `extras`:
 | `Subject`, `Content` | The rendered subject and body. For `stream`, `Subject` is the topic. |
 | `Status` | `sent`, `error`, `skipped` or `throttled`. |
 | `ErrorText` | The failure, when `Status` is `error`. |
+| `ErrorClass` | Why it failed, when `Status` is `error`: `auth` (the provider refused the credentials), `rate_limited`, `provider_down` (5xx, timeout, unreachable), `rejected_message` (the provider refused this message) or `recipient` (a bad or unknown address). |
 | `SkipReason` | `condition`, `condition_invalid` or `preference`, when `Status` is `skipped`. |
 | `Seen`, `Read`, `Archived` | Inbox state. |
 | `TransactionID` | The transaction. |

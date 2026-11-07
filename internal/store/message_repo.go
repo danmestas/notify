@@ -81,8 +81,9 @@ type MessageRepo interface {
 var markableFields = map[string]bool{"seen": true, "read": true, "archived": true}
 
 type messageRepo struct {
-	w *sql.DB
-	r *sql.DB
+	w   *sql.DB
+	r   *sql.DB
+	obs *messageObserverSlot
 }
 
 // messageColumns is the canonical ordered column list for SELECT and INSERT,
@@ -92,7 +93,7 @@ type messageRepo struct {
 // only requires updating this constant and the corresponding Scan call.
 const messageColumns = `m.id, m.org_id, m.environment_id, m.workflow_id, m.notification_id, m.run_id, m.step_id,
 	m.subscriber_id, m.channel, m.provider_id, m.integration_id, m.content, m.subject, m.status, m.seen, m.read,
-	m.archived, m.transaction_id, m.error_text, m.skip_reason, m.created_at, m.extras,
+	m.archived, m.transaction_id, m.error_text, m.error_class, m.skip_reason, m.created_at, m.extras,
 	COALESCE(w.trigger_identifier, '') AS workflow_identifier`
 
 // messageWorkflowJoin resolves each message's workflow_identifier at read
@@ -111,7 +112,7 @@ func scanMessage(rows *sql.Rows) (domain.Message, error) {
 	err := rows.Scan(
 		&m.ID, &m.OrgID, &m.EnvID, &m.WorkflowID, &m.NotificationID, &m.RunID, &m.StepID,
 		&m.SubscriberID, &m.Channel, &m.ProviderID, &m.IntegrationID, &m.Content, &m.Subject,
-		&m.Status, &m.Seen, &m.Read, &m.Archived, &m.TransactionID, &m.ErrorText, &m.SkipReason, &m.CreatedAt,
+		&m.Status, &m.Seen, &m.Read, &m.Archived, &m.TransactionID, &m.ErrorText, &m.ErrorClass, &m.SkipReason, &m.CreatedAt,
 		&extras, &m.WorkflowIdentifier,
 	)
 	m.Extras = json.RawMessage(extras)
@@ -140,14 +141,19 @@ func (repo *messageRepo) Create(ctx context.Context, scope domain.Scope, m domai
 		`INSERT INTO messages
 		   (id, org_id, environment_id, workflow_id, notification_id, run_id, step_id, subscriber_id,
 		    channel, provider_id, integration_id, content, subject, status, seen, read, archived,
-		    transaction_id, error_text, skip_reason, created_at, extras)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    transaction_id, error_text, error_class, skip_reason, created_at, extras)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.OrgID, m.EnvID, m.WorkflowID, m.NotificationID, m.RunID, m.StepID, m.SubscriberID,
 		m.Channel, m.ProviderID, m.IntegrationID, m.Content, m.Subject, m.Status, m.Seen, m.Read,
-		m.Archived, m.TransactionID, m.ErrorText, m.SkipReason, m.CreatedAt, []byte(m.Extras),
+		m.Archived, m.TransactionID, m.ErrorText, m.ErrorClass, m.SkipReason, m.CreatedAt, []byte(m.Extras),
 	)
 	if err != nil {
 		return domain.Message{}, err
+	}
+	if repo.obs != nil {
+		if o := repo.obs.load(); o != nil {
+			o.MessageCreated(ctx, scope, m)
+		}
 	}
 	return m, nil
 }
@@ -160,7 +166,7 @@ func scanMessageRow(row *sql.Row) (domain.Message, error) {
 	err := row.Scan(
 		&m.ID, &m.OrgID, &m.EnvID, &m.WorkflowID, &m.NotificationID, &m.RunID, &m.StepID,
 		&m.SubscriberID, &m.Channel, &m.ProviderID, &m.IntegrationID, &m.Content, &m.Subject,
-		&m.Status, &m.Seen, &m.Read, &m.Archived, &m.TransactionID, &m.ErrorText, &m.SkipReason, &m.CreatedAt,
+		&m.Status, &m.Seen, &m.Read, &m.Archived, &m.TransactionID, &m.ErrorText, &m.ErrorClass, &m.SkipReason, &m.CreatedAt,
 		&extras, &m.WorkflowIdentifier,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
