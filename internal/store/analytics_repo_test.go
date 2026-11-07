@@ -13,8 +13,8 @@ import (
 func TestMigrate_0006_AppliesAnalytics(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 51 {
-		t.Fatalf("expected 51 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 52 {
+		t.Fatalf("expected 52 recorded migrations, got %d", n)
 	}
 
 	var name string
@@ -455,5 +455,37 @@ func TestAnalyticsRepo_CountActiveSubscribers_ScopeIsolation(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("expected 1, got %d (cross-scope leak?)", n)
+	}
+}
+
+func TestAnalyticsRepo_InsertIdempotentOnEventKey(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Analytics()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	row := domain.AnalyticsDelivery{Channel: "email", Status: "sent", EventKey: "m1:sent"}
+	for i := 0; i < 3; i++ {
+		if err := repo.Insert(ctx, scope, row); err != nil {
+			t.Fatalf("insert #%d: %v", i, err)
+		}
+	}
+	// A different status of the same message, and key-less rows, all count.
+	if err := repo.Insert(ctx, scope, domain.AnalyticsDelivery{Channel: "email", Status: "read", EventKey: "m1:read"}); err != nil {
+		t.Fatalf("insert read: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := repo.Insert(ctx, scope, domain.AnalyticsDelivery{Channel: "email", Status: "sent"}); err != nil {
+			t.Fatalf("insert keyless #%d: %v", i, err)
+		}
+	}
+
+	got, err := repo.CountByChannelStatus(ctx, scope, AnalyticsFilter{})
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	want := map[string]map[string]int{"email": {"sent": 3, "read": 1}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
 	}
 }

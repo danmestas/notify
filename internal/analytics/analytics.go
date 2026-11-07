@@ -1,8 +1,9 @@
 // Package analytics owns notify's delivery-status analytics: a projector that
 // drains every environment's delivery-status events off the event bus into the
 // analytics store, plus a Scope-first query API and its HTTP route. The
-// projector is best-effort — a malformed event or a transient store error is
-// dropped, never panicked on, so the bus subscription keeps draining.
+// projector is a durable JetStream consumer, so it resumes after downtime; a
+// malformed event is dropped and a transient store error is retried, never
+// panicked on, so the consumer keeps draining.
 package analytics
 
 import (
@@ -39,23 +40,27 @@ func NewWithRepo(repo store.AnalyticsRepo, bus *eventbus.Bus) *Service {
 	return &Service{repo: repo, bus: bus}
 }
 
-// Start launches the projector: it subscribes to EVERY environment's
-// delivery-status events and, for each, inserts one AnalyticsDelivery scoped to
-// the event's OrgID/EnvID. The returned stop func unsubscribes.
+// durableName is the JetStream durable consumer the projector resumes across
+// restarts. Renaming it starts a fresh consumer with no memory of what was
+// already projected, so do not change it without a migration plan.
+const durableName = "notify-analytics"
+
+// Start launches the projector: a durable JetStream consumer over EVERY
+// environment's delivery-status events that inserts one AnalyticsDelivery
+// scoped to the event's OrgID/EnvID. Events published while notify is down are
+// delivered on the next Start. The returned stop func drains the consumer.
 func (svc *Service) Start(ctx context.Context) (stop func() error, err error) {
-	unsub, err := svc.bus.SubscribeAllDelivery(func(data []byte) {
-		svc.ingest(ctx, data)
+	return svc.bus.ConsumeAllDeliveryDurable(ctx, durableName, func(data []byte) error {
+		return svc.ingest(ctx, data)
 	})
-	if err != nil {
-		return nil, err
-	}
-	return unsub, nil
 }
 
 // ingest unmarshals one delivery-status event (a domain.Message JSON) and
-// appends an AnalyticsDelivery row when it carries a tenancy scope. Best-effort:
-// errors are logged and swallowed so the subscription keeps draining.
-func (svc *Service) ingest(ctx context.Context, data []byte) {
+// appends an AnalyticsDelivery row when it carries a tenancy scope. A malformed
+// or unscoped event is logged and dropped (nil: acked, never redelivered). A
+// store error is returned so the durable consumer Naks and redelivers; the
+// event key makes that redelivery idempotent.
+func (svc *Service) ingest(ctx context.Context, data []byte) error {
 	var ev struct {
 		OrgID         string
 		EnvID         string
@@ -69,10 +74,11 @@ func (svc *Service) ingest(ctx context.Context, data []byte) {
 	}
 	if err := json.Unmarshal(data, &ev); err != nil {
 		log.Printf("analytics: drop event: unmarshal: %v", err)
-		return
+		return nil
 	}
 	if ev.OrgID == "" || ev.EnvID == "" {
-		return
+		log.Printf("analytics: drop event: no tenancy scope")
+		return nil
 	}
 	scope := domain.Scope{OrgID: ev.OrgID, EnvID: ev.EnvID}
 	if err := svc.repo.Insert(ctx, scope, domain.AnalyticsDelivery{
@@ -83,9 +89,12 @@ func (svc *Service) ingest(ctx context.Context, data []byte) {
 		TransactionID: ev.TransactionID,
 		RunID:         ev.RunID,
 		CreatedAt:     ev.CreatedAt,
+		EventKey:      eventbus.DeliveryEventKey(data),
 	}); err != nil {
 		log.Printf("analytics: insert: %v", err)
+		return err
 	}
+	return nil
 }
 
 // DeliveriesByChannel returns delivery counts grouped by channel then status

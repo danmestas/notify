@@ -43,6 +43,14 @@ const schema = `CREATE TABLE IF NOT EXISTS analytics_deliveries (
 	created_at     VARCHAR NOT NULL
 )`
 
+// eventKeySchema adds the idempotency key to a database created before it
+// existed and indexes it, mirroring SQLite migration 0052. NULL keys never
+// collide, so pre-existing rows are unaffected.
+var eventKeySchema = []string{
+	`ALTER TABLE analytics_deliveries ADD COLUMN IF NOT EXISTS event_key VARCHAR`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS analytics_deliveries_event_key ON analytics_deliveries (event_key)`,
+}
+
 // Open opens (or creates) a DuckDB database at path — pass "" for an in-memory
 // database — and ensures the analytics schema exists. The returned *Repo
 // satisfies store.AnalyticsRepo.
@@ -51,9 +59,11 @@ func Open(ctx context.Context, path string) (*Repo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("analyticsduck: open %q: %w", path, err)
 	}
-	if _, err := db.ExecContext(ctx, schema); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("analyticsduck: schema: %w", err)
+	for _, stmt := range append([]string{schema}, eventKeySchema...) {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("analyticsduck: schema: %w", err)
+		}
 	}
 	return &Repo{db: db}, nil
 }
@@ -73,14 +83,19 @@ func (r *Repo) Insert(ctx context.Context, scope domain.Scope, d domain.Analytic
 	if d.CreatedAt == "" {
 		d.CreatedAt = timestamp.Now()
 	}
+	var eventKey any
+	if d.EventKey != "" {
+		eventKey = d.EventKey
+	}
 	_, err := r.db.ExecContext(
 		ctx,
 		`INSERT INTO analytics_deliveries
 		   (id, org_id, environment_id, channel, status, subscriber_id,
-		    workflow_id, transaction_id, run_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    workflow_id, transaction_id, run_id, created_at, event_key)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT DO NOTHING`,
 		d.ID, d.OrgID, d.EnvID, d.Channel, d.Status, d.SubscriberID,
-		d.WorkflowID, d.TransactionID, d.RunID, d.CreatedAt,
+		d.WorkflowID, d.TransactionID, d.RunID, d.CreatedAt, eventKey,
 	)
 	return err
 }

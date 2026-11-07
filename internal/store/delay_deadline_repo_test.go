@@ -12,8 +12,8 @@ import (
 
 func TestMigrate_0031_AppliesDelayDeadlines(t *testing.T) {
 	s := openTemp(t)
-	if n := migrationCount(t, s); n != 51 {
-		t.Fatalf("expected 51 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 52 {
+		t.Fatalf("expected 52 recorded migrations, got %d", n)
 	}
 	var name string
 	err := s.reader.QueryRow(

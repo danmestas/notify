@@ -54,7 +54,7 @@ func wireCommon[T common[T]](h T, d deliveryDeps) T {
 // preferences/event-bus/throttle/digest dependencies — including send.email,
 // which previously never received .WithEventBus and so never published
 // delivery-status events (the analytics service's live counts are driven
-// entirely off those events via bus.SubscribeAllDelivery, so email sends
+// entirely off those events via the durable delivery consumer, so email sends
 // were silently invisible to /v1/analytics/deliveries and
 // /v1/analytics/timeseries).
 func registerDeliveryHandlers(eng taskRegistrar, st *store.Store, conn *connectivity.Service, prefs *preferences.Service, bus *eventbus.Bus, armer delivery.ReplyArmer) {

@@ -46,6 +46,8 @@ The console's Activity view lists every notification and its messages with live 
 
 ## Analytics backend
 
+The analytics projector reads delivery events through a durable consumer, so it resumes where it stopped after downtime or a restart, and a redelivered event is counted once.
+
 By default delivery analytics live in SQLite. A binary built with the `duckdb` tag stores them in an embedded DuckDB file instead (`NOTIFY_DUCKDB`, default `notify-analytics.duckdb`), while all transactional data stays in SQLite. It needs cgo, so the default image and release binaries do not include it:
 
 ```bash
