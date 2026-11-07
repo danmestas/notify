@@ -99,11 +99,32 @@ func TestUpsertTrigger_RefusedIsAnErrorButNotUnsupported(t *testing.T) {
 	}
 }
 
-// TestUpsertTrigger_NoRespondersIsUnsupported runs against the real pinned
-// dagnats, which has no program trigger endpoint.
-func TestUpsertTrigger_NoRespondersIsUnsupported(t *testing.T) {
+// TestUpsertTrigger_RealDagnatsCreatesAndDeletes runs against the real
+// pinned dagnats (v0.0.55 or later serves program triggers, dagnats#957).
+func TestUpsertTrigger_RealDagnatsCreatesAndDeletes(t *testing.T) {
 	e, _ := newTriggerEngine(t)
-	err := e.UpsertTrigger(context.Background(), engine.CronTrigger{ID: "notify.x", WorkflowID: "notify.y", Expression: "* * * * *"})
+	tr := engine.CronTrigger{ID: "notify.x", WorkflowID: "notify.y", Expression: "17 6 * * *", Timezone: "UTC"}
+	if err := e.UpsertTrigger(context.Background(), tr); err != nil {
+		t.Fatalf("UpsertTrigger: %v", err)
+	}
+	if err := e.UpsertTrigger(context.Background(), tr); err != nil {
+		t.Fatalf("UpsertTrigger again (upsert): %v", err)
+	}
+	if err := e.DeleteTrigger(context.Background(), "notify.x"); err != nil {
+		t.Fatalf("DeleteTrigger: %v", err)
+	}
+}
+
+// TestUpsertTrigger_NoRespondersIsUnsupported runs against a bare NATS
+// server, which is what a dagnats without program triggers looks like.
+func TestUpsertTrigger_NoRespondersIsUnsupported(t *testing.T) {
+	nc, err := nats.Connect(dagtest.StartBareNATS(t), engine.InboxOption())
+	if err != nil {
+		t.Fatalf("nats.Connect: %v", err)
+	}
+	t.Cleanup(nc.Close)
+	e := engine.FromConn(nc)
+	err = e.UpsertTrigger(context.Background(), engine.CronTrigger{ID: "notify.x", WorkflowID: "notify.y", Expression: "* * * * *"})
 	if !errors.Is(err, engine.ErrTriggersUnsupported) {
 		t.Fatalf("err = %v, want ErrTriggersUnsupported", err)
 	}

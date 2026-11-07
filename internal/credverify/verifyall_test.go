@@ -217,11 +217,29 @@ func TestValidateVerifyCron(t *testing.T) {
 	}
 }
 
-// TestScheduleDaily_RealDagnatsWithoutProgramTriggers runs the real engine
-// against the pinned dagnats, which has no program trigger endpoint: the
-// request gets no responders and start-up carries on after one info line.
-func TestScheduleDaily_RealDagnatsWithoutProgramTriggers(t *testing.T) {
+// TestScheduleDaily_RealDagnatsSchedules runs the real engine against the
+// pinned dagnats, which serves program triggers: the daily check is
+// scheduled and start-up logs one info line saying so.
+func TestScheduleDaily_RealDagnatsSchedules(t *testing.T) {
 	nc, err := nats.Connect(dagtest.StartSidecar(t), engine.InboxOption())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	var buf bytes.Buffer
+	loggedService(&buf).ScheduleDaily(context.Background(), engine.FromConn(nc), "")
+	out := strings.TrimSpace(buf.String())
+	if strings.Count(out, "\n") != 0 || !strings.Contains(out, "daily credential check scheduled") ||
+		!strings.Contains(out, "notify.health-verify-daily") {
+		t.Fatalf("log = %q", out)
+	}
+}
+
+// TestScheduleDaily_WithoutProgramTriggers runs against a bare NATS server,
+// which is what a dagnats without program triggers looks like: the request
+// gets no responders and start-up carries on after one info line.
+func TestScheduleDaily_WithoutProgramTriggers(t *testing.T) {
+	nc, err := nats.Connect(dagtest.StartBareNATS(t), engine.InboxOption())
 	if err != nil {
 		t.Fatal(err)
 	}
