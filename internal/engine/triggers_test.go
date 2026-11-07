@@ -38,7 +38,20 @@ func fakeProgramTriggers(t *testing.T, nc *nats.Conn, subject, reply string) cha
 
 func newTriggerEngine(t *testing.T) (*engine.Engine, *nats.Conn) {
 	t.Helper()
-	nc, err := nats.Connect(dagtest.StartSidecar(t), engine.InboxOption())
+	return connectTriggerEngine(t, dagtest.StartSidecar(t))
+}
+
+// newFakeTriggerEngine connects to a bare NATS server, so fakeProgramTriggers
+// is the only responder. On a real dagnats sidecar the engine also answers
+// the triggers API, and whichever reply lands first wins.
+func newFakeTriggerEngine(t *testing.T) (*engine.Engine, *nats.Conn) {
+	t.Helper()
+	return connectTriggerEngine(t, dagtest.StartBareNATS(t))
+}
+
+func connectTriggerEngine(t *testing.T, url string) (*engine.Engine, *nats.Conn) {
+	t.Helper()
+	nc, err := nats.Connect(url, engine.InboxOption())
 	if err != nil {
 		t.Fatalf("nats.Connect: %v", err)
 	}
@@ -47,7 +60,7 @@ func newTriggerEngine(t *testing.T) (*engine.Engine, *nats.Conn) {
 }
 
 func TestUpsertTrigger_SendsCronTriggerDef(t *testing.T) {
-	e, nc := newTriggerEngine(t)
+	e, nc := newFakeTriggerEngine(t)
 	got := fakeProgramTriggers(t, nc, "api.p.notify.triggers.create", `{"status":"created","id":"notify.health-verify-daily"}`)
 
 	err := e.UpsertTrigger(context.Background(), engine.CronTrigger{
@@ -90,7 +103,7 @@ func TestUpsertTrigger_SendsCronTriggerDef(t *testing.T) {
 }
 
 func TestUpsertTrigger_RefusedIsAnErrorButNotUnsupported(t *testing.T) {
-	e, nc := newTriggerEngine(t)
+	e, nc := newFakeTriggerEngine(t)
 	fakeProgramTriggers(t, nc, "api.p.notify.triggers.create", `{"error":"a program may register cron triggers only"}`)
 
 	err := e.UpsertTrigger(context.Background(), engine.CronTrigger{ID: "notify.x", WorkflowID: "notify.y", Expression: "* * * * *"})
@@ -134,7 +147,7 @@ func TestUpsertTrigger_NoRespondersIsUnsupported(t *testing.T) {
 }
 
 func TestDeleteTrigger_SendsRawIDAndToleratesMissing(t *testing.T) {
-	e, nc := newTriggerEngine(t)
+	e, nc := newFakeTriggerEngine(t)
 	got := fakeProgramTriggers(t, nc, "api.p.notify.triggers.delete", `{"error":"trigger not found"}`)
 
 	if err := e.DeleteTrigger(context.Background(), names.HealthVerifyTrigger); err != nil {
