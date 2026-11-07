@@ -2952,6 +2952,13 @@ pre.console-textarea-mono {
   color: var(--text-primary);
 }
 
+.agent-turn-retry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
 .agent-compose-box {
   margin-top: var(--space-4);
   padding: var(--space-3);
