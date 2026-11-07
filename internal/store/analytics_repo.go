@@ -64,14 +64,19 @@ func (repo *analyticsRepo) Insert(ctx context.Context, scope domain.Scope, d dom
 	if d.CreatedAt == "" {
 		d.CreatedAt = timestamp.Now()
 	}
+	var eventKey any
+	if d.EventKey != "" {
+		eventKey = d.EventKey
+	}
 	_, err := repo.w.ExecContext(
 		ctx,
 		`INSERT INTO analytics_deliveries
 		   (id, org_id, environment_id, channel, status, subscriber_id,
-		    workflow_id, transaction_id, run_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    workflow_id, transaction_id, run_id, created_at, event_key)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT DO NOTHING`,
 		d.ID, d.OrgID, d.EnvID, d.Channel, d.Status, d.SubscriberID,
-		d.WorkflowID, d.TransactionID, d.RunID, d.CreatedAt,
+		d.WorkflowID, d.TransactionID, d.RunID, d.CreatedAt, eventKey,
 	)
 	return err
 }

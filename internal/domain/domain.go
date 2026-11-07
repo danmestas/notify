@@ -320,6 +320,10 @@ type AnalyticsDelivery struct {
 	// runs, not per-channel delivery rows (M2, GAP-AF-06 follow-up).
 	RunID     string `db:"run_id"`
 	CreatedAt string `db:"created_at"`
+	// EventKey is the source delivery event's identity (eventbus.DeliveryEventKey).
+	// Insert drops a row whose non-empty key is already stored, so a redelivered
+	// event counts once. Empty for rows without a source event.
+	EventKey string `db:"event_key"`
 }
 
 // DeliveryDayCount is one row of the delivery time-series: the per-day count of

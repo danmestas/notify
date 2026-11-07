@@ -49,8 +49,8 @@ func seedMessage(t *testing.T, s *Store, m domain.Message) domain.Message {
 func TestMigrate_0017_AppliesIntegrationID(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 51 {
-		t.Fatalf("expected 51 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 52 {
+		t.Fatalf("expected 52 recorded migrations, got %d", n)
 	}
 
 	// Verify the column exists via PRAGMA.
