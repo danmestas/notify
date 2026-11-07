@@ -81,6 +81,9 @@ type Deps struct {
 	Ingress *ingress.Service
 	// Connectivity backs the integration management routes. Nil disables them.
 	Connectivity *connectivity.Service
+	// CredChecker backs POST /v1/integrations/{id}/verify. Nil leaves the
+	// route unmounted.
+	CredChecker CredentialChecker
 	// Store is the persistence layer. Nil disables the console read surface
 	// (GET /v1/notifications, GET /v1/notifications/{id}), webhook-endpoint
 	// management (GET/POST/PUT/DELETE /v1/webhooks/endpoints), layouts,
@@ -284,6 +287,10 @@ func New(d Deps) http.Handler {
 			pr.Put("/v1/integrations/{id}", putIntegration(conn))
 			pr.Delete("/v1/integrations/{id}", deleteIntegration(conn))
 			pr.Patch("/v1/integrations/{id}/active", patchIntegrationActive(conn))
+			// Run the credential check now and return the resulting health (#101).
+			if d.CredChecker != nil {
+				pr.Post("/v1/integrations/{id}/verify", postIntegrationVerify(conn, d.CredChecker))
+			}
 		}
 		if au != nil {
 			pr.Post("/v1/workflows", postWorkflow(au))
@@ -1999,6 +2006,9 @@ type integrationDTO struct {
 	Primary           bool           `json:"primary"`
 	Priority          int            `json:"priority"`
 	CredentialsMasked map[string]any `json:"credentialsMasked"`
+	// Health is the integration's delivery health. Set on the GET responses;
+	// the create/update responses leave it out.
+	Health *integrationHealthDTO `json:"health,omitempty"`
 }
 
 // toIntegrationDTO converts a domain.Integration (which may carry
@@ -2052,9 +2062,22 @@ func getIntegrations(conn *connectivity.Service) http.HandlerFunc {
 			writeInternalError(w, r, err)
 			return
 		}
+		rows, err := conn.Store().IntegrationHealth().List(r.Context(), scope)
+		if err != nil {
+			writeInternalError(w, r, err)
+			return
+		}
+		byID := make(map[string]domain.IntegrationHealth, len(rows))
+		for _, h := range rows {
+			byID[h.IntegrationID] = h
+		}
 		dtos := make([]integrationDTO, 0, len(list))
 		for _, in := range list {
-			dtos = append(dtos, toIntegrationDTONoCredentials(in))
+			dto := toIntegrationDTONoCredentials(in)
+			h, found := byID[in.ID]
+			hd := toHealthDTO(h, found)
+			dto.Health = &hd
+			dtos = append(dtos, dto)
 		}
 		writeJSON(w, http.StatusOK, dtos)
 	}
@@ -2075,7 +2098,14 @@ func getIntegration(conn *connectivity.Service) http.HandlerFunc {
 			writeInternalError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, toIntegrationDTO(conn, in))
+		dto := toIntegrationDTO(conn, in)
+		hd, err := integrationHealth(r.Context(), conn.Store(), scope, in.ID)
+		if err != nil {
+			writeInternalError(w, r, err)
+			return
+		}
+		dto.Health = &hd
+		writeJSON(w, http.StatusOK, dto)
 	}
 }
 

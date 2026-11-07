@@ -77,6 +77,19 @@
     {{end}}
   </div>
 
+  {{with $in.Health}}{{if .State}}
+  {{/* Delivery health (#101): state, since, and the last counted error. */}}
+  <div class="integration-detail-health" id="integration-health">
+    <span class="form-label">Delivery health</span>
+    <span class="chip {{.ChipClass}}" data-health-state="{{.State}}">{{.State}}</span>
+    {{if .Since}}<span class="console-lede">since {{.Since}}</span>{{end}}
+    {{if .ErrorMessage}}
+    <p class="console-lede integration-health-error">Last error{{if .ErrorClass}} ({{.ErrorClass}}){{end}}: {{.ErrorMessage}}</p>
+    {{end}}
+    {{if .CheckedAt}}<p class="console-lede">Credentials last checked {{.CheckedAt}}.</p>{{end}}
+  </div>
+  {{end}}{{end}}
+
   {{/* W4 ADR-013 (#55): durable credential-verify action. Two-step inline
        confirm (chassis idiom — no native confirm(); the probe performs a real
        provider handshake). On confirm a native POST kicks an engine run; the

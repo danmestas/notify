@@ -1103,6 +1103,14 @@ a.activity-item-run { color: var(--accent); }
   background: rgba(9, 105, 218, 0.10);
 }
 .console-banner--info strong { color: var(--status-info); }
+.console-banner--danger {
+  border-color: var(--status-danger);
+  background: var(--danger-soft);
+}
+.console-banner--danger strong { color: var(--status-danger); }
+.console-health-banner { margin-bottom: var(--space-5); }
+.integration-detail-health { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); }
+.integration-health-error { margin: var(--space-1) 0 0; word-break: break-word; }
 
 /* Form/result alert callouts (FormError, API-key reveal, …). Were undefined →
    rendered as bare prose. Both modifier spellings (-danger and --error) are in

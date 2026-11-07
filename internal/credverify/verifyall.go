@@ -10,6 +10,7 @@ import (
 
 	"github.com/danmestas/dagnats/dag"
 
+	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/names"
@@ -99,23 +100,38 @@ const (
 )
 
 func (s *Service) checkOne(ctx context.Context, scope domain.Scope, id string) outcome {
+	res, err := s.CheckNow(ctx, scope, id)
+	switch {
+	case err != nil:
+		s.log.Warn("credverify: daily check could not probe", "integration", id, "err", err)
+		return outcomeErrored
+	case res.Unsupported:
+		return outcomeUnsupported
+	case res.OK:
+		return outcomePassed
+	default:
+		return outcomeRejected
+	}
+}
+
+// CheckNow probes integration id's credentials in the caller's goroutine and
+// reports the verdict to the observer, so the integration's health reflects it
+// when CheckNow returns. It is what an operator's "verify now" runs, and what
+// the daily check runs per integration. An error means the probe could not
+// complete (the integration is missing, its credentials will not decrypt, or
+// its config is malformed): nothing is reported. A provider with no probe
+// returns Unsupported and reports nothing.
+func (s *Service) CheckNow(ctx context.Context, scope domain.Scope, id string) (connectivity.VerifyResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, verifyTimeout)
 	defer cancel()
 	res, err := s.ver.VerifyByID(ctx, scope, id)
 	if err != nil {
-		s.log.Warn("credverify: daily check could not probe", "integration", id, "err", err)
-		return outcomeErrored
+		return connectivity.VerifyResult{}, err
 	}
-	if res.Unsupported {
-		return outcomeUnsupported
-	}
-	if s.obs != nil {
+	if !res.Unsupported && s.obs != nil {
 		s.obs.CredentialChecked(ctx, scope, id, res.OK, res.Detail)
 	}
-	if res.OK {
-		return outcomePassed
-	}
-	return outcomeRejected
+	return res, nil
 }
 
 // registerVerifyAll declares the one-step workflow the daily trigger starts.

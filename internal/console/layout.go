@@ -440,7 +440,67 @@ type pageData struct {
 	ReadOnly   bool
 	Version    string // sidebar footer build label
 	DagnatsURL string // sidebar "dagnats console ↗" external link target ("" hides the link target)
-	Page       any
+	// HealthBanner is set while an active integration in this environment is
+	// failing (#101); nil otherwise.
+	HealthBanner *healthBanner
+	Page         any
+}
+
+// healthBanner is the environment-wide notice that an integration is
+// failing. It names the first failing integration (by id) and links to it.
+type healthBanner struct {
+	Name    string // "Resend · transactional"
+	Href    string // /console/integrations/{id}
+	Class   string // error class, may be ""
+	Message string // provider's message, may be ""
+	More    int    // other failing integrations beyond Name
+}
+
+// failingBanner returns the banner for scope, or nil when no active
+// integration is failing or health is not wired. Lookups that fail degrade to
+// no banner: chrome never fails a page.
+func (c *Console) failingBanner(ctx context.Context, scope domain.Scope) *healthBanner {
+	if c.deps.IntegrationHealth == nil || c.deps.Integrations == nil {
+		return nil
+	}
+	hs, err := c.deps.IntegrationHealth.List(ctx, scope)
+	if err != nil {
+		return nil
+	}
+	failing := map[string]domain.IntegrationHealth{}
+	for _, h := range hs {
+		if h.State == "failing" {
+			failing[h.IntegrationID] = h
+		}
+	}
+	if len(failing) == 0 {
+		return nil
+	}
+	ints, err := c.deps.Integrations.List(ctx, scope)
+	if err != nil {
+		return nil
+	}
+	var b *healthBanner
+	count := 0
+	for _, in := range ints { // ordered; a stale row or inactive integration is skipped
+		h, ok := failing[in.ID]
+		if !ok || !in.Active {
+			continue
+		}
+		count++
+		if b == nil {
+			b = &healthBanner{
+				Name:    providerLabel(in.ProviderID) + " · " + in.Identifier,
+				Href:    "/console/integrations/" + url.PathEscape(in.ID),
+				Class:   h.LastErrorClass,
+				Message: h.LastErrorMessage,
+			}
+		}
+	}
+	if b != nil {
+		b.More = count - 1
+	}
+	return b
 }
 
 // navCounts computes the sidebar badge counts (workflows / integrations /
@@ -500,6 +560,7 @@ func (c *Console) renderPage(
 		DagnatsURL: c.deps.DagnatsConsoleURL,
 		Page:       page,
 	}
+	data.HealthBanner = c.failingBanner(r.Context(), scope)
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, "layout", data); err != nil {
 		c.deps.Logger.Error("console: render page", "section", section, "err", err)

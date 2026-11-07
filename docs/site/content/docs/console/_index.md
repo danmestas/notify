@@ -21,7 +21,7 @@ Set `NOTIFY_CONSOLE_READ_ONLY=1` to disable every mutation button.
 | Workflows | List, create, edit steps, reorder, activate, duplicate, delete; version history and rollback; a test-fire page; per-workflow activity. A **Guided create** tab builds a workflow from a prompt when an AI key is configured ([below](#ai-workflow-builder)). |
 | Activity | Every notification and its messages, with live tail, run deep-links to the dagnats console (`NOTIFY_DAGNATS_CONSOLE_URL`), and resend. |
 | Analytics | Delivery counts by channel and status, and a time series. |
-| Integrations | Add, edit, activate, delete, verify credentials, send a test message, set the Web Push subject. Shows per-integration activity. |
+| Integrations | Add, edit, activate, delete, verify credentials, send a test message, set the Web Push subject. Shows per-integration activity and delivery health, with a banner on every page while an integration is failing. |
 | Subscribers | List, create, edit, delete; channel addresses; preferences. |
 | Topics | Topic membership and activity. |
 | Webhooks | Outbound endpoints and their secrets. |

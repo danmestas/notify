@@ -135,6 +135,10 @@ type Deps struct {
 	// page (W2). List / GetByID / SetActive / Delete are called directly;
 	// credential-merge updates go through Connectivity.Update.
 	Integrations store.IntegrationRepo
+	// IntegrationHealth provides per-integration delivery health for the
+	// integrations page badges and the environment-wide failing banner (#101).
+	// Nil renders neither.
+	IntegrationHealth store.IntegrationHealthRepo
 	// Connectivity is the connectivity service used by the integrations page
 	// for Update (credential merge + primary-conflict detection). Nil is
 	// allowed only when no integration mutation routes are mounted; in

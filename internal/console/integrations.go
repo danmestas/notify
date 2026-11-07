@@ -8,6 +8,7 @@ package console
 // ("••••••") before the view struct is built.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -103,6 +104,37 @@ type integrationRow struct {
 	Identifier    string
 	Active        bool
 	Primary       bool
+	// Health is the delivery health badge and last error; zero (State "")
+	// when health is not wired, which renders no badge.
+	Health integrationHealthView
+}
+
+// integrationHealthView is one integration's delivery health for display.
+type integrationHealthView struct {
+	// State is healthy, degraded, failing or unverified; "" renders nothing.
+	State string
+	// Since is when State began, as stored (RFC 3339).
+	Since string
+	// ErrorClass and ErrorMessage are the latest counted delivery error as
+	// the provider reported it (never a credential).
+	ErrorClass   string
+	ErrorMessage string
+	// CheckedAt is when credentials were last checked; "" if never.
+	CheckedAt string
+}
+
+// ChipClass is the .chip modifier for the state.
+func (h integrationHealthView) ChipClass() string {
+	switch h.State {
+	case "healthy":
+		return "chip-success"
+	case "degraded":
+		return "chip-warning"
+	case "failing":
+		return "chip-danger"
+	default:
+		return "chip-default"
+	}
 }
 
 // integrationsListView is what integrations.html binds.
@@ -258,6 +290,65 @@ func integrationToRow(in domain.Integration) integrationRow {
 		Active:        in.Active,
 		Primary:       in.Primary,
 	}
+}
+
+// healthView maps a stored health row; found=false (nothing recorded) is
+// unverified.
+func healthView(h domain.IntegrationHealth, found bool) integrationHealthView {
+	if !found {
+		return integrationHealthView{State: "unverified"}
+	}
+	return integrationHealthView{
+		State: h.State, Since: h.Since,
+		ErrorClass: h.LastErrorClass, ErrorMessage: h.LastErrorMessage,
+		CheckedAt: h.LastCheckAt,
+	}
+}
+
+// integrationRows builds display rows for list, with each integration's
+// delivery health. A health lookup that fails is logged and leaves the badges
+// off: health never fails the page.
+func (c *Console) integrationRows(ctx context.Context, scope domain.Scope, list []domain.Integration) []integrationRow {
+	var byID map[string]domain.IntegrationHealth
+	if c.deps.IntegrationHealth != nil {
+		hs, err := c.deps.IntegrationHealth.List(ctx, scope)
+		if err != nil {
+			c.deps.Logger.Error("console: integration health list", "err", err)
+		} else {
+			byID = make(map[string]domain.IntegrationHealth, len(hs))
+			for _, h := range hs {
+				byID[h.IntegrationID] = h
+			}
+		}
+	}
+	rows := make([]integrationRow, 0, len(list))
+	for _, in := range list {
+		row := integrationToRow(in)
+		if byID != nil {
+			h, found := byID[in.ID]
+			row.Health = healthView(h, found)
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// integrationRowWithHealth is integrationToRow plus the integration's health.
+func (c *Console) integrationRowWithHealth(ctx context.Context, scope domain.Scope, in domain.Integration) integrationRow {
+	row := integrationToRow(in)
+	if c.deps.IntegrationHealth == nil {
+		return row
+	}
+	h, err := c.deps.IntegrationHealth.Get(ctx, scope, in.ID)
+	switch {
+	case err == nil:
+		row.Health = healthView(h, true)
+	case errors.Is(err, store.ErrNotFound):
+		row.Health = healthView(h, false)
+	default:
+		c.deps.Logger.Error("console: integration health get", "id", in.ID, "err", err)
+	}
+	return row
 }
 
 // filterRows returns the subset of rows matching the channel filter.
@@ -483,10 +574,7 @@ func (c *Console) serveIntegrationsPage(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	rows := make([]integrationRow, 0, len(integrations))
-	for _, in := range integrations {
-		rows = append(rows, integrationToRow(in))
-	}
+	rows := c.integrationRows(r.Context(), scope, integrations)
 
 	header := pageHeader{
 		Title:    "Integration Store",
@@ -564,10 +652,7 @@ func (c *Console) serveFragmentIntegrationsGrid(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	allRows := make([]integrationRow, 0, len(integrations))
-	for _, in := range integrations {
-		allRows = append(allRows, integrationToRow(in))
-	}
+	allRows := c.integrationRows(r.Context(), scope, integrations)
 
 	rows := filterRows(allRows, channel)
 	var empty *emptyState
@@ -676,7 +761,7 @@ func (c *Console) serveFragmentIntegrationDetail(w http.ResponseWriter, r *http.
 	}
 
 	html, err := renderFragment(c.ts.base, "integration-detail", integrationDetailView{
-		Integration:   integrationToRow(in),
+		Integration:   c.integrationRowWithHealth(r.Context(), scope, in),
 		CredFields:    credFields,
 		ConfirmDelete: confirmDelete,
 		ReadOnly:      c.deps.ReadOnly,
