@@ -204,6 +204,16 @@ func (d *discovery) protocolFor(ctx context.Context, nc *nats.Conn, subj string)
 	}
 }
 
+// rescan drops subj's cached protocol and detects it afresh, joining the scan
+// in flight or starting one. A turn calls it after an a2a dispatch showed the
+// v0.3 shape, meaning the earlier scan missed a late INFO reply.
+func (d *discovery) rescan(ctx context.Context, nc *nats.Conn, subj string) protocol {
+	d.mu.Lock()
+	delete(d.cached, subj)
+	d.mu.Unlock()
+	return d.protocolFor(ctx, nc, subj)
+}
+
 // scan multicasts $SRV.INFO.agents and returns the prompt subjects of
 // instances declaring protocol_version "0.3". ok is false when the request
 // could not be sent. onFound is called for each subject as its reply arrives.
