@@ -48,6 +48,12 @@ func v03Agent(t *testing.T, nc *nats.Conn, subject string, script func(req micro
 	if err != nil {
 		t.Fatalf("AddEndpoint: %v", err)
 	}
+	// The service's subscriptions ($SRV.INFO and the prompt endpoint) reach
+	// the server asynchronously; flush so the client under test, on another
+	// connection, can discover and reach the agent as soon as this returns.
+	if err := nc.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
 	return func() []micro.Request {
 		mu.Lock()
 		defer mu.Unlock()
