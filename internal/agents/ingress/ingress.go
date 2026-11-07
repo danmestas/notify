@@ -130,6 +130,7 @@ func (s *Service) WithLiveReceivers(l LiveReceivers) *Service {
 type TaskRecorder interface {
 	Submitted(ctx context.Context, scope domain.Scope, taskID string)
 	Close(ctx context.Context, scope domain.Scope, taskID, state string)
+	Reopen(ctx context.Context, scope domain.Scope, taskID, note string) (bool, error)
 	Sink(scope domain.Scope, taskID string) agentdomain.StatusSink
 	Get(ctx context.Context, scope domain.Scope, taskID string) (agentdomain.TaskStatus, bool)
 }
@@ -164,13 +165,14 @@ func (s *Service) WithReplyHook(h ReplyHook) *Service {
 	return s
 }
 
-// Routes mounts the inbox conversation endpoints. They run behind the same
+// Routes mounts the inbox conversation endpoints and the turn retry. They run behind the same
 // ApiKey guard as every other /v1 route; the subscriber-JWT handshake of
 // RFC 0002 §8 does not exist yet.
 // Tracking: switch compose auth to the subscriber JWT once realtime grows it.
 func (s *Service) Routes(r chi.Router) {
 	r.Post("/v1/inbox/conversations/{agentIdentifier}/messages", s.compose)
 	r.Get("/v1/inbox/conversations/{agentIdentifier}", s.transcript)
+	r.Post("/v1/agents/{identifier}/conversations/{conversationId}/activities/{activityId}/retry", s.retryTurn)
 }
 
 // composeRequest is the POST /v1/inbox/conversations/{agentIdentifier}/messages
@@ -195,14 +197,17 @@ type composeResponse struct {
 }
 
 // turnInput is the engine run input. Field names are wire contract: the
-// workflow's idempotency key dot-path reads "activity_id" and the singleton
-// key dot-path reads "conversation_id".
+// workflow's idempotency key dot-path reads "turn_key" and the singleton
+// key dot-path reads "conversation_id". TurnKey is the activity id for a
+// turn's first run and "<activity id>#r<ulid>" for an operator retry, so a
+// redelivered start dedupes while a retry starts a fresh run.
 type turnInput struct {
 	OrgID           string `json:"org_id"`
 	EnvID           string `json:"env_id"`
 	AgentIdentifier string `json:"agent_identifier"`
 	ConversationID  string `json:"conversation_id"`
 	ActivityID      string `json:"activity_id"`
+	TurnKey         string `json:"turn_key"`
 }
 
 // compose resolves the agent, upserts the conversation, appends the user
@@ -400,7 +405,7 @@ func (s *Service) Compose(ctx context.Context, scope domain.Scope, in ComposeInp
 		return ComposeResult{}, err
 	}
 
-	runID, err := s.startTurn(ctx, scope, agent, conv.ID, act.ID)
+	runID, err := s.startTurn(ctx, scope, agent, conv.ID, act.ID, act.ID)
 	if err != nil {
 		return ComposeResult{}, err
 	}
@@ -431,7 +436,7 @@ func (s *Service) replay(ctx context.Context, scope domain.Scope, agent agentdom
 		// the run on the activity id, so a run that did start is returned
 		// again rather than duplicated.
 		var err error
-		if runID, err = s.startTurn(ctx, scope, agent, conv.ID, prior.ID); err != nil {
+		if runID, err = s.startTurn(ctx, scope, agent, conv.ID, prior.ID, prior.ID); err != nil {
 			return ComposeResult{}, err
 		}
 		if err := s.agents.Activities().SetRunID(ctx, scope, prior.ID, runID); err != nil {
@@ -492,10 +497,10 @@ func writeComposeError(w http.ResponseWriter, err error) {
 }
 
 // startTurn ensures the agent's turn workflow exists and starts one run for
-// the activity. Idempotency keys on the activity id (webhook-redelivery
-// safe); the singleton key serialises turns per conversation so turns within
+// the activity. Idempotency keys on turnKey (the activity id on first dispatch,
+// so webhook redelivery is safe; see turnInput); the singleton key serialises turns per conversation so turns within
 // a thread never interleave (the digest keying pattern, RFC 0002 §5).
-func (s *Service) startTurn(ctx context.Context, scope domain.Scope, agent agentdomain.Agent, conversationID, activityID string) (string, error) {
+func (s *Service) startTurn(ctx context.Context, scope domain.Scope, agent agentdomain.Agent, conversationID, activityID, turnKey string) (string, error) {
 	name, err := s.ensureWorkflow(ctx, agent)
 	if err != nil {
 		return "", err
@@ -506,6 +511,7 @@ func (s *Service) startTurn(ctx context.Context, scope domain.Scope, agent agent
 		AgentIdentifier: agent.Identifier,
 		ConversationID:  conversationID,
 		ActivityID:      activityID,
+		TurnKey:         turnKey,
 	})
 	if err != nil {
 		return "", err
@@ -527,7 +533,7 @@ func (s *Service) ensureWorkflow(ctx context.Context, agent agentdomain.Agent) (
 	}
 	def := engine.WorkflowDef{
 		Name:           name,
-		IdempotencyKey: "activity_id",
+		IdempotencyKey: "turn_key",
 		Singleton:      &engine.SingletonConfig{Mode: "skip", Key: "conversation_id"},
 		Steps: []engine.StepDef{{
 			ID:    "turn",

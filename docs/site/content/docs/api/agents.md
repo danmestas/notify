@@ -20,6 +20,7 @@ All routes take an API key. Concepts, runtimes and examples are in [Agents and c
 | `GET /v1/agents/{identifier}/channels/{integrationID}/setup` | The inbound webhook URL for a linked channel. | `200` `{webhookUrl}`; `404` if not linked |
 | `POST /v1/agents/{identifier}/conversations/email` | Start an email-origin conversation. `{subscriberId, text}` | `201` `{conversationId, replyTo}` |
 | `POST /v1/inbox/conversations/{agentIdentifier}/messages` | Compose a message. Optional `Idempotency-Key`. | `202` `{conversationId, activityId, runId}` |
+| `POST /v1/agents/{identifier}/conversations/{conversationId}/activities/{activityId}/retry` | Run a [failed turn](#retry-a-failed-turn) again. No body. | `202` `{conversationId, activityId, runId}`; `404`; `409`; `503` |
 | `GET /v1/inbox/conversations/{agentIdentifier}` | Transcript. `conversationId` required; optional `limit`, `before`, `after`. | `200` `{conversation, activities}` |
 | `GET /v1/inbox/conversations` | Conversations across agents. `?agent=&cursor=&limit=` | `200` `{items, next}` |
 | `GET /v1/inbox/drafts` | [Drafts](../../inbox-and-agents/drafts). `?subscriberId=&mailbox=…&after=&limit=` | `200` `{drafts, cursor, gap}` |
@@ -40,6 +41,21 @@ The email conversation route exists only when the agent, inbound email and audie
 | Agent `unavailable`, not listening, or silent for 10 seconds. | `503` |
 
 A malformed `Idempotency-Key` is a `422`. A config change sets fields rather than appending to them, so repeating a request with the same key leaves the agent in the same state.
+
+## Retry a failed turn
+
+A turn whose retries ran out is marked `failed` and stays that way. `POST …/activities/{activityId}/retry` starts a new run for the user message, with the same input and a run key of its own, so the engine does not hand back the failed run. `conversationId` is the `platformThreadId` handle (the conversation's `id` also works). The reply, when it comes, lands on the same conversation, and the turn's task status gains a `Retried by operator` note.
+
+| Result | Status |
+|---|---|
+| A new run started. The body is `{conversationId, activityId, runId}`. | `202` |
+| Unknown agent, conversation or activity, or an activity that belongs to a different conversation or agent. | `404` |
+| The activity is not a `user` message, or an agent reply already follows it. | `409` |
+| The turn has not failed: it is still running, or retried a moment ago. Of two simultaneous retries exactly one starts a run. | `409` |
+| The agent's runtime is not executable on this server. | `422` |
+| This server keeps no turn status, so a failed turn cannot be told from a running one. | `503` |
+
+The console conversation view shows a **Retry** button on a user message whose turn failed and that has no reply.
 
 ## Objects
 

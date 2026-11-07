@@ -73,6 +73,15 @@
         {{end}}
       </div>
       <div class="agent-turn-body">{{.Text}}</div>
+      {{if .CanRetry}}
+      <form method="POST"
+            action="/console/agents/{{$page.Agent.Identifier}}/conversations/{{$page.Conv.ID}}/activities/{{.ID}}/retry"
+            class="agent-turn-retry">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <span class="console-muted">This turn failed.</span>
+        <button type="submit" class="btn btn-outline">Retry</button>
+      </form>
+      {{end}}
     </div>
     {{end}}
   </div>

@@ -8,6 +8,7 @@
 package console
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"html/template"
@@ -169,6 +170,7 @@ type turnRow struct {
 	Text      string // decoded from content JSON {parts:[{text}]}
 	RunURL    string // non-empty when role=agent and run_id exists
 	CreatedAt string
+	CanRetry  bool // user turn whose task failed and that has no reply after it
 }
 
 // agentsSignalsJSON returns the Datastar signals for the agents list page.
@@ -527,6 +529,7 @@ func (c *Console) serveConversationPage(w http.ResponseWriter, r *http.Request) 
 			CreatedAt: act.CreatedAt,
 		})
 	}
+	c.markRetryable(r.Context(), scope, turns)
 	var olderCursor string
 	if len(activities) > 0 {
 		olderCursor = activities[0].ID
@@ -545,6 +548,57 @@ func (c *Console) serveConversationPage(w http.ResponseWriter, r *http.Request) 
 		CSRF:        s.CSRF,
 	}
 	c.renderPage(w, r, http.StatusOK, "agent-conversation", "Conversation", pd)
+}
+
+// markRetryable sets CanRetry on each user turn whose task failed and that no
+// agent turn follows. The service re-checks both when the button is pressed.
+func (c *Console) markRetryable(ctx context.Context, scope domain.Scope, turns []turnRow) {
+	if c.deps.ReadOnly || c.deps.Retrier == nil {
+		return
+	}
+	answered := false
+	for i := len(turns) - 1; i >= 0; i-- {
+		switch turns[i].Role {
+		case "agent":
+			answered = true
+		case "user":
+			if !answered {
+				st, err := c.deps.Agents.TaskStatuses().Get(ctx, scope, turns[i].ID)
+				turns[i].CanRetry = err == nil && st.State == agentdomain.TaskFailed
+			}
+			answered = false
+		}
+	}
+}
+
+// handleConversationRetry runs a failed turn again through the ingress retry
+// path, then 303-redirects back to the conversation.
+func (c *Console) handleConversationRetry(w http.ResponseWriter, r *http.Request) {
+	if c.deps.ReadOnly {
+		http.Error(w, "console is read-only", http.StatusForbidden)
+		return
+	}
+	if c.deps.Retrier == nil {
+		http.Error(w, "retry service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	scope, ok := domain.ScopeFromContext(r.Context())
+	if !ok {
+		panic("handleConversationRetry: no scope in context")
+	}
+	identifier := chi.URLParam(r, "identifier")
+	convID := chi.URLParam(r, "id")
+	back := "/console/agents/" + url.PathEscape(identifier) + "/conversations/" + url.PathEscape(convID)
+	err := c.deps.Retrier.RetryTurn(r.Context(), scope, identifier, convID, chi.URLParam(r, "activityId"))
+	switch {
+	case err == nil:
+		http.Redirect(w, r, back, http.StatusSeeOther)
+	case errors.Is(err, agentstore.ErrNotFound):
+		c.serveNotFound(w, r)
+	default:
+		c.deps.Logger.Error("console: retry turn", "identifier", identifier, "conv", convID, "err", err)
+		http.Redirect(w, r, back+"?error="+url.QueryEscape("Retry failed: "+err.Error()), http.StatusSeeOther)
+	}
 }
 
 // extractActivityText decodes content JSON {parts:[{text:"..."},...]} and

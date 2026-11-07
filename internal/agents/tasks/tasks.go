@@ -58,6 +58,19 @@ func (s *Service) Close(ctx context.Context, scope domain.Scope, taskID, state s
 	})
 }
 
+// Reopen puts a failed task back to submitted with note and wakes watchers. It
+// reports whether the task was reopened; false means it is open, finished, or
+// otherwise not failed, and the caller must not start another turn for it.
+func (s *Service) Reopen(ctx context.Context, scope domain.Scope, taskID, note string) (bool, error) {
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+	defer cancel()
+	ok, err := s.repo.Reopen(wctx, scope, taskID, note)
+	if ok {
+		s.notify(scope, taskID)
+	}
+	return ok, err
+}
+
 // Get returns the record, or the zero record and false when none exists.
 func (s *Service) Get(ctx context.Context, scope domain.Scope, taskID string) (agentdomain.TaskStatus, bool) {
 	st, err := s.repo.Get(ctx, scope, taskID)
