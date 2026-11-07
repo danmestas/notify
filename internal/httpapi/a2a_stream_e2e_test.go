@@ -420,7 +420,14 @@ func TestA2AStreaming_E2E(t *testing.T) {
 			}
 		}
 		got := eventSummary(evs)
-		if got[len(got)-1] != "status-update:completed:final" || !strings.Contains(strings.Join(got, "|"), "read_note") {
+		// The note arrives as its own working update, or, when the turn ran
+		// ahead of the stream's first read, as the opening task's status
+		// message. Either way the client sees it.
+		sawNote := strings.Contains(strings.Join(got, "|"), "read_note")
+		if st, ok := evs[0]["status"].(map[string]any); ok && strings.Contains(toJSON(st["message"]), "read_note") {
+			sawNote = true
+		}
+		if got[len(got)-1] != "status-update:completed:final" || !sawNote {
 			t.Fatalf("ws events = %v", got)
 		}
 		taskID, _ := evs[len(evs)-1]["taskId"].(string)
