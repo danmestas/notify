@@ -396,7 +396,25 @@ func (c *Client) Dispatch(ctx context.Context, t domain.Turn) (domain.Reply, err
 	if c.disc.protocolFor(ctx, c.nc, subj) == protoSynadia {
 		return c.dispatchSynadia(ctx, t)
 	}
+	started := time.Now()
+	reply, err := c.dispatchA2A(ctx, t)
+	if !errors.Is(err, ErrAckedNoV2Answer) {
+		return reply, err
+	}
+	// The agent acked and went quiet: a v0.3 agent whose discovery reply
+	// missed the scan window was cached as a2a. Rescan and, if it is v0.3
+	// after all, resend the same turn once within the overall timeout.
+	rctx, cancel := context.WithDeadline(ctx, started.Add(c.timeout))
+	defer cancel()
+	if c.disc.rescan(rctx, c.nc, subj) != protoSynadia {
+		return reply, err
+	}
+	return c.dispatchSynadia(rctx, t)
+}
 
+// dispatchA2A runs the turn over the A2A v2 envelope.
+func (c *Client) dispatchA2A(ctx context.Context, t domain.Turn) (domain.Reply, error) {
+	subj := t.Agent.MeshSubject
 	messageID := t.Message.ID
 	if messageID == "" {
 		messageID = randToken()
