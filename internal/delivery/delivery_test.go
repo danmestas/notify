@@ -737,12 +737,12 @@ func TestHandleInApp_SelfSourcesWhenInputEmpty(t *testing.T) {
 }
 
 // stubDigester returns a fixed event slice for any key, standing in for
-// eventbus.Bus.DigestDrain in the unit test.
+// eventbus.Bus.DigestBatch in the unit test.
 type stubDigester struct {
 	events []json.RawMessage
 }
 
-func (d stubDigester) DigestDrain(string) ([]json.RawMessage, error) {
+func (d stubDigester) DigestBatch(string, string) ([]json.RawMessage, error) {
 	return d.events, nil
 }
 

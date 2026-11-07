@@ -47,12 +47,12 @@ type Throttler interface {
 	ThrottleAllow(key string, limit int, window time.Duration) (bool, error)
 }
 
-// Digester drains the events merged into a digest window so the channel handler
+// Digester returns the events merged (closing the window once per run) into a digest window so the channel handler
 // can render an aggregate (e.g. a count). eventbus.Bus satisfies this
 // structurally. A nil digester disables digest rendering: a notification with a
 // DigestKey then renders per the single event like any other.
 type Digester interface {
-	DigestDrain(key string) ([]json.RawMessage, error)
+	DigestBatch(key, runID string) ([]json.RawMessage, error)
 }
 
 // Handler persists rendered messages through the store.
@@ -132,7 +132,7 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	// merged events so the body can render {{digest.count}}. Only the
 	// self-source path sets digestKey, so the Input-present path is unchanged.
 	if digestKey != "" && h.digester != nil {
-		events, _ := h.digester.DigestDrain(digestKey)
+		events, _ := h.digester.DigestBatch(digestKey, t.RunID)
 		data["digest"] = digestData(events)
 	}
 	translate := storeTranslator(ctx, h.store, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, subMap)

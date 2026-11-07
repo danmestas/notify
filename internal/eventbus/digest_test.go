@@ -36,23 +36,32 @@ func TestBus_DigestAppendAndDrain(t *testing.T) {
 		t.Fatalf("DigestAppend e2: %v", err)
 	}
 
-	events, err := bus.DigestDrain(key)
+	events, err := bus.DigestBatch(key, "run-1")
 	if err != nil {
-		t.Fatalf("DigestDrain: %v", err)
+		t.Fatalf("DigestBatch: %v", err)
 	}
 	if len(events) != 2 {
-		t.Fatalf("DigestDrain: got %d events, want 2", len(events))
+		t.Fatalf("DigestBatch: got %d events, want 2", len(events))
 	}
 	if string(events[0]) != string(e1) || string(events[1]) != string(e2) {
-		t.Fatalf("DigestDrain: got [%s, %s], want [%s, %s]", events[0], events[1], e1, e2)
+		t.Fatalf("DigestBatch: got [%s, %s], want [%s, %s]", events[0], events[1], e1, e2)
 	}
 
-	again, err := bus.DigestDrain(key)
+	// Same run: the same batch again (idempotent for later steps and retries).
+	again, err := bus.DigestBatch(key, "run-1")
 	if err != nil {
-		t.Fatalf("DigestDrain second: %v", err)
+		t.Fatalf("DigestBatch second: %v", err)
 	}
-	if len(again) != 0 {
-		t.Fatalf("DigestDrain second: got %d events, want 0 (cleared)", len(again))
+	if len(again) != 2 {
+		t.Fatalf("DigestBatch same run: got %d events, want the same 2", len(again))
+	}
+	// A different run sees the live list, which the close cleared.
+	other, err := bus.DigestBatch(key, "run-2")
+	if err != nil {
+		t.Fatalf("DigestBatch other run: %v", err)
+	}
+	if len(other) != 0 {
+		t.Fatalf("DigestBatch other run: got %d events, want 0 (live list cleared)", len(other))
 	}
 }
 
@@ -79,8 +88,8 @@ func TestBus_DigestClaim_OnlyOneOwner(t *testing.T) {
 		}
 	}
 
-	if _, err := bus.DigestDrain(key); err != nil {
-		t.Fatalf("DigestDrain: %v", err)
+	if _, err := bus.DigestBatch(key, "run-1"); err != nil {
+		t.Fatalf("DigestBatch: %v", err)
 	}
 
 	owner, err = bus.DigestClaim(key)
@@ -141,20 +150,20 @@ func TestBus_DigestSeparateKeys(t *testing.T) {
 		t.Fatalf("DigestClaim(b): owner=%v err=%v, want true", ownerB, err)
 	}
 
-	eventsA, err := bus.DigestDrain("a")
+	eventsA, err := bus.DigestBatch("a", "run-1")
 	if err != nil {
-		t.Fatalf("DigestDrain(a): %v", err)
+		t.Fatalf("DigestBatch(a): %v", err)
 	}
 	if len(eventsA) != 1 || string(eventsA[0]) != string(ea) {
-		t.Fatalf("DigestDrain(a): got %v, want [%s]", eventsA, ea)
+		t.Fatalf("DigestBatch(a): got %v, want [%s]", eventsA, ea)
 	}
 
 	// Draining "a" must leave "b" intact.
-	eventsB, err := bus.DigestDrain("b")
+	eventsB, err := bus.DigestBatch("b", "run-1")
 	if err != nil {
-		t.Fatalf("DigestDrain(b): %v", err)
+		t.Fatalf("DigestBatch(b): %v", err)
 	}
 	if len(eventsB) != 1 || string(eventsB[0]) != string(eb) {
-		t.Fatalf("DigestDrain(b): got %v, want [%s]", eventsB, eb)
+		t.Fatalf("DigestBatch(b): got %v, want [%s]", eventsB, eb)
 	}
 }

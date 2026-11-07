@@ -380,33 +380,72 @@ func digestListKey(key string) string { return sanitizeKey(key) + ".events" }
 // digestClaimKey returns the KV key used to atomically claim the digest window.
 func digestClaimKey(key string) string { return sanitizeKey(key) + ".claim" }
 
-// DigestAppend appends one event payload to the accumulator list at key.
+// maxDigestAppendAttempts bounds the optimistic-concurrency retry loops on the
+// digest list (append and window close). Contention is per digest key, so a
+// handful of simultaneous writers is the realistic worst case.
+const maxDigestAppendAttempts = 64
+
+// DigestAppend appends one event payload to the accumulator list at key. The
+// read-modify-write is guarded by the KV revision (Create when absent, Update
+// otherwise) and retried on conflict, so concurrent appends never lose events.
 func (b *Bus) DigestAppend(key string, event json.RawMessage) error {
 	ctx := context.Background()
 	listKey := digestListKey(key)
 
-	var events []json.RawMessage
-	entry, err := b.digest.Get(ctx, listKey)
-	switch {
-	case err == nil:
-		if uerr := json.Unmarshal(entry.Value(), &events); uerr != nil {
-			return fmt.Errorf("eventbus: digest unmarshal %q: %w", listKey, uerr)
+	for range maxDigestAppendAttempts {
+		var events []json.RawMessage
+		var rev uint64
+		entry, err := b.digest.Get(ctx, listKey)
+		switch {
+		case err == nil:
+			rev = entry.Revision()
+			if uerr := json.Unmarshal(entry.Value(), &events); uerr != nil {
+				return fmt.Errorf("eventbus: digest unmarshal %q: %w", listKey, uerr)
+			}
+		case errors.Is(err, jetstream.ErrKeyNotFound):
+			// No list yet; start a fresh one.
+		default:
+			return fmt.Errorf("eventbus: digest get %q: %w", listKey, err)
 		}
-	case errors.Is(err, jetstream.ErrKeyNotFound):
-		// No list yet; start a fresh one.
-	default:
-		return fmt.Errorf("eventbus: digest get %q: %w", listKey, err)
-	}
 
-	events = append(events, event)
-	data, err := json.Marshal(events)
-	if err != nil {
-		return fmt.Errorf("eventbus: digest marshal %q: %w", listKey, err)
-	}
-	if _, err := b.digest.Put(ctx, listKey, data); err != nil {
+		events = append(events, event)
+		data, err := json.Marshal(events)
+		if err != nil {
+			return fmt.Errorf("eventbus: digest marshal %q: %w", listKey, err)
+		}
+		if rev == 0 {
+			_, err = b.digest.Create(ctx, listKey, data)
+		} else {
+			_, err = b.digest.Update(ctx, listKey, data, rev)
+		}
+		if err == nil {
+			return nil
+		}
+		if isKVConflict(err) {
+			continue
+		}
 		return fmt.Errorf("eventbus: digest put %q: %w", listKey, err)
 	}
-	return nil
+	return fmt.Errorf("eventbus: digest append %q: too much contention", listKey)
+}
+
+// isKVConflict reports whether err is an optimistic-concurrency loss (the key
+// changed or appeared since it was read).
+func isKVConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, jetstream.ErrKeyExists) {
+		return true
+	}
+	var apiErr *jetstream.APIError
+	return errors.As(err, &apiErr) && apiErr.ErrorCode == jetstream.JSErrCodeStreamWrongLastSequence
+}
+
+// digestSnapshotKey returns the key holding the closed window's batch for one
+// workflow run.
+func digestSnapshotKey(key, runID string) string {
+	return sanitizeKey(key) + ".run." + sanitizeKey(runID)
 }
 
 // DigestClaim atomically claims the digest window for key: returns isOwner=true
@@ -428,30 +467,73 @@ func (b *Bus) DigestClaim(key string) (isOwner bool, err error) {
 	return true, nil
 }
 
-// DigestDrain returns all accumulated events for key and clears the list + claim.
-func (b *Bus) DigestDrain(key string) ([]json.RawMessage, error) {
+// DigestBatch closes the digest window for key ONCE per workflow run and
+// returns its events; every call with the same (key, runID) returns the same
+// batch. The first call snapshots the live list into a run-scoped key, then
+// clears the live list and the claim, so triggers arriving afterwards open the
+// next window. Later channel steps of the run, and retries of any step, read
+// the snapshot and never touch the live list.
+//
+// The snapshot lives in the digest-claim bucket, whose bucket-wide TTL
+// (maxDigestClaimTTL) reclaims it; nothing deletes it explicitly because a
+// retry may legitimately need it until the run ends.
+func (b *Bus) DigestBatch(key, runID string) ([]json.RawMessage, error) {
 	ctx := context.Background()
 	listKey := digestListKey(key)
-	claimKey := digestClaimKey(key)
+	snapKey := digestSnapshotKey(key, runID)
 
-	events := []json.RawMessage{}
-	entry, err := b.digest.Get(ctx, listKey)
-	switch {
-	case err == nil:
-		if uerr := json.Unmarshal(entry.Value(), &events); uerr != nil {
-			return nil, fmt.Errorf("eventbus: digest unmarshal %q: %w", listKey, uerr)
+	if entry, err := b.digestClaim.Get(ctx, snapKey); err == nil {
+		return decodeDigestList(snapKey, entry.Value())
+	} else if !errors.Is(err, jetstream.ErrKeyNotFound) {
+		return nil, fmt.Errorf("eventbus: digest get %q: %w", snapKey, err)
+	}
+
+	for range maxDigestAppendAttempts {
+		events := []json.RawMessage{}
+		var rev uint64
+		entry, err := b.digest.Get(ctx, listKey)
+		switch {
+		case err == nil:
+			rev = entry.Revision()
+			if events, err = decodeDigestList(listKey, entry.Value()); err != nil {
+				return nil, err
+			}
+		case errors.Is(err, jetstream.ErrKeyNotFound):
+			// Nothing accumulated.
+		default:
+			return nil, fmt.Errorf("eventbus: digest get %q: %w", listKey, err)
 		}
-	case errors.Is(err, jetstream.ErrKeyNotFound):
-		// Nothing accumulated.
-	default:
-		return nil, fmt.Errorf("eventbus: digest get %q: %w", listKey, err)
-	}
 
-	if err := b.digest.Delete(ctx, listKey); err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
-		return nil, fmt.Errorf("eventbus: digest delete %q: %w", listKey, err)
+		data, err := json.Marshal(events)
+		if err != nil {
+			return nil, fmt.Errorf("eventbus: digest marshal %q: %w", snapKey, err)
+		}
+		// Snapshot first, then clear: a crash in between leaves the events in the
+		// snapshot (a retry still sees them) rather than dropping them.
+		if _, err := b.digestClaim.Put(ctx, snapKey, data); err != nil {
+			return nil, fmt.Errorf("eventbus: digest put %q: %w", snapKey, err)
+		}
+		if rev != 0 {
+			err := b.digest.Delete(ctx, listKey, jetstream.LastRevision(rev))
+			if isKVConflict(err) {
+				continue // an append landed after our read; re-snapshot it too
+			}
+			if err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
+				return nil, fmt.Errorf("eventbus: digest delete %q: %w", listKey, err)
+			}
+		}
+		if err := b.digestClaim.Delete(ctx, digestClaimKey(key)); err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
+			return nil, fmt.Errorf("eventbus: digest delete %q: %w", digestClaimKey(key), err)
+		}
+		return events, nil
 	}
-	if err := b.digestClaim.Delete(ctx, claimKey); err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
-		return nil, fmt.Errorf("eventbus: digest delete %q: %w", claimKey, err)
+	return nil, fmt.Errorf("eventbus: digest close %q: too much contention", listKey)
+}
+
+func decodeDigestList(key string, raw []byte) ([]json.RawMessage, error) {
+	events := []json.RawMessage{}
+	if err := json.Unmarshal(raw, &events); err != nil {
+		return nil, fmt.Errorf("eventbus: digest unmarshal %q: %w", key, err)
 	}
 	return events, nil
 }
