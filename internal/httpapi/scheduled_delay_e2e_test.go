@@ -42,7 +42,12 @@ func TestScheduledDelay_FiresInTheSubscribersTimezone(t *testing.T) {
 		t.Fatalf("set timezone: %v %v", err, resp)
 	}
 	_ = resp.Body.Close()
+	// Aim for the next minute, or the one after when the next is too close:
+	// a trigger that lands after the minute has passed waits until tomorrow.
 	fire := time.Now().In(tokyo).Truncate(time.Minute).Add(time.Minute)
+	if time.Until(fire) < 30*time.Second {
+		fire = fire.Add(time.Minute)
+	}
 	cv, _ := json.Marshal(map[string]any{"type": "scheduled", "atTime": fire.Format("15:04")})
 	if _, err := h.auth.Create(h.ctx, h.scope, authoring.WorkflowInput{
 		Name: "tokyo-morning", TriggerIdentifier: "tokyo-morning",
