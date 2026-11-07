@@ -55,8 +55,8 @@ github.com/cevatbarisyilmaz/ara v0.0.4 h1:SGH10hXpBJhhTlObuZzTuFn1rrdmjQImITXnZV
 github.com/cevatbarisyilmaz/ara v0.0.4/go.mod h1:BfFOxnUd6Mj6xmcvRxHN3Sr21Z1T3U2MYkYOmoQe4Ts=
 github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNUA=
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
-github.com/danmestas/dagnats v0.0.56 h1:b1fC/+8ImsJPMBjYDd0RGJqUmW5xRNNmYwyR9XP+QBU=
-github.com/danmestas/dagnats v0.0.56/go.mod h1:offBIoJdcqs7A/r3cYMLv/JgZ++58mlm/lKZX7RHOwk=
+github.com/danmestas/dagnats v0.0.57 h1:luHTNgqgKpVfxzJQmIxGBs0Bde3T7dqJgwmjcHFHME0=
+github.com/danmestas/dagnats v0.0.57/go.mod h1:offBIoJdcqs7A/r3cYMLv/JgZ++58mlm/lKZX7RHOwk=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dnaeon/go-vcr v1.2.0 h1:zHCHvJYTMh1N7xnV7zf1m1GPBF9Ad0Jk/whtQ1663qI=
