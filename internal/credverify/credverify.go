@@ -63,10 +63,11 @@ type runInput struct {
 // engine has a sidecar), and register the task handler via Handler on the
 // engine before StartWorkers.
 type Service struct {
-	eng Engine
-	ver Verifier
-	obs Observer
-	log *slog.Logger
+	eng    Engine
+	ver    Verifier
+	obs    Observer
+	lister Lister
+	log    *slog.Logger
 }
 
 // Observer hears the verdict of every completed credential check: ok when
@@ -128,7 +129,7 @@ func (s *Service) Register(ctx context.Context) error {
 	if err := s.eng.RegisterWorkflow(ctx, def); err != nil {
 		return fmt.Errorf("credverify: register workflow: %w", err)
 	}
-	return nil
+	return s.registerVerifyAll(ctx)
 }
 
 // Handler is the engine task handler for TaskVerify. Register it with

@@ -192,3 +192,33 @@ func (repo *integrationHealthRepo) LatestResultSeq(ctx context.Context) (int64, 
 	err := repo.r.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM delivery_results`).Scan(&seq)
 	return seq, err
 }
+
+// ActiveIntegrationScopes lists every active integration in every
+// organization and environment, as (scope, integration id) pairs and without
+// credentials. It is the one deliberately cross-tenant read: the daily
+// credential check (#100) must visit every tenant, and each probe then runs
+// under its own scope.
+func (s *Store) ActiveIntegrationScopes(ctx context.Context) ([]ScopedIntegration, error) {
+	rows, err := s.reader.QueryContext(ctx,
+		`SELECT org_id, environment_id, id FROM integrations WHERE active = 1
+		 ORDER BY org_id, environment_id, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ScopedIntegration
+	for rows.Next() {
+		var si ScopedIntegration
+		if err := rows.Scan(&si.Scope.OrgID, &si.Scope.EnvID, &si.IntegrationID); err != nil {
+			return nil, err
+		}
+		out = append(out, si)
+	}
+	return out, rows.Err()
+}
+
+// ScopedIntegration names one integration and the tenant it belongs to.
+type ScopedIntegration struct {
+	Scope         domain.Scope
+	IntegrationID string
+}

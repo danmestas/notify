@@ -27,6 +27,7 @@ const (
 	AgentMessage   = Prefix + "agent_message"
 
 	VerifyCredentials = Prefix + "verify.credentials"
+	VerifyAll         = Prefix + "verify.all"
 	AgentTurnMesh     = Prefix + "agent.turn.mesh"
 	AgentTurnManaged  = Prefix + "agent.turn.managed"
 	AIBuild           = Prefix + "ai.build"
@@ -37,7 +38,12 @@ const (
 const (
 	CredentialVerifyWorkflow = Prefix + "credential-verify"
 	AIBuilderWorkflow        = Prefix + "ai-builder"
+	HealthVerifyAllWorkflow  = Prefix + "health-verify-all"
 )
+
+// HealthVerifyTrigger is the id of the cron trigger that starts
+// HealthVerifyAllWorkflow every day.
+const HealthVerifyTrigger = Prefix + "health-verify-daily"
 
 // TaskTypes lists every task type notify handles, in Manifest order.
 func TaskTypes() []string {
@@ -45,13 +51,13 @@ func TaskTypes() []string {
 		SendInApp, SendEmail, SendPush, SendChat, SendSMS, SendStream,
 		DelayScheduled, DelayDynamic, DigestWait, CheckThrottle,
 		HTTPRequest, AgentMessage,
-		VerifyCredentials, AgentTurnMesh, AgentTurnManaged, AIBuild,
+		VerifyCredentials, VerifyAll, AgentTurnMesh, AgentTurnManaged, AIBuild,
 	}
 }
 
 // Workflows lists the fixed workflow names notify registers.
 func Workflows() []string {
-	return []string{CredentialVerifyWorkflow, AIBuilderWorkflow}
+	return []string{CredentialVerifyWorkflow, AIBuilderWorkflow, HealthVerifyAllWorkflow}
 }
 
 // Send is the task type of the channel send step ("email" -> notify.send.email).

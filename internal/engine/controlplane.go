@@ -149,3 +149,82 @@ func decodeError(reply []byte) error {
 	}
 	return nil
 }
+
+// Program trigger subjects (dagnats#958): a program registers and removes
+// its own cron triggers on api.p.<program>.triggers.*. Older dagnats has no
+// such endpoint, so the request gets no responders.
+const (
+	subjTriggerCreate = "api.p.notify.triggers.create"
+	subjTriggerDelete = "api.p.notify.triggers.delete"
+)
+
+// ErrTriggersUnsupported marks a trigger request dagnats cannot serve: no
+// responders (a release without program triggers). Test it with errors.Is.
+var ErrTriggersUnsupported = errors.New("engine: dagnats does not support program triggers")
+
+// CronTrigger is a cron trigger notify owns. The id and the workflow must be
+// under "notify."; dagnats refuses anything else.
+type CronTrigger struct {
+	ID         string
+	WorkflowID string
+	// Expression is a standard 5-field cron expression (minute resolution).
+	Expression string
+	// Timezone is an IANA name; empty is dagnats' default.
+	Timezone string
+}
+
+// triggerDef is dagnats' TriggerDef JSON for a cron trigger
+// (internal/trigger/types.go). The server stamps the source itself.
+type triggerDef struct {
+	ID         string      `json:"id"`
+	WorkflowID string      `json:"workflow_id"`
+	Enabled    bool        `json:"enabled"`
+	Cron       *cronConfig `json:"cron"`
+}
+
+type cronConfig struct {
+	Expression string `json:"expression"`
+	Timezone   string `json:"timezone"`
+	Backfill   bool   `json:"backfill"`
+}
+
+func (t CronTrigger) def() triggerDef {
+	return triggerDef{
+		ID:         t.ID,
+		WorkflowID: t.WorkflowID,
+		Enabled:    true,
+		Cron:       &cronConfig{Expression: t.Expression, Timezone: t.Timezone},
+	}
+}
+
+// UpsertTrigger creates the cron trigger, or replaces it when notify already
+// owns one with that id, so it is safe to send on every start. It returns
+// ErrTriggersUnsupported when dagnats has no program triggers.
+func (e *Engine) UpsertTrigger(ctx context.Context, t CronTrigger) error {
+	body, err := json.Marshal(t.def())
+	if err != nil {
+		return fmt.Errorf("marshal trigger def: %w", err)
+	}
+	return e.triggerRequest(ctx, subjTriggerCreate, body)
+}
+
+// DeleteTrigger removes the trigger notify created with id. A trigger that
+// does not exist is not an error.
+func (e *Engine) DeleteTrigger(ctx context.Context, id string) error {
+	err := e.triggerRequest(ctx, subjTriggerDelete, []byte(id))
+	if err != nil && strings.Contains(err.Error(), "trigger not found") {
+		return nil
+	}
+	return err
+}
+
+func (e *Engine) triggerRequest(ctx context.Context, subject string, body []byte) error {
+	reply, err := e.request(ctx, subject, body)
+	if err != nil {
+		if errors.Is(err, nats.ErrNoResponders) {
+			return fmt.Errorf("%w: %w", ErrTriggersUnsupported, err)
+		}
+		return err
+	}
+	return decodeError(reply)
+}

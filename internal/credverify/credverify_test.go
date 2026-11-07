@@ -84,8 +84,9 @@ func TestRegister_DeclaresOneStepVerifyWorkflow(t *testing.T) {
 	if err := svc.Register(context.Background()); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if len(eng.registered) != 1 {
-		t.Fatalf("registered %d workflows, want 1", len(eng.registered))
+	// The verify workflow, then the daily health-verify-all one.
+	if len(eng.registered) != 2 {
+		t.Fatalf("registered %d workflows, want 2", len(eng.registered))
 	}
 	def := eng.registered[0]
 	if def.Name != workflowName {

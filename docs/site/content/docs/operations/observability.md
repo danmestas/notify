@@ -10,6 +10,10 @@ weight: 5
 
 Use `/healthz` for a restart decision and `/readyz` to decide whether to send traffic.
 
+## Delivery health
+
+Each integration carries a delivery health state (`unverified`, `healthy`, `degraded`, `failing`), worked out from its delivery results and from credential checks. A credential check runs right after an integration's credentials change, and once a day for every active integration in every environment, so a key that was revoked at the provider shows up without waiting for a send to fail. The daily check is a dagnats cron trigger (`notify.health-verify-daily`) that starts the `notify.health-verify-all` workflow. It runs at 06:17 UTC by default. `NOTIFY_HEALTH_VERIFY_CRON` changes the schedule (a standard 5-field cron expression, read in UTC) or, set to `off`, turns the check off and removes the trigger. notify re-asserts the trigger on every start. It needs a dagnats with program triggers (dagnats#958, not in v0.0.54); on an older dagnats notify logs `daily credential check not scheduled` once and carries on, and the check starts working at the first start after dagnats is upgraded.
+
 ## Metrics
 
 `GET /metrics` returns JSON of `notify_`-prefixed expvar variables only:
