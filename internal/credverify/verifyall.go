@@ -24,8 +24,8 @@ const DefaultVerifyCron = "17 6 * * *"
 // VerifyCronOff, as the schedule, turns the daily check off.
 const VerifyCronOff = "off"
 
-// verifyTimeout bounds one integration's probe in the daily check, so one
-// hung provider cannot stall the rest.
+// verifyTimeout bounds one integration's probe, so one hung provider cannot
+// stall the daily check or an operator's request.
 const verifyTimeout = 30 * time.Second
 
 // Lister lists the integrations the daily check visits. *store.Store
@@ -99,23 +99,18 @@ const (
 )
 
 func (s *Service) checkOne(ctx context.Context, scope domain.Scope, id string) outcome {
-	ctx, cancel := context.WithTimeout(ctx, verifyTimeout)
-	defer cancel()
-	res, err := s.ver.VerifyByID(ctx, scope, id)
-	if err != nil {
+	res, err := s.CheckNow(ctx, scope, id)
+	switch {
+	case err != nil:
 		s.log.Warn("credverify: daily check could not probe", "integration", id, "err", err)
 		return outcomeErrored
-	}
-	if res.Unsupported {
+	case res.Unsupported:
 		return outcomeUnsupported
-	}
-	if s.obs != nil {
-		s.obs.CredentialChecked(ctx, scope, id, res.OK, res.Detail)
-	}
-	if res.OK {
+	case res.OK:
 		return outcomePassed
+	default:
+		return outcomeRejected
 	}
-	return outcomeRejected
 }
 
 // registerVerifyAll declares the one-step workflow the daily trigger starts.
