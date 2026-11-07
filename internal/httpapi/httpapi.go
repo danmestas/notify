@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/mail"
@@ -2062,21 +2063,25 @@ func getIntegrations(conn *connectivity.Service) http.HandlerFunc {
 			writeInternalError(w, r, err)
 			return
 		}
+		// Health is secondary: if it cannot be read, list without it.
+		var byID map[string]domain.IntegrationHealth
 		rows, err := conn.Store().IntegrationHealth().List(r.Context(), scope)
 		if err != nil {
-			writeInternalError(w, r, err)
-			return
-		}
-		byID := make(map[string]domain.IntegrationHealth, len(rows))
-		for _, h := range rows {
-			byID[h.IntegrationID] = h
+			slog.ErrorContext(r.Context(), "httpapi: integration health list", "err", err)
+		} else {
+			byID = make(map[string]domain.IntegrationHealth, len(rows))
+			for _, h := range rows {
+				byID[h.IntegrationID] = h
+			}
 		}
 		dtos := make([]integrationDTO, 0, len(list))
 		for _, in := range list {
 			dto := toIntegrationDTONoCredentials(in)
-			h, found := byID[in.ID]
-			hd := toHealthDTO(h, found)
-			dto.Health = &hd
+			if byID != nil {
+				h, found := byID[in.ID]
+				hd := toHealthDTO(h, found)
+				dto.Health = &hd
+			}
 			dtos = append(dtos, dto)
 		}
 		writeJSON(w, http.StatusOK, dtos)

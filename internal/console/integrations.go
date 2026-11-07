@@ -842,11 +842,19 @@ func (c *Console) handleIntegrationVerify(w http.ResponseWriter, r *http.Request
 	// trip to dagnats to find out whether the credentials actually work.
 	// Probe synchronously — the same check the durable run's task handler
 	// performs (connectivity.VerifyByID) — and surface pass/fail inline.
-	if c.deps.Connectivity == nil {
+	// CredChecker, when wired, is the throttled path that also updates the
+	// integration's health; without it the probe is a bare VerifyByID.
+	var probe func(context.Context, domain.Scope, string) (connectivity.VerifyResult, error)
+	switch {
+	case c.deps.CredChecker != nil:
+		probe = c.deps.CredChecker.CheckNow
+	case c.deps.Connectivity != nil:
+		probe = c.deps.Connectivity.VerifyByID
+	default:
 		http.Redirect(w, r, backURL+"?verifyRun="+url.QueryEscape(runID), http.StatusSeeOther)
 		return
 	}
-	res, verr := c.deps.Connectivity.VerifyByID(r.Context(), scope, id)
+	res, verr := probe(r.Context(), scope, id)
 	switch {
 	case verr != nil:
 		c.deps.Logger.Error("console: credential verify probe", "id", id, "err", verr)

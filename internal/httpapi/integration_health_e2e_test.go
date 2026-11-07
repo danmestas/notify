@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
@@ -44,10 +45,18 @@ type healthServer struct {
 	st      *store.Store
 	tracker *deliveryhealth.Tracker
 	probe   *atomic.Int32 // HTTP status the fake ntfy answers with
+	hits    *atomic.Int32 // requests the fake ntfy has served
 	ntfyURL string
 }
 
 func startHealthServer(t *testing.T) *healthServer {
+	t.Helper()
+	// Most tests flip the provider's answer between checks, so they run
+	// unthrottled; the throttle has its own test.
+	return startHealthServerWith(t, 0)
+}
+
+func startHealthServerWith(t *testing.T, minInterval time.Duration) *healthServer {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "notify.db"))
@@ -56,10 +65,16 @@ func startHealthServer(t *testing.T) *healthServer {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	var status atomic.Int32
+	var status, hits atomic.Int32
 	status.Store(http.StatusOK)
 	ntfy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(int(status.Load()))
+		hits.Add(1)
+		code := int(status.Load())
+		w.WriteHeader(code)
+		if code == http.StatusInternalServerError {
+			// A provider that echoes the credential it was sent.
+			_, _ = fmt.Fprintf(w, "credentials rejected: bad token %q", strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		}
 	}))
 	t.Cleanup(ntfy.Close)
 
@@ -68,7 +83,7 @@ func startHealthServer(t *testing.T) *healthServer {
 	aud := audience.New(st)
 	conn := connectivity.New(st, masterKey, connectivity.WithHTTPClient(&http.Client{}))
 	tracker := deliveryhealth.New(st, deliveryhealth.DefaultSettings(), nil)
-	chk := credverify.New(noEngine{}, conn).WithObserver(tracker)
+	chk := credverify.New(noEngine{}, conn).WithObserver(tracker).WithMinCheckInterval(minInterval)
 
 	key, scope, err := id.Bootstrap(ctx, "Acme", "dev")
 	if err != nil {
@@ -86,7 +101,7 @@ func startHealthServer(t *testing.T) *healthServer {
 	t.Cleanup(srv.Close)
 	return &healthServer{
 		srv: srv, auth: "ApiKey " + key, otherAu: "ApiKey " + otherKey, scope: scope,
-		st: st, tracker: tracker, probe: &status, ntfyURL: ntfy.URL,
+		st: st, tracker: tracker, probe: &status, hits: &hits, ntfyURL: ntfy.URL,
 	}
 }
 
@@ -196,7 +211,7 @@ func TestIntegrationHealth_VerifyRunsTheCheckAndUpdatesState(t *testing.T) {
 func TestIntegrationHealth_NoSecretInAnyHealthField(t *testing.T) {
 	h := startHealthServer(t)
 	id := h.createNtfy(t, "ntfy-secret")
-	h.probe.Store(http.StatusForbidden)
+	h.probe.Store(http.StatusInternalServerError) // the fake echoes the token in its error body
 
 	_, verifyBody := doPost(t, h.srv.URL+"/v1/integrations/"+id+"/verify", h.auth, "")
 	_, getBody := doGet(t, h.srv.URL+"/v1/integrations/"+id, h.auth)
@@ -206,7 +221,59 @@ func TestIntegrationHealth_NoSecretInAnyHealthField(t *testing.T) {
 			t.Errorf("%s response leaks the token: %s", name, body)
 		}
 	}
+	// The provider's message still reaches the operator, minus the secret.
+	var got healthJSON
+	if err := json.Unmarshal([]byte(verifyBody), &got); err != nil {
+		t.Fatalf("decode verify: %v", err)
+	}
+	if got.State != "failing" || !strings.Contains(got.LastErrorMessage, "[redacted]") {
+		t.Fatalf("health = %+v, want failing with the token redacted in the message", got)
+	}
+	// And the stored row never held it.
+	row, err := h.st.IntegrationHealth().Get(context.Background(), h.scope, id)
+	if err != nil {
+		t.Fatalf("health row: %v", err)
+	}
+	if strings.Contains(row.LastErrorMessage, "tk_super_secret") {
+		t.Fatalf("stored last error leaks the token: %q", row.LastErrorMessage)
+	}
 }
+
+func TestIntegrationHealth_VerifyIsThrottledPerIntegration(t *testing.T) {
+	h := startHealthServerWith(t, time.Minute)
+	id := h.createNtfy(t, "ntfy-throttle")
+	other := h.createNtfy(t, "ntfy-other")
+	h.probe.Store(http.StatusUnauthorized)
+
+	var first healthJSON
+	for i := 0; i < 5; i++ {
+		code, body := doPost(t, h.srv.URL+"/v1/integrations/"+id+"/verify", h.auth, "")
+		if code != http.StatusOK {
+			t.Fatalf("verify %d: status=%d body=%s", i, code, body)
+		}
+		var got healthJSON
+		if err := json.Unmarshal([]byte(body), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if i == 0 {
+			first = got
+		} else if got != first {
+			t.Fatalf("verify %d = %+v, want the stored health %+v", i, got, first)
+		}
+	}
+	if n := hitsOf(h); n != 1 {
+		t.Fatalf("provider probed %d times by 5 verifies, want 1", n)
+	}
+	// Another integration is not held back by this one's interval.
+	if code, _ := doPost(t, h.srv.URL+"/v1/integrations/"+other+"/verify", h.auth, ""); code != http.StatusOK {
+		t.Fatalf("verify of another integration: status=%d", code)
+	}
+	if n := hitsOf(h); n != 2 {
+		t.Fatalf("provider probed %d times, want 2", n)
+	}
+}
+
+func hitsOf(h *healthServer) int32 { return h.hits.Load() }
 
 func TestIntegrationHealth_OutOfScopeIs404(t *testing.T) {
 	h := startHealthServer(t)

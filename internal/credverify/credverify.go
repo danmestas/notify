@@ -18,9 +18,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/danmestas/dagnats/dag"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/domain"
@@ -68,7 +70,34 @@ type Service struct {
 	obs    Observer
 	lister Lister
 	log    *slog.Logger
+
+	// Every probe goes through check, which shares one in-flight probe per
+	// integration and answers from the last completed one while it is under
+	// minInterval old, so no caller can make notify hammer a provider.
+	now         func() time.Time
+	minInterval time.Duration
+	flight      singleflight.Group
+	mu          sync.Mutex
+	last        map[string]checked
 }
+
+// checked is the last completed probe of one integration.
+type checked struct {
+	at  time.Time
+	res connectivity.VerifyResult
+}
+
+// WithMinCheckInterval sets how soon after a completed check the same
+// integration is probed again (default MinCheckInterval; 0 never throttles)
+// and returns s.
+func (s *Service) WithMinCheckInterval(d time.Duration) *Service {
+	s.minInterval = d
+	return s
+}
+
+// MinCheckInterval is how soon after a completed check the same integration
+// is probed again: a check asked for inside it gets the previous verdict.
+const MinCheckInterval = 10 * time.Second
 
 // Observer hears the verdict of every completed credential check: ok when
 // the provider accepted the credentials, otherwise detail says why not. A
@@ -96,6 +125,8 @@ func (s *Service) CheckSoon(ctx context.Context, scope domain.Scope, integration
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), startTimeout)
 	go func() {
 		defer cancel()
+		// The credentials just changed, so the last verdict no longer applies.
+		s.forget(scope, integrationID)
 		if _, err := s.Start(ctx, scope, integrationID); err != nil {
 			s.log.Warn("credverify: check after credential change did not start",
 				"integration", integrationID, "err", err)
@@ -111,7 +142,73 @@ func New(eng Engine, ver Verifier) *Service {
 	if ver == nil {
 		panic("credverify.New: verifier is nil")
 	}
-	return &Service{eng: eng, ver: ver, log: slog.Default()}
+	return &Service{
+		eng: eng, ver: ver, log: slog.Default(),
+		now: time.Now, minInterval: MinCheckInterval, last: map[string]checked{},
+	}
+}
+
+func checkKey(scope domain.Scope, id string) string {
+	return scope.OrgID + "/" + scope.EnvID + "/" + id
+}
+
+// forget drops integration id's remembered verdict so the next check probes.
+func (s *Service) forget(scope domain.Scope, id string) {
+	s.mu.Lock()
+	delete(s.last, checkKey(scope, id))
+	s.mu.Unlock()
+}
+
+func (s *Service) recent(key string) (connectivity.VerifyResult, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.last[key]
+	if !ok || s.now().Sub(c.at) >= s.minInterval {
+		return connectivity.VerifyResult{}, false
+	}
+	return c.res, true
+}
+
+// CheckNow probes integration id's credentials and reports the verdict to the
+// observer, so the integration's health reflects it when CheckNow returns. It
+// is what an operator's "verify now" runs, and what the durable check and the
+// daily check run per integration.
+//
+// A check asked for within MinCheckInterval of the last completed one returns
+// that verdict without probing, and concurrent checks of one integration
+// share a single probe. An error means the probe could not complete (the
+// integration is missing, its credentials will not decrypt, or its config is
+// malformed): nothing is reported or remembered. A provider with no probe
+// returns Unsupported and reports nothing.
+func (s *Service) CheckNow(ctx context.Context, scope domain.Scope, id string) (connectivity.VerifyResult, error) {
+	key := checkKey(scope, id)
+	if res, ok := s.recent(key); ok {
+		return res, nil
+	}
+	v, err, _ := s.flight.Do(key, func() (any, error) {
+		if res, ok := s.recent(key); ok {
+			return res, nil
+		}
+		// Detached from the first caller's cancellation: the other callers
+		// sharing this probe still want its answer.
+		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), verifyTimeout)
+		defer cancel()
+		res, err := s.ver.VerifyByID(pctx, scope, id)
+		if err != nil {
+			return connectivity.VerifyResult{}, err
+		}
+		if !res.Unsupported && s.obs != nil {
+			s.obs.CredentialChecked(pctx, scope, id, res.OK, res.Detail)
+		}
+		s.mu.Lock()
+		s.last[key] = checked{at: s.now(), res: res}
+		s.mu.Unlock()
+		return res, nil
+	})
+	if err != nil {
+		return connectivity.VerifyResult{}, err
+	}
+	return v.(connectivity.VerifyResult), nil
 }
 
 // Register declares the one-step verify workflow with the engine. It is
@@ -140,7 +237,7 @@ func (s *Service) Handler(ctx context.Context, t engine.TaskPayload) (json.RawMe
 		return nil, fmt.Errorf("credverify: decode task input: %w", err)
 	}
 	scope := domain.Scope{OrgID: in.OrgID, EnvID: in.EnvID}
-	res, err := s.ver.VerifyByID(ctx, scope, in.IntegrationID)
+	res, err := s.CheckNow(ctx, scope, in.IntegrationID)
 	if err != nil {
 		// The probe could not be completed (provider unreachable, decrypt
 		// failure). Treat as retryable so the engine retries per policy and the
@@ -150,9 +247,6 @@ func (s *Service) Handler(ctx context.Context, t engine.TaskPayload) (json.RawMe
 	out, err := json.Marshal(res)
 	if err != nil {
 		return nil, fmt.Errorf("credverify: encode result: %w", err)
-	}
-	if s.obs != nil && !res.Unsupported {
-		s.obs.CredentialChecked(ctx, scope, in.IntegrationID, res.OK, res.Detail)
 	}
 	// A rejected credential is a completed run with ok=false — a definite,
 	// non-retryable answer the operator can act on. Returning the result as

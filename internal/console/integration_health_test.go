@@ -183,3 +183,29 @@ func TestIntegrationHealth_NoHealthRepoRendersNothing(t *testing.T) {
 		t.Error("health markup rendered without a health repo")
 	}
 }
+
+func TestIntegrationHealth_LastErrorIsHTMLEscaped(t *testing.T) {
+	tc := newTestConsole(t)
+	tc.withHealth()
+	in := seedSMTP(tc, t, "smtp-xss", true)
+	const evil = `<script>alert(1)</script>`
+	tc.putHealth(t, domain.IntegrationHealth{
+		IntegrationID: in.ID, State: "failing", LastErrorClass: "auth", LastErrorMessage: evil,
+	})
+	cookie, _ := tc.login(t)
+
+	pages := map[string]string{
+		"page":   tc.get(t, "/console/integrations", cookie).Body.String(),
+		"drawer": tc.getWithQuery(t, "/console/api/fragments/integration-detail", url.Values{"id": {in.ID}}.Encode(), cookie).Body.String(),
+		"grid":   tc.getWithQuery(t, "/console/api/fragments/integrations-grid", "", cookie).Body.String(),
+		"dash":   tc.get(t, "/console/", cookie).Body.String(),
+	}
+	for name, body := range pages {
+		if strings.Contains(body, evil) {
+			t.Errorf("%s renders the last error unescaped", name)
+		}
+	}
+	if !strings.Contains(pages["page"], "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Error("page does not show the escaped last error")
+	}
+}

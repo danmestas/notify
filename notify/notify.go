@@ -380,6 +380,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 		InboundSecretConfigured: cfg.InboundSecret != "",
 		Trigger:                 trg,
 		CredVerifier:            n.credVerify,
+		CredChecker:             n.credVerify,
 		Agents:                  ags,
 		Composer:                consoleComposer{ing},
 		// #106: read-only chat inbound status page. The loop resolves its

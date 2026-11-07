@@ -46,6 +46,8 @@ An integration object:
 | `lastErrorMessage` | The provider's message for that error. Never a credential. |
 | `lastCheckedAt` | When the credentials were last checked, by the daily check, after a credential change, or by `verify`. Absent if never. |
 
-`POST /v1/integrations/{id}/verify` probes the provider with the stored credentials, without sending a message, and waits for the verdict. A pass clears `failing` and `unverified`; a credential refusal sets `failing`. A provider that has no credential probe, or a provider that cannot be reached, leaves `state` as it was. The response is the health object alone, and the call is scoped like every other: an integration in another environment is `404`.
+`POST /v1/integrations/{id}/verify` probes the provider with the stored credentials, without sending a message, and waits for the verdict. A pass clears `failing` and `unverified`; a credential refusal sets `failing`. A provider that has no credential probe, or a provider that cannot be reached, leaves `state` as it was. The response is the health object alone, and the call is scoped like every other: an integration in another environment is `404`. Any valid API key can call it, the same as the other integration routes.
+
+To protect the provider account, an integration is probed at most once every 10 seconds: a verify inside that window returns the stored health without probing, and simultaneous verifies share one probe. A provider's error text is stored with every credential value of the integration replaced by `[redacted]`, and cut to 500 characters.
 
 `providerId` for the unified create is one of `smtp, cloudflare-email, resend, ses, ntfy, expo, fcm, discord, telegram, slack, whatsapp, mastodon, bluesky, twilio, signalwire, sns, email-webhook, push-webhook, chat-webhook`, plus `sendmail`. An unknown one is `400`. A bad `identifier` is `422`. Responses never include credentials in the clear.
