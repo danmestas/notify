@@ -52,8 +52,12 @@ A turn whose retries ran out is marked `failed` and stays that way. `POST …/ac
 | Unknown agent, conversation or activity, or an activity that belongs to a different conversation or agent. | `404` |
 | The activity is not a `user` message, or an agent reply already follows it. | `409` |
 | The turn has not failed: it is still running, or retried a moment ago. Of two simultaneous retries exactly one starts a run. | `409` |
+| The activity has no recorded turn status (it predates status tracking). | `409` |
+| Another turn of the conversation holds the turn lock, so the new run was not admitted. The turn stays failed; retry shortly. | `409` |
 | The agent's runtime is not executable on this server. | `422` |
 | This server keeps no turn status, so a failed turn cannot be told from a running one. | `503` |
+
+`failed` is terminal for an A2A stream: a stream closed on `failed` stays closed after a retry. Pollers and other readers of the task see it move from `failed` back to `submitted`.
 
 The console conversation view shows a **Retry** button on a user message whose turn failed and that has no reply.
 

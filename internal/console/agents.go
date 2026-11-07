@@ -597,7 +597,7 @@ func (c *Console) handleConversationRetry(w http.ResponseWriter, r *http.Request
 		c.serveNotFound(w, r)
 	default:
 		c.deps.Logger.Error("console: retry turn", "identifier", identifier, "conv", convID, "err", err)
-		http.Redirect(w, r, back+"?error="+url.QueryEscape("Retry failed: "+err.Error()), http.StatusSeeOther)
+		http.Redirect(w, r, back+"?error="+url.QueryEscape("Retry failed."), http.StatusSeeOther)
 	}
 }
 

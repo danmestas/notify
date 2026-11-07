@@ -59,8 +59,8 @@ func (s *Service) Close(ctx context.Context, scope domain.Scope, taskID, state s
 }
 
 // Reopen puts a failed task back to submitted with note and wakes watchers. It
-// reports whether the task was reopened; false means it is open, finished, or
-// otherwise not failed, and the caller must not start another turn for it.
+// reports whether the task was reopened; false means it has no record, is open,
+// finished, or otherwise not failed, and the caller must not start another turn for it.
 func (s *Service) Reopen(ctx context.Context, scope domain.Scope, taskID, note string) (bool, error) {
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 	defer cancel()

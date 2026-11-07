@@ -9,7 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danmestas/dagnats/dag"
+
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
+	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/names"
 )
 
 // retryTurn POSTs the retry route and returns the status and body.
@@ -52,6 +56,16 @@ func (h *harness) failedTurn(t *testing.T) composeResponse {
 
 func TestRetryFailedTurn_E2E(t *testing.T) {
 	h := newRetryHarness(t)
+	// A definition left by the previous binary keys idempotency on activity_id.
+	// Registering the current one must replace it, or the retry's new key
+	// would be ignored and the old failed run handed back.
+	if err := h.eng.RegisterWorkflow(context.Background(), engine.WorkflowDef{
+		Name:           names.AgentTurnWorkflow(h.agent.ID),
+		IdempotencyKey: "activity_id",
+		Steps:          []engine.StepDef{{ID: "turn", Task: names.AgentTurn(agentdomain.RuntimeMesh), Type: dag.StepTypeNormal}},
+	}); err != nil {
+		t.Fatalf("register old definition: %v", err)
+	}
 	frames := h.openSSE(t)
 	out := h.failedTurn(t)
 
@@ -157,4 +171,66 @@ func TestRetryOfOpenTurn_E2E(t *testing.T) {
 	if status, body := h.retryTurn(t, h.agent.Identifier, out.ConversationID, out.ActivityID); status != http.StatusConflict {
 		t.Errorf("retry of running turn = %d (%s), want 409", status, body)
 	}
+}
+
+// A retry is refused for an activity with no turn status: it may have been
+// answered or be running, and a second run could double-reply.
+func TestRetryWithoutTurnStatus_E2E(t *testing.T) {
+	h := newRetryHarness(t)
+	out := h.compose(t, "", "seed")
+	h.waitTaskState(t, out.ActivityID, agentdomain.TaskFailed, 60*time.Second)
+	convID := h.conversationRowID(t, h.agent.ID, out.ConversationID)
+	legacy, err := h.agents.Activities().Append(context.Background(), testScope, agentdomain.Activity{
+		ConversationID: convID, Role: "user", Content: json.RawMessage(`{"parts":[{"text":"legacy"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("append legacy activity: %v", err)
+	}
+	if status, body := h.retryTurn(t, h.agent.Identifier, out.ConversationID, legacy.ID); status != http.StatusConflict {
+		t.Errorf("retry without status = %d (%s), want 409", status, body)
+	}
+}
+
+// A retry started while another run of the conversation holds the turn lock
+// is not admitted by the engine. It must be refused and leave the turn failed
+// (so it can be retried), not stay "submitted" behind a run that never runs.
+func TestRetryWhileConversationBusy_E2E(t *testing.T) {
+	h := newRetryHarness(t)
+	failed := h.failedTurn(t)
+
+	// A newer message in the same conversation holds the lock while its
+	// agent acks but never answers.
+	dispatches := h.startNeverReplyStub(t, stubSubject)
+	held := h.compose(t, failed.ConversationID, "holds the lock")
+	deadline := time.Now().Add(30 * time.Second)
+	for dispatches.Load() < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("holding turn never dispatched")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	status, body := h.retryTurn(t, h.agent.Identifier, failed.ConversationID, failed.ActivityID)
+	if status != http.StatusConflict || !strings.Contains(string(body), "busy") {
+		t.Fatalf("retry while busy = %d (%s), want 409 busy", status, body)
+	}
+	if rec, _ := h.tasks.Get(context.Background(), testScope, failed.ActivityID); rec.State != agentdomain.TaskFailed {
+		t.Fatalf("task after skipped retry = %q, want failed", rec.State)
+	}
+
+	// Once the holder ends, the same turn can be retried.
+	h.waitTaskState(t, held.ActivityID, agentdomain.TaskFailed, 60*time.Second)
+	h.startStub(t)
+	deadline = time.Now().Add(30 * time.Second)
+	for {
+		status, body = h.retryTurn(t, h.agent.Identifier, failed.ConversationID, failed.ActivityID)
+		if status == http.StatusAccepted {
+			break
+		}
+		if status != http.StatusConflict || time.Now().After(deadline) {
+			t.Fatalf("retry after holder ended = %d (%s), want 202", status, body)
+		}
+		time.Sleep(200 * time.Millisecond) // the engine may not have released the lock yet
+	}
+	h.waitTaskState(t, failed.ActivityID, agentdomain.TaskCompleted, 30*time.Second)
 }

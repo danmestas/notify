@@ -26,10 +26,9 @@ type TaskStatusRepo interface {
 	// Close moves an open task to state. A non-empty usage is stored whatever
 	// the state; an empty state only stores usage.
 	Close(ctx context.Context, scope domain.Scope, taskID, state string, usage json.RawMessage) error
-	// Reopen moves a failed task back to submitted and appends note, or creates
-	// the record as submitted when none exists. It reports whether it did: a
-	// task that is open or finished is left alone, so of two concurrent retries
-	// exactly one wins.
+	// Reopen moves a failed task back to submitted and appends note. It reports
+	// whether it did: a missing record, or a task that is open or finished, is
+	// left alone, so of two concurrent retries exactly one wins.
 	Reopen(ctx context.Context, scope domain.Scope, taskID, note string) (bool, error)
 	// Get returns the record, or ErrNotFound.
 	Get(ctx context.Context, scope domain.Scope, taskID string) (agentdomain.TaskStatus, error)
@@ -83,15 +82,13 @@ func (repo *taskStatusRepo) Close(ctx context.Context, scope domain.Scope, taskI
 func (repo *taskStatusRepo) Reopen(ctx context.Context, scope domain.Scope, taskID, note string) (bool, error) {
 	now := timestamp.Now()
 	res, err := repo.w.ExecContext(ctx,
-		`INSERT INTO task_status (org_id, environment_id, task_id, state, notes, updated_at)
-		 VALUES (?1, ?2, ?3, 'submitted', json_array(json_object('text', ?4, 'at', ?5)), ?5)
-		 ON CONFLICT (org_id, environment_id, task_id) DO UPDATE SET
+		`UPDATE task_status SET
 		   state = 'submitted',
-		   notes = CASE WHEN json_array_length(notes) < ?6
-		                THEN json_insert(notes, '$[#]', json_object('text', ?4, 'at', ?5)) ELSE notes END,
-		   updated_at = ?5
-		 WHERE state = 'failed'`,
-		scope.OrgID, scope.EnvID, taskID, note, now, MaxTaskNotes)
+		   notes = CASE WHEN json_array_length(notes) < ?4
+		                THEN json_insert(notes, '$[#]', json_object('text', ?5, 'at', ?6)) ELSE notes END,
+		   updated_at = ?6
+		 WHERE org_id = ?1 AND environment_id = ?2 AND task_id = ?3 AND state = 'failed'`,
+		scope.OrgID, scope.EnvID, taskID, MaxTaskNotes, note, now)
 	if err != nil {
 		return false, err
 	}

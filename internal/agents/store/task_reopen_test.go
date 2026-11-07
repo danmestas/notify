@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
@@ -13,12 +14,18 @@ func TestTaskStatusRepo_Reopen(t *testing.T) {
 	repo := openTemp(t).TaskStatuses()
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
 
-	// No record yet: reopen creates one as submitted.
-	if ok, err := repo.Reopen(ctx, scope, "t0", "again"); err != nil || !ok {
-		t.Fatalf("reopen of missing record = %v, %v, want true", ok, err)
+	// No record: nothing to reopen, and none is created.
+	if ok, err := repo.Reopen(ctx, scope, "t0", "again"); err != nil || ok {
+		t.Fatalf("reopen of missing record = %v, %v, want false", ok, err)
+	}
+	if _, err := repo.Get(ctx, scope, "t0"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reopen created a record: %v", err)
 	}
 	// Open: refused.
-	if ok, err := repo.Reopen(ctx, scope, "t0", "again"); err != nil || ok {
+	if err := repo.Submit(ctx, scope, "t2"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := repo.Reopen(ctx, scope, "t2", "again"); err != nil || ok {
 		t.Fatalf("reopen of open task = %v, %v, want false", ok, err)
 	}
 

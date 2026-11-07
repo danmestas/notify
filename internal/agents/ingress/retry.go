@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -28,6 +29,13 @@ var (
 	// ErrTurnRunning: the activity's turn has not failed, so it is still
 	// running (or already finished) and a second run must not start.
 	ErrTurnRunning = errors.New("a turn for this activity is already running")
+	// ErrNoTurnStatus: the activity has no turn status record (it predates
+	// status tracking, or its write failed), so whether it was answered or is
+	// running cannot be known and a second run could double-reply.
+	ErrNoTurnStatus = errors.New("no turn status recorded for this activity")
+	// ErrConversationBusy: another run of the conversation holds the turn
+	// lock, so the retry was not admitted. The turn is still failed.
+	ErrConversationBusy = errors.New("conversation busy, retry shortly")
 	// ErrRetryUnavailable: no task status is kept, so a running turn could
 	// not be told from a failed one. Callers map it to 503.
 	ErrRetryUnavailable = errors.New("turn status is not recorded on this server")
@@ -75,6 +83,9 @@ func (s *Service) RetryTurn(ctx context.Context, scope domain.Scope, agentIdenti
 		return ComposeResult{}, ErrRetryUnavailable
 	}
 
+	if _, ok := s.tasks.Get(ctx, scope, act.ID); !ok {
+		return ComposeResult{}, ErrNoTurnStatus
+	}
 	reopened, err := s.tasks.Reopen(ctx, scope, act.ID, retryNote)
 	if err != nil {
 		return ComposeResult{}, err
@@ -88,7 +99,40 @@ func (s *Service) RetryTurn(ctx context.Context, scope domain.Scope, agentIdenti
 		s.closeTask(ctx, scope, act.ID, agentdomain.TaskFailed)
 		return ComposeResult{}, err
 	}
+	// The workflow serialises turns per conversation (singleton skip): a run
+	// started while another holds the lock is recorded as cancelled and never
+	// executes, yet StartRun still answers with its id. Admission is
+	// asynchronous, so wait for the run's first snapshot and put the task back
+	// to failed when the run was skipped.
+	if s.startSkipped(ctx, runID) {
+		s.closeTask(ctx, scope, act.ID, agentdomain.TaskFailed)
+		return ComposeResult{}, ErrConversationBusy
+	}
 	return ComposeResult{ConversationID: conv.PlatformThreadID, ActivityID: act.ID, RunID: runID}, nil
+}
+
+// admissionWait bounds how long RetryTurn waits to learn whether the engine
+// admitted the new run.
+const admissionWait = 5 * time.Second
+
+// startSkipped reports whether the engine refused to run runID because the
+// conversation's singleton lock was held. A run cancelled before it did
+// anything is a skip. If no snapshot appears within admissionWait the run is
+// taken as admitted: it is the only outcome that leaves a turn to execute.
+func (s *Service) startSkipped(ctx context.Context, runID string) bool {
+	deadline := time.Now().Add(admissionWait)
+	for time.Now().Before(deadline) {
+		snap, err := s.eng.GetRun(ctx, runID)
+		if err == nil && snap.Status != "" {
+			return snap.Status == "cancelled"
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	return false
 }
 
 // requireUnanswered returns ErrAlreadyAnswered when an agent activity follows
@@ -116,7 +160,8 @@ func (s *Service) retryTurn(w http.ResponseWriter, r *http.Request) {
 		chi.URLParam(r, "identifier"), chi.URLParam(r, "conversationId"), chi.URLParam(r, "activityId"))
 	if err != nil {
 		switch {
-		case errors.Is(err, ErrAlreadyAnswered), errors.Is(err, ErrNotUserTurn), errors.Is(err, ErrTurnRunning):
+		case errors.Is(err, ErrAlreadyAnswered), errors.Is(err, ErrNotUserTurn), errors.Is(err, ErrTurnRunning),
+			errors.Is(err, ErrNoTurnStatus), errors.Is(err, ErrConversationBusy):
 			http.Error(w, err.Error(), http.StatusConflict)
 		case errors.Is(err, ErrRetryUnavailable):
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
