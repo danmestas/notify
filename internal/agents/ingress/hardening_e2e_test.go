@@ -94,7 +94,7 @@ func assertDispatchesHold(t *testing.T, count *atomic.Int64, want int64, window 
 }
 
 // turnInputJSON rebuilds the engine run input the compose handler produces —
-// the wire contract of RFC 0002 §5 (idempotency key dot-path "activity_id",
+// the wire contract of RFC 0002 §5 (idempotency key dot-path "turn_key",
 // singleton key dot-path "conversation_id") — so tests can simulate a webhook
 // redelivery: a second StartRun carrying the same activity id.
 func turnInputJSON(t *testing.T, agentIdentifier, conversationID, activityID string) json.RawMessage {
@@ -105,6 +105,7 @@ func turnInputJSON(t *testing.T, agentIdentifier, conversationID, activityID str
 		"agent_identifier": agentIdentifier,
 		"conversation_id":  conversationID,
 		"activity_id":      activityID,
+		"turn_key":         activityID, // first dispatch: the activity id
 	})
 	if err != nil {
 		t.Fatalf("marshal turn input: %v", err)

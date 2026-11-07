@@ -53,6 +53,13 @@ type ConversationComposer interface {
 	ComposeMessage(ctx context.Context, scope domain.Scope, agentIdentifier, conversationID, subscriberID, text string) (string, error)
 }
 
+// TurnRetrier restarts an agent turn that exhausted its retries.
+// *ingress.Service satisfies it through the notify wiring. Nil hides the
+// Retry button.
+type TurnRetrier interface {
+	RetryTurn(ctx context.Context, scope domain.Scope, agentIdentifier, conversationID, activityID string) error
+}
+
 // ChatStatusProvider is the read-only port the /console/chat status page reads
 // (#106). *chatloop.Service satisfies it structurally; the console renders the
 // returned snapshot — it never reaches into chatloop internals. Nil leaves the
@@ -203,6 +210,8 @@ type Deps struct {
 	// Composer relays the conversation view's send-message form through the
 	// ingress compose path in-process (Wave 3). Nil disables the compose box.
 	Composer ConversationComposer
+	// Retrier backs the conversation view's Retry button on a failed turn.
+	Retrier TurnRetrier
 	// ChatStatus exposes the chat two-way loop's read-only config snapshot for
 	// the /console/chat status page (#106). The production wiring passes the
 	// *chatloop.Service; tests pass a stub. Nil leaves the chat route unmounted.
@@ -669,6 +678,7 @@ func (c *Console) Routes() http.Handler {
 		pr.Post("/console/agents/{identifier}/channels", c.handleAgentChannelLink)
 		pr.Post("/console/agents/{identifier}/channels/{integrationID}/unlink", c.handleAgentChannelUnlink)
 		pr.Post("/console/agents/{identifier}/conversations/{id}/compose", c.handleConversationCompose)
+		pr.Post("/console/agents/{identifier}/conversations/{id}/activities/{activityId}/retry", c.handleConversationRetry)
 		pr.Get("/console/api/fragments/agents-list", c.serveFragmentAgentsList)
 		pr.Get("/console/api/fragments/agent-conversations", c.serveFragmentAgentConversations)
 		// W4-A5: global conversations list (cross-agent inbox, #46).

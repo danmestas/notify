@@ -381,6 +381,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 		CredVerifier:            n.credVerify,
 		Agents:                  ags,
 		Composer:                consoleComposer{ing},
+		Retrier:                 consoleComposer{ing},
 		// #106: read-only chat inbound status page. The loop resolves its
 		// default agent in the chat default scope, not the console operator's
 		// scope, so pin chatScope here.
@@ -660,6 +661,12 @@ func (c consoleComposer) ComposeMessage(
 		return "", err
 	}
 	return res.ConversationID, nil
+}
+
+// RetryTurn adapts ingress.Service.RetryTurn to console.TurnRetrier.
+func (c consoleComposer) RetryTurn(ctx context.Context, scope domain.Scope, agentIdentifier, conversationID, activityID string) error {
+	_, err := c.ing.RetryTurn(ctx, scope, agentIdentifier, conversationID, activityID)
+	return err
 }
 
 // chatStatus adapts *chatloop.Service to console.ChatStatusProvider, pinning
