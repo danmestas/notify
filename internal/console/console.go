@@ -142,6 +142,10 @@ type Deps struct {
 	// page (W2). List / GetByID / SetActive / Delete are called directly;
 	// credential-merge updates go through Connectivity.Update.
 	Integrations store.IntegrationRepo
+	// IntegrationHealth provides per-integration delivery health for the
+	// integrations page badges and the environment-wide failing banner (#101).
+	// Nil renders neither.
+	IntegrationHealth store.IntegrationHealthRepo
 	// Connectivity is the connectivity service used by the integrations page
 	// for Update (credential merge + primary-conflict detection). Nil is
 	// allowed only when no integration mutation routes are mounted; in
@@ -203,6 +207,13 @@ type Deps struct {
 	// Verify button disabled with a tooltip. The production wiring passes
 	// *credverify.Service; tests may pass a stub.
 	CredVerifier CredentialVerifier
+	// CredChecker runs the synchronous credential check behind the Verify
+	// button: throttled, and it updates the integration's health. Nil falls
+	// back to an unthrottled Connectivity.VerifyByID. *credverify.Service
+	// satisfies it.
+	CredChecker interface {
+		CheckNow(ctx context.Context, scope domain.Scope, integrationID string) (connectivity.VerifyResult, error)
+	}
 	// Agents provides the agents store for the agents CRUD pages and the
 	// conversation views (Wave 3). Nil is allowed only when no agent routes
 	// are mounted; in practice New panics when Agents is nil.

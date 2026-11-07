@@ -58,6 +58,12 @@
     {{else}}
     <span class="chip chip-warning" aria-label="inactive">inactive</span>
     {{end}}
+    {{if .Health.State}}
+    <span class="chip {{.Health.ChipClass}}" data-health-state="{{.Health.State}}" aria-label="delivery health: {{.Health.State}}"{{if .Health.ErrorMessage}} title="{{.Health.ErrorMessage}}"{{end}}>{{.Health.State}}</span>
+    {{end}}
+    {{if .Health.ErrorMessage}}
+    <div class="console-lede integration-health-error">{{if .Health.ErrorClass}}{{.Health.ErrorClass}}: {{end}}{{.Health.ErrorMessage}}</div>
+    {{end}}
   </td>
   <td class="integration-col-primary">
     {{if .Primary}}

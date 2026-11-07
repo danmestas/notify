@@ -126,6 +126,12 @@
         <span>Mutations are disabled for this console instance.</span>
       </div>
       {{end}}
+      {{with .HealthBanner}}
+      <div class="console-banner console-banner--danger console-health-banner" role="alert" id="integration-health-banner">
+        <strong>Integration failing.</strong>
+        <span><a class="console-link" href="{{.Href}}">{{.Name}}</a> is not delivering{{if .Class}} ({{.Class}}){{end}}{{if .Message}}: {{.Message}}{{end}}.{{if .More}} {{.More}} more {{if eq .More 1}}integration is{{else}}integrations are{{end}} failing.{{end}}</span>
+      </div>
+      {{end}}
       {{template "content" .}}
     </main>
   </div>

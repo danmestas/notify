@@ -342,7 +342,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 		A2A:      a2aSvc,
 		Identity: id, Audience: aud, Trigger: trg, Inbox: inboxapi.New(st),
 		Realtime: realtime.New(bus), Feed: feedapi.New(bus), Inbound: inbound.New(trg),
-		Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, Store: st, EnvVars: ev,
+		Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, CredChecker: n.credVerify, Store: st, EnvVars: ev,
 		EmailLoop: eml, SourceIngest: feedingest.New(srcSvc, bus), Authoring: n.au,
 		Preferences: prefs, InboundMXHost: cfg.InboundMXHost, Secrets: secrets, Blobs: blobs,
 	})
@@ -351,16 +351,17 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// public API. All console reads go through the same Scope-carrying
 	// services in-process.
 	consoleDeps := console.Deps{
-		Logger:           log,
-		DevMode:          cfg.Dev,
-		Identity:         id,
-		Authoring:        n.au,
-		Analytics:        an,
-		WorkflowVersions: st.WorkflowVersions(),
-		Notifications:    st.Notifications(),
-		Messages:         st.Messages(),
-		Integrations:     st.Integrations(),
-		Connectivity:     conn,
+		Logger:            log,
+		DevMode:           cfg.Dev,
+		Identity:          id,
+		Authoring:         n.au,
+		Analytics:         an,
+		WorkflowVersions:  st.WorkflowVersions(),
+		Notifications:     st.Notifications(),
+		Messages:          st.Messages(),
+		Integrations:      st.Integrations(),
+		IntegrationHealth: st.IntegrationHealth(),
+		Connectivity:      conn,
 		// S5: inbound webhook-push source management (same service the ingest
 		// gateway authenticates against).
 		StreamSources:  srcSvc,
@@ -379,6 +380,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 		InboundSecretConfigured: cfg.InboundSecret != "",
 		Trigger:                 trg,
 		CredVerifier:            n.credVerify,
+		CredChecker:             n.credVerify,
 		Agents:                  ags,
 		Composer:                consoleComposer{ing},
 		Retrier:                 consoleComposer{ing},

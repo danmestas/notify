@@ -1722,7 +1722,7 @@ type VerifyResult struct {
 // credentials were rejected" — a definite negative. A non-nil error means the
 // probe could not be completed (integration missing, decrypt failure, malformed
 // config); the caller decides whether that is retryable.
-func (svc *Service) VerifyByID(ctx context.Context, scope domain.Scope, id string) (VerifyResult, error) {
+func (svc *Service) VerifyByID(ctx context.Context, scope domain.Scope, id string) (res VerifyResult, err error) {
 	in, err := svc.store.Integrations().GetByID(ctx, scope, id)
 	if err != nil {
 		return VerifyResult{}, fmt.Errorf("connectivity: verify: load integration: %w", err)
@@ -1731,12 +1731,16 @@ func (svc *Service) VerifyByID(ctx context.Context, scope domain.Scope, id strin
 	if err != nil {
 		return VerifyResult{}, fmt.Errorf("connectivity: verify: decrypt: %w", err)
 	}
+	// A provider's reply can echo what it was sent, and the detail is shown to
+	// operators and stored as an integration's last error: whatever it says,
+	// no credential value leaves here.
+	defer func() { res.Detail = redactCredentials(res.Detail, plaintext) }()
 
 	providerID := in.ProviderID
 	if providerID == "" {
 		providerID = "smtp"
 	}
-	res := VerifyResult{ProviderID: providerID, Channel: in.Channel}
+	res = VerifyResult{ProviderID: providerID, Channel: in.Channel}
 
 	switch providerID {
 	case "sendmail":
