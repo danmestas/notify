@@ -146,9 +146,9 @@ func TestDigestClaim_EventListsSurviveClaimExpiry(t *testing.T) {
 	// would be gone now.
 	time.Sleep(ttl + 2*time.Second)
 
-	events, err := bus.DigestDrain(key)
+	events, err := bus.DigestBatch(key, "run-1")
 	if err != nil {
-		t.Fatalf("DigestDrain: %v", err)
+		t.Fatalf("DigestBatch: %v", err)
 	}
 	if len(events) != 2 {
 		t.Fatalf("accumulated events after claim expiry = %d, want 2: event lists inherited the claim TTL", len(events))
@@ -165,8 +165,8 @@ func TestDigestClaim_NormalCycleUnchanged(t *testing.T) {
 	if err != nil || !owner {
 		t.Fatalf("first claim: owner=%v err=%v", owner, err)
 	}
-	if _, err := bus.DigestDrain(key); err != nil {
-		t.Fatalf("DigestDrain: %v", err)
+	if _, err := bus.DigestBatch(key, "run-1"); err != nil {
+		t.Fatalf("DigestBatch: %v", err)
 	}
 	// Drain released the claim, so the next window claims cleanly.
 	owner, err = bus.DigestClaim(key)

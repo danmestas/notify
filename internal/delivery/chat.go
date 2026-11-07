@@ -192,7 +192,7 @@ func (h *ChatHandler) HandleChat(ctx context.Context, t engine.TaskPayload) (jso
 	// merged events so the body can render {{digest.count}}. Only the
 	// self-source path sets digestKey, so the Input-present path is unchanged.
 	if digestKey != "" && h.digester != nil {
-		events, _ := h.digester.DigestDrain(digestKey)
+		events, _ := h.digester.DigestBatch(digestKey, t.RunID)
 		data["digest"] = digestData(events)
 	}
 	scope := domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}
