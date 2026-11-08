@@ -14,6 +14,7 @@ import (
 
 	"github.com/danmestas/notify/internal/agents/runtime/mesh"
 	"github.com/danmestas/notify/internal/aibuilder"
+	"github.com/danmestas/notify/internal/analyticslake"
 	"github.com/danmestas/notify/internal/blobstore"
 	"github.com/danmestas/notify/internal/eventbus"
 	"github.com/danmestas/notify/notify"
@@ -129,6 +130,12 @@ func loadConfig(args []string) (config, error) {
 	if (*smtpCert == "") != (*smtpKey == "") {
 		return config{}, errors.New("-smtp-cert and -smtp-key must be set together")
 	}
+	// NOTIFY_ANALYTICS_LAKE: unset keeps SQLite; "r2" reads the R2 lake from
+	// the NOTIFY_LAKE_R2_* variables; any other value is a local lake root.
+	analyticsLake, err := analyticslake.ConfigFromEnv(os.Getenv("NOTIFY_ANALYTICS_LAKE"), os.Getenv)
+	if err != nil {
+		return config{}, err
+	}
 
 	return config{
 		natsURL:          *natsURL,
@@ -189,7 +196,8 @@ func loadConfig(args []string) (config, error) {
 			//   Neither            → builder gracefully disabled (Guided tab shows a note)
 			AI: aibuilder.NewClientFromEnv(os.Getenv),
 
-			DuckDBPath: envOr("NOTIFY_DUCKDB", "notify-analytics.duckdb"),
+			DuckDBPath:    envOr("NOTIFY_DUCKDB", "notify-analytics.duckdb"),
+			AnalyticsLake: analyticsLake,
 
 			Health:           health,
 			HealthVerifyCron: verifyCron,

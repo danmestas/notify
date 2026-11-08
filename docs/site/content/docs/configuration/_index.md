@@ -110,6 +110,23 @@ With neither key set the builder is disabled.
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | empty | OTLP endpoint. **Empty disables tracing completely**: nothing is constructed. Setting it also switches log output to structured `slog` text with `trace_id` and `span_id` on records logged inside a span. |
 | `OTEL_SERVICE_NAME` | `notify` | Service name on traces. |
 | `NOTIFY_DUCKDB` | `notify-analytics.duckdb` | DuckDB file for analytics. Only read by a binary built with `-tags duckdb`; see [Observability](../operations/observability#analytics-backend). |
+| `NOTIFY_ANALYTICS_LAKE` | empty | Off when empty. `r2` reads analytics queries from the R2 lake; any other value is a local lake root. Needs `-tags duckdb`; see [Observability](../operations/observability#reading-analytics-from-the-lake). |
+| `NOTIFY_LAKE_R2_ENDPOINT`, `NOTIFY_LAKE_R2_ACCESS_KEY_ID`, `NOTIFY_LAKE_R2_SECRET_ACCESS_KEY` | empty | The R2 lake's endpoint and credential, for `NOTIFY_ANALYTICS_LAKE=r2` and `notify analytics-import`. Read from the environment only. |
+| `NOTIFY_LAKE_BUCKET`, `NOTIFY_LAKE_PREFIX` | `lode`, `mesh` | The R2 lake's bucket and key prefix. |
+
+## notify analytics-import
+
+| Flag | Environment variable | Default |
+|---|---|---|
+| `-db` | `NOTIFY_DB` | `notify.db` |
+| `-cutoff` | none | `2026-11-08T17:09:48Z` (when the live publisher started) |
+| `-lake` | none | `r2`, or a local lake root directory |
+| `-endpoint` | `NOTIFY_LAKE_R2_ENDPOINT` | none |
+| `-bucket` | `NOTIFY_LAKE_BUCKET` | `lode` |
+| `-prefix` | `NOTIFY_LAKE_PREFIX` | `mesh` |
+| `-dry-run` | none | off: counts rows per day and writes nothing |
+
+The access key and secret come only from `NOTIFY_LAKE_R2_ACCESS_KEY_ID` and `NOTIFY_LAKE_R2_SECRET_ACCESS_KEY`, never from a flag, and are never printed.
 
 ## notify inbound
 

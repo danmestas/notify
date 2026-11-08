@@ -81,6 +81,35 @@ func (repo *analyticsRepo) Insert(ctx context.Context, scope domain.Scope, d dom
 	return err
 }
 
+// EachAnalyticsDelivery calls fn for every analytics_deliveries row in rowid
+// (insertion) order, with NULL columns read as "". It backs the one-shot lake
+// import (internal/analyticslake), whose stream sequence follows rowid. An
+// error from fn stops the walk and is returned.
+func (s *Store) EachAnalyticsDelivery(ctx context.Context, fn func(domain.AnalyticsDelivery) error) error {
+	rows, err := s.reader.QueryContext(ctx,
+		`SELECT id, org_id, environment_id, channel, status,
+		        COALESCE(subscriber_id, ''), COALESCE(workflow_id, ''),
+		        COALESCE(transaction_id, ''), COALESCE(run_id, ''),
+		        created_at, COALESCE(event_key, '')
+		 FROM analytics_deliveries ORDER BY rowid`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var d domain.AnalyticsDelivery
+		if err := rows.Scan(&d.ID, &d.OrgID, &d.EnvID, &d.Channel, &d.Status,
+			&d.SubscriberID, &d.WorkflowID, &d.TransactionID, &d.RunID,
+			&d.CreatedAt, &d.EventKey); err != nil {
+			return err
+		}
+		if err := fn(d); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
 func (repo *analyticsRepo) CountByChannelStatus(ctx context.Context, scope domain.Scope, f AnalyticsFilter) (map[string]map[string]int, error) {
 	return QueryCountByChannelStatus(ctx, repo.r, scope, f)
 }

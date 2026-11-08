@@ -61,3 +61,22 @@ By default delivery analytics live in SQLite. A binary built with the `duckdb` t
 ```bash
 CGO_ENABLED=1 go build -tags duckdb -o notify ./cmd/notify
 ```
+
+### Reading analytics from the lake
+
+The metadata-only `NOTIFY_ANALYTICS` stream is drained by Lode into Parquet parts under `<prefix>/notify/stream_notify_analytics/dt=YYYY-MM-DD/`. A `-tags duckdb` binary can answer the analytics API from those parts instead: set `NOTIFY_ANALYTICS_LAKE`. It is off by default, and SQLite stays the default.
+
+- `NOTIFY_ANALYTICS_LAKE=r2` reads the R2 lake in bucket `NOTIFY_LAKE_BUCKET` (default `lode`) under prefix `NOTIFY_LAKE_PREFIX` (default `mesh`). It uses `NOTIFY_LAKE_R2_ENDPOINT`, `NOTIFY_LAKE_R2_ACCESS_KEY_ID` and `NOTIFY_LAKE_R2_SECRET_ACCESS_KEY`. DuckDB loads its `httpfs` extension for this, and downloads it once if it is not installed.
+- Any other value is a local lake root directory.
+
+Only parts with a commit record and no supersede record are read. Each row's fields come from its JSON payload, and an event id that appears twice (in both the import and the live stream) is counted once. The projector keeps writing SQLite. A binary without the `duckdb` tag refuses to start with `NOTIFY_ANALYTICS_LAKE` set.
+
+### Importing SQLite analytics into the lake
+
+`notify analytics-import` copies the `analytics_deliveries` rows created before the live publisher started into the lake once, as stream `notify-import`. Run it with `-dry-run` first: that counts rows per day and writes nothing. Running it again over the same rows writes nothing new.
+
+```bash
+notify analytics-import -db /path/notify.db -dry-run
+notify analytics-import -db /path/notify.db            # R2, from NOTIFY_LAKE_R2_*
+notify analytics-import -db /path/notify.db -lake /tmp/lake   # local lake root
+```
