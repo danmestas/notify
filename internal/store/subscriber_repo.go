@@ -8,6 +8,7 @@ import (
 	"errors"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/phonenum"
 )
 
 // SubscriberRepo persists subscribers keyed by (EnvID, SubscriberID). Every
@@ -90,6 +91,10 @@ func (repo *subscriberRepo) Upsert(ctx context.Context, scope domain.Scope, sub 
 	if sub.ID == "" {
 		sub.ID = newULID()
 	}
+	// One spelling per number, so the comparison below sees "+1 (555)
+	// 111-2222" and "+15551112222" as the same phone. A phone that cannot be
+	// normalised is stored as given; it can never be verified.
+	sub.Phone = phonenum.Canonical(sub.Phone)
 	// On conflict of the (environment_id, subscriber_id) dedup key, MERGE the
 	// mutable profile in place: each column takes the incoming value only when
 	// it is non-empty, otherwise it keeps the stored value. This is a
@@ -280,11 +285,13 @@ func (repo *subscriberRepo) List(ctx context.Context, scope domain.Scope, after 
 }
 
 // SoftDelete sets deleted=1 for the subscriber identified by internal id within
-// scope. Returns ErrNotFound when no matching active row exists.
+// scope, drops their phone verification, and makes any code they were sent
+// unconfirmable (the send itself stays counted toward the number's limits).
+// Returns ErrNotFound when no matching active row exists.
 func (repo *subscriberRepo) SoftDelete(ctx context.Context, scope domain.Scope, id string) error {
 	res, err := repo.w.ExecContext(
 		ctx,
-		`UPDATE subscribers SET deleted = 1
+		`UPDATE subscribers SET deleted = 1, phone_verified_at = ''
 		 WHERE org_id = ? AND environment_id = ? AND id = ? AND deleted = 0`,
 		scope.OrgID, scope.EnvID, id,
 	)
@@ -298,7 +305,14 @@ func (repo *subscriberRepo) SoftDelete(ctx context.Context, scope domain.Scope, 
 	if n == 0 {
 		return ErrNotFound
 	}
-	return nil
+	_, err = repo.w.ExecContext(
+		ctx,
+		`UPDATE phone_verifications SET consumed = 1
+		 WHERE org_id = ? AND environment_id = ? AND consumed = 0 AND subscriber_id =
+		   (SELECT subscriber_id FROM subscribers WHERE org_id = ? AND environment_id = ? AND id = ?)`,
+		scope.OrgID, scope.EnvID, scope.OrgID, scope.EnvID, id,
+	)
+	return err
 }
 
 // PurgeDeletedByExternalID hard-deletes ONLY the soft-deleted row for the

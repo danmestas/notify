@@ -57,7 +57,7 @@ curl -X POST localhost:3000/v1/me/phone/verification/confirm -H "Authorization: 
 { "phone": "+15551234567", "verifiedAt": "2026-10-18T12:01:12Z" }
 ```
 
-That number becomes the subscriber's verified phone, replacing any phone they had. Only the newest code counts, and only once.
+The number the code was sent to becomes the subscriber's verified phone. It replaces any phone they had, including one your backend wrote between the request and the confirm: the subscriber has just proved they hold this number, so it wins. Only the newest code counts, and only once.
 
 | Status | `error.code` | Meaning |
 |---|---|---|
@@ -66,12 +66,14 @@ That number becomes the subscriber's verified phone, replacing any phone they ha
 | `403` | `subscriber_session_required` | Called with an API key. |
 | `422` | `invalid_phone` | Not an E.164 number. |
 | `429` | `rate_limited` | 5 codes in the last hour for this subscriber, or for this number across subscribers. |
+| `429` | `daily_limit` | This number has had 10 codes, or 10 wrong guesses across its codes, in the last 24 hours. |
+| `429` | `environment_daily_limit` | The environment has sent 100 codes in the last 24 hours. |
 | `502` | `sms_send_failed` | The SMS integration refused or failed the send. |
 | `409` | `no_pending_code` | No unused code to confirm. |
 | `410` | `code_expired` | The code is more than 10 minutes old. Request a new one. |
 | `422` | `wrong_code` | The code does not match. |
 | `429` | `too_many_attempts` | 5 wrong codes; this code is spent. Request a new one. |
 
-Only a salted hash of each code is stored. Each send is recorded as an `sms` message on the integration (without the code), so it counts toward the integration's delivery health like any delivery.
+Only a salted hash of each code is stored. Each send is recorded as an `sms` message on the integration (without the code), so it counts toward the integration's delivery health like any delivery. A provider error that echoes the number has it replaced by `[phone]` before it is stored or logged. Deleting a subscriber drops their verification and makes any code they were sent unconfirmable.
 
-The sender API can still write `phone` on `POST` and `PATCH /v1/subscribers`, but that phone is stored unverified, and writing a different number clears a verification. `GET /v1/subscribers/{id}` shows `phoneVerified`.
+The sender API can still write `phone` on `POST` and `PATCH /v1/subscribers` and in a trigger's `to.phone`, but that phone is stored unverified, and writing a different number clears a verification. Every phone is stored in E.164, so the same number in another format (`+1 (555) 111-2222`) is not a change. A phone that cannot be normalised is stored as written, unverified. `GET /v1/subscribers/{id}` shows `phoneVerified`.

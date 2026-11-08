@@ -8,7 +8,9 @@
 // Only a salted hash of each code is stored. A code expires after CodeTTL and
 // allows MaxAttempts guesses. Sends are limited to MaxSends per SendWindow for
 // each subscriber and, across subscribers, for each number, so the flow cannot
-// be used to flood a phone.
+// be used to flood a phone. Daily caps sit on top: MaxSendsPerPhoneDay and
+// MaxFailedConfirmsPerPhoneDay per number, and MaxSendsPerEnvDay per
+// environment, so neither texting nor guessing is unbounded over time.
 package phoneverify
 
 import (
@@ -24,6 +26,7 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/phonenum"
 	"github.com/danmestas/notify/internal/providers"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/timestamp"
@@ -39,10 +42,19 @@ const (
 	MaxSends = 5
 	// SendWindow is the period MaxSends counts over.
 	SendWindow = time.Hour
+	// MaxSendsPerPhoneDay caps codes sent to one number in a day.
+	MaxSendsPerPhoneDay = 10
+	// MaxFailedConfirmsPerPhoneDay caps wrong guesses against one number in
+	// a day, across all its codes: two codes' worth of MaxAttempts.
+	MaxFailedConfirmsPerPhoneDay = 10
+	// MaxSendsPerEnvDay caps codes one environment sends in a day.
+	MaxSendsPerEnvDay = 100
+	// day is the period the daily caps count over.
+	day = 24 * time.Hour
 
 	codeDigits = 6
-	// keepFor bounds how long sent-code rows are kept; well past every window.
-	keepFor = 24 * time.Hour
+	// keepFor is how long sent-code rows are kept: the longest window.
+	keepFor = day
 )
 
 var (
@@ -54,6 +66,12 @@ var (
 	ErrCodeExpired       = errors.New("phoneverify: the code has expired")
 	ErrWrongCode         = errors.New("phoneverify: the code is wrong")
 	ErrTooManyAttempts   = errors.New("phoneverify: too many wrong codes; request a new one")
+	// ErrDailyLimit: the number has had its codes, or its wrong guesses, for
+	// the day.
+	ErrDailyLimit = errors.New("phoneverify: this number has reached its daily limit; try again tomorrow")
+	// ErrEnvironmentDailyLimit: the environment has sent its codes for the
+	// day.
+	ErrEnvironmentDailyLimit = errors.New("phoneverify: this environment has sent its verification codes for today; try again tomorrow")
 )
 
 // SMSResolver resolves the environment's SMS provider, its provider id and
@@ -92,27 +110,14 @@ func (s *Service) WithClock(now func() time.Time) *Service {
 	return s
 }
 
-// Normalize returns number in E.164 form: a '+', a country code that does not
-// start with 0, and 7 to 15 digits in all. Spaces, dots, dashes and
-// parentheses are dropped; anything else is ErrInvalidPhone.
+// Normalize returns number in E.164 form (see phonenum.Normalize), or
+// ErrInvalidPhone.
 func Normalize(number string) (string, error) {
-	var b strings.Builder
-	for i, r := range strings.TrimSpace(number) {
-		switch {
-		case r == '+' && i == 0:
-			b.WriteRune(r)
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == ' ' || r == ' ' || r == '-' || r == '.' || r == '(' || r == ')':
-		default:
-			return "", ErrInvalidPhone
-		}
-	}
-	out := b.String()
-	if len(out) < 8 || len(out) > 16 || out[0] != '+' || out[1] == '0' {
+	n, ok := phonenum.Normalize(number)
+	if !ok {
 		return "", ErrInvalidPhone
 	}
-	return out, nil
+	return n, nil
 }
 
 // Request sends a new code to number for the subscriber. The newest code is
@@ -133,11 +138,16 @@ func (s *Service) Request(ctx context.Context, scope domain.Scope, subscriberID,
 	if err := repo.PruneBefore(ctx, scope, timestamp.Format(now.Add(-keepFor))); err != nil {
 		return Pending{}, err
 	}
-	bySub, byPhone, err := repo.CountSince(ctx, scope, subscriberID, phone, timestamp.Format(now.Add(-SendWindow)))
+	u, err := s.usage(ctx, scope, subscriberID, phone, now)
 	if err != nil {
 		return Pending{}, err
 	}
-	if bySub >= MaxSends || byPhone >= MaxSends {
+	switch {
+	case u.EnvDay >= MaxSendsPerEnvDay:
+		return Pending{}, ErrEnvironmentDailyLimit
+	case u.PhoneDay >= MaxSendsPerPhoneDay:
+		return Pending{}, ErrDailyLimit
+	case u.SubscriberRecent >= MaxSends || u.PhoneRecent >= MaxSends:
 		return Pending{}, ErrRateLimited
 	}
 
@@ -161,15 +171,18 @@ func (s *Service) Request(ctx context.Context, scope domain.Scope, subscriberID,
 
 	body := fmt.Sprintf("Your verification code is %s. It expires in %d minutes.", code, int(CodeTTL/time.Minute))
 	_, sendErr := provider.Send(ctx, providers.SMSMessage{To: phone, Body: body})
-	s.record(ctx, scope, subscriberID, providerID, integrationID, now, sendErr)
+	s.record(ctx, scope, subscriberID, providerID, integrationID, phone, now, sendErr)
 	if sendErr != nil {
-		return Pending{}, fmt.Errorf("%w: %w", ErrSendFailed, sendErr)
+		// A provider may echo the recipient; the number goes no further.
+		return Pending{}, fmt.Errorf("%w: %s", ErrSendFailed, redactPhone(sendErr.Error(), phone))
 	}
 	return Pending{Phone: phone, ExpiresAt: expires}, nil
 }
 
 // Confirm checks code against the subscriber's newest code and, when it
-// matches, sets that code's number as the subscriber's verified phone.
+// matches, sets the number that code was sent to as the subscriber's verified
+// phone. That number wins over any phone written since the Request: the
+// subscriber has just proved they hold it.
 func (s *Service) Confirm(ctx context.Context, scope domain.Scope, subscriberID, code string) (Verified, error) {
 	repo := s.store.PhoneVerifications()
 	v, err := repo.Latest(ctx, scope, subscriberID)
@@ -189,6 +202,13 @@ func (s *Service) Confirm(ctx context.Context, scope domain.Scope, subscriberID,
 	}
 	if !now.Before(expires) {
 		return Verified{}, ErrCodeExpired
+	}
+	u, err := s.usage(ctx, scope, subscriberID, v.Phone, now)
+	if err != nil {
+		return Verified{}, err
+	}
+	if u.PhoneFailedDay >= MaxFailedConfirmsPerPhoneDay {
+		return Verified{}, ErrDailyLimit
 	}
 	// The attempt is spent before the comparison, atomically, so concurrent
 	// guesses cannot exceed MaxAttempts between them.
@@ -216,6 +236,11 @@ func (s *Service) Confirm(ctx context.Context, scope domain.Scope, subscriberID,
 	return Verified{Phone: v.Phone, VerifiedAt: now}, nil
 }
 
+func (s *Service) usage(ctx context.Context, scope domain.Scope, subscriberID, phone string, now time.Time) (store.PhoneVerificationUsage, error) {
+	return s.store.PhoneVerifications().Usage(ctx, scope, subscriberID, phone,
+		timestamp.Format(now.Add(-SendWindow)), timestamp.Format(now.Add(-day)))
+}
+
 func (s *Service) requireSubscriber(ctx context.Context, scope domain.Scope, subscriberID string) error {
 	sub, err := s.store.Subscribers().GetByExternalID(ctx, scope, subscriberID)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && sub.Deleted) {
@@ -226,7 +251,7 @@ func (s *Service) requireSubscriber(ctx context.Context, scope domain.Scope, sub
 
 // record writes the send as an sms message, the path every delivery outcome
 // takes to reach delivery health. The code is never part of it.
-func (s *Service) record(ctx context.Context, scope domain.Scope, subscriberID, providerID, integrationID string, at time.Time, sendErr error) {
+func (s *Service) record(ctx context.Context, scope domain.Scope, subscriberID, providerID, integrationID, phone string, at time.Time, sendErr error) {
 	m := domain.Message{
 		SubscriberID:  subscriberID,
 		Channel:       "sms",
@@ -239,12 +264,19 @@ func (s *Service) record(ctx context.Context, scope domain.Scope, subscriberID, 
 	}
 	if sendErr != nil {
 		m.Status = "error"
-		m.ErrorText = sendErr.Error()
+		m.ErrorText = redactPhone(sendErr.Error(), phone)
 		m.ErrorClass = string(providers.ClassifyError(sendErr))
 	}
 	// Best effort: the send already happened, and failing the request over
 	// the record would invite a second code.
 	_, _ = s.store.Messages().Create(ctx, scope, m)
+}
+
+// redactPhone removes phone (E.164, and its digits without the '+') from a
+// provider's error text.
+func redactPhone(text, phone string) string {
+	text = strings.ReplaceAll(text, phone, "[phone]")
+	return strings.ReplaceAll(text, strings.TrimPrefix(phone, "+"), "[phone]")
 }
 
 func newCode() (string, error) {

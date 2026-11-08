@@ -103,14 +103,6 @@ func TestPhoneVerificationRepo_LatestCountsAttemptsConsume(t *testing.T) {
 		t.Fatalf("Latest in another env: err = %v, want ErrNotFound", err)
 	}
 
-	bySub, byPhone, err := repo.CountSince(ctx, scope, "sub-1", "+15550002222", "2026-01-01T00:00:30Z")
-	if err != nil {
-		t.Fatalf("CountSince: %v", err)
-	}
-	if bySub != 1 || byPhone != 2 {
-		t.Fatalf("CountSince = (%d, %d), want (1, 2)", bySub, byPhone)
-	}
-
 	for i := 1; i <= 2; i++ {
 		ok, err := repo.ClaimAttempt(ctx, scope, "01B", 2)
 		if err != nil || !ok {
@@ -119,6 +111,27 @@ func TestPhoneVerificationRepo_LatestCountsAttemptsConsume(t *testing.T) {
 	}
 	if ok, _ := repo.ClaimAttempt(ctx, scope, "01B", 2); ok {
 		t.Fatal("claim past the limit succeeded")
+	}
+	// 01C: one attempt that succeeded. A success is not a failure.
+	if ok, _ := repo.ClaimAttempt(ctx, scope, "01C", 5); !ok {
+		t.Fatal("claim 01C failed")
+	}
+	if ok, _ := repo.Consume(ctx, scope, "01C"); !ok {
+		t.Fatal("consume 01C failed")
+	}
+
+	u, err := repo.Usage(ctx, scope, "sub-1", "+15550002222", "2026-01-01T00:00:30Z", "2025-12-31T01:00:00Z")
+	if err != nil {
+		t.Fatalf("Usage: %v", err)
+	}
+	want := PhoneVerificationUsage{SubscriberRecent: 1, PhoneRecent: 2, PhoneDay: 2, EnvDay: 3, PhoneFailedDay: 2}
+	if u != want {
+		t.Fatalf("Usage = %+v, want %+v", u, want)
+	}
+	// Day counts honour their own cutoff.
+	u, _ = repo.Usage(ctx, scope, "sub-1", "+15550002222", "2026-01-01T00:00:30Z", "2026-01-01T00:01:30Z")
+	if u.EnvDay != 1 || u.PhoneDay != 1 || u.PhoneFailedDay != 0 {
+		t.Fatalf("Usage after 00:01:30 = %+v, want only 01C", u)
 	}
 
 	if ok, err := repo.Consume(ctx, scope, "01A"); err != nil || !ok {

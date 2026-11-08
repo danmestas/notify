@@ -7,6 +7,8 @@ Channel `sms`. The recipient is the subscriber's phone, and only once the subscr
 
 SMS is off by default for a subscriber with no SMS preference; a workflow turns it on with its step's `defaultEnabled`. See [preferences](../preferences#sms-default).
 
+Upgrading from a release without verification stops existing SMS workflows until subscribers verify and you set `defaultEnabled`; see the [upgrade note](../../operations/releases#upgrade-note-verified-phones-for-sms-130).
+
 Every send, the verification codes included, is recorded as an `sms` message on its integration, with the same `status`, `errorClass` and delivery health as push and email. A verification message never records the code.
 
 ## Credential check

@@ -104,6 +104,7 @@ func TestSMSStep_SignOffReachesOnlyAVerifiedPhone(t *testing.T) {
 		"verified":  `{"subscriberId":"verified","email":"v@acme.io"}`,
 		"no-phone":  `{"subscriberId":"no-phone","email":"n@acme.io"}`,
 		"api-phone": `{"subscriberId":"api-phone","email":"a@acme.io","phone":"+15553334444"}`,
+		"switched":  `{"subscriberId":"switched","email":"s@acme.io"}`,
 	}
 	for sid, body := range subs {
 		if status, resp := doPost(t, srv.URL+"/v1/subscribers", apiKey, body); status != http.StatusCreated {
@@ -115,19 +116,30 @@ func TestSMSStep_SignOffReachesOnlyAVerifiedPhone(t *testing.T) {
 		}
 	}
 
-	// "verified" verifies their own phone through a subscriber session.
-	tok, _ := id.MintSubscriberSession(scope, "verified")
-	if status, resp := req(t, http.MethodPost, srv.URL+"/v1/me/phone/verification", "Bearer "+tok, `{"phone":"+15551112222"}`); status != http.StatusAccepted {
-		t.Fatalf("request code: %d %s", status, resp)
-	}
-	code := lastCode(t, smsCapt, "+15551112222")
-	if status, resp := req(t, http.MethodPost, srv.URL+"/v1/me/phone/verification/confirm", "Bearer "+tok, `{"code":"`+code+`"}`); status != http.StatusOK {
-		t.Fatalf("confirm code: %d %s", status, resp)
+	// "verified" and "switched" verify their own phones through a subscriber
+	// session.
+	for sid, phone := range map[string]string{"verified": "+15551112222", "switched": "+15556667777"} {
+		tok, _ := id.MintSubscriberSession(scope, sid)
+		if status, resp := req(t, http.MethodPost, srv.URL+"/v1/me/phone/verification", "Bearer "+tok, `{"phone":"`+phone+`"}`); status != http.StatusAccepted {
+			t.Fatalf("request code %s: %d %s", sid, status, resp)
+		}
+		code := lastCode(t, smsCapt, phone)
+		if status, resp := req(t, http.MethodPost, srv.URL+"/v1/me/phone/verification/confirm", "Bearer "+tok, `{"code":"`+code+`"}`); status != http.StatusOK {
+			t.Fatalf("confirm code %s: %d %s", sid, status, resp)
+		}
 	}
 	codesSent := len(smsCapt.Sent())
 
+	// Triggers carry to.phone. The verified subscriber's repeats their number
+	// in another format, which must not cost them their verification; the
+	// switched subscriber's carries a different number, which must.
+	toPhone := map[string]string{"verified": "+1 (555) 111-2222", "switched": "+15550001234"}
 	for sid := range subs {
-		body := `{"name":"quarry-signoff","to":{"subscriberId":"` + sid + `"},"payload":{"what":"Approve deploy","link":"https://q.example/s/1"},"transactionId":"tx-` + sid + `"}`
+		phone := ""
+		if p, ok := toPhone[sid]; ok {
+			phone = `,"phone":"` + p + `"`
+		}
+		body := `{"name":"quarry-signoff","to":{"subscriberId":"` + sid + `"` + phone + `},"payload":{"what":"Approve deploy","link":"https://q.example/s/1"},"transactionId":"tx-` + sid + `"}`
 		if status, resp := doPost(t, srv.URL+"/v1/events/trigger", apiKey, body); status != http.StatusCreated {
 			t.Fatalf("trigger %s: %d %s", sid, status, resp)
 		}
@@ -194,10 +206,10 @@ func TestSMSStep_SignOffReachesOnlyAVerifiedPhone(t *testing.T) {
 	if len(steps2) != 1 || steps2[0].To != "+15551112222" || steps2[0].Body != "Sign-off needed: https://q.example/s/1" {
 		t.Fatalf("step sms sent = %+v, want one to +15551112222 with the link", steps2)
 	}
-	if got := len(pushCapt.Sent()); got != 3 {
-		t.Errorf("push sent = %d, want 3", got)
+	if got := len(pushCapt.Sent()); got != len(subs) {
+		t.Errorf("push sent = %d, want %d", got, len(subs))
 	}
-	if got := len(mailCapt.Sent()); got != 3 {
-		t.Errorf("email sent = %d, want 3", got)
+	if got := len(mailCapt.Sent()); got != len(subs) {
+		t.Errorf("email sent = %d, want %d", got, len(subs))
 	}
 }

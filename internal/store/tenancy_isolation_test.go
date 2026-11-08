@@ -757,9 +757,9 @@ func checkPhoneVerifications(t *testing.T, ctx context.Context, s *Store, a, b d
 
 	_, err := repo.Latest(ctx, b, "shared-sub")
 	mustNotFound(t, "PhoneVerifications.Latest", err)
-	bySub, byPhone, err := repo.CountSince(ctx, b, "shared-sub", "+15550001111", "2000-01-01T00:00:00Z")
-	if err != nil || bySub != 0 || byPhone != 0 {
-		t.Errorf("PhoneVerifications.CountSince(b) = (%d, %d, %v), want (0, 0, nil)", bySub, byPhone, err)
+	u, err := repo.Usage(ctx, b, "shared-sub", "+15550001111", "2000-01-01T00:00:00Z", "2000-01-01T00:00:00Z")
+	if err != nil || u != (PhoneVerificationUsage{}) {
+		t.Errorf("PhoneVerifications.Usage(b) = (%+v, %v), want zero", u, err)
 	}
 	if ok, _ := repo.ClaimAttempt(ctx, b, "pv-a", 5); ok {
 		t.Error("PhoneVerifications.ClaimAttempt crossed tenants")

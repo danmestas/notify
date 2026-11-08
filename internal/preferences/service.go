@@ -136,8 +136,10 @@ func (svc *Service) SetForWorkflow(ctx context.Context, scope domain.Scope, subs
 	return err
 }
 
-// ResolveChannels merges global + per-workflow into the effective enabled-map.
-// Missing entry => enabled (true). Per-workflow overrides global per channel.
+// ResolveChannels merges the subscriber's stored global and per-workflow
+// preferences, per-workflow overriding global per channel. It holds only
+// explicit preferences: a channel with none is absent, and ChannelEnabled
+// then applies the workflow's default.
 func (svc *Service) ResolveChannels(ctx context.Context, scope domain.Scope, subscriberID, workflowID string) (map[string]bool, error) {
 	global, err := svc.load(svc.store.Preferences().GetGlobal(ctx, scope, subscriberID))
 	if err != nil {

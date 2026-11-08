@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -69,6 +70,9 @@ func (svc *Service) requestPhoneCode(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// confirmPhoneCode verifies the number the code was sent to and makes it the
+// subscriber's phone, replacing any phone the sender wrote since the request:
+// holding the code proves the subscriber holds that number.
 func (svc *Service) confirmPhoneCode(w http.ResponseWriter, r *http.Request) {
 	scope, sub, ok := sessionSubscriber(w, r)
 	if !ok {
@@ -101,6 +105,8 @@ var phoneErrors = []struct {
 	{phoneverify.ErrInvalidPhone, http.StatusUnprocessableEntity, "invalid_phone"},
 	{phoneverify.ErrUnknownSubscriber, http.StatusNotFound, "not_found"},
 	{phoneverify.ErrRateLimited, http.StatusTooManyRequests, "rate_limited"},
+	{phoneverify.ErrDailyLimit, http.StatusTooManyRequests, "daily_limit"},
+	{phoneverify.ErrEnvironmentDailyLimit, http.StatusTooManyRequests, "environment_daily_limit"},
 	{phoneverify.ErrSendFailed, http.StatusBadGateway, "sms_send_failed"},
 	{phoneverify.ErrNoPendingCode, http.StatusConflict, "no_pending_code"},
 	{phoneverify.ErrCodeExpired, http.StatusGone, "code_expired"},
@@ -114,8 +120,8 @@ func writePhoneError(w http.ResponseWriter, r *http.Request, err error) {
 			if e.err == phoneverify.ErrSendFailed {
 				slog.WarnContext(r.Context(), "inboxapi: verification code not sent", "err", err)
 			}
-			// The sentinel's text, never the wrapped provider error.
-			writeError(w, e.status, e.code, e.err.Error())
+			// The sentinel's plain text, never the wrapped provider error.
+			writeError(w, e.status, e.code, strings.TrimPrefix(e.err.Error(), "phoneverify: "))
 			return
 		}
 	}

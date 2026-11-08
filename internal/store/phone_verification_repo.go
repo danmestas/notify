@@ -29,16 +29,31 @@ type PhoneVerificationRepo interface {
 	// Latest returns the subscriber's newest code, consumed or not, or
 	// ErrNotFound when none was ever sent.
 	Latest(ctx context.Context, scope domain.Scope, subscriberID string) (PhoneVerification, error)
-	// CountSince counts codes created at or after since for the subscriber
-	// and, across every subscriber in the environment, for the phone.
-	CountSince(ctx context.Context, scope domain.Scope, subscriberID, phone, since string) (bySubscriber, byPhone int, err error)
+	// Usage counts the sends and wrong guesses the limits are checked
+	// against: since recent for the subscriber and the phone, and since day
+	// for the phone and the whole environment.
+	Usage(ctx context.Context, scope domain.Scope, subscriberID, phone, recent, day string) (PhoneVerificationUsage, error)
 	// ClaimAttempt spends one attempt on an unconsumed code, atomically, and
 	// reports false when maxAttempts attempts were already spent or it is consumed.
 	ClaimAttempt(ctx context.Context, scope domain.Scope, id string, maxAttempts int) (bool, error)
-	// Consume marks the code used, reporting false when it already was.
+	// Consume marks the code confirmed (used and verified), reporting false
+	// when it was already used.
 	Consume(ctx context.Context, scope domain.Scope, id string) (bool, error)
 	// PruneBefore deletes codes created before cutoff.
 	PruneBefore(ctx context.Context, scope domain.Scope, cutoff string) error
+}
+
+// PhoneVerificationUsage is what PhoneVerificationRepo.Usage counts.
+type PhoneVerificationUsage struct {
+	// SubscriberRecent and PhoneRecent are codes sent since recent, to the
+	// subscriber and (by any subscriber) to the phone.
+	SubscriberRecent, PhoneRecent int
+	// PhoneDay and EnvDay are codes sent since day, to the phone and in the
+	// environment.
+	PhoneDay, EnvDay int
+	// PhoneFailedDay is wrong guesses since day against codes sent to the
+	// phone.
+	PhoneFailedDay int
 }
 
 // PhoneVerifications vends the verification-code repository.
@@ -79,18 +94,21 @@ func (repo *phoneVerificationRepo) Latest(ctx context.Context, scope domain.Scop
 	return v, err
 }
 
-func (repo *phoneVerificationRepo) CountSince(ctx context.Context, scope domain.Scope, subscriberID, phone, since string) (int, int, error) {
-	var bySub, byPhone int
+func (repo *phoneVerificationRepo) Usage(ctx context.Context, scope domain.Scope, subscriberID, phone, recent, day string) (PhoneVerificationUsage, error) {
+	var u PhoneVerificationUsage
 	err := repo.w.QueryRowContext(
 		ctx,
 		`SELECT
-		   COALESCE(SUM(CASE WHEN subscriber_id = ? THEN 1 ELSE 0 END), 0),
-		   COALESCE(SUM(CASE WHEN phone = ? THEN 1 ELSE 0 END), 0)
+		   COALESCE(SUM(CASE WHEN subscriber_id = ? AND created_at >= ? THEN 1 ELSE 0 END), 0),
+		   COALESCE(SUM(CASE WHEN phone = ? AND created_at >= ? THEN 1 ELSE 0 END), 0),
+		   COALESCE(SUM(CASE WHEN phone = ? THEN 1 ELSE 0 END), 0),
+		   COUNT(*),
+		   COALESCE(SUM(CASE WHEN phone = ? THEN attempts - verified ELSE 0 END), 0)
 		 FROM phone_verifications
-		 WHERE org_id = ? AND environment_id = ? AND created_at >= ? AND (subscriber_id = ? OR phone = ?)`,
-		subscriberID, phone, scope.OrgID, scope.EnvID, since, subscriberID, phone,
-	).Scan(&bySub, &byPhone)
-	return bySub, byPhone, err
+		 WHERE org_id = ? AND environment_id = ? AND created_at >= ?`,
+		subscriberID, recent, phone, recent, phone, phone, scope.OrgID, scope.EnvID, day,
+	).Scan(&u.SubscriberRecent, &u.PhoneRecent, &u.PhoneDay, &u.EnvDay, &u.PhoneFailedDay)
+	return u, err
 }
 
 func (repo *phoneVerificationRepo) ClaimAttempt(ctx context.Context, scope domain.Scope, id string, maxAttempts int) (bool, error) {
@@ -102,7 +120,7 @@ func (repo *phoneVerificationRepo) ClaimAttempt(ctx context.Context, scope domai
 
 func (repo *phoneVerificationRepo) Consume(ctx context.Context, scope domain.Scope, id string) (bool, error) {
 	return repo.affected(repo.w.ExecContext(ctx,
-		`UPDATE phone_verifications SET consumed = 1
+		`UPDATE phone_verifications SET consumed = 1, verified = 1
 		 WHERE org_id = ? AND environment_id = ? AND id = ? AND consumed = 0`,
 		scope.OrgID, scope.EnvID, id))
 }
