@@ -79,34 +79,48 @@ type Plan struct {
 	chunkRows int
 }
 
-// NewPlan reads every row created before cutoff, in rowid order, numbering
-// them 1..N with no holes. The whole import is held in memory: it is a one-shot
-// over a table that predates the lake. A created_at that does not parse is an
-// error, since dropping the row would make the numbers disagree with SQLite.
+// NewPlan reads every row created before cutoff and numbers them 1..N with no
+// holes in (created_at, rowid) order. created_at is the message's creation
+// time, so a late status event has a later rowid but an earlier date; numbering
+// by rowid alone would interleave the dates' seq ranges, and lake.ListCommitted
+// would report the per-date parts as Overlaps, its duplicate signal. Ordering
+// by created_at first keeps each date's seqs contiguous and its parts disjoint.
+//
+// The whole import is held in memory: it is a one-shot over a table that
+// predates the lake. A created_at that does not parse is an error, since
+// dropping the row would make the numbers disagree with SQLite.
 func NewPlan(ctx context.Context, src Rows, cutoff time.Time) (*Plan, error) {
-	plan := &Plan{byDay: map[string][]writer.Row{}, chunkRows: writer.PartRowsMax}
-	var seq int64
+	type kept struct {
+		d       domain.AnalyticsDelivery
+		created time.Time
+	}
+	var rows []kept
 	err := src.EachAnalyticsDelivery(ctx, func(d domain.AnalyticsDelivery) error {
 		created, err := timestamp.Parse(d.CreatedAt)
 		if err != nil {
 			return fmt.Errorf("analytics row %s: created_at %q: %w", d.ID, d.CreatedAt, err)
 		}
-		if !created.Before(cutoff) {
-			return nil
+		if created.Before(cutoff) {
+			rows = append(rows, kept{d, created})
 		}
-		seq++
-		row, err := lakeRow(d, created, seq)
-		if err != nil {
-			return err
-		}
-		dt := row.EventTime.Format(time.DateOnly)
-		plan.byDay[dt] = append(plan.byDay[dt], row)
-		plan.rows++
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	// Stable: rows arrive in rowid order, which breaks created_at ties.
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].created.Before(rows[j].created) })
+
+	plan := &Plan{byDay: map[string][]writer.Row{}, chunkRows: writer.PartRowsMax}
+	for i, k := range rows {
+		row, err := lakeRow(k.d, k.created, int64(i+1))
+		if err != nil {
+			return nil, err
+		}
+		dt := row.EventTime.Format(time.DateOnly)
+		plan.byDay[dt] = append(plan.byDay[dt], row)
+	}
+	plan.rows = len(rows)
 	return plan, nil
 }
 
@@ -132,9 +146,11 @@ func (p *Plan) dates() []string {
 }
 
 // Write commits the plan through one lake writer, one date at a time, in
-// chunks of at most chunkRows rows, flushing after each chunk. A chunk depends
-// only on its date's rows, so a rerun over the same rows makes the same parts
-// and the writer finds them already committed.
+// chunks of at most chunkRows rows, flushing after each chunk and at no other
+// time (no timer, no buffer pressure). A part's key is a digest of its exact
+// rows, so the batch boundaries must be a function of the rows alone: then a
+// rerun over the same rows makes the same parts, the writer finds them already
+// committed, and nothing overlaps for Lode's compaction to refuse.
 func (p *Plan) Write(ctx context.Context, store writer.Store) ([]lake.Commit, error) {
 	w, err := writer.New(store, Program, writer.Config{
 		Table: Table, Stream: ImportStream, Schema: Schema(),

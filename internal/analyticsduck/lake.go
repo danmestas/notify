@@ -100,7 +100,11 @@ const emptyView = `CREATE OR REPLACE VIEW analytics_deliveries AS
 	WHERE false`
 
 // lakeView maps each payload's v1 fields to the SQLite columns, keeping one
-// row per event_id.
+// row per event_id. created_at is the payload's createdAt, the message's
+// creation time, as in SQLite: day grouping and the since filter must never
+// use dt, event_time or at, because imported rows partition by createdAt and
+// live rows by publish time, so those would shift days at the import boundary.
+// hive_partitioning is off so dt is not even a column here.
 const lakeView = `CREATE OR REPLACE VIEW analytics_deliveries AS
 	SELECT json_extract_string(body, '$.orgId')         AS org_id,
 	       json_extract_string(body, '$.envId')         AS environment_id,

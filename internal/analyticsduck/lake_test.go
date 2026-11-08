@@ -52,7 +52,7 @@ func seedSQLite(t *testing.T, st *store.Store) {
 
 // writeLivePart writes one event as Lode would drain it from NOTIFY_ANALYTICS,
 // duplicating an imported event id: the reader must count it once.
-func writeLivePart(t *testing.T, root, eventID string, ev eventbus.AnalyticsEvent) {
+func writeLivePart(t *testing.T, root string, seq int64, eventID string, ev eventbus.AnalyticsEvent) {
 	t.Helper()
 	body, err := ev.Encode()
 	if err != nil {
@@ -66,7 +66,7 @@ func writeLivePart(t *testing.T, root, eventID string, ev eventbus.AnalyticsEven
 	}
 	at := time.Date(2026, 11, 8, 18, 0, 0, 0, time.UTC)
 	if err := w.Append(writer.Row{
-		EventID: eventID, EventTime: at, StreamSeq: 1, PayloadBytes: body,
+		EventID: eventID, EventTime: at, StreamSeq: seq, PayloadBytes: body,
 		Values: map[string]any{"subject": eventbus.AnalyticsSubject(ev.EnvID), "time_ns": at.UnixNano()},
 	}); err != nil {
 		t.Fatal(err)
@@ -105,10 +105,26 @@ func TestLakeRepo_MatchesSQLite(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	// msg1 is imported row 1 (o1/e2, sms, sent); the live stream holds it too.
-	writeLivePart(t, root, "msg1:sent", eventbus.AnalyticsEvent{
+	writeLivePart(t, root, 1, "msg1:sent", eventbus.AnalyticsEvent{
 		V: eventbus.AnalyticsEventVersion, MessageID: "msg1", OrgID: "o1", EnvID: "e2",
 		WorkflowID: "wf1", RunID: "run1", SubscriberID: "sub1", Channel: "sms", Status: "sent",
 		CreatedAt: "2026-11-02T01:00:00.000000000Z", At: "2026-11-08T18:00:00.000000000Z",
+	})
+
+	// A live-only event: published (event_time, dt, at) on Nov 8 for a message
+	// created Nov 3. SQLite files it under Nov 3, so the lake must too.
+	late := domain.AnalyticsDelivery{
+		Channel: "email", Status: "delivered", SubscriberID: "sub9", WorkflowID: "wf1",
+		RunID: "run9", CreatedAt: "2026-11-03T05:00:00.000000000Z", EventKey: "late1:delivered",
+	}
+	if err := st.Analytics().Insert(ctx, domain.Scope{OrgID: "o1", EnvID: "e1"}, late); err != nil {
+		t.Fatalf("insert late: %v", err)
+	}
+	writeLivePart(t, root, 2, late.EventKey, eventbus.AnalyticsEvent{
+		V: eventbus.AnalyticsEventVersion, MessageID: "late1", OrgID: "o1", EnvID: "e1",
+		WorkflowID: late.WorkflowID, RunID: late.RunID, SubscriberID: late.SubscriberID,
+		Channel: late.Channel, Status: late.Status, CreatedAt: late.CreatedAt,
+		At: "2026-11-08T18:00:00.000000000Z",
 	})
 
 	repo, err := OpenLake(ctx, cfg, st.Analytics())

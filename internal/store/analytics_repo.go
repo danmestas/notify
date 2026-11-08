@@ -83,7 +83,7 @@ func (repo *analyticsRepo) Insert(ctx context.Context, scope domain.Scope, d dom
 
 // EachAnalyticsDelivery calls fn for every analytics_deliveries row in rowid
 // (insertion) order, with NULL columns read as "". It backs the one-shot lake
-// import (internal/analyticslake), whose stream sequence follows rowid. An
+// import (internal/analyticslake), which breaks created_at ties by rowid. An
 // error from fn stops the walk and is returned.
 func (s *Store) EachAnalyticsDelivery(ctx context.Context, fn func(domain.AnalyticsDelivery) error) error {
 	rows, err := s.reader.QueryContext(ctx,

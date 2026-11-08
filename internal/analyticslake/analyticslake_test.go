@@ -1,8 +1,10 @@
 package analyticslake
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -53,7 +55,9 @@ func sampleRows() fakeRows {
 	}
 }
 
-func TestPlan_RowsBeforeCutoffInRowidOrder(t *testing.T) {
+// TestPlan_RowsBeforeCutoffInCreatedOrder: rows before the cutoff are numbered
+// 1..N in (created_at, rowid) order, so 01BBB (rowid 2, an earlier date) is 1.
+func TestPlan_RowsBeforeCutoffInCreatedOrder(t *testing.T) {
 	plan, err := NewPlan(context.Background(), sampleRows(), DefaultCutoff)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -75,8 +79,8 @@ func TestPlan_RowsBeforeCutoffInRowidOrder(t *testing.T) {
 	if !ok {
 		t.Fatalf("keyed row's event id is not its event_key; have %v", byID)
 	}
-	if keyed.StreamSeq != 1 {
-		t.Fatalf("keyed seq: got %d want 1", keyed.StreamSeq)
+	if keyed.StreamSeq != 2 {
+		t.Fatalf("keyed seq: got %d want 2", keyed.StreamSeq)
 	}
 	wantTime := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
 	if !keyed.EventTime.Equal(wantTime) || keyed.EventTime.Location() != time.UTC {
@@ -107,8 +111,8 @@ func TestPlan_RowsBeforeCutoffInRowidOrder(t *testing.T) {
 	if !ok {
 		t.Fatalf("old row's event id: have %v", byID)
 	}
-	if old.StreamSeq != 2 {
-		t.Fatalf("old seq: got %d want 2", old.StreamSeq)
+	if old.StreamSeq != 1 {
+		t.Fatalf("old seq: got %d want 1", old.StreamSeq)
 	}
 	var oldBody map[string]any
 	if err := json.Unmarshal(old.PayloadBytes, &oldBody); err != nil {
@@ -213,19 +217,17 @@ func TestPlan_WriteIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(listing.Commits) != 2 || len(listing.Rejected) != 0 {
+	if len(listing.Commits) != 2 || len(listing.Rejected) != 0 || len(listing.Overlaps) != 0 {
 		t.Fatalf("listing: %+v", listing)
 	}
 }
 
-// TestPlan_RowidOrderAcrossDatesOverlaps pins a property of numbering in rowid
-// order while partitioning by created_at date: when a later row carries an
-// earlier date (a late status event of an older message), the dates' seq
-// ranges interleave, and lake.ListCommitted reports the parts as Overlaps,
-// its signature of a duplicate. Readers dedupe on event_id, so counts are
-// unaffected; whether to number in (created_at, rowid) order instead is open
-// on #119.
-func TestPlan_RowidOrderAcrossDatesOverlaps(t *testing.T) {
+// TestPlan_LateRowAcrossDatesNoOverlaps: a later row with an earlier date (a
+// late status event of an older message) still gets a seq inside its date's
+// range, because numbering follows (created_at, rowid). So the per-date parts'
+// seq ranges are disjoint and lake.ListCommitted reports no Overlaps, keeping
+// that check a real duplicate signal.
+func TestPlan_LateRowAcrossDatesNoOverlaps(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	plan, err := NewPlan(ctx, sampleRows(), DefaultCutoff)
@@ -239,9 +241,95 @@ func TestPlan_RowidOrderAcrossDatesOverlaps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	// dt=2026-11-02 holds seqs 1 and 3, dt=2026-11-01 holds seq 2.
-	if len(listing.Overlaps) != 1 {
-		t.Fatalf("overlaps: got %d want 1: %+v", len(listing.Overlaps), listing.Overlaps)
+	if len(listing.Overlaps) != 0 {
+		t.Fatalf("overlaps: got %d want 0: %+v", len(listing.Overlaps), listing.Overlaps)
+	}
+	ranges := map[string][2]int64{}
+	for _, c := range listing.Commits {
+		ranges[c.Dt] = [2]int64{c.SeqMin, c.SeqMax}
+	}
+	if want := map[string][2]int64{"2026-11-01": {1, 1}, "2026-11-02": {2, 3}}; !reflect.DeepEqual(ranges, want) {
+		t.Fatalf("seq ranges: got %v want %v", ranges, want)
+	}
+}
+
+// TestPlan_RerunWritesIdenticalPartKeys: two independent runs over the same
+// rows, spread over several dates in a rowid order that disagrees with date
+// order and split into several chunks per date, write byte-identical part keys
+// and records, and the lake reports no Overlaps.
+func TestPlan_RerunWritesIdenticalPartKeys(t *testing.T) {
+	ctx := context.Background()
+	var rows fakeRows
+	for i := 0; i < 20; i++ {
+		rows = append(rows, domain.AnalyticsDelivery{
+			ID: fmt.Sprintf("r%02d", i), OrgID: "o", EnvID: "e", Channel: "email", Status: "sent",
+			CreatedAt: fmt.Sprintf("2026-11-0%dT%02d:00:00.000000000Z", 1+(i*7)%3, i),
+			EventKey:  fmt.Sprintf("m%02d:sent", i),
+		})
+	}
+	run := func(root string) []string {
+		plan, err := NewPlan(ctx, rows, DefaultCutoff)
+		if err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		plan.chunkRows = 3
+		commits, err := plan.Write(ctx, writer.NewLocalStore(root))
+		if err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		keys := make([]string, len(commits))
+		for i, c := range commits {
+			keys[i] = c.Key
+		}
+		return keys
+	}
+	root := t.TempDir()
+	first := run(root)
+	files := listFiles(t, root)
+	second := run(root)
+	if len(first) < 6 || !reflect.DeepEqual(first, second) {
+		t.Fatalf("part keys differ or too few chunks:\n first %v\nsecond %v", first, second)
+	}
+	if got := listFiles(t, root); !reflect.DeepEqual(got, files) {
+		t.Fatalf("rerun wrote new objects:\n before %v\n after %v", files, got)
+	}
+	// A run into an empty lake makes the same keys and the same part bytes.
+	fresh := t.TempDir()
+	if third := run(fresh); !reflect.DeepEqual(third, first) {
+		t.Fatalf("fresh run keys differ:\n %v\n %v", third, first)
+	}
+	for _, key := range first {
+		a, errA := os.ReadFile(filepath.Join(root, filepath.FromSlash(key)))
+		b, errB := os.ReadFile(filepath.Join(fresh, filepath.FromSlash(key)))
+		if errA != nil || errB != nil || !bytes.Equal(a, b) {
+			t.Fatalf("part %s not byte-identical across runs (%v, %v)", key, errA, errB)
+		}
+	}
+	listing, err := lake.ListCommitted(root, Program, Table)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listing.Overlaps) != 0 || len(listing.Rejected) != 0 || len(listing.Commits) != len(first) {
+		t.Fatalf("listing: %d commits, %d overlaps, %d rejected",
+			len(listing.Commits), len(listing.Overlaps), len(listing.Rejected))
+	}
+}
+
+// TestPlan_EqualCreatedAtKeepsRowidOrder: rowid breaks a created_at tie.
+func TestPlan_EqualCreatedAtKeepsRowidOrder(t *testing.T) {
+	at := "2026-11-03T00:00:00.000000000Z"
+	rows := fakeRows{
+		{ID: "z", OrgID: "o", EnvID: "e", Channel: "email", Status: "sent", CreatedAt: at},
+		{ID: "a", OrgID: "o", EnvID: "e", Channel: "email", Status: "sent", CreatedAt: at},
+	}
+	plan, err := NewPlan(context.Background(), rows, DefaultCutoff)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	got := plan.byDay["2026-11-03"]
+	if len(got) != 2 || got[0].EventID != "analytics-row:z" || got[0].StreamSeq != 1 ||
+		got[1].EventID != "analytics-row:a" || got[1].StreamSeq != 2 {
+		t.Fatalf("tie order: %+v", got)
 	}
 }
 
