@@ -9,8 +9,8 @@ import (
 
 func TestMigrate_0016_AppliesTopicTriggers(t *testing.T) {
 	s := openTemp(t)
-	if n := migrationCount(t, s); n != 52 {
-		t.Fatalf("expected 52 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 53 {
+		t.Fatalf("expected 53 recorded migrations, got %d", n)
 	}
 	var name string
 	err := s.reader.QueryRow(

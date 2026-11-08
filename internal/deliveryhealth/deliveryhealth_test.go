@@ -203,6 +203,15 @@ func TestUnreachableCheckIsNoVerdict(t *testing.T) {
 	if h.LastCheckAt == "" || h.LastCheckOK {
 		t.Fatalf("check not recorded: %+v", h)
 	}
+	// The state is unchanged, but why the check failed is kept.
+	if h.LastCheckDetail != "smtp: dial mx:587 failed: dial tcp: connection refused" {
+		t.Fatalf("LastCheckDetail = %q", h.LastCheckDetail)
+	}
+	// A passing check clears it.
+	r.tr.CredentialChecked(context.Background(), scope, r.integ, true, "smtp: authenticated with mx")
+	if h := r.health(); !h.LastCheckOK || h.LastCheckDetail != "" {
+		t.Fatalf("after pass: %+v", h)
+	}
 }
 
 func TestRecipientErrorsChangeNothing(t *testing.T) {
