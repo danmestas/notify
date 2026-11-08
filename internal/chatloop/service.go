@@ -54,6 +54,9 @@ const discordAPIBaseURL = "https://discord.com/api/v10"
 // the responder seam, the inbound pollers (Telegram long-poll, Discord
 // gateway), and the outbound reply senders that close the loop.
 type Service struct {
+	// pollers tracks the goroutines Start launches, so Wait can outlast them.
+	pollers sync.WaitGroup
+
 	core         *corestore.Store
 	responder    Responder
 	defaultAgent string
@@ -358,17 +361,18 @@ func (s *Service) ReplyHook(ctx context.Context, scope domain.Scope, conv agentd
 }
 
 // Start launches the inbound pollers for any platform whose token is set. Each
-// runs in its own goroutine until ctx is cancelled. A platform with an empty
+// runs in its own goroutine until ctx is cancelled; Wait returns once they
+// have all stopped. A platform with an empty
 // token is skipped (no-op), so a deploy with only one bot configured runs only
 // that poller. scope is the tenancy inbound routes to.
 func (s *Service) Start(ctx context.Context, scope domain.Scope) {
 	if s.telegramToken != "" {
-		go s.runTelegramPoll(ctx, scope)
+		s.pollers.Go(func() { s.runTelegramPoll(ctx, scope) })
 	} else {
 		s.log.Info("chatloop: telegram poller disabled (no token)")
 	}
 	if s.discordToken != "" {
-		go s.runDiscordGateway(ctx, scope)
+		s.pollers.Go(func() { s.runDiscordGateway(ctx, scope) })
 	} else {
 		s.log.Info("chatloop: discord gateway disabled (no token)")
 	}
@@ -376,6 +380,11 @@ func (s *Service) Start(ctx context.Context, scope domain.Scope) {
 	s.resolveCredentialPoller(ctx, scope, providerMastodon)
 	s.resolveCredentialPoller(ctx, scope, providerBluesky)
 }
+
+// Wait blocks until every poller Start launched has returned. Cancel Start's
+// ctx first: the pollers run until it is done, and they write to the store, so
+// whoever closes the store waits here.
+func (s *Service) Wait() { s.pollers.Wait() }
 
 // resolveCredentialPoller resolves providerID's active integration
 // credentials via the injected CredentialSource and logs the enable/disable
@@ -410,7 +419,7 @@ func (s *Service) resolveCredentialPoller(ctx context.Context, scope domain.Scop
 		s.mastodon = newMastodonSender(token, baseURL, s.httpClient)
 		s.mastodonMu.Unlock()
 		s.log.Info("chatloop: credentials resolved, launching mention poller", "provider", providerID)
-		go s.runMastodonPoll(ctx, scope, baseURL, token)
+		s.pollers.Go(func() { s.runMastodonPoll(ctx, scope, baseURL, token) })
 	case providerBluesky:
 		pdsURL, identifier, appPassword := creds["pds_url"], creds["identifier"], creds["app_password"]
 		if pdsURL == "" || identifier == "" || appPassword == "" {
@@ -436,7 +445,7 @@ func (s *Service) resolveCredentialPoller(ctx context.Context, scope domain.Scop
 		s.bluesky = newBlueskySender(client)
 		s.blueskyMu.Unlock()
 		s.log.Info("chatloop: credentials resolved, launching mention poller", "provider", providerID)
-		go s.runBlueskyPoll(ctx, scope, client)
+		s.pollers.Go(func() { s.runBlueskyPoll(ctx, scope, client) })
 	default:
 		// TODO: launch the mention-poll loop once implemented (see #296).
 		s.log.Info("chatloop: credentials resolved, poller not yet implemented", "provider", providerID)

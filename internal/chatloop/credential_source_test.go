@@ -28,6 +28,7 @@ func TestStart_NilCredentialSource_DisablesMastodonAndBluesky(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	svc.Start(ctx, domain.Scope{OrgID: "o1", EnvID: "e1"})
+	t.Cleanup(func() { cancel(); svc.Wait() }) // before the store's TempDir goes
 
 	out := buf.String()
 	if !strings.Contains(out, "provider=mastodon") {
@@ -59,6 +60,7 @@ func TestStart_CredentialSourceNoActiveIntegration_DisablesPoller(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	svc.Start(ctx, domain.Scope{OrgID: "o1", EnvID: "e1"})
+	t.Cleanup(func() { cancel(); svc.Wait() }) // before the store's TempDir goes
 
 	out := buf.String()
 	if !strings.Contains(out, "no active integration") {
@@ -87,6 +89,7 @@ func TestStart_CredentialSourceError_LogsAndDisables(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	svc.Start(ctx, domain.Scope{OrgID: "o1", EnvID: "e1"})
+	t.Cleanup(func() { cancel(); svc.Wait() }) // before the store's TempDir goes
 
 	out := buf.String()
 	if !strings.Contains(out, "boom") {
@@ -129,6 +132,7 @@ func TestStart_CredentialSourceResolves_LogsCredentialsFound(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	svc.Start(ctx, domain.Scope{OrgID: "o1", EnvID: "e1"})
+	t.Cleanup(func() { cancel(); svc.Wait() }) // before the store's TempDir goes
 
 	if len(gotProviders) != 2 {
 		t.Fatalf("credential source calls = %v, want [mastodon bluesky]", gotProviders)

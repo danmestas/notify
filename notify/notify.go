@@ -528,6 +528,7 @@ func (n *Notify) start(ctx context.Context) error {
 	// Launch the chat inbound pollers now that the engine worker pool is live.
 	// Each poller no-ops when its bot token is unset.
 	n.chat.Start(ctx, n.chatScope)
+	n.goLoop(n.chat.Wait) // Stop waits for the pollers before closing the store.
 
 	// Register the credential-verify workflow now that the engine is live.
 	// A failure here is non-fatal: the console renders the Verify button
