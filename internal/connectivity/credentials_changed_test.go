@@ -56,7 +56,7 @@ func TestVerifyByID_UnsupportedProviderSaysSo(t *testing.T) {
 	ctx := context.Background()
 	svc := New(openTemp(t), testKey())
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
-	row, err := svc.CreateTwilio(ctx, scope, "sms", TwilioConfig{AccountSID: "AC1", AuthToken: "t", From: "+1"}, true)
+	row, err := svc.CreateSignalWire(ctx, scope, "sms", SignalWireConfig{ProjectID: "p", Token: "t", SpaceURL: "x.signalwire.com", From: "+1"}, true)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

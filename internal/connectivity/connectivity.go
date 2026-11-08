@@ -1712,6 +1712,7 @@ type VerifyResult struct {
 //
 //   - smtp: dial the server and run AUTH (no MAIL/DATA);
 //   - cloudflare-email: an authenticated GET against the account email scope;
+//   - twilio: an authenticated GET of the account resource (no message sent);
 //   - ntfy: an authenticated GET against the server root;
 //   - mastodon: an authenticated GET against /api/v1/accounts/verify_credentials;
 //   - bluesky: a com.atproto.server.createSession handshake (no post is made);
@@ -1761,6 +1762,14 @@ func (svc *Service) VerifyByID(ctx context.Context, scope domain.Scope, id strin
 			return VerifyResult{}, fmt.Errorf("connectivity: verify: unmarshal cloudflare config: %w", err)
 		}
 		ok, detail := probeCloudflareEmail(ctx, svc.probeClient(), cfg)
+		res.OK, res.Detail = ok, detail
+		return res, nil
+	case "twilio":
+		var cfg TwilioConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return VerifyResult{}, fmt.Errorf("connectivity: verify: unmarshal twilio config: %w", err)
+		}
+		ok, detail := probeTwilio(ctx, svc.probeClient(), cfg)
 		res.OK, res.Detail = ok, detail
 		return res, nil
 	case "ntfy":

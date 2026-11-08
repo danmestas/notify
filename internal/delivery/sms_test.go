@@ -69,6 +69,7 @@ func smsEnvelope() runenv.InAppEnvelope {
 func TestHandleSMS_Twilio_RendersSendsPersists(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
+	verifySMSSubscriber(t, s, "+15557654321")
 	capt := providers.NewCaptureSMS()
 	h := NewSMS(s, stubSMSResolver{p: capt, id: "twilio"})
 
@@ -123,6 +124,7 @@ func TestHandleSMS_Twilio_RendersSendsPersists(t *testing.T) {
 func TestHandleSMS_SignalWire_RendersSendsPersists(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
+	verifySMSSubscriber(t, s, "+15557654321")
 	capt := providers.NewCaptureSMS()
 	h := NewSMS(s, stubSMSResolver{p: capt, id: "signalwire"})
 
@@ -140,42 +142,12 @@ func TestHandleSMS_SignalWire_RendersSendsPersists(t *testing.T) {
 	}
 }
 
-// TestHandleSMS_MissingPhoneIsError: a subscriber with no phone number is a
-// permanent fault — an "error" message is recorded and the provider is never
-// invoked.
-func TestHandleSMS_MissingPhoneIsError(t *testing.T) {
-	ctx := context.Background()
-	s := newStore(t)
-	capt := providers.NewCaptureSMS()
-	h := NewSMS(s, stubSMSResolver{p: capt, id: "twilio"})
-
-	env := smsEnvelope()
-	env.Subscriber = json.RawMessage(`{"subscriberId":"user_123","firstName":"Ada"}`) // no phone
-	input, _ := json.Marshal(env)
-	if _, err := h.HandleSMS(ctx, engine.TaskPayload{RunID: "run_s3", StepID: "S1", Input: input}); err != nil {
-		t.Fatalf("HandleSMS: %v", err)
-	}
-
-	msgs, err := s.Messages().List(ctx, domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "user_123", "sms")
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(msgs) != 1 || msgs[0].Status != "error" {
-		t.Fatalf("expected one error message, got %+v", msgs)
-	}
-	if msgs[0].ErrorText == "" {
-		t.Error("ErrorText empty, want a missing-phone explanation")
-	}
-	if got := len(capt.Sent()); got != 0 {
-		t.Errorf("provider invoked %d times with no phone, want 0", got)
-	}
-}
-
 // TestHandleSMS_SkipsWhenChannelDisabled: a disabled sms channel records a
 // "skipped" message and never invokes the provider.
 func TestHandleSMS_SkipsWhenChannelDisabled(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
+	verifySMSSubscriber(t, s, "+15557654321")
 	capt := providers.NewCaptureSMS()
 	h := NewSMS(s, stubSMSResolver{p: capt, id: "twilio"}).WithPreferences(stubChecker{enabled: false})
 
@@ -201,6 +173,7 @@ func TestHandleSMS_SkipsWhenChannelDisabled(t *testing.T) {
 func TestHandleSMS_TransientSendErrorRetries(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
+	verifySMSSubscriber(t, s, "+15557654321")
 	h := NewSMS(s, stubSMSResolver{p: errSMSProvider{transient: true}, id: "twilio"})
 
 	input, _ := json.Marshal(smsEnvelope())
@@ -245,6 +218,7 @@ func smsEnvelopeWithIntegration(identifier string) runenv.InAppEnvelope {
 func TestHandleSMS_ExplicitIntegration_RoutesToThatProvider(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
+	verifySMSSubscriber(t, s, "+15557654321")
 	primary := providers.NewCaptureSMS()
 	secondary := providers.NewCaptureSMS()
 	h := NewSMS(s, stubSMSResolver{
@@ -295,6 +269,7 @@ func TestHandleSMS_ExplicitIntegration_RoutesToThatProvider(t *testing.T) {
 func TestHandleSMS_UnknownIntegration_ErrorPersistedNoRetry(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
+	verifySMSSubscriber(t, s, "+15557654321")
 	capt := providers.NewCaptureSMS()
 	h := NewSMS(s, stubSMSResolver{p: capt, id: "twilio"})
 

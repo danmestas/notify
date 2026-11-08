@@ -136,7 +136,7 @@ type stubChecker struct {
 	err     error
 }
 
-func (c stubChecker) ChannelEnabled(_ context.Context, _ domain.Scope, _, _, _ string, _ bool) (bool, error) {
+func (c stubChecker) ChannelEnabled(_ context.Context, _ domain.Scope, _, _, _ string, _, _ bool) (bool, error) {
 	return c.enabled, c.err
 }
 
@@ -221,7 +221,7 @@ func TestHandleInApp_SendsWhenEnabled(t *testing.T) {
 // own, matching the checker's ChannelEnabled(..., critical bool) contract.
 type criticalAwareChecker struct{ muted bool }
 
-func (c criticalAwareChecker) ChannelEnabled(_ context.Context, _ domain.Scope, _, _, _ string, critical bool) (bool, error) {
+func (c criticalAwareChecker) ChannelEnabled(_ context.Context, _ domain.Scope, _, _, _ string, critical, _ bool) (bool, error) {
 	if critical {
 		return true, nil
 	}

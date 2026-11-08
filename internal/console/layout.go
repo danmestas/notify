@@ -713,7 +713,9 @@ func skipReasonLabel(reason string) string {
 	case delivery.SkipReasonConditionInvalid:
 		return "Skipped: this step's condition could not be evaluated, so the send was blocked. Check the filter."
 	case delivery.SkipReasonPreference:
-		return "Skipped: the subscriber has this channel turned off."
+		return "Skipped: the subscriber has this channel turned off, or has no preference and the step is off by default."
+	case delivery.SkipReasonNoVerifiedPhone:
+		return "Skipped: the subscriber has no verified phone. Only the subscriber can verify one."
 	case "":
 		return ""
 	default:

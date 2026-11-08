@@ -14,12 +14,14 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/danmestas/notify/internal/domain"
+	"github.com/danmestas/notify/internal/phoneverify"
 	"github.com/danmestas/notify/internal/store"
 )
 
 // Service exposes the in-app message feed over HTTP.
 type Service struct {
 	store *store.Store
+	phone *phoneverify.Service // nil: no phone verification routes
 }
 
 // New builds a Service backed by the given store.
@@ -34,6 +36,11 @@ func (svc *Service) Routes(r chi.Router) {
 	r.Get("/v1/messages/count", svc.countMessages)
 	r.Post("/v1/messages/mark", svc.markMessagesBulk)
 	r.Post("/v1/messages/{id}/{action}", svc.markMessage)
+	// Some callers mount a nil *Service (tests that need no inbox); the
+	// message routes above are method values and never dereference it.
+	if svc != nil && svc.phone != nil {
+		svc.phoneRoutes(r)
+	}
 }
 
 const (

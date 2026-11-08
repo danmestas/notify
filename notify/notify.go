@@ -51,6 +51,7 @@ import (
 	"github.com/danmestas/notify/internal/inboxapi"
 	"github.com/danmestas/notify/internal/metrics"
 	"github.com/danmestas/notify/internal/names"
+	"github.com/danmestas/notify/internal/phoneverify"
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/replyhook"
@@ -334,7 +335,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 		A2AAuth:  a2a,
 		Receiver: receiver,
 		A2A:      a2aSvc,
-		Identity: id, Audience: aud, Trigger: trg, Inbox: inboxapi.New(st),
+		Identity: id, Audience: aud, Trigger: trg, Inbox: inboxapi.New(st).WithPhoneVerification(phoneverify.New(st, conn)),
 		Realtime: realtime.New(bus), Feed: feedapi.New(bus), Inbound: inbound.New(trg),
 		Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, CredChecker: n.credVerify, Store: st, EnvVars: ev,
 		EmailLoop: eml, SourceIngest: feedingest.New(srcSvc, bus), Authoring: n.au,

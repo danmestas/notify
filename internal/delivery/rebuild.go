@@ -153,6 +153,7 @@ func RebuildEnvelope(ctx context.Context, s *store.Store, t engine.TaskPayload) 
 			Redirect:          controls.Redirect,
 			InAppData:         controls.Data,
 			Integration:       controls.Integration,
+			DefaultEnabled:    controls.DefaultEnabled,
 			Filters:           found.Filters,
 		},
 	}, notif.DigestKey, stepOutputs, nil

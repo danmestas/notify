@@ -57,6 +57,12 @@ type Subscriber struct {
 	Timezone     string          `db:"timezone"`
 	Data         json.RawMessage `db:"data"`
 	Deleted      bool            `db:"deleted"`
+
+	// PhoneVerifiedAt is when the subscriber confirmed Phone with a code sent
+	// to it (internal/phoneverify); empty means unverified. Only that flow sets
+	// it: every other write ignores it, and a write that changes Phone clears
+	// it.
+	PhoneVerifiedAt string `db:"phone_verified_at"`
 }
 
 // SubscriberChannel is a per-subscriber channel address for one provider

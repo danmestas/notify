@@ -55,6 +55,9 @@ func TestDigest_EveryChannelStepSeesTheWholeBatch(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Subscribers.Upsert: %v", err)
 	}
+	if err := s.Subscribers().SetVerifiedPhone(ctx, scope, "dg_user", "+15550001111", "2026-11-08T12:00:00Z"); err != nil {
+		t.Fatalf("SetVerifiedPhone: %v", err)
+	}
 	if _, err := s.Notifications().Create(ctx, scope, domain.Notification{
 		ID: "ntf_dg", WorkflowID: wf.ID, SubscriberID: "dg_user", TransactionID: "txn_dg",
 		RunID: "r_dg", DigestKey: key, Payload: json.RawMessage(`{}`),

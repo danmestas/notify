@@ -58,6 +58,7 @@ func tenantCases() []tenantCase {
 		{name: "Layouts", check: checkLayouts},
 		{name: "Contexts", check: checkContexts},
 		{name: "EnvVars", check: checkEnvVars},
+		{name: "PhoneVerifications", check: checkPhoneVerifications},
 		{name: "InboundDomains", check: checkInboundDomains},
 		{name: "InboundMessages", check: checkInboundMessages},
 		{name: "StreamSources", check: checkStreamSources},
@@ -742,6 +743,36 @@ func checkEnvVars(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope
 
 	_, err = repo.Get(ctx, b, "KEY_A")
 	mustNotFound(t, "EnvVars.Get", err)
+}
+
+func checkPhoneVerifications(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
+	repo := s.PhoneVerifications()
+	v := PhoneVerification{
+		ID: "pv-a", SubscriberID: "shared-sub", Phone: "+15550001111", CodeHash: "h",
+		ExpiresAt: "2099-01-01T00:00:00Z", CreatedAt: "2026-01-01T00:00:00Z",
+	}
+	if err := repo.Create(ctx, a, v); err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+
+	_, err := repo.Latest(ctx, b, "shared-sub")
+	mustNotFound(t, "PhoneVerifications.Latest", err)
+	bySub, byPhone, err := repo.CountSince(ctx, b, "shared-sub", "+15550001111", "2000-01-01T00:00:00Z")
+	if err != nil || bySub != 0 || byPhone != 0 {
+		t.Errorf("PhoneVerifications.CountSince(b) = (%d, %d, %v), want (0, 0, nil)", bySub, byPhone, err)
+	}
+	if ok, _ := repo.ClaimAttempt(ctx, b, "pv-a", 5); ok {
+		t.Error("PhoneVerifications.ClaimAttempt crossed tenants")
+	}
+	if ok, _ := repo.Consume(ctx, b, "pv-a"); ok {
+		t.Error("PhoneVerifications.Consume crossed tenants")
+	}
+	if err := repo.PruneBefore(ctx, b, "2099-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("PruneBefore(b): %v", err)
+	}
+	if _, err := repo.Latest(ctx, a, "shared-sub"); err != nil {
+		t.Errorf("PhoneVerifications.PruneBefore(b) removed A's row: %v", err)
+	}
 }
 
 func checkInboundDomains(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {

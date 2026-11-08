@@ -26,9 +26,11 @@ import (
 // critical is the triggering workflow's Critical flag (env.WorkflowCritical);
 // every call site forwards it verbatim so the no-opt-out override lives once,
 // inside the checker's implementation, rather than being re-checked at each
-// of the 5 channel handlers.
+// of the 5 channel handlers. defaultOn is the workflow's default for the
+// channel when the subscriber has no preference: true for every channel but
+// sms, which takes it from the step (runenv.Step.DefaultEnabled).
 type PreferenceChecker interface {
-	ChannelEnabled(ctx context.Context, scope domain.Scope, subscriberID, workflowID, channel string, critical bool) (bool, error)
+	ChannelEnabled(ctx context.Context, scope domain.Scope, subscriberID, workflowID, channel string, critical, defaultOn bool) (bool, error)
 }
 
 // EventPublisher publishes live events for a persisted message: a per-subscriber
@@ -170,7 +172,7 @@ func (h *Handler) HandleInApp(ctx context.Context, t engine.TaskPayload) (json.R
 	// error we fail open (proceed to send), a default-enabled
 	// behaviour rather than dropping the notification on a transient lookup fault.
 	if h.prefs != nil {
-		enabled, perr := h.prefs.ChannelEnabled(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical)
+		enabled, perr := h.prefs.ChannelEnabled(ctx, domain.Scope{OrgID: env.Scope.OrgID, EnvID: env.Scope.EnvID}, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical, true)
 		if perr == nil && !enabled {
 			return h.persistSkipped(ctx, env, t, subject, content, SkipReasonPreference)
 		}
@@ -233,6 +235,9 @@ const (
 	// SkipReasonPreference: the subscriber has this channel disabled. Not a
 	// fault; the system did exactly what was asked.
 	SkipReasonPreference = "preference"
+	// SkipReasonNoVerifiedPhone: an sms step for a subscriber with no phone
+	// they verified. Not a fault; the subscriber has not opted a number in.
+	SkipReasonNoVerifiedPhone = "no_verified_phone"
 )
 
 // persistSkipped records a status:"skipped" in-app message (the channel is

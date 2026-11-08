@@ -29,6 +29,9 @@ type SubscriberRepo interface {
 	// ensures a concurrently-inserted live row is never removed. Returns the
 	// number of rows deleted (0 or 1); zero means no soft-deleted row existed.
 	PurgeDeletedByExternalID(ctx context.Context, scope domain.Scope, subscriberID string) (int64, error)
+	// SetVerifiedPhone sets the subscriber's phone and marks it verified. It is
+	// the only write that sets phone_verified_at; Upsert never does.
+	SetVerifiedPhone(ctx context.Context, scope domain.Scope, subscriberID, phone, verifiedAt string) error
 }
 
 // SubscriberPage is the result of a keyset-paginated List call.
@@ -93,6 +96,10 @@ func (repo *subscriberRepo) Upsert(ctx context.Context, scope domain.Scope, sub 
 	// subscriber patch-upsert: a partial re-upsert (e.g. a trigger carrying
 	// only `to.subscriberId`) must not blank out a profile populated by an
 	// earlier full upsert. id stays the original row's id.
+	//
+	// phone_verified_at is never taken from sub: an insert leaves it empty, and
+	// an update keeps it only while the phone stays the same. SetVerifiedPhone
+	// is the one way to set it, so no API write can produce a verified number.
 	_, err := repo.w.ExecContext(
 		ctx,
 		`INSERT INTO subscribers
@@ -100,6 +107,8 @@ func (repo *subscriberRepo) Upsert(ctx context.Context, scope domain.Scope, sub 
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (environment_id, subscriber_id) DO UPDATE SET
 		   email=COALESCE(NULLIF(excluded.email, ''), subscribers.email),
+		   phone_verified_at=CASE WHEN excluded.phone <> '' AND excluded.phone <> subscribers.phone
+		     THEN '' ELSE subscribers.phone_verified_at END,
 		   phone=COALESCE(NULLIF(excluded.phone, ''), subscribers.phone),
 		   first_name=COALESCE(NULLIF(excluded.first_name, ''), subscribers.first_name),
 		   last_name=COALESCE(NULLIF(excluded.last_name, ''), subscribers.last_name),
@@ -123,10 +132,10 @@ func (repo *subscriberRepo) GetByExternalID(ctx context.Context, scope domain.Sc
 	)
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, org_id, environment_id, subscriber_id, email, phone, first_name, last_name, locale, timezone, data, deleted
+		`SELECT id, org_id, environment_id, subscriber_id, email, phone, phone_verified_at, first_name, last_name, locale, timezone, data, deleted
 		 FROM subscribers WHERE org_id = ? AND environment_id = ? AND subscriber_id = ?`,
 		scope.OrgID, scope.EnvID, subscriberID,
-	).Scan(&sub.ID, &sub.OrgID, &sub.EnvID, &sub.SubscriberID, &sub.Email, &sub.Phone,
+	).Scan(&sub.ID, &sub.OrgID, &sub.EnvID, &sub.SubscriberID, &sub.Email, &sub.Phone, &sub.PhoneVerifiedAt,
 		&sub.FirstName, &sub.LastName, &sub.Locale, &sub.Timezone, &data, &sub.Deleted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Subscriber{}, ErrNotFound
@@ -146,10 +155,10 @@ func (repo *subscriberRepo) GetByID(ctx context.Context, scope domain.Scope, id 
 	)
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, org_id, environment_id, subscriber_id, email, phone, first_name, last_name, locale, timezone, data, deleted
+		`SELECT id, org_id, environment_id, subscriber_id, email, phone, phone_verified_at, first_name, last_name, locale, timezone, data, deleted
 		 FROM subscribers WHERE org_id = ? AND environment_id = ? AND id = ?`,
 		scope.OrgID, scope.EnvID, id,
-	).Scan(&sub.ID, &sub.OrgID, &sub.EnvID, &sub.SubscriberID, &sub.Email, &sub.Phone,
+	).Scan(&sub.ID, &sub.OrgID, &sub.EnvID, &sub.SubscriberID, &sub.Email, &sub.Phone, &sub.PhoneVerifiedAt,
 		&sub.FirstName, &sub.LastName, &sub.Locale, &sub.Timezone, &data, &sub.Deleted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Subscriber{}, ErrNotFound
@@ -159,6 +168,29 @@ func (repo *subscriberRepo) GetByID(ctx context.Context, scope domain.Scope, id 
 	}
 	sub.Data = data
 	return sub, nil
+}
+
+// SetVerifiedPhone records that the subscriber confirmed phone at
+// verifiedAt, replacing any phone they had. Only internal/phoneverify calls it,
+// after a correct code. ErrNotFound when no live subscriber matches.
+func (repo *subscriberRepo) SetVerifiedPhone(ctx context.Context, scope domain.Scope, subscriberID, phone, verifiedAt string) error {
+	res, err := repo.w.ExecContext(
+		ctx,
+		`UPDATE subscribers SET phone = ?, phone_verified_at = ?
+		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND deleted = 0`,
+		phone, verifiedAt, scope.OrgID, scope.EnvID, subscriberID,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // List returns a cursor-paginated page of non-deleted subscribers ordered by
@@ -194,7 +226,7 @@ func (repo *subscriberRepo) List(ctx context.Context, scope domain.Scope, after 
 	if curID == "" {
 		rows, qErr = repo.r.QueryContext(
 			ctx,
-			`SELECT id, org_id, environment_id, subscriber_id, email, phone, first_name, last_name, locale, timezone, data, deleted
+			`SELECT id, org_id, environment_id, subscriber_id, email, phone, phone_verified_at, first_name, last_name, locale, timezone, data, deleted
 			 FROM subscribers
 			 WHERE org_id = ? AND environment_id = ? AND deleted = 0
 			 ORDER BY id ASC
@@ -204,7 +236,7 @@ func (repo *subscriberRepo) List(ctx context.Context, scope domain.Scope, after 
 	} else {
 		rows, qErr = repo.r.QueryContext(
 			ctx,
-			`SELECT id, org_id, environment_id, subscriber_id, email, phone, first_name, last_name, locale, timezone, data, deleted
+			`SELECT id, org_id, environment_id, subscriber_id, email, phone, phone_verified_at, first_name, last_name, locale, timezone, data, deleted
 			 FROM subscribers
 			 WHERE org_id = ? AND environment_id = ? AND deleted = 0 AND id > ?
 			 ORDER BY id ASC
@@ -223,7 +255,7 @@ func (repo *subscriberRepo) List(ctx context.Context, scope domain.Scope, after 
 			sub  domain.Subscriber
 			data []byte
 		)
-		if err := rows.Scan(&sub.ID, &sub.OrgID, &sub.EnvID, &sub.SubscriberID, &sub.Email, &sub.Phone,
+		if err := rows.Scan(&sub.ID, &sub.OrgID, &sub.EnvID, &sub.SubscriberID, &sub.Email, &sub.Phone, &sub.PhoneVerifiedAt,
 			&sub.FirstName, &sub.LastName, &sub.Locale, &sub.Timezone, &data, &sub.Deleted); err != nil {
 			return SubscriberPage{}, err
 		}
