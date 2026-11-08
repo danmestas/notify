@@ -19,7 +19,7 @@ import (
 var analyticsAllowList = []string{
 	"at", "channel", "createdAt", "envId", "errorClass", "integrationId",
 	"messageId", "notificationId", "orgId", "providerId", "runId", "status",
-	"stepId", "subscriberId", "transactionId", "updatedAt", "v", "workflowId",
+	"stepId", "subscriberId", "transactionId", "v", "workflowId",
 }
 
 func TestAnalyticsEvent_FieldAllowList(t *testing.T) {
@@ -121,7 +121,7 @@ func TestPublishDelivery_PublishesMetadataOnlyAnalyticsEvent(t *testing.T) {
 		"notificationId": "n1", "runId": "r1", "stepId": "s1", "transactionId": "t1",
 		"integrationId": "i1", "subscriberId": "sub1", "channel": "email",
 		"providerId": "smtp", "status": "error", "errorClass": "auth",
-		"createdAt": "2026-01-02T03:04:05Z", "updatedAt": "",
+		"createdAt": "2026-01-02T03:04:05Z",
 	}
 	at := m["at"]
 	delete(m, "at")

@@ -38,7 +38,6 @@ type AnalyticsEvent struct {
 	Status         string `json:"status"`
 	ErrorClass     string `json:"errorClass"`
 	CreatedAt      string `json:"createdAt"`
-	UpdatedAt      string `json:"updatedAt"`
 	At             string `json:"at"`
 }
 
@@ -60,15 +59,12 @@ type analyticsSource struct {
 	Status         string
 	ErrorClass     string
 	CreatedAt      string
-	UpdatedAt      string
 }
 
 // buildAnalyticsEvent maps a delivery payload to its slim event. ok is false
 // for a payload that is not a message delivery event: the emailloop reply
 // event (it has no message id, and carries reply text and a sender address) and
-// anything unparseable are skipped, never partially mapped. domain.Message has
-// no updated-at field today, so UpdatedAt is empty until the payload carries
-// one.
+// anything unparseable are skipped, never partially mapped.
 func buildAnalyticsEvent(environmentID string, data []byte, now time.Time) (AnalyticsEvent, bool) {
 	var s analyticsSource
 	if json.Unmarshal(data, &s) != nil || s.ID == "" {
@@ -80,7 +76,7 @@ func buildAnalyticsEvent(environmentID string, data []byte, now time.Time) (Anal
 		StepID: s.StepID, TransactionID: s.TransactionID, IntegrationID: s.IntegrationID,
 		SubscriberID: s.SubscriberID, Channel: s.Channel, ProviderID: s.ProviderID,
 		Status: s.Status, ErrorClass: s.ErrorClass, CreatedAt: s.CreatedAt,
-		UpdatedAt: s.UpdatedAt, At: timestamp.Format(now),
+		At: timestamp.Format(now),
 	}, true
 }
 
