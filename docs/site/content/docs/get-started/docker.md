@@ -49,7 +49,7 @@ The `Dockerfile` has these targets:
 | Target | Contents |
 |---|---|
 | `notify` | Static `notify` binary on Alpine 3.20, runs as a non-root `notify` user under `tini`. `EXPOSE 3000`, `VOLUME /data`, default command `serve`. |
-| `dagnats` | The dagnats binary, built with `go install` at `DAGNATS_VERSION` (default `v0.0.58`). `EXPOSE 4222 8080`. |
+| `dagnats` | The dagnats binary, built with `go install` at `DAGNATS_VERSION` (default `v0.0.59`). `EXPOSE 4222 8080`. |
 
 The default image is built with `CGO_ENABLED=0` and does not include the DuckDB analytics backend.
 
