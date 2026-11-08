@@ -8,7 +8,7 @@ weight: 4
 | What | Where | Why |
 |---|---|---|
 | The SQLite database | `NOTIFY_DB` (default `notify.db`) | Everything notify owns: tenants, API key hashes, workflows and their versions, subscribers, integrations (encrypted), messages, agents and conversations, drafts. |
-| **The master key** | Your secret store | Credentials, API keys, environment variables, session cookies and managed-agent keys are encrypted with it. **A backup of the database without the key is not restorable.** Store it separately from the database backup. |
+| **The master key** | Your secret store | Credentials, API keys, environment variables, and session cookies are encrypted with it. **A backup of the database without the key is not restorable.** Store it separately from the database backup. |
 | The blob store | `NOTIFY_BLOB_DIR` or the S3 bucket | Raw mail bytes, if you turned the archive on. The database holds only the records. |
 | The dagnats data directory | `DAGNATS_DATA_DIR` | The JetStream streams (delivery events, the feed) and in-flight runs. Workflow definitions are re-registered from notify's database at start, so this is not needed to recover your configuration, but runs that were in flight are lost without it. |
 | `NOTIFY_INBOUND_SECRET` | Your secret store | Needed to bring the pair back up. |

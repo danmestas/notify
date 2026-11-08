@@ -198,8 +198,8 @@ func (s *Service) baseURL(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
-// buildCard starts from the receiver's card (a mesh agent's published card, or
-// one derived for a managed agent), falls back to a minimal one built from the
+// buildCard starts from the receiver's card (a mesh agent's published card),
+// falls back to a minimal one built from the
 // record, and then sets the fields notify owns: where it is served, how it is
 // called, whether it streams and how it authenticates. The receiver's name,
 // description, skills and extensions are kept.
@@ -254,8 +254,6 @@ func (s *Service) sourceCard(a agentdomain.Agent) json.RawMessage {
 				return c.Raw
 			}
 		}
-	case agentdomain.RuntimeManaged:
-		return cards.Derive(a)
 	}
 	return nil
 }

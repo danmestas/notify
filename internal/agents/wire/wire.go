@@ -23,7 +23,6 @@ type Agent struct {
 	Active         bool              `json:"active"`
 	MeshSubject    string            `json:"meshSubject"`
 	BridgeURL      string            `json:"bridgeUrl"`
-	Managed        json.RawMessage   `json:"managed,omitempty"`
 	WelcomeMessage string            `json:"welcomeMessage"`
 	Labels         map[string]string `json:"labels"`
 	Logo           string            `json:"logo"`
@@ -58,7 +57,6 @@ func FromAgent(a agentdomain.Agent) Agent {
 		Active:         a.Active,
 		MeshSubject:    a.MeshSubject,
 		BridgeURL:      a.BridgeURL,
-		Managed:        hideAPIKey(a.Managed),
 		WelcomeMessage: a.WelcomeMessage,
 		Labels:         orEmptyLabels(a.Labels),
 		Logo:           a.Logo,
@@ -316,47 +314,4 @@ func orEmptyLabels(l map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	return l
-}
-
-// hideAuthSecrets replaces every authSecret, at any depth, with
-// authSecretSet.
-func hideAuthSecrets(v any) {
-	switch x := v.(type) {
-	case map[string]any:
-		if s, ok := x["authSecret"]; ok {
-			delete(x, "authSecret")
-			str, _ := s.(string)
-			x["authSecretSet"] = str != ""
-		}
-		for _, c := range x {
-			hideAuthSecrets(c)
-		}
-	case []any:
-		for _, c := range x {
-			hideAuthSecrets(c)
-		}
-	}
-}
-
-// hideAPIKey replaces a managed agent's API key with "apiKeySet": true, and
-// every authSecret with "authSecretSet": true. A secret never leaves notify
-// once stored.
-func hideAPIKey(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
-		return raw
-	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil
-	}
-	if k, ok := m["apiKey"].(string); ok {
-		delete(m, "apiKey")
-		m["apiKeySet"] = k != ""
-	}
-	hideAuthSecrets(m)
-	out, err := json.Marshal(m)
-	if err != nil {
-		return nil
-	}
-	return out
 }

@@ -3,13 +3,10 @@
   "identifier": "support",
   "name": "Support",
   "description": "Answers support mail",
-  "runtime": "managed",
+  "runtime": "mesh",
   "active": true,
   "meshSubject": "agents.support",
   "bridgeUrl": "https://bridge.example",
-  "managed": {
-    "integrationId": "i1"
-  },
   "welcomeMessage": "Hi",
   "labels": {
     "owner": "lou"

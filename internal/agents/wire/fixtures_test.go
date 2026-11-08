@@ -28,20 +28,8 @@ var fixtures = []struct {
 }{
 	{"agent", reflect.TypeOf(wire.Agent{}), withCard(wire.FromAgent(agentdomain.Agent{
 		ID: "a1", Identifier: "support", Name: "Support", Description: "Answers support mail",
-		Runtime: "managed", Active: true, MeshSubject: "agents.support", BridgeURL: "https://bridge.example",
-		Managed: json.RawMessage(`{"integrationId":"i1"}`), WelcomeMessage: "Hi", Labels: map[string]string{"owner": "lou"}, Logo: "data:image/png;base64,iVBORw0KGgo=", CreatedAt: "2026-10-01T00:00:00Z", UpdatedAt: "2026-10-02T00:00:00Z",
-	}))},
-	{"agent_managed", reflect.TypeOf(wire.Agent{}), withCard(wire.FromAgent(agentdomain.Agent{
-		ID: "a2", Identifier: "ember", Name: "Ember", Runtime: "managed", Active: true,
-		Managed:   json.RawMessage(`{"provider":"openrouter","model":"anthropic/claude-sonnet-4.5","systemPrompt":"Draft replies.","apiKey":"enc:1:sealed"}`),
-		Labels:    map[string]string{"owner": "owner"},
-		CreatedAt: "2026-10-18T00:00:00Z", UpdatedAt: "2026-10-18T00:00:00Z",
-	}))},
-	{"agent_managed_mcp", reflect.TypeOf(wire.Agent{}), withCard(wire.FromAgent(agentdomain.Agent{
-		ID: "a3", Identifier: "vault-agent", Name: "Vault", Runtime: "managed", Active: true,
-		Managed:   json.RawMessage(`{"provider":"openrouter","model":"anthropic/claude-sonnet-4.5","apiKey":"enc:1:sealed","mcpServers":[{"name":"vault","url":"https://relay.example/mcp","authHeader":"Authorization","authSecret":"enc:1:sealed"}]}`),
-		Labels:    map[string]string{"owner": "owner"},
-		CreatedAt: "2026-10-21T00:00:00Z", UpdatedAt: "2026-10-21T00:00:00Z",
+		Runtime: "mesh", Active: true, MeshSubject: "agents.support", BridgeURL: "https://bridge.example",
+		WelcomeMessage: "Hi", Labels: map[string]string{"owner": "lou"}, Logo: "data:image/png;base64,iVBORw0KGgo=", CreatedAt: "2026-10-01T00:00:00Z", UpdatedAt: "2026-10-02T00:00:00Z",
 	}))},
 	{"link", reflect.TypeOf(wire.Link{}), wire.FromLink(agentdomain.AgentLink{
 		ID: "l1", AgentID: "a1", IntegrationID: "i1", ConnectedAt: "2026-10-01T00:00:00Z", Config: json.RawMessage(`{"chatId":"7"}`),

@@ -16,7 +16,7 @@ Mint a [client key](../../api/a2a-client-keys) in the environment that owns the 
 
 ## The card
 
-The card starts from the receiver's own card (a mesh agent's published card, or one derived for a managed agent) and keeps its name, description, skills and extensions. notify then sets `url` (this route), `preferredTransport: "JSONRPC"`, `capabilities.streaming: true` and a bearer `securitySchemes` entry. The URL is built on `NOTIFY_PUBLIC_BASE_URL`; when that is unset, on the scheme and host of the request.
+The card starts from the receiver's own card (a mesh agent's published card) and keeps its name, description, skills and extensions. notify then sets `url` (this route), `preferredTransport: "JSONRPC"`, `capabilities.streaming: true` and a bearer `securitySchemes` entry. The URL is built on `NOTIFY_PUBLIC_BASE_URL`; when that is unset, on the scheme and host of the request.
 
 ```sh
 curl -H "Authorization: Bearer $A2A_KEY" \

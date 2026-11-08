@@ -40,8 +40,8 @@ type Config struct {
 	// MasterKey is the 32-byte AES-256-GCM key that seals credentials, API
 	// keys and secret step fields at rest.
 	MasterKey []byte
-	// Dev relaxes development-only guards: managed agents and agent configs
-	// may reach MCP servers on loopback over plain http.
+	// Dev relaxes development-only guards: agent configs may reach MCP
+	// servers on loopback over plain http.
 	Dev bool
 
 	// SendmailCommand is the argv the "sendmail" email provider pipes each

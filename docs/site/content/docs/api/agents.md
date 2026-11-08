@@ -68,15 +68,14 @@ The JSON formats are pinned by fixtures in `internal/agents/wire/testdata`; orga
 **Agent**
 
 ```json
-{ "id": "a1", "identifier": "support", "name": "Support", "description": "", "runtime": "managed",
-  "active": true, "meshSubject": "", "bridgeUrl": "",
-  "managed": { "apiKeySet": true, "model": "…", "provider": "openrouter", "systemPrompt": "…" },
+{ "id": "a1", "identifier": "support", "name": "Support", "description": "", "runtime": "mesh",
+  "active": true, "meshSubject": "agents.prompt.support", "bridgeUrl": "",
   "welcomeMessage": "", "labels": { "owner": "lou" }, "logo": "", "history": "inline", "receiver": { "kind": "mesh" }, "card": null, "createdAt": "…", "updatedAt": "…" }
 ```
 
 `receiver` says what answers the agent's turns: `{"kind": "live", "since": "…"}` while a harness is connected over the [live receiver](../../inbox-and-agents/live-receiver) WebSocket (on `GET /v1/agents` and `GET /v1/agents/{identifier}`), otherwise `{"kind": <runtime>}`.
 
-`card` is the agent's A2A v0.3 AgentCard, returned by `GET /v1/agents` and `GET /v1/agents/{identifier}` only (create and patch answer `null`). A `mesh` agent publishes its own card; notify passes it through as JSON, with `cardUpdatedAt` (RFC 3339) saying when it was last written, and `card` is `null` until the agent publishes one or when its `meshSubject` is not under `agents.prompt.`. A `managed` agent with no stored card gets one derived from its settings on each request: name, description, `protocolVersion` `0.3.0`, and a runtime extension carrying `model`, `llmProvider` and `tools` (its MCP servers, kind `mcp`); it never includes the API key or any secret, and has no `cardUpdatedAt`. A card is visible only to callers who can see the agent, so an agent outside your organization and environment is a `404`.
+`card` is the agent's A2A v0.3 AgentCard, returned by `GET /v1/agents` and `GET /v1/agents/{identifier}` only (create and patch answer `null`). A `mesh` agent publishes its own card; notify passes it through as JSON, with `cardUpdatedAt` (RFC 3339) saying when it was last written, and `card` is `null` until the agent publishes one or when its `meshSubject` is not under `agents.prompt.`. A card is visible only to callers who can see the agent, so an agent outside your organization and environment is a `404`.
 **Link**: `{id, agentId, integrationId, connectedAt, config?}`.
 
 **Conversation**: `{id, agentId, integrationId, platformThreadId, subscriberId, status, createdAt, lastActivityAt}`. `platformThreadId` is the handle you pass back as `conversationId`; `status` starts as `open`.

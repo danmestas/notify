@@ -18,32 +18,38 @@ import (
 
 	"github.com/danmestas/notify/internal/agents/cards"
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
-	"github.com/danmestas/notify/internal/agents/runtime/managed"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/agents/wire"
 	"github.com/danmestas/notify/internal/identity"
-	"github.com/danmestas/notify/internal/secretbox"
 	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // runtimeErrMsg enumerates the runtimes a caller may actually create — those
-// with a registered executor (agentdomain.SupportedRuntimes). bridge/managed
-// are valid constants but unimplemented, so accepting them would mint an agent
-// that dead-letters every turn (#113 tightens this from ValidRuntime). The list
+// with a registered executor (agentdomain.SupportedRuntimes). bridge is a valid
+// constant but unimplemented, so accepting it would mint an agent that
+// dead-letters every turn (#113 tightens this from ValidRuntime). The list
 // is derived from SupportedRuntimes so it never drifts; an empty enum list in a
 // 422 is a misdiagnosis trap.
 var runtimeErrMsg = "runtime must be one of: " + strings.Join(agentdomain.SupportedRuntimes, ", ")
+
+// managedRemovedMsg answers a request that still names the removed managed
+// runtime or sends its settings.
+const managedRemovedMsg = "the managed runtime was removed; use mesh"
+
+// removedManaged reports whether a request names the removed managed runtime
+// or carries a non-empty managed settings object.
+func removedManaged(runtime string, managed json.RawMessage) bool {
+	if runtime == "managed" {
+		return true
+	}
+	m := strings.TrimSpace(string(managed))
+	return m != "" && m != "null"
+}
 
 // Service exposes agent management over HTTP.
 type Service struct {
 	store   *agentstore.Store
 	baseURL string // optional; used by channelSetup to assemble inbound webhook URLs
-	// box seals a managed agent's API key before it is stored. Without one,
-	// an agent that sends a key is refused rather than stored in plaintext.
-	box *secretbox.Box
-	// loopbackMCP admits managed agents' MCP servers on loopback, over http
-	// too. Development only.
-	loopbackMCP bool
 	// cards, when set, supplies mesh agents' published A2A cards.
 	cards cards.Lookup
 	// configurer relays config changes to mesh agents.
@@ -72,8 +78,8 @@ func (svc *Service) WithCards(c cards.Lookup) *Service {
 
 // present maps a stored agent to its response, with its A2A card. The agent
 // has already been found in the caller's scope, which is what makes its card
-// visible. A mesh agent gets the card its subject names, if one is published;
-// a managed agent gets one derived from its record. Neither is stored.
+// visible. A mesh agent gets the card its subject names, if one is published.
+// It is never stored.
 func (svc *Service) present(a agentdomain.Agent) wire.Agent {
 	out := wire.FromAgent(a)
 	if svc.live != nil {
@@ -91,8 +97,6 @@ func (svc *Service) present(a agentdomain.Agent) wire.Agent {
 			out.Card = json.RawMessage(c.Raw)
 			out.CardUpdatedAt = timestamp.Format(c.UpdatedAt)
 		}
-	case agentdomain.RuntimeManaged:
-		out.Card = cards.Derive(a)
 	}
 	return out
 }
@@ -104,18 +108,6 @@ func (svc *Service) presentAll(in []agentdomain.Agent) []wire.Agent {
 		out = append(out, svc.present(a))
 	}
 	return out
-}
-
-// WithLoopbackMCP admits MCP servers on loopback when allow is set.
-func (svc *Service) WithLoopbackMCP(allow bool) *Service {
-	svc.loopbackMCP = allow
-	return svc
-}
-
-// WithSecretBox seals managed agents' API keys with box.
-func (svc *Service) WithSecretBox(box *secretbox.Box) *Service {
-	svc.box = box
-	return svc
 }
 
 // New builds a Service backed by the given agents store.
@@ -154,13 +146,14 @@ func (svc *Service) Routes(r chi.Router) {
 
 // agentRequest is the POST /v1/agents body.
 type agentRequest struct {
-	Identifier     string            `json:"identifier"`
-	Name           string            `json:"name"`
-	Description    string            `json:"description"`
-	Runtime        string            `json:"runtime"`
-	Active         *bool             `json:"active"`
-	MeshSubject    string            `json:"meshSubject"`
-	BridgeURL      string            `json:"bridgeUrl"`
+	Identifier  string `json:"identifier"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Runtime     string `json:"runtime"`
+	Active      *bool  `json:"active"`
+	MeshSubject string `json:"meshSubject"`
+	BridgeURL   string `json:"bridgeUrl"`
+	// Managed is refused when set: it belongs to the removed managed runtime.
 	Managed        json.RawMessage   `json:"managed"`
 	WelcomeMessage string            `json:"welcomeMessage"`
 	Labels         map[string]string `json:"labels"`
@@ -189,6 +182,10 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "identifier may only contain lowercase letters, numbers, hyphens, and underscores", http.StatusUnprocessableEntity)
 		return
 	}
+	if removedManaged(req.Runtime, req.Managed) {
+		http.Error(w, managedRemovedMsg, http.StatusUnprocessableEntity)
+		return
+	}
 	// Enforce supported-on-creation: only runtimes with a registered executor
 	// may be minted, otherwise the API can create a dead agent (#113 Part A).
 	if !agentdomain.IsSupportedRuntime(req.Runtime) {
@@ -207,16 +204,6 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	if err := svc.checkManaged(req.Runtime, req.Managed); err != nil {
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-		return
-	}
-	managed, err := svc.sealManagedKey(req.Managed, nil)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-		return
-	}
-	req.Managed = managed
 	active := true
 	if req.Active != nil {
 		active = *req.Active
@@ -233,7 +220,6 @@ func (svc *Service) createAgent(w http.ResponseWriter, r *http.Request) {
 		Active:         active,
 		MeshSubject:    req.MeshSubject,
 		BridgeURL:      req.BridgeURL,
-		Managed:        req.Managed,
 		WelcomeMessage: req.WelcomeMessage,
 	})
 	if err != nil {
@@ -274,120 +260,6 @@ func (svc *Service) listAgents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, svc.presentAll(matched))
-}
-
-// checkManaged refuses managed settings a managed agent could not run with,
-// so a mistake is a 422 now rather than a failed turn later. Settings left
-// out entirely are allowed: an agent can be created first and configured
-// after.
-func (svc *Service) checkManaged(runtime string, raw json.RawMessage) error {
-	if runtime != agentdomain.RuntimeManaged || len(raw) == 0 || string(raw) == "null" {
-		return nil
-	}
-	_, err := managed.ParseConfig(raw, svc.loopbackMCP)
-	return err
-}
-
-// sealManagedKey seals the plaintext secrets in a managed agent's settings:
-// the apiKey and each mcpServers entry's authSecret. When next carries no
-// secret, the one in prev (already sealed) is kept, so changing a prompt does
-// not mean sending the key again. A secret is kept only while it goes to the
-// same place: the apiKey while provider and baseUrl are unchanged, a server's
-// secret while the server of the same name keeps its url and authHeader.
-// Otherwise the secret must be sent again, so an edit cannot redirect a
-// stored secret. An explicit empty secret clears it. A secret cannot be
-// stored without a secret box.
-func (svc *Service) sealManagedKey(next, prev json.RawMessage) (json.RawMessage, error) {
-	if len(next) == 0 {
-		return next, nil
-	}
-	var m map[string]any
-	if err := json.Unmarshal(next, &m); err != nil {
-		return nil, fmt.Errorf("managed must be a JSON object: %w", err)
-	}
-	if m == nil {
-		return next, nil
-	}
-	var old map[string]any
-	if len(prev) > 0 {
-		_ = json.Unmarshal(prev, &old)
-	}
-	sameModel := strings.EqualFold(field(m, "provider"), field(old, "provider")) && field(m, "baseUrl") == field(old, "baseUrl")
-	if err := svc.sealSecret(m, old, sameModel, "apiKey", "agent API key"); err != nil {
-		return nil, err
-	}
-	oldServers := map[string]map[string]any{}
-	if list, ok := old["mcpServers"].([]any); ok {
-		for _, s := range list {
-			if sm, ok := s.(map[string]any); ok {
-				if name, ok := sm["name"].(string); ok {
-					oldServers[name] = sm
-				}
-			}
-		}
-	}
-	if list, ok := m["mcpServers"].([]any); ok {
-		for _, s := range list {
-			sm, ok := s.(map[string]any)
-			if !ok {
-				continue
-			}
-			name, _ := sm["name"].(string)
-			o := oldServers[name]
-			same := field(sm, "url") == field(o, "url") && strings.EqualFold(authHeader(sm), authHeader(o))
-			if err := svc.sealSecret(sm, o, same, "authSecret", "MCP server secret"); err != nil {
-				return nil, err
-			}
-		}
-	}
-	return json.Marshal(m)
-}
-
-// field is m[key] as a trimmed string, "" when absent.
-func field(m map[string]any, key string) string {
-	s, _ := m[key].(string)
-	return strings.TrimSpace(s)
-}
-
-func authHeader(server map[string]any) string {
-	if h := field(server, "authHeader"); h != "" {
-		return h
-	}
-	return "Authorization"
-}
-
-// sealSecret seals m[key], keeps old[key] when m has none and same says it
-// still goes to the same place, and clears it when it is empty. A stored
-// secret whose destination changed must be sent again.
-func (svc *Service) sealSecret(m, old map[string]any, same bool, key, what string) error {
-	secret, sent := m[key].(string)
-	if !sent {
-		k, ok := old[key].(string)
-		if !ok || k == "" {
-			return nil
-		}
-		if !same {
-			return fmt.Errorf("the %s was stored for another address; send %s again to use it here", what, key)
-		}
-		m[key] = k
-		return nil
-	}
-	if secret == "" {
-		delete(m, key)
-		return nil
-	}
-	if secretbox.IsSealed(secret) {
-		return nil
-	}
-	if svc.box == nil {
-		return fmt.Errorf("this server has no master key, so it cannot store an %s", what)
-	}
-	sealed, err := svc.box.Seal(secret)
-	if err != nil {
-		return fmt.Errorf("seal %s: %w", what, err)
-	}
-	m[key] = sealed
-	return nil
 }
 
 // labelKeyChar reports whether c may appear in a label key.
@@ -455,12 +327,13 @@ func (svc *Service) getAgent(w http.ResponseWriter, r *http.Request) {
 // distinguish "absent" from "set to zero value" so a partial update only
 // touches what the caller sent.
 type agentPatch struct {
-	Name           *string          `json:"name"`
-	Description    *string          `json:"description"`
-	Runtime        *string          `json:"runtime"`
-	Active         *bool            `json:"active"`
-	MeshSubject    *string          `json:"meshSubject"`
-	BridgeURL      *string          `json:"bridgeUrl"`
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Runtime     *string `json:"runtime"`
+	Active      *bool   `json:"active"`
+	MeshSubject *string `json:"meshSubject"`
+	BridgeURL   *string `json:"bridgeUrl"`
+	// Managed is refused when set: it belongs to the removed managed runtime.
 	Managed        *json.RawMessage `json:"managed"`
 	WelcomeMessage *string          `json:"welcomeMessage"`
 	// Labels, when present, replaces the agent's labels; {} clears them.
@@ -485,6 +358,18 @@ func (svc *Service) patchAgent(w http.ResponseWriter, r *http.Request) {
 	agent, err := svc.store.Agents().GetByIdentifier(r.Context(), scope, chi.URLParam(r, "identifier"))
 	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	var managed json.RawMessage
+	if req.Managed != nil {
+		managed = *req.Managed
+	}
+	rt := ""
+	if req.Runtime != nil {
+		rt = *req.Runtime
+	}
+	if removedManaged(rt, managed) {
+		http.Error(w, managedRemovedMsg, http.StatusUnprocessableEntity)
 		return
 	}
 	// Enforce supported-only-on-change: a runtime switch must target a runtime
@@ -512,18 +397,6 @@ func (svc *Service) patchAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.BridgeURL != nil {
 		agent.BridgeURL = *req.BridgeURL
-	}
-	if req.Managed != nil {
-		if err := svc.checkManaged(agent.Runtime, *req.Managed); err != nil {
-			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-			return
-		}
-		managed, err := svc.sealManagedKey(*req.Managed, agent.Managed)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-			return
-		}
-		agent.Managed = managed
 	}
 	if req.WelcomeMessage != nil {
 		agent.WelcomeMessage = *req.WelcomeMessage

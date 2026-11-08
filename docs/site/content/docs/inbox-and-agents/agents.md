@@ -25,15 +25,14 @@ curl -X POST localhost:3000/v1/agents \
 |---|---|
 | `identifier` | Required. Lowercase letters, digits, hyphens and underscores, starting with a letter or digit. Unique per environment (`409` on a duplicate). |
 | `name`, `description`, `welcomeMessage` | Free text, returned as written. |
-| `runtime` | `mesh` or `managed`. Anything else is `422`. |
+| `runtime` | `mesh`. Anything else is `422`; `managed` answers `the managed runtime was removed; use mesh`. |
 | `active` | Default `true`. A workflow's `agent_message` step refuses an inactive agent. |
 | `meshSubject` | For `mesh`: the NATS subject prompts are published to. |
-| `managed` | For `managed`: the model settings. See [Managed agents](../managed-agents). |
 | `labels` | Free-form tags. See below. |
 | `logo` | Optional. A `data:` URI (`image/png`, `image/jpeg` or `image/webp`, base64), at most 96 KB decoded; anything else, SVG included, is `422`. `PATCH` with `""` clears it. |
 | `history` | For `mesh`: `inline` (default) pastes the conversation into each prompt; `none` sends only the new message and relies on the agent keeping its own state, resending once with the transcript if the agent reports it has none. Anything else is `422`. |
 
-`GET /v1/agents`, `GET /v1/agents/{identifier}`, `PATCH /v1/agents/{identifier}` (a partial update: only the fields you send change) and `DELETE /v1/agents/{identifier}` (`204`) complete the CRUD. `bridgeUrl` appears in responses and is accepted, but there is no `bridge` runtime: only `mesh` and `managed` can be created or switched to.
+`GET /v1/agents`, `GET /v1/agents/{identifier}`, `PATCH /v1/agents/{identifier}` (a partial update: only the fields you send change) and `DELETE /v1/agents/{identifier}` (`204`) complete the CRUD. `bridgeUrl` appears in responses and is accepted, but there is no `bridge` runtime: only `mesh` can be created or switched to. The `managed` runtime was removed; a request that names it, or sends a non-empty `managed` field, is a `422`.
 
 An agent object:
 
@@ -43,7 +42,7 @@ An agent object:
   "welcomeMessage": "", "labels": {"owner": "lou"}, "logo": "", "history": "inline", "card": null, "createdAt": "…", "updatedAt": "…" }
 ```
 
-`managed` is included for managed agents; organization and environment ids are never part of the format.
+Organization and environment ids are never part of the format.
 
 ### Labels
 
@@ -58,10 +57,6 @@ notify publishes an A2A v2 prompt envelope (`{messageId, role: "user", parts: [{
 - Subjects must match the allowlist `NOTIFY_MESH_ALLOW` (`-mesh-allow`), default `agents.prompt.>`. Anything else is refused as a permanent failure.
 - Dispatch uses `NOTIFY_MESH_NATS_URL` (`-mesh-nats-url`) if set, otherwise the engine's NATS URL. Set it when agents live on a different hub from the engine.
 - An agent that acknowledges but never answers in v2 is reported as a permanent failure, as is a non-200 service error in the 4xx class.
-
-### managed
-
-notify itself calls a model. See [Managed agents](../managed-agents).
 
 ### Turn execution
 
@@ -92,10 +87,6 @@ It answers `202`: the turn runs as engine work, never inside the request.
 `Idempotency-Key` is optional: 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `_`, `-` (`422` otherwise). Retrying a compose with the same key in the same conversation returns the original message, conversation and run instead of posting twice; a new conversation opened with a key gets a thread id derived from it, so a retry of the opening message lands in the same thread. Reusing a key for a *different* message is `409`.
 
 Errors: `404` unknown agent, `422` for a missing field or a runtime that cannot execute on this server, `409` for a key conflict.
-
-## Sources
-
-A managed agent's reply lists what it drew on in `content.sources`: one entry per tool call it made, in order, then each attachment of the user's message it read, at most 20. An entry is `{"server", "tool", "label", "ref"?, "error"?}`. `server` and `tool` name the MCP server and tool; `label` is the call's `query`, `id`, `path` or `title` argument (the first present, cut to 120 characters), else the tool name; `ref` is the `id` or `path` argument when there is one; `error` is `true` for a call that failed. An attachment is `{"server": "", "tool": "attachment", "label": "<name>"}`. Mesh agents report no sources.
 
 ## Reading conversations
 

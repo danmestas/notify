@@ -29,7 +29,6 @@ const (
 	VerifyCredentials = Prefix + "verify.credentials"
 	VerifyAll         = Prefix + "verify.all"
 	AgentTurnMesh     = Prefix + "agent.turn.mesh"
-	AgentTurnManaged  = Prefix + "agent.turn.managed"
 	AIBuild           = Prefix + "ai.build"
 )
 
@@ -51,7 +50,7 @@ func TaskTypes() []string {
 		SendInApp, SendEmail, SendPush, SendChat, SendSMS, SendStream,
 		DelayScheduled, DelayDynamic, DigestWait, CheckThrottle,
 		HTTPRequest, AgentMessage,
-		VerifyCredentials, VerifyAll, AgentTurnMesh, AgentTurnManaged, AIBuild,
+		VerifyCredentials, VerifyAll, AgentTurnMesh, AIBuild,
 	}
 }
 

@@ -25,7 +25,6 @@ func TestNames_LiteralValues(t *testing.T) {
 		Workflow("env", "slug"):  "notify.env-slug",
 		AgentTurnWorkflow("a1"):  "notify.agent-turn-a1",
 		Send("sms"):              "notify.send.sms",
-		AgentTurn("managed"):     "notify.agent.turn.managed",
 	}
 	for got, want := range cases {
 		if got != want {

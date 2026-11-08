@@ -35,10 +35,6 @@ import (
 // Task("agent.turn.<runtime>")).
 const TaskMesh = names.AgentTurnMesh
 
-// TaskManaged is the engine task type for managed-runtime turns: agents
-// notify runs itself on the owner's model settings.
-const TaskManaged = names.AgentTurnManaged
-
 // historyWindow bounds the transcript carried into each turn,
 // RFC 0002 §4: last N=20, oldest first).
 const historyWindow = 20
