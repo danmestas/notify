@@ -44,6 +44,14 @@ Set `OTEL_EXPORTER_OTLP_ENDPOINT` (and optionally `OTEL_SERVICE_NAME`, default `
 
 The console's Activity view lists every notification and its messages with live tail. With `NOTIFY_DAGNATS_CONSOLE_URL` set, each run links to the run page in dagnats' own console.
 
+## The analytics event stream
+
+For every delivery event notify also publishes a small event to its `NOTIFY_ANALYTICS` stream, on `notify.analytics.<environment id>`. It carries the same `Nats-Msg-Id` as the delivery event, so a duplicate publish is stored once.
+
+The event holds ids, enums and timestamps only: `v` (schema version, 1), `messageId`, `orgId`, `envId`, `workflowId`, `notificationId`, `runId`, `stepId`, `transactionId`, `integrationId`, `subscriberId`, `channel`, `providerId`, `status`, `errorClass`, `createdAt` and `at`. It holds **no message content**: no subject, body, recipient address or phone number, error text or skip reason. `subscriberId` is the opaque id your tenant chose. Replies to a conversation produce no analytics event.
+
+The stream has no age limit, only a size cap (1% of the dagnats store budget, at least 64 MiB). The publish is best effort: if it fails, it is logged and the delivery is not affected.
+
 ## Analytics backend
 
 The analytics projector reads delivery events through a durable consumer, so it resumes where it stopped after downtime or a restart, and a redelivered event is counted once.

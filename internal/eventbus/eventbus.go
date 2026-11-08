@@ -241,16 +241,23 @@ func DeliveryEventKey(data []byte) string {
 // JetStream publish is a normal NATS publish that the stream also captures.
 // The event carries Nats-Msg-Id = DeliveryEventKey(data), so a duplicate
 // publish within the stream's duplicate window is dropped.
+//
+// It then publishes a metadata-only AnalyticsEvent to NOTIFY_ANALYTICS under
+// the same Nats-Msg-Id, best effort: a failure there is logged and the
+// delivery publish's result is returned. Payloads that are not message
+// delivery events (the emailloop reply event) get no analytics event.
 func (b *Bus) PublishDelivery(environmentID string, data []byte) error {
 	if environmentID == "" {
 		return fmt.Errorf("eventbus: PublishDelivery: environmentID must be non-empty")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	key := DeliveryEventKey(data)
 	if _, err := b.js.Publish(ctx, deliverySubject(environmentID), data,
-		jetstream.WithMsgID(DeliveryEventKey(data))); err != nil {
+		jetstream.WithMsgID(key)); err != nil {
 		return fmt.Errorf("eventbus: PublishDelivery: %w", err)
 	}
+	b.publishAnalytics(ctx, environmentID, data, key)
 	return nil
 }
 
