@@ -317,7 +317,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 		return nil, fmt.Errorf("envvars.New: %w", err)
 	}
 
-	an, anClose, err := analyticsBackend(ctx, st, bus, cfg.DuckDBPath)
+	an, anClose, err := analyticsBackend(ctx, st, bus, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("analyticsBackend: %w", err)
 	}

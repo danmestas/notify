@@ -6,6 +6,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/danmestas/notify/internal/aibuilder"
+	"github.com/danmestas/notify/internal/analyticslake"
 	"github.com/danmestas/notify/internal/blobstore"
 	"github.com/danmestas/notify/internal/deliveryhealth"
 	"github.com/danmestas/notify/internal/engine"
@@ -96,6 +97,12 @@ type Config struct {
 	// DuckDBPath is the analytics database in a `-tags duckdb` build; other
 	// builds ignore it.
 	DuckDBPath string
+
+	// AnalyticsLake, when enabled, answers analytics queries from the lake
+	// (#119) instead of SQLite or DuckDBPath; the projector still writes to
+	// SQLite. It needs a `-tags duckdb` build; other builds refuse to start
+	// with it set. The zero value keeps the default.
+	AnalyticsLake analyticslake.Config
 
 	// Health holds the integration health thresholds. The zero value means
 	// deliveryhealth.DefaultSettings.

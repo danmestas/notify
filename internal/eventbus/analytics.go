@@ -80,8 +80,16 @@ func buildAnalyticsEvent(environmentID string, data []byte, now time.Time) (Anal
 	}, true
 }
 
-// analyticsSubjectFor is notify.analytics.<environmentID>.
-func analyticsSubjectFor(environmentID string) string {
+// Encode is the event's wire body on NOTIFY_ANALYTICS. The live publisher and
+// the SQLite import (internal/analyticslake) both encode through it, so the
+// lake holds one payload shape.
+func (ev AnalyticsEvent) Encode() ([]byte, error) {
+	return json.Marshal(ev)
+}
+
+// AnalyticsSubject is notify.analytics.<environmentID>, the subject an
+// environment's AnalyticsEvent is published on.
+func AnalyticsSubject(environmentID string) string {
 	return "notify.analytics." + environmentID
 }
 
@@ -94,9 +102,9 @@ func (b *Bus) publishAnalytics(ctx context.Context, environmentID string, data [
 	if !ok {
 		return
 	}
-	body, err := json.Marshal(ev)
+	body, err := ev.Encode()
 	if err == nil {
-		_, err = b.js.Publish(ctx, analyticsSubjectFor(environmentID), body, jetstream.WithMsgID(msgID))
+		_, err = b.js.Publish(ctx, AnalyticsSubject(environmentID), body, jetstream.WithMsgID(msgID))
 	}
 	if err != nil {
 		slog.Default().Warn("eventbus: analytics publish failed",

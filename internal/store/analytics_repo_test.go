@@ -489,3 +489,34 @@ func TestAnalyticsRepo_InsertIdempotentOnEventKey(t *testing.T) {
 		t.Fatalf("got %v want %v", got, want)
 	}
 }
+
+// TestEachAnalyticsDelivery_RowidOrder: the import walks rows in insertion
+// (rowid) order, not id or created_at order, and NULL columns read as "".
+func TestEachAnalyticsDelivery_RowidOrder(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Analytics()
+	in := []domain.AnalyticsDelivery{
+		{ID: "zz", Channel: "email", Status: "sent", CreatedAt: "2026-11-02T00:00:00.000000000Z", EventKey: "m1:sent"},
+		{ID: "aa", Channel: "sms", Status: "failed", CreatedAt: "2026-11-01T00:00:00.000000000Z", SubscriberID: "s1", RunID: "r1"},
+	}
+	for i, d := range in {
+		if err := repo.Insert(ctx, domain.Scope{OrgID: "o1", EnvID: "e1"}, d); err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+	var got []domain.AnalyticsDelivery
+	err := s.EachAnalyticsDelivery(ctx, func(d domain.AnalyticsDelivery) error {
+		got = append(got, d)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("each: %v", err)
+	}
+	for i := range in {
+		in[i].OrgID, in[i].EnvID = "o1", "e1"
+	}
+	if !reflect.DeepEqual(got, in) {
+		t.Fatalf("rows:\n got %+v\nwant %+v", got, in)
+	}
+}
