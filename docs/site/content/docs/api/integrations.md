@@ -45,6 +45,8 @@ An integration object:
 | `lastErrorClass` | The class of the latest counted error, for example `auth`. Absent until one has happened. |
 | `lastErrorMessage` | The provider's message for that error. Never a credential. |
 | `lastCheckedAt` | When the credentials were last checked, by the daily check, after a credential change, or by `verify`. Absent if never. |
+| `lastCheckOk` | Whether that check passed. Absent if no check ran. |
+| `lastCheckDetail` | Why the last check failed, with credential values removed. A check that fails for a reason other than a rejected credential, such as an unreachable server, leaves `state` unchanged, so this is where its reason shows. Absent when the check passed. |
 
 `POST /v1/integrations/{id}/verify` probes the provider with the stored credentials, without sending a message, and waits for the verdict. A pass clears `failing` and `unverified`; a credential refusal sets `failing`. A provider that has no credential probe, or a provider that cannot be reached, leaves `state` as it was. The response is the health object alone, and the call is scoped like every other: an integration in another environment is `404`. Any valid API key can call it, the same as the other integration routes.
 

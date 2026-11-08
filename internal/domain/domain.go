@@ -119,7 +119,10 @@ type IntegrationHealth struct {
 	LastErrorAt      string `db:"last_error_at"`
 	LastCheckAt      string `db:"last_check_at"`
 	LastCheckOK      bool   `db:"last_check_ok"`
-	UpdatedAt        string `db:"updated_at"`
+	// LastCheckDetail is why the last credential check failed (redacted,
+	// truncated); empty when it passed or never ran.
+	LastCheckDetail string `db:"last_check_detail"`
+	UpdatedAt       string `db:"updated_at"`
 }
 
 // StreamSource is an inbound webhook-push source: an external producer

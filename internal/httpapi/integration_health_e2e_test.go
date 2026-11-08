@@ -129,6 +129,8 @@ type healthJSON struct {
 	LastErrorClass   string `json:"lastErrorClass"`
 	LastErrorMessage string `json:"lastErrorMessage"`
 	LastCheckedAt    string `json:"lastCheckedAt"`
+	LastCheckOK      bool   `json:"lastCheckOk"`
+	LastCheckDetail  string `json:"lastCheckDetail"`
 }
 
 func getHealth(t *testing.T, h *healthServer, id string) healthJSON {
@@ -189,6 +191,9 @@ func TestIntegrationHealth_VerifyRunsTheCheckAndUpdatesState(t *testing.T) {
 		!strings.Contains(failing.LastErrorMessage, "rejected") || failing.LastCheckedAt == "" || failing.Since == "" {
 		t.Fatalf("verify health = %+v, want failing/auth with message, since and lastCheckedAt", failing)
 	}
+	if failing.LastCheckOK || !strings.Contains(failing.LastCheckDetail, "rejected") {
+		t.Fatalf("verify health = %+v, want the failed check and its reason", failing)
+	}
 	if got := getHealth(t, h, id); got != failing {
 		t.Fatalf("GET health = %+v, want what verify returned %+v", got, failing)
 	}
@@ -203,7 +208,7 @@ func TestIntegrationHealth_VerifyRunsTheCheckAndUpdatesState(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &healthy); err != nil {
 		t.Fatalf("decode verify: %v", err)
 	}
-	if healthy.State != "healthy" || healthy.LastCheckedAt == "" {
+	if healthy.State != "healthy" || healthy.LastCheckedAt == "" || !healthy.LastCheckOK || healthy.LastCheckDetail != "" {
 		t.Fatalf("verify health = %+v, want healthy", healthy)
 	}
 }

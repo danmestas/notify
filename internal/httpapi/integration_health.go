@@ -36,6 +36,11 @@ type integrationHealthDTO struct {
 	LastErrorMessage string `json:"lastErrorMessage,omitempty"`
 	// LastCheckedAt is when the credentials were last checked, if ever.
 	LastCheckedAt string `json:"lastCheckedAt,omitempty"`
+	// LastCheckOK says whether that check passed; absent if none ran. A
+	// failed check that was not a rejected credential (an unreachable server)
+	// leaves State as it was, so this and LastCheckDetail say what happened.
+	LastCheckOK     *bool  `json:"lastCheckOk,omitempty"`
+	LastCheckDetail string `json:"lastCheckDetail,omitempty"`
 }
 
 // toHealthDTO maps a stored health row; found=false (no row yet) is
@@ -44,13 +49,19 @@ func toHealthDTO(h domain.IntegrationHealth, found bool) integrationHealthDTO {
 	if !found {
 		return integrationHealthDTO{State: string(deliveryhealth.Unverified)}
 	}
-	return integrationHealthDTO{
+	dto := integrationHealthDTO{
 		State:            h.State,
 		Since:            h.Since,
 		LastErrorClass:   h.LastErrorClass,
 		LastErrorMessage: h.LastErrorMessage,
 		LastCheckedAt:    h.LastCheckAt,
+		LastCheckDetail:  h.LastCheckDetail,
 	}
+	if h.LastCheckAt != "" {
+		ok := h.LastCheckOK
+		dto.LastCheckOK = &ok
+	}
+	return dto
 }
 
 // integrationHealth loads one integration's health in scope.

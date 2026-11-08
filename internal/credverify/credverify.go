@@ -197,6 +197,9 @@ func (s *Service) CheckNow(ctx context.Context, scope domain.Scope, id string) (
 		if err != nil {
 			return connectivity.VerifyResult{}, err
 		}
+		if !res.Unsupported && !res.OK {
+			s.log.Warn("credverify: credential check failed", "integration", id, "provider", res.ProviderID, "detail", res.Detail)
+		}
 		if !res.Unsupported && s.obs != nil {
 			s.obs.CredentialChecked(pctx, scope, id, res.OK, res.Detail)
 		}

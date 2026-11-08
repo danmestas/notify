@@ -121,6 +121,10 @@ type integrationHealthView struct {
 	ErrorMessage string
 	// CheckedAt is when credentials were last checked; "" if never.
 	CheckedAt string
+	// CheckFailed and CheckDetail say the last check failed and why (never a
+	// credential). A failure that was not a rejected credential leaves State.
+	CheckFailed bool
+	CheckDetail string
 }
 
 // ChipClass is the .chip modifier for the state.
@@ -301,7 +305,9 @@ func healthView(h domain.IntegrationHealth, found bool) integrationHealthView {
 	return integrationHealthView{
 		State: h.State, Since: h.Since,
 		ErrorClass: h.LastErrorClass, ErrorMessage: h.LastErrorMessage,
-		CheckedAt: h.LastCheckAt,
+		CheckedAt:   h.LastCheckAt,
+		CheckFailed: h.LastCheckAt != "" && !h.LastCheckOK,
+		CheckDetail: h.LastCheckDetail,
 	}
 }
 

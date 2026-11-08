@@ -97,14 +97,14 @@ type integrationHealthRepo struct {
 }
 
 const integrationHealthColumns = `integration_id, org_id, environment_id, state, since, window_floor,
-	last_error_class, last_error_message, last_error_at, last_check_at, last_check_ok, updated_at`
+	last_error_class, last_error_message, last_error_at, last_check_at, last_check_ok, last_check_detail, updated_at`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanIntegrationHealth(row rowScanner) (domain.IntegrationHealth, error) {
 	var h domain.IntegrationHealth
 	err := row.Scan(&h.IntegrationID, &h.OrgID, &h.EnvID, &h.State, &h.Since, &h.WindowFloor,
-		&h.LastErrorClass, &h.LastErrorMessage, &h.LastErrorAt, &h.LastCheckAt, &h.LastCheckOK, &h.UpdatedAt)
+		&h.LastErrorClass, &h.LastErrorMessage, &h.LastErrorAt, &h.LastCheckAt, &h.LastCheckOK, &h.LastCheckDetail, &h.UpdatedAt)
 	return h, err
 }
 
@@ -124,16 +124,17 @@ func (repo *integrationHealthRepo) Put(ctx context.Context, scope domain.Scope, 
 	h.OrgID, h.EnvID = scope.OrgID, scope.EnvID
 	_, err := repo.w.ExecContext(ctx,
 		`INSERT INTO integration_health (`+integrationHealthColumns+`)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (integration_id) DO UPDATE SET
 		   state = excluded.state, since = excluded.since, window_floor = excluded.window_floor,
 		   last_error_class = excluded.last_error_class, last_error_message = excluded.last_error_message,
 		   last_error_at = excluded.last_error_at, last_check_at = excluded.last_check_at,
-		   last_check_ok = excluded.last_check_ok, updated_at = excluded.updated_at
+		   last_check_ok = excluded.last_check_ok, last_check_detail = excluded.last_check_detail,
+		   updated_at = excluded.updated_at
 		 WHERE integration_health.org_id = excluded.org_id
 		   AND integration_health.environment_id = excluded.environment_id`,
 		h.IntegrationID, h.OrgID, h.EnvID, h.State, h.Since, h.WindowFloor,
-		h.LastErrorClass, h.LastErrorMessage, h.LastErrorAt, h.LastCheckAt, h.LastCheckOK, h.UpdatedAt)
+		h.LastErrorClass, h.LastErrorMessage, h.LastErrorAt, h.LastCheckAt, h.LastCheckOK, h.LastCheckDetail, h.UpdatedAt)
 	return err
 }
 

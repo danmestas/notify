@@ -183,6 +183,10 @@ func (t *Tracker) CredentialChecked(ctx context.Context, scope domain.Scope, int
 	t.update(ctx, scope, integrationID, func(h *domain.IntegrationHealth, now time.Time) error {
 		h.LastCheckAt = timestamp.Format(now)
 		h.LastCheckOK = ok
+		h.LastCheckDetail = ""
+		if !ok {
+			h.LastCheckDetail = truncate(detail, maxMessageLen)
+		}
 		if ok {
 			if State(h.State) == Failing || State(h.State) == Unverified {
 				floor, err := t.st.IntegrationHealth().LatestResultSeq(ctx)

@@ -86,7 +86,7 @@
     {{if .ErrorMessage}}
     <p class="console-lede integration-health-error">Last error{{if .ErrorClass}} ({{.ErrorClass}}){{end}}: {{.ErrorMessage}}</p>
     {{end}}
-    {{if .CheckedAt}}<p class="console-lede">Credentials last checked {{.CheckedAt}}.</p>{{end}}
+    {{if .CheckedAt}}<p class="console-lede">Credentials last checked {{.CheckedAt}}{{if .CheckFailed}}: the check failed{{if .CheckDetail}} ({{.CheckDetail}}){{end}}{{end}}.</p>{{end}}
   </div>
   {{end}}{{end}}
 
