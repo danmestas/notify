@@ -14,7 +14,6 @@ It is the root of notify's encryption at rest. It seals:
 - environment variable values,
 - `http_request` header values,
 - stream-source secrets,
-- managed-agent API keys,
 - console session cookies, and the HMAC key for subscriber session tokens and reply tokens (derived from it).
 
 Consequences:

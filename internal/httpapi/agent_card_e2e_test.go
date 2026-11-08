@@ -42,8 +42,6 @@ func (f *fakeCards) set(key string, raw string, at time.Time) {
 	f.m[key] = cards.Card{Raw: []byte(raw), UpdatedAt: at}
 }
 
-const secretKey = "sk-SUPER-SECRET-KEY-123"
-
 // TestAgentCards covers the card on GET /v1/agents[/{id}].
 func TestAgentCards(t *testing.T) {
 	ctx := context.Background()
@@ -79,11 +77,6 @@ func TestAgentCards(t *testing.T) {
 	mk(agentdomain.Agent{Identifier: "claude", Runtime: "mesh", MeshSubject: "agents.prompt.cc.dmestas.claude"})
 	mk(agentdomain.Agent{Identifier: "nocard", Runtime: "mesh", MeshSubject: "agents.prompt.nocard"})
 	mk(agentdomain.Agent{Identifier: "elsewhere", Runtime: "mesh", MeshSubject: "agents.other.claude"})
-	mk(agentdomain.Agent{
-		Identifier: "ember", Runtime: "managed", Description: "Drafts replies",
-		Managed: json.RawMessage(`{"provider":"openrouter","model":"anthropic/claude-sonnet-4.5","apiKey":"` + secretKey +
-			`","baseUrl":"https://llm.example","systemPrompt":"be nice","mcpServers":[{"name":"vault","url":"https://r.example/mcp","authSecret":"` + secretKey + `"}]}`),
-	})
 
 	authA, authB := "ApiKey "+keyA, "ApiKey "+keyB
 	// Unusual key order: it must pass through unchanged (encoding/json compacts whitespace, nothing else).
@@ -131,44 +124,6 @@ func TestAgentCards(t *testing.T) {
 		status, body = doGet(t, srv.URL+"/v1/agents", authB)
 		if status != http.StatusOK || strings.Contains(body, "Claude") || strings.Contains(body, "claude") {
 			t.Fatalf("list leaked: %d %s", status, body)
-		}
-	})
-	t.Run("managed agent gets a derived card with no secret", func(t *testing.T) {
-		status, body, v := get(authA, "ember")
-		if status != http.StatusOK {
-			t.Fatalf("%d %s", status, body)
-		}
-		if strings.Contains(body, secretKey) || strings.Contains(string(v.Card), "be nice") {
-			t.Fatalf("secret leaked: %s", body)
-		}
-		var card struct {
-			Name, Description, ProtocolVersion, PreferredTransport string
-			Capabilities                                           struct {
-				Extensions []struct {
-					URI    string
-					Params struct {
-						Model       string
-						LLMProvider string `json:"llmProvider"`
-						Tools       []struct{ Name, Kind string }
-					}
-				}
-			}
-			Skills []any
-		}
-		if err := json.Unmarshal(v.Card, &card); err != nil {
-			t.Fatal(err)
-		}
-		ext := card.Capabilities.Extensions
-		if card.Name != "ember" || card.ProtocolVersion != "0.3.0" || card.PreferredTransport != "JSONRPC" ||
-			len(ext) != 1 || ext[0].URI != cards.RuntimeExtensionURI ||
-			ext[0].Params.Model != "anthropic/claude-sonnet-4.5" || ext[0].Params.LLMProvider != "openrouter" ||
-			len(ext[0].Params.Tools) != 1 || ext[0].Params.Tools[0].Name != "vault" || ext[0].Params.Tools[0].Kind != "mcp" ||
-			card.Skills == nil {
-			t.Errorf("derived card: %s", v.Card)
-		}
-		status, body = doGet(t, srv.URL+"/v1/agents", authA)
-		if status != http.StatusOK || strings.Contains(body, secretKey) {
-			t.Fatalf("list: %d leaked=%v", status, strings.Contains(body, secretKey))
 		}
 	})
 	t.Run("a watch update is reflected", func(t *testing.T) {

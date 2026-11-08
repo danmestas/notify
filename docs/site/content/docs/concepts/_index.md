@@ -56,7 +56,7 @@ A **transaction id** names one logical send. If you supply it on a trigger, repe
 
 ## Agents and conversations
 
-An **agent** is a conversational endpoint registered in a scope. A **conversation** is a thread between an agent and a subscriber, with an append-only transcript. Messages posted to an agent start a turn that runs durably on the engine, using the agent's **runtime**: `mesh` (dispatched over NATS to an external agent) or `managed` (notify calls a model for you). See [Inbox and agents](../inbox-and-agents).
+An **agent** is a conversational endpoint registered in a scope. A **conversation** is a thread between an agent and a subscriber, with an append-only transcript. Messages posted to an agent start a turn that runs durably on the engine, using the agent's **runtime**: `mesh` (dispatched over NATS to an external agent). See [Inbox and agents](../inbox-and-agents).
 
 ## Supporting objects
 

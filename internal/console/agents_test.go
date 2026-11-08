@@ -197,8 +197,8 @@ func TestAgents_ListPage_CreateFormRuntimeOptions(t *testing.T) {
 	if strings.Contains(body, `data-value="bridge"`) {
 		t.Errorf("list page slide-over must NOT offer unimplemented bridge runtime")
 	}
-	if !strings.Contains(body, `data-value="managed"`) {
-		t.Errorf("list page slide-over must offer the managed runtime")
+	if strings.Contains(body, `data-value="managed"`) {
+		t.Errorf("list page slide-over must NOT offer the removed managed runtime")
 	}
 }
 
@@ -222,8 +222,8 @@ func TestAgents_CreateFormRuntimeOptions_OnlySupported(t *testing.T) {
 	if strings.Contains(body, `data-value="bridge"`) {
 		t.Errorf("create form must NOT offer unimplemented bridge runtime")
 	}
-	if !strings.Contains(body, `data-value="managed"`) {
-		t.Errorf("create form must offer the managed runtime")
+	if strings.Contains(body, `data-value="managed"`) {
+		t.Errorf("create form must NOT offer the removed managed runtime")
 	}
 }
 
@@ -312,6 +312,9 @@ func TestAgents_Create_AcceptsValidIdentifier(t *testing.T) {
 // only blocks switching TO an unsupported runtime, not editing the other fields
 // of a pre-existing one (#113 Part B relaxes #103's blanket save guard). The
 // edit form has no runtime selector, so name/welcome edits leave runtime intact.
+// legacyManaged is the runtime of rows that predate its removal.
+const legacyManaged = "managed"
+
 func TestAgents_Save_LegacyUnsupportedRuntimeEditable(t *testing.T) {
 	tc := newTestConsole(t)
 	cookie, csrf := tc.login(t)
@@ -320,7 +323,7 @@ func TestAgents_Save_LegacyUnsupportedRuntimeEditable(t *testing.T) {
 	tc.seedAgent(t, agentdomain.Agent{
 		Identifier: "legacy-managed",
 		Name:       "Legacy",
-		Runtime:    agentdomain.RuntimeManaged,
+		Runtime:    legacyManaged,
 		Active:     true,
 	})
 
@@ -343,8 +346,8 @@ func TestAgents_Save_LegacyUnsupportedRuntimeEditable(t *testing.T) {
 	if got.Name != "Renamed" || got.WelcomeMessage != "hello" {
 		t.Errorf("legacy-runtime edit not persisted: %+v", got)
 	}
-	if got.Runtime != agentdomain.RuntimeManaged {
-		t.Errorf("save changed stored runtime: got %q, want %q", got.Runtime, agentdomain.RuntimeManaged)
+	if got.Runtime != legacyManaged {
+		t.Errorf("save changed stored runtime: got %q, want %q", got.Runtime, legacyManaged)
 	}
 }
 

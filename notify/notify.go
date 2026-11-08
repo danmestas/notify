@@ -23,7 +23,6 @@ import (
 	"github.com/danmestas/notify/internal/agents/cards"
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	"github.com/danmestas/notify/internal/agents/ingress"
-	"github.com/danmestas/notify/internal/agents/runtime/managed"
 	"github.com/danmestas/notify/internal/agents/runtime/mesh"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/agents/tasks"
@@ -204,9 +203,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	ing := ingress.New(ags, st, eng, bus).
 		WithTasks(taskStatus).
 		WithLiveReceivers(receiver).
-		WithRuntime(agentdomain.RuntimeMesh, meshClient).
-		// Dev mode lets managed agents reach MCP servers on loopback over http.
-		WithRuntime(agentdomain.RuntimeManaged, managed.New(secrets, managed.DefaultClient).WithMCP(cfg.Dev))
+		WithRuntime(agentdomain.RuntimeMesh, meshClient)
 
 	// Email two-way loop: inbound email replies route back to the agent and the
 	// agent's reply mails back out. The responder defaults to the conversation's
@@ -276,9 +273,6 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// never fails the turn or blocks the other.
 	ing = ing.WithReplyHook(replyhook.Combine(log, eml.ReplyHook, chat.ReplyHook))
 	reg.Handle(ingress.TaskMesh, ing.HandleTurn)
-	// A managed turn with tools runs up to managed.MaxTurnDuration; past that
-	// plus a margin it is hung, and dagnats stops keeping its claim alive.
-	reg.Handle(ingress.TaskManaged, ing.HandleTurn, engine.WithMaxRunTime(managed.MaxTurnDuration+runTimeMargin))
 
 	// B3: durable AI workflow-builder loop, hosted as a dagnats agent-loop
 	// handler alongside the synchronous console path (console.Builder.Run).
@@ -304,7 +298,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// gateway that authenticates SourceKeys, limits, normalizes, and publishes
 	// batches into the durable feed.
 	srcSvc := streamsource.New(st, mk)
-	ag := agentsapi.New(ags).WithLiveReceivers(receiver).WithSecretBox(secrets).WithLoopbackMCP(cfg.Dev).
+	ag := agentsapi.New(ags).WithLiveReceivers(receiver).
 		WithConfigurer(meshClient).WithLogger(log)
 	// The card bucket may live in another JetStream domain (another region).
 	js, err := jetstream.New(h.NC)

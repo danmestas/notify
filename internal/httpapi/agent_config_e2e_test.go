@@ -128,7 +128,6 @@ func TestAgentConfigRelay(t *testing.T) {
 	mk(agentdomain.Agent{Identifier: "silent", Runtime: "mesh", MeshSubject: "agents.prompt.silent"})
 	mk(agentdomain.Agent{Identifier: "gone", Runtime: "mesh", MeshSubject: "agents.prompt.gone"})
 	mk(agentdomain.Agent{Identifier: "elsewhere", Runtime: "mesh", MeshSubject: "agents.other.claude"})
-	mk(agentdomain.Agent{Identifier: "ember", Runtime: "managed", Managed: []byte(`{"provider":"openrouter","model":"m"}`)})
 
 	const providerKey = "sk-PROVIDER-KEY-987"
 	body := `{"model":"m1",  "providerKey":"` + providerKey + `"}`
@@ -213,8 +212,8 @@ func TestAgentConfigRelay(t *testing.T) {
 			t.Error("out-of-scope request reached the agent")
 		}
 	})
-	t.Run("managed or non-prompt subject is 409", func(t *testing.T) {
-		for _, ident := range []string{"ember", "elsewhere"} {
+	t.Run("non-prompt subject is 409", func(t *testing.T) {
+		for _, ident := range []string{"elsewhere"} {
 			if status, out := patch(keyA, ident, body); status != http.StatusConflict || out == "" {
 				t.Errorf("%s: %d %s", ident, status, out)
 			}

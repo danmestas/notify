@@ -33,7 +33,6 @@ import (
 	"github.com/danmestas/notify/internal/agents/agentstep"
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"
 	"github.com/danmestas/notify/internal/agents/ingress"
-	"github.com/danmestas/notify/internal/agents/runtime/managed"
 	"github.com/danmestas/notify/internal/agents/runtime/mesh"
 	agentstore "github.com/danmestas/notify/internal/agents/store"
 	"github.com/danmestas/notify/internal/agents/tasks"
@@ -112,10 +111,8 @@ func newHarness(t *testing.T) *harness {
 	}
 	ing := ingress.New(ags, st, eng, bus).
 		WithRuntime(agentdomain.RuntimeMesh, meshClient).
-		WithRuntime(agentdomain.RuntimeManaged, managed.New(nil, managed.DefaultClient)).
 		WithRetry(retry)
 	eng.Handle(ingress.TaskMesh, ing.HandleTurn)
-	eng.Handle(ingress.TaskManaged, ing.HandleTurn)
 	eng.Handle("notify.agent_message", agentstep.New(st, ing, ags.Drafts()).Handle)
 	if err := eng.StartWorkers(ctx); err != nil {
 		t.Fatalf("StartWorkers: %v", err)

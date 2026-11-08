@@ -178,11 +178,11 @@ func TestAgents_CRUDLifecycle(t *testing.T) {
 // TestAgents_RuntimeEnumMessage pins the 422 contract: a runtime without a
 // registered executor must be rejected on create and on patch, with the error
 // enumerating the supported values (#113 tightened this from ValidRuntime to
-// SupportedRuntimes — bridge/managed are valid constants but unimplemented).
+// SupportedRuntimes — bridge is a valid constant but unimplemented).
 func TestAgents_RuntimeEnumMessage(t *testing.T) {
 	srv, authHeader := startAgentServer(t)
 
-	const wantMsg = "runtime must be one of: mesh, managed"
+	const wantMsg = "runtime must be one of: mesh"
 
 	status, body := doPost(t, srv.URL+"/v1/agents", authHeader, `{"identifier":"bad-bot","runtime":"warp"}`)
 	if status != http.StatusUnprocessableEntity {
@@ -221,6 +221,36 @@ func TestAgents_RuntimeEnumMessage(t *testing.T) {
 		}
 		if strings.TrimSpace(body) != wantMsg {
 			t.Fatalf("PATCH runtime=%s 422 body = %q, want %q", rt, strings.TrimSpace(body), wantMsg)
+		}
+	}
+}
+
+// TestAgents_ManagedRuntimeRemoved pins the 422 for the removed managed
+// runtime: naming it, or sending its settings, is refused on create and patch.
+func TestAgents_ManagedRuntimeRemoved(t *testing.T) {
+	srv, authHeader := startAgentServer(t)
+	const wantMsg = "the managed runtime was removed; use mesh"
+
+	for _, payload := range []string{
+		`{"identifier":"m1","runtime":"managed"}`,
+		`{"identifier":"m1","runtime":"mesh","managed":{"provider":"openrouter","model":"m"}}`,
+	} {
+		status, body := doPost(t, srv.URL+"/v1/agents", authHeader, payload)
+		if status != http.StatusUnprocessableEntity || strings.TrimSpace(body) != wantMsg {
+			t.Fatalf("POST %s: status=%d body=%q, want 422 %q", payload, status, strings.TrimSpace(body), wantMsg)
+		}
+		if s, _ := doGet(t, srv.URL+"/v1/agents/m1", authHeader); s != http.StatusNotFound {
+			t.Fatalf("refused agent was persisted (GET status=%d)", s)
+		}
+	}
+	// A null managed field is the same as none.
+	if status, body := doPost(t, srv.URL+"/v1/agents", authHeader, `{"identifier":"ok","runtime":"mesh","managed":null}`); status != http.StatusCreated {
+		t.Fatalf("POST with managed null: status=%d body=%s", status, body)
+	}
+	for _, payload := range []string{`{"runtime":"managed"}`, `{"managed":{"model":"m"}}`} {
+		status, body := doPatch(t, srv.URL+"/v1/agents/ok", authHeader, payload)
+		if status != http.StatusUnprocessableEntity || strings.TrimSpace(body) != wantMsg {
+			t.Fatalf("PATCH %s: status=%d body=%q, want 422 %q", payload, status, strings.TrimSpace(body), wantMsg)
 		}
 	}
 }

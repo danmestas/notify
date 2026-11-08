@@ -735,8 +735,8 @@ func (c *Console) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runtime := strings.TrimSpace(r.FormValue("runtime"))
-	// Reject runtimes without a registered executor — bridge/managed are
-	// defined constants but unimplemented, so an agent saved with them would
+	// Reject runtimes without a registered executor — bridge is a
+	// defined constant but unimplemented, so an agent saved with it would
 	// dead-letter every turn (#103). Defense in depth behind the form, which
 	// only offers domain.SupportedRuntimes.
 	if !agentdomain.IsSupportedRuntime(runtime) {

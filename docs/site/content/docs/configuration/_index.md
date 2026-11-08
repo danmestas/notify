@@ -26,7 +26,7 @@ Flags use Go's `flag` package, so `-addr` and `--addr` are the same. Variables m
 |---|---|---|---|
 | `-addr` | `NOTIFY_ADDR` | `127.0.0.1:3000` | HTTP listen address for the API and console. |
 | `-db` | `NOTIFY_DB` | `notify.db` | SQLite database path. Other subcommands read the same variable. |
-| `-master-key-hex` | `NOTIFY_MASTER_KEY_HEX` | none | 32 bytes as 64 hex characters. **Required** unless `-dev`. Encrypts API keys, integration credentials, session cookies, environment variables and managed-agent keys. Prefer the environment variable: a flag value is visible in `ps`. |
+| `-master-key-hex` | `NOTIFY_MASTER_KEY_HEX` | none | 32 bytes as 64 hex characters. **Required** unless `-dev`. Encrypts API keys, integration credentials, session cookies, and environment variables. Prefer the environment variable: a flag value is visible in `ps`. |
 | `-dev` | `NOTIFY_DEV` (`1` or `true`) | off | Allow starting with no master key by deriving a fixed, **publicly known** one. Development only. |
 | | `NOTIFY_DAGNATS_URL` | `nats://127.0.0.1:4222` | NATS client URL of the running dagnats. notify does not embed NATS. |
 | | `NOTIFY_SEED` | `notify.seed` beside `-db` | notify's program key; must persist. See [running notify as a program](../operations/dagnats-sidecar#running-notify-as-a-program). |
@@ -91,7 +91,7 @@ All env only. See [Chat loop](../inbox-and-agents/chat-loop).
 
 ## AI workflow builder
 
-All env only. The builder is the console's Guided create; it is separate from [managed agents](../inbox-and-agents/managed-agents), which carry their own settings.
+All env only. The builder is the console's Guided create.
 
 | Environment variable | Default | Meaning |
 |---|---|---|

@@ -15,18 +15,16 @@ import (
 )
 
 // Allowed values of Agent.Runtime. The runtime selects how a turn is executed:
-// mesh publishes an A2A envelope over NATS, bridge POSTs to an HTTP endpoint,
-// managed compiles onto the engine's agent_loop.
+// mesh publishes an A2A envelope over NATS, bridge POSTs to an HTTP endpoint.
 const (
-	RuntimeMesh    = "mesh"
-	RuntimeBridge  = "bridge"
-	RuntimeManaged = "managed"
+	RuntimeMesh   = "mesh"
+	RuntimeBridge = "bridge"
 )
 
 // ValidRuntime reports whether r is one of the allowed runtime values.
 func ValidRuntime(r string) bool {
 	switch r {
-	case RuntimeMesh, RuntimeBridge, RuntimeManaged:
+	case RuntimeMesh, RuntimeBridge:
 		return true
 	}
 	return false
@@ -36,11 +34,11 @@ func ValidRuntime(r string) bool {
 // and can therefore execute turns without dead-lettering. It is the single
 // source of truth the console renders its runtime <option> list from and guards
 // create/save against. Keep it in lockstep with the WithRuntime(...) calls in
-// cmd/notify/main.go: a runtime constant exists here (RuntimeBridge,
-// RuntimeManaged) before its executor does, so offering it in the UI would
+// cmd/notify/main.go: a runtime constant exists here (RuntimeBridge)
+// before its executor does, so offering it in the UI would
 // silently dead-letter every turn (see issue #103). Add an entry here only when
 // the matching WithRuntime registration lands.
-var SupportedRuntimes = []string{RuntimeMesh, RuntimeManaged}
+var SupportedRuntimes = []string{RuntimeMesh}
 
 // IsSupportedRuntime reports whether r has a registered executor (i.e. appears
 // in SupportedRuntimes). Unlike ValidRuntime, it rejects runtimes that are
@@ -144,21 +142,21 @@ func (a Agent) HistoryMode() string {
 }
 
 // Agent is a conversational endpoint registered with the platform, uniquely
-// identified by (environment_id, identifier). Exactly one of MeshSubject,
-// BridgeURL, or Managed is meaningful, selected by Runtime.
+// identified by (environment_id, identifier). MeshSubject or BridgeURL is
+// meaningful, selected by Runtime. The agents.managed column of rows from the
+// removed managed runtime is neither read nor written.
 type Agent struct {
-	ID             string          `db:"id"`
-	OrgID          string          `db:"org_id"`
-	EnvID          string          `db:"environment_id"`
-	Identifier     string          `db:"identifier"`
-	Name           string          `db:"name"`
-	Description    string          `db:"description"`
-	Runtime        string          `db:"runtime"` // mesh|bridge|managed
-	Active         bool            `db:"active"`
-	MeshSubject    string          `db:"mesh_subject"` // runtime=mesh: prompt subject
-	BridgeURL      string          `db:"bridge_url"`   // runtime=bridge
-	Managed        json.RawMessage `db:"managed"`      // runtime=managed: {integration_id, system_prompt, tools[], mcp_servers[], skills[]}
-	WelcomeMessage string          `db:"welcome_message"`
+	ID             string `db:"id"`
+	OrgID          string `db:"org_id"`
+	EnvID          string `db:"environment_id"`
+	Identifier     string `db:"identifier"`
+	Name           string `db:"name"`
+	Description    string `db:"description"`
+	Runtime        string `db:"runtime"` // mesh|bridge
+	Active         bool   `db:"active"`
+	MeshSubject    string `db:"mesh_subject"` // runtime=mesh: prompt subject
+	BridgeURL      string `db:"bridge_url"`   // runtime=bridge
+	WelcomeMessage string `db:"welcome_message"`
 	// Logo is a data: URI of a png, jpeg or webp image (see ValidateLogo);
 	// empty means none.
 	Logo string `db:"logo"`
@@ -334,9 +332,9 @@ type Reply struct {
 	Sources []Source
 }
 
-// Runtime executes one conversation turn. Implementations (mesh, bridge,
-// managed) hide their entire wire protocol behind Dispatch; nothing above the
-// runtime packages sees NATS subjects, HTTP signatures, or model calls.
+// Runtime executes one conversation turn. Implementations (mesh, bridge)
+// hide their entire wire protocol behind Dispatch; nothing above the
+// runtime packages sees NATS subjects, or HTTP signatures.
 type Runtime interface {
 	Dispatch(ctx context.Context, t Turn) (Reply, error)
 }

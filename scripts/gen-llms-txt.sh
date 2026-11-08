@@ -22,7 +22,7 @@ cat > "$STATIC_DIR/llms.txt" << 'HEADER'
 - **Workflow**: an ordered list of steps with a trigger identifier. Step types: in_app, email, push, chat, sms, delay, digest, throttle, http_request, stream, agent_message.
 - **Trigger**: `POST /v1/events/trigger` runs the workflow named by `name` for a subscriber or a topic.
 - **Integration**: stored, encrypted provider credentials for a channel.
-- **Agent**: a conversational endpoint on the `mesh` (NATS) or `managed` (notify calls a model) runtime.
+- **Agent**: a conversational endpoint on the `mesh` (NATS) runtime.
 
 ## Quick Start
 

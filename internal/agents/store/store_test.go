@@ -38,7 +38,6 @@ func TestAgentRepo_CRUDRoundTrip(t *testing.T) {
 		Runtime:     agentdomain.RuntimeMesh,
 		Active:      true,
 		MeshSubject: "agents.support.prompt",
-		Managed:     json.RawMessage(`{"system_prompt":"be kind"}`),
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -53,9 +52,6 @@ func TestAgentRepo_CRUDRoundTrip(t *testing.T) {
 	}
 	if got.ID != created.ID || got.Runtime != "mesh" || got.MeshSubject != "agents.support.prompt" || !got.Active {
 		t.Fatalf("round-trip mismatch: %+v", got)
-	}
-	if string(got.Managed) != `{"system_prompt":"be kind"}` {
-		t.Fatalf("managed JSON round-trip mismatch: %s", got.Managed)
 	}
 
 	got.Name = "Support Bot v2"
@@ -1088,5 +1084,43 @@ func TestTaskStatusRepo_NotesStateAndScope(t *testing.T) {
 	}
 	if _, err := repo.Get(ctx, domain.Scope{OrgID: "o1", EnvID: "e2"}, "t1"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("other environment: %v", err)
+	}
+}
+
+// A row written by the removed managed runtime keeps its managed column: it
+// reads back without error and an update leaves the column untouched.
+func TestAgentRepo_LegacyManagedColumnLeftAlone(t *testing.T) {
+	ctx := context.Background()
+	st, err := corestore.Open(ctx, filepath.Join(t.TempDir(), "notify.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	repo := New(st).Agents()
+	w, r := st.Pools()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+
+	a, err := repo.Create(ctx, scope, agentdomain.Agent{Identifier: "old", Name: "Old", Runtime: "managed", Active: true})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	const legacy = `{"provider":"openrouter","model":"m"}`
+	if _, err := w.ExecContext(ctx, `UPDATE agents SET managed = ? WHERE id = ?`, legacy, a.ID); err != nil {
+		t.Fatalf("seed managed column: %v", err)
+	}
+	got, err := repo.GetByIdentifier(ctx, scope, "old")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	got.Name = "Renamed"
+	if _, err := repo.Update(ctx, scope, got); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	var col string
+	if err := r.QueryRowContext(ctx, `SELECT managed FROM agents WHERE id = ?`, a.ID).Scan(&col); err != nil {
+		t.Fatalf("read managed column: %v", err)
+	}
+	if col != legacy {
+		t.Fatalf("managed column = %q, want %q", col, legacy)
 	}
 }

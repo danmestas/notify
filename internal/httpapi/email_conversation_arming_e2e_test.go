@@ -152,13 +152,13 @@ func (h *emailArmHarness) createAgent(t *testing.T, scope domain.Scope, identifi
 	}
 }
 
-// createUnrunnableAgent creates an agent whose runtime (managed) has no
+// createUnrunnableAgent creates an agent whose runtime (bridge) has no
 // executor registered on the harness, so ComposeMessage fails with
 // ingress.ErrUnknownRuntime.
 func (h *emailArmHarness) createUnrunnableAgent(t *testing.T, scope domain.Scope, identifier string) {
 	t.Helper()
 	if _, err := h.ags.Agents().Create(context.Background(), scope, agentdomain.Agent{
-		Identifier: identifier, Name: identifier, Runtime: agentdomain.RuntimeManaged,
+		Identifier: identifier, Name: identifier, Runtime: agentdomain.RuntimeBridge,
 		Active: true,
 	}); err != nil {
 		t.Fatalf("create agent: %v", err)

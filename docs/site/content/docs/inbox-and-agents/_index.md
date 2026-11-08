@@ -11,8 +11,7 @@ Two related features share the same inbox:
 {{< cards cols="2" >}}
   {{< card link="inbox" title="Inbox" subtitle="List, count, mark, and stream messages" >}}
   {{< card link="subscriber-sessions" title="Subscriber sessions" subtitle="Let a browser read one inbox without your API key" >}}
-  {{< card link="agents" title="Agents and conversations" subtitle="Registering agents, the mesh and managed runtimes, composing messages" >}}
-  {{< card link="managed-agents" title="Managed agents" subtitle="Run an agent on a model notify calls for you" >}}
+  {{< card link="agents" title="Agents and conversations" subtitle="Registering agents, the mesh runtime, composing messages" >}}
   {{< card link="drafts" title="Drafts" subtitle="Agent replies held for a person to review" >}}
   {{< card link="chat-loop" title="Chat loop" subtitle="Telegram and Discord conversations with an agent" >}}
 {{< /cards >}}
