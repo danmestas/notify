@@ -102,8 +102,11 @@ func (s *SMTP) Send(ctx context.Context, msg EmailMessage) (Result, error) {
 }
 
 func (s *SMTP) send(ctx context.Context, from, to string, mime []byte) error {
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", s.Addr)
+	host, _, err := net.SplitHostPort(s.Addr)
+	if err != nil {
+		return err
+	}
+	conn, err := DialSMTP(ctx, s.Addr, host)
 	if err != nil {
 		return err
 	}
@@ -116,10 +119,6 @@ func (s *SMTP) send(ctx context.Context, from, to string, mime []byte) error {
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 
-	host, _, err := net.SplitHostPort(s.Addr)
-	if err != nil {
-		return err
-	}
 	c, err := smtp.NewClient(conn, host)
 	if err != nil {
 		return err

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/danmestas/notify/internal/delivery/httpaction"
+	"github.com/danmestas/notify/internal/providers"
 )
 
 // probeTimeout bounds every credential probe so a wedged provider cannot stall
@@ -45,7 +46,8 @@ func (svc *Service) probeClient() *http.Client {
 	return httpaction.NewSSRFSafeClientWithTimeout(probeTimeout)
 }
 
-// probeSMTP dials the configured SMTP server, runs STARTTLS when offered, and
+// probeSMTP dials the configured SMTP server (implicit TLS on port 465, see
+// providers.DialSMTP), runs STARTTLS when offered, and
 // authenticates with PLAIN. It never sends MAIL/DATA, so no message is
 // delivered. A successful AUTH proves the credentials; an auth rejection is a
 // definite negative (ok=false, nil-shaped detail).
@@ -60,7 +62,9 @@ func probeSMTP(cfg SMTPConfig) (ok bool, detail string) {
 		}
 	}
 
-	conn, err := net.DialTimeout("tcp", cfg.Addr, probeTimeout)
+	dctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	conn, err := providers.DialSMTP(dctx, cfg.Addr, host)
 	if err != nil {
 		return false, fmt.Sprintf("smtp: dial %s failed: %v", cfg.Addr, err)
 	}
