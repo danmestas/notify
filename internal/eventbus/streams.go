@@ -33,12 +33,15 @@ func WithProgramOutput(name string) Option {
 // Subjects and ages match what FromConn creates on its own. Each size is a
 // fraction of the dagnats store budget with a floor: NOTIFY_FEED holds tenant
 // feed data, NOTIFY_DELIVERY a week of delivery events, and NOTIFY_ANALYTICS
-// has no publisher today.
+// the metadata-only AnalyticsEvent for each delivery event. NOTIFY_ANALYTICS
+// has no MaxAge: the Lode lake drains it and treats any age limit as best
+// effort, so only size bounds it. Sizes only ever rise; dagnats refuses a
+// manifest that lowers one.
 func Streams() []program.StreamSpec {
 	return []program.StreamSpec{
 		{
 			Name: analyticsStream, Subjects: []string{analyticsSubject},
-			MaxBytesFloor: 16 << 20,
+			MaxBytesFraction: 0.01, MaxBytesFloor: 64 << 20,
 		},
 		{
 			Name: deliveryStream, Subjects: []string{deliverySubjectAll},

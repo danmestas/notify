@@ -62,7 +62,7 @@ Before this release the state lived in a KV bucket and could reach about 1 MiB.
 |---|---|---|
 | Workflow definitions | The compiled DAGs. The engine holds them **in memory**, so notify re-registers every persisted workflow at each start (the latest published version of each). A workflow that fails to compile is logged and skipped. | until restart |
 | `NOTIFY_DELIVERY` stream | Delivery-status events; feeds webhooks and the live activity view. | 7 days, file storage; 1% of the dagnats store budget, at least 64 MiB |
-| `NOTIFY_ANALYTICS` stream | Delivery events for analytics. | 16 MiB |
+| `NOTIFY_ANALYTICS` stream | One metadata-only event per delivery event, for the analytics lake. See [observability](../observability#the-analytics-event-stream). | no age limit; 1% of the dagnats store budget, at least 64 MiB |
 | `NOTIFY_FEED` stream | The durable [feed](../../streams-and-webhooks#the-feed). | 7 days and 2% of the store budget, at least 128 MiB, across all tenants; oldest evicted first. Producer-supplied event ids are deduplicated for 2 minutes. |
 
 dagnats creates and sizes the three streams when notify registers.
