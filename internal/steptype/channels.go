@@ -179,10 +179,16 @@ func (sms) Compile(step domain.Step) (engine.StepDef, error) { return channelSte
 func (sms) Validate(json.RawMessage) error                   { return nil }
 func (sms) EditorPartial() string                            { return "wf-step-fields-sms" }
 
+// ParseForm reads the body, the optional integration, and the step's channel
+// default: "defaultEnabled" sends to a subscriber with no SMS preference for the
+// workflow (a sign-off, say). Unchecked it is absent, and SMS is off by default.
 func (sms) ParseForm(form url.Values) (json.RawMessage, error) {
 	m := map[string]any{"body": formField(form, "body")}
 	if v := formField(form, "integration"); v != "" {
 		m["integration"] = v
+	}
+	if v := formField(form, "default_enabled"); v == "on" || v == "true" {
+		m["defaultEnabled"] = true
 	}
 	return marshalControlValues(m)
 }

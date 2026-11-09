@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -35,10 +36,10 @@ type SMSResolver interface {
 }
 
 // SMSHandler persists rendered SMS messages through the store, dispatching via a
-// provider resolved per scope. The recipient is the subscriber's phone number
-// (the subscriber model's phone field), resolved exactly like email's recipient
-// address — a subscriber with no phone is a permanent fault (the provider cannot
-// address them).
+// provider resolved per scope. The recipient is the subscriber's verified phone,
+// read from the store at send time: a phone is verified only by the subscriber
+// (internal/phoneverify), so a subscriber with none, or with an unverified one,
+// has the step skipped (SkipReasonNoVerifiedPhone) — not a fault.
 type SMSHandler struct {
 	store    *store.Store
 	resolver SMSResolver
@@ -136,13 +137,14 @@ func (h *SMSHandler) resolveSMSProvider(ctx context.Context, scope domain.Scope,
 
 // HandleSMS is registered via engine.Handle("notify.send.sms", h.HandleSMS).
 // It unmarshals the run envelope, renders the body template against the
-// {subscriber, payload} context, resolves the scope's SMS provider and the
-// subscriber's phone number, sends the message, and persists a "sent" sms
-// message. Failures are classified per 0001 §10: a transient provider fault
-// (5xx, timeout) returns engine.NewRetryableError so the engine retries the
-// task; every permanent fault (unmarshal, resolve, missing phone, 4xx, persist)
-// records an "error" message (with ErrorText) and returns its JSON with a nil
-// error — a failed message, not a crashed run.
+// {subscriber, payload} context, resolves the subscriber's verified phone (a
+// subscriber with none is skipped) and the scope's SMS provider, sends the
+// message, and persists a "sent" sms message. Failures are classified per 0001
+// §10: a transient provider fault (5xx, timeout) returns
+// engine.NewRetryableError so the engine retries the task; every permanent
+// fault (unmarshal, resolve, 4xx, persist) records an "error" message (with
+// ErrorText) and returns its JSON with a nil error — a failed message, not a
+// crashed run.
 func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.RawMessage, error) {
 	env, digestKey, stepOutputs, err := taskEnvelope(ctx, h.store, t)
 	if err != nil {
@@ -175,17 +177,17 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 	subject := template.RenderAs(template.Plain, env.Step.SubjectTemplate, data, translate)
 	content := template.RenderAs(template.Plain, env.Step.BodyTemplate, data, translate)
 
-	// Recipient address: SMS goes to the subscriber's phone number (the
-	// subscriber model's phone field, mirroring email's per-subscriber address).
-	to, _ := subMap["phone"].(string)
-
 	// Per-step condition gate. When the step authored a filter condition, it is
 	// evaluated against the {subscriber, payload} context; a false (or
 	// unevaluable) condition SKIPS the send. Absent/empty filters always run. A
 	// malformed condition fails closed (skip) so a broken condition never blasts
 	// a send to every subscriber.
-	if !conditionMet(env.Step.Filters, subMap, payloadMap, stepOutputs) {
-		return h.persistSMSSkipped(ctx, env, t, scope, subject, content)
+	if met, invalid := conditionOutcome(env.Step.Filters, subMap, payloadMap, stepOutputs); !met {
+		reason := SkipReasonCondition
+		if invalid {
+			reason = SkipReasonConditionInvalid
+		}
+		return h.persistSMSSkipped(ctx, env, t, scope, subject, content, reason)
 	}
 
 	// Optional throttle gate. When the step configures a limit and a throttler
@@ -199,24 +201,33 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 		}
 	}
 
-	// Optional preference filtering. A nil checker always sends. On a checker
-	// error we fail open (proceed to send), a default-enabled
-	// behaviour rather than dropping the notification on a transient lookup fault.
+	// Optional preference filtering. A nil checker always sends. With no
+	// subscriber preference the step's own default decides, and SMS is off
+	// unless the workflow turns it on (env.Step.DefaultEnabled). On a checker
+	// error we fail open (proceed to send) rather than dropping the
+	// notification on a transient lookup fault; the verified-phone gate below
+	// still applies.
 	if h.prefs != nil {
-		enabled, perr := h.prefs.ChannelEnabled(ctx, scope, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical)
+		enabled, perr := h.prefs.ChannelEnabled(ctx, scope, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical, env.Step.DefaultEnabled)
 		if perr == nil && !enabled {
-			return h.persistSMSSkipped(ctx, env, t, scope, subject, content)
+			return h.persistSMSSkipped(ctx, env, t, scope, subject, content, SkipReasonPreference)
 		}
+	}
+
+	// SMS goes only to a phone the subscriber verified. It is read from the
+	// store, not the trigger-time snapshot, so a number changed (and so
+	// unverified) since the trigger is never sent to.
+	to, err := h.verifiedPhone(ctx, scope, env.SubscriberID)
+	if err != nil {
+		return h.persistSMSError(ctx, env, t, "", "", err)
+	}
+	if to == "" {
+		return h.persistSMSSkipped(ctx, env, t, scope, subject, content, SkipReasonNoVerifiedPhone)
 	}
 
 	provider, providerID, integrationID, err := h.resolveSMSProvider(ctx, scope, env.Step.Integration)
 	if err != nil {
 		return h.persistSMSError(ctx, env, t, "", "", err)
-	}
-
-	// A subscriber with no phone number cannot be addressed: permanent fault.
-	if to == "" {
-		return h.persistSMSError(ctx, env, t, providerID, integrationID, fmt.Errorf("sms: subscriber %q has no phone number", env.SubscriberID))
 	}
 
 	if _, err := provider.Send(ctx, providers.SMSMessage{
@@ -266,10 +277,26 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 	return out, nil
 }
 
-// persistSMSSkipped records a status:"skipped" sms message (the channel is
-// disabled by subscriber preference) and returns its JSON with a nil error. No
-// SMS is sent; this mirrors the existing skipped/failed-message pattern.
-func (h *SMSHandler) persistSMSSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+// verifiedPhone returns the subscriber's verified phone, or "" when they have
+// none (no phone, an unverified one, or no stored subscriber at all).
+func (h *SMSHandler) verifiedPhone(ctx context.Context, scope domain.Scope, subscriberID string) (string, error) {
+	sub, err := h.store.Subscribers().GetByExternalID(ctx, scope, subscriberID)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("sms: load subscriber: %w", err)
+	}
+	if sub.Deleted || sub.PhoneVerifiedAt == "" {
+		return "", nil
+	}
+	return sub.Phone, nil
+}
+
+// persistSMSSkipped records a status:"skipped" sms message carrying the gate
+// that skipped it (reason) and returns its JSON with a nil error. No SMS is
+// sent; this mirrors the existing skipped/failed-message pattern.
+func (h *SMSHandler) persistSMSSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content, reason string) (json.RawMessage, error) {
 	metrics.Delivery("sms", metrics.OutcomeSkipped)
 	providerID, integrationID := h.resolveSMSIDs(ctx, scope, env.Step.Integration)
 	if providerID == "" {
@@ -290,6 +317,7 @@ func (h *SMSHandler) persistSMSSkipped(ctx context.Context, env runenv.InAppEnve
 		Content:        content,
 		Subject:        subject,
 		Status:         "skipped",
+		SkipReason:     reason,
 		Seen:           false,
 		Read:           false,
 		Archived:       false,
@@ -348,7 +376,7 @@ func (h *SMSHandler) persistSMSThrottled(ctx context.Context, env runenv.InAppEn
 // returns its JSON with a nil error. Best-effort: if persistence itself fails,
 // the in-memory message is still marshalled and returned. providerID and
 // integrationID are empty on pre-resolve paths and carry the actual values on
-// post-resolve paths (missing phone, send failure, persist failure).
+// post-resolve paths (send failure, persist failure).
 func (h *SMSHandler) persistSMSError(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, providerID, integrationID string, cause error) (json.RawMessage, error) {
 	metrics.Delivery("sms", metrics.OutcomeError)
 	if providerID == "" {

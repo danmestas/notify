@@ -226,7 +226,7 @@ func (h *ChatHandler) HandleChat(ctx context.Context, t engine.TaskPayload) (jso
 	// error we fail open (proceed to send), a default-enabled
 	// behaviour rather than dropping the notification on a transient lookup fault.
 	if h.prefs != nil {
-		enabled, perr := h.prefs.ChannelEnabled(ctx, scope, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical)
+		enabled, perr := h.prefs.ChannelEnabled(ctx, scope, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical, true)
 		if perr == nil && !enabled {
 			return h.persistChatSkipped(ctx, env, t, scope, subject, content)
 		}

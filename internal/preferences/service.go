@@ -3,11 +3,9 @@
 // per-workflow — into an effective enabled-map. A channel is enabled unless a
 // level explicitly sets it false; per-workflow overrides global per channel.
 //
-// TODO(parity): resolve four levels — workflow-critical override >
-// subscriber per-workflow > subscriber global > workflow default. This service
-// implements the two subscriber levels plus the workflow-critical override
-// (ChannelEnabled's critical parameter); workflow-default is a documented
-// follow-up.
+// ChannelEnabled resolves four levels: workflow-critical override >
+// subscriber per-workflow > subscriber global > workflow default (its
+// defaultOn parameter, which the delivery handler takes from the step).
 package preferences
 
 import (
@@ -138,8 +136,10 @@ func (svc *Service) SetForWorkflow(ctx context.Context, scope domain.Scope, subs
 	return err
 }
 
-// ResolveChannels merges global + per-workflow into the effective enabled-map.
-// Missing entry => enabled (true). Per-workflow overrides global per channel.
+// ResolveChannels merges the subscriber's stored global and per-workflow
+// preferences, per-workflow overriding global per channel. It holds only
+// explicit preferences: a channel with none is absent, and ChannelEnabled
+// then applies the workflow's default.
 func (svc *Service) ResolveChannels(ctx context.Context, scope domain.Scope, subscriberID, workflowID string) (map[string]bool, error) {
 	global, err := svc.load(svc.store.Preferences().GetGlobal(ctx, scope, subscriberID))
 	if err != nil {
@@ -160,13 +160,15 @@ func (svc *Service) ResolveChannels(ctx context.Context, scope domain.Scope, sub
 	return merged, nil
 }
 
-// ChannelEnabled is the convenience check used by delivery: a channel is
-// enabled unless explicitly set false (absent => enabled). critical is the
-// triggering workflow's domain.Workflow.Critical flag: a critical (no-opt-out)
-// workflow always reports enabled, bypassing subscriber preferences entirely —
-// this is the single enforcement point for the critical override so delivery
-// call sites never duplicate the short-circuit.
-func (svc *Service) ChannelEnabled(ctx context.Context, scope domain.Scope, subscriberID, workflowID, channel string, critical bool) (bool, error) {
+// ChannelEnabled is the check used by delivery. A subscriber's explicit
+// preference decides, per-workflow over global; with neither, defaultOn (the
+// workflow's own default for the channel) decides. Every channel defaults on
+// except sms, which is on only where the workflow's sms step says so (#130).
+// critical is the triggering workflow's domain.Workflow.Critical flag: a
+// critical (no-opt-out) workflow always reports enabled, bypassing subscriber
+// preferences entirely — this is the single enforcement point for the critical
+// override so delivery call sites never duplicate the short-circuit.
+func (svc *Service) ChannelEnabled(ctx context.Context, scope domain.Scope, subscriberID, workflowID, channel string, critical, defaultOn bool) (bool, error) {
 	if critical {
 		return true, nil
 	}
@@ -175,7 +177,10 @@ func (svc *Service) ChannelEnabled(ctx context.Context, scope domain.Scope, subs
 		return false, err
 	}
 	v, ok := m[channel]
-	return !ok || v, nil
+	if !ok {
+		return defaultOn, nil
+	}
+	return v, nil
 }
 
 // GetForSubscriber returns all preference rows (global + per-workflow) for the

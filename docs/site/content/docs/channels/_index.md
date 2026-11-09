@@ -61,7 +61,7 @@ Providers that call a URL you supply (the webhook providers, ntfy, Mastodon, Blu
 
 ## Subscriber addresses
 
-Email goes to `subscriber.email`; SMS to `subscriber.phone`. Push and chat providers need their own address per subscriber, stored with:
+Email goes to `subscriber.email`; SMS to the subscriber's phone once they have [verified it](../../inbox-and-agents/subscriber-sessions#verify-a-phone). Push and chat providers need their own address per subscriber, stored with:
 
 ```bash
 curl -X PUT localhost:3000/v1/subscribers/user-1/credentials \

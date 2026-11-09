@@ -58,6 +58,11 @@ type StepControls struct {
 	// primary" (existing Resolve* behavior, unchanged). Send steps only
 	// (email/sms/push/chat); absent on every other step type.
 	Integration string `json:"integration,omitempty"`
+	// DefaultEnabled is an sms step's channel default: whether it sends to a
+	// subscriber who has no SMS preference for the workflow. Off unless the
+	// workflow turns it on (a sign-off, say); an explicit preference always
+	// wins. Read only by the sms handler (#130).
+	DefaultEnabled bool `json:"defaultEnabled,omitempty"`
 	// Email-specific per-step overrides. Empty string means "use integration default".
 	From       string `json:"from,omitempty"`
 	ReplyTo    string `json:"replyTo,omitempty"`
@@ -121,6 +126,8 @@ type Step struct {
 	// connectivity.Service.ResolveIntegration instead of Resolve<Channel> when
 	// set.
 	Integration string `json:"integration,omitempty"`
+	// DefaultEnabled mirrors StepControls.DefaultEnabled (sms steps only).
+	DefaultEnabled bool `json:"defaultEnabled,omitempty"`
 	// Data is the optional key-value map forwarded as native data to FCM and
 	// Expo (deep-links, badges). Absent/nil sends no data payload.
 	Data map[string]string `json:"data,omitempty"`

@@ -11,6 +11,12 @@ The channel keys are `in_app`, `push`, `email`, `sms` and `chat`. A channel is *
 
 A disabled channel does not fail the run. The step records a message with status `skipped` and `skipReason: "preference"`.
 
+### SMS default
+
+SMS is the exception to "enabled unless set to `false`". With no SMS preference for the workflow, either per workflow or global, the workflow's own default decides: its sms step's `defaultEnabled`, `false` unless set. So a sign-off workflow sets `"defaultEnabled": true` and texts everyone with a verified phone, while every other workflow texts only subscribers who turned SMS on. An explicit preference always wins, in the usual order (per workflow over global), with the same on/off meaning as email. A critical workflow sends regardless.
+
+`GET` still reports `global.sms` as `true` when nothing is stored, as it does for every channel; read it as "no global preference", since the default then comes from each workflow.
+
 ## API
 
 ```bash

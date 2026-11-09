@@ -271,6 +271,13 @@
 {{define "wf-step-fields-sms"}}
     {{template "wf-step-fields-integration" .}}
     {{template "wf-preview-split" (dict "BodyLabel" "Message" "Rows" 4 "Body" (index .ControlMap "body"))}}
+    <div class="form-row">
+      <label class="form-label" for="cv-default-enabled">
+        <input type="checkbox" id="cv-default-enabled" name="default_enabled" value="on"{{if eq (index .ControlMap "defaultEnabled") "true"}} checked{{end}}>
+        Send when the subscriber has no SMS preference
+      </label>
+      <span class="form-hint">Off by default: SMS goes only to subscribers who turned it on for this workflow. Turn this on for messages that must reach a phone, such as sign-off requests. Only phones the subscriber verified are ever texted.</span>
+    </div>
     {{end}}
 {{define "wf-step-fields-chat"}}
     {{template "wf-step-fields-integration" .}}

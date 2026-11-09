@@ -115,6 +115,33 @@ func probeCloudflareEmail(ctx context.Context, client *http.Client, cfg Cloudfla
 	}
 }
 
+// twilioAPIBase is the Twilio REST host the probe reads from.
+const twilioAPIBase = "https://api.twilio.com"
+
+// probeTwilio issues an authenticated GET of the Twilio account resource
+// (/2010-04-01/Accounts/{AccountSID}.json, HTTP Basic AccountSID:AuthToken).
+// It only reads, so no message is ever sent. A 2xx proves the credentials; a
+// 401/403 is a definite credential negative.
+func probeTwilio(ctx context.Context, client *http.Client, cfg TwilioConfig) (ok bool, detail string) {
+	if strings.TrimSpace(cfg.AccountSID) == "" || strings.TrimSpace(cfg.AuthToken) == "" {
+		return false, "twilio: account sid or auth token not configured"
+	}
+	endpoint := twilioAPIBase + "/2010-04-01/Accounts/" + url.PathEscape(cfg.AccountSID) + ".json"
+	basic := base64.StdEncoding.EncodeToString([]byte(cfg.AccountSID + ":" + cfg.AuthToken))
+	status, body, err := authedGET(ctx, client, endpoint, "Basic "+basic)
+	if err != nil {
+		return false, fmt.Sprintf("twilio: probe account failed: %v", err)
+	}
+	switch {
+	case status >= 200 && status < 300:
+		return true, "twilio: credentials accepted for account"
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return false, fmt.Sprintf("twilio: credentials rejected (status %d)", status)
+	default:
+		return false, fmt.Sprintf("twilio: unexpected status %d: %s", status, body)
+	}
+}
+
 // probeNtfy issues an authenticated GET against the ntfy server root. ntfy
 // returns 200 for the docs/health root; a 401/403 indicates the token is
 // invalid for an auth-protected server. A transport failure is reported as a

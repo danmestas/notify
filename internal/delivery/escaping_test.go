@@ -123,6 +123,7 @@ func TestEscaping_PushIsVerbatim(t *testing.T) {
 
 func TestEscaping_SMSIsVerbatim(t *testing.T) {
 	s := newStore(t)
+	verifySMSSubscriber(t, s, "+15557654321")
 	capt := providers.NewCaptureSMS()
 	h := NewSMS(s, stubSMSResolver{p: capt, id: "twilio"})
 	env := smsEnvelope()

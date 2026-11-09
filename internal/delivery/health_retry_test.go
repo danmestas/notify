@@ -75,6 +75,7 @@ func wantRetryable(t *testing.T, out json.RawMessage, err error) {
 func TestHandleSMS_TransientOutageCountsAgainstHealth(t *testing.T) {
 	ctx := context.Background()
 	s, integ := healthRig(t, "twilio", "sms")
+	verifySMSSubscriber(t, s, "+15557654321")
 	srv, up := switchable(t, `{"sid":"SM1"}`)
 	client := &twilio.Client{AccountSID: "AC1", AuthToken: "t", From: "+15550000000", BaseURL: srv.URL}
 	h := NewSMS(s, stubSMSResolver{p: client, id: "twilio", integrationID: integ})

@@ -50,7 +50,7 @@ func TestStore_Migrate_IsIdempotent(t *testing.T) {
 		"a2a_client_keys", "a2a_receiver_keys", "agent_draft_requests", "agent_drafts", "agent_links", "agents", "analytics_deliveries", "api_keys", "builder_checkpoints", "builder_messages", "builder_sessions", "chat_inbound_handled", "chat_poll_cursors", "chat_threads", "contexts", "conversation_activities", "conversations",
 		"delay_deadlines", "delivery_results", "email_threads", "env_var_values", "env_vars",
 		"environments", "inbound_domains", "inbound_messages", "integration_health", "integrations", "layouts", "messages", "notifications",
-		"organizations", "preferences", "step_outputs", "stream_sources", "subscriber_channels", "subscribers", "task_status", "topic_subscribers", "topic_triggers", "topics", "translations", "webhook_deliveries", "webhook_endpoints", "webpush_subscriptions", "workflow_versions", "workflows",
+		"organizations", "phone_verifications", "preferences", "step_outputs", "stream_sources", "subscriber_channels", "subscribers", "task_status", "topic_subscribers", "topic_triggers", "topics", "translations", "webhook_deliveries", "webhook_endpoints", "webpush_subscriptions", "workflow_versions", "workflows",
 	}
 	got := businessTables(t, s2)
 	if len(got) != len(want) {
@@ -97,8 +97,8 @@ func businessTables(t *testing.T, s *Store) []string {
 func TestMigrate_0005_AppliesDigestKey(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 53 {
-		t.Fatalf("expected 53 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 54 {
+		t.Fatalf("expected 54 recorded migrations, got %d", n)
 	}
 
 	var found bool
@@ -138,8 +138,8 @@ func TestMigrate_0005_AppliesDigestKey(t *testing.T) {
 func TestMigrate_0028_AddsWorkflowVersionSnapshotColumns(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 53 {
-		t.Fatalf("expected 53 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 54 {
+		t.Fatalf("expected 54 recorded migrations, got %d", n)
 	}
 
 	want := map[string]bool{"steps": false, "payload_schema": false, "critical": false}

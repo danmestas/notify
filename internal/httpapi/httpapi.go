@@ -2404,28 +2404,32 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // Internal scope ids (org_id, environment_id) are excluded; data JSON is
 // forwarded as-is.
 type subscriberDTO struct {
-	ID           string          `json:"id"`
-	SubscriberID string          `json:"subscriberId"`
-	Email        string          `json:"email"`
-	Phone        string          `json:"phone"`
-	FirstName    string          `json:"firstName"`
-	LastName     string          `json:"lastName"`
-	Locale       string          `json:"locale"`
-	Timezone     string          `json:"timezone"`
-	Data         json.RawMessage `json:"data,omitempty"`
+	ID           string `json:"id"`
+	SubscriberID string `json:"subscriberId"`
+	Email        string `json:"email"`
+	Phone        string `json:"phone"`
+	// PhoneVerified is read-only: only the subscriber can verify a phone
+	// (POST /v1/me/phone/verification), and sms steps send only to one.
+	PhoneVerified bool            `json:"phoneVerified"`
+	FirstName     string          `json:"firstName"`
+	LastName      string          `json:"lastName"`
+	Locale        string          `json:"locale"`
+	Timezone      string          `json:"timezone"`
+	Data          json.RawMessage `json:"data,omitempty"`
 }
 
 func toSubscriberDTO(s domain.Subscriber) subscriberDTO {
 	return subscriberDTO{
-		ID:           s.ID,
-		SubscriberID: s.SubscriberID,
-		Email:        s.Email,
-		Phone:        s.Phone,
-		FirstName:    s.FirstName,
-		LastName:     s.LastName,
-		Locale:       s.Locale,
-		Timezone:     s.Timezone,
-		Data:         s.Data,
+		ID:            s.ID,
+		SubscriberID:  s.SubscriberID,
+		Email:         s.Email,
+		Phone:         s.Phone,
+		PhoneVerified: s.PhoneVerifiedAt != "",
+		FirstName:     s.FirstName,
+		LastName:      s.LastName,
+		Locale:        s.Locale,
+		Timezone:      s.Timezone,
+		Data:          s.Data,
 	}
 }
 

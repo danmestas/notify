@@ -23,11 +23,11 @@ All routes take an API key.
 The subscriber object:
 
 ```json
-{ "id": "01J…", "subscriberId": "user-1", "email": "", "phone": "", "firstName": "", "lastName": "",
-  "locale": "", "timezone": "", "data": { } }
+{ "id": "01J…", "subscriberId": "user-1", "email": "", "phone": "", "phoneVerified": false,
+  "firstName": "", "lastName": "", "locale": "", "timezone": "", "data": { } }
 ```
 
-`POST` and `PATCH` bodies take the same fields without `id`. Validation (a malformed email, an oversized field, too many or invalid custom `data` fields) is `400` with the reason.
+`POST` and `PATCH` bodies take the same fields without `id` and `phoneVerified`. `phoneVerified` is read-only: only the subscriber can [verify a phone](../../inbox-and-agents/subscriber-sessions#verify-a-phone). A `phone` you write is stored unverified, and writing a different number clears the verification; sms steps send only to a verified phone. Validation (a malformed email, an oversized field, too many or invalid custom `data` fields) is `400` with the reason.
 
 `PUT .../credentials` takes `{"providerId": "ntfy", "channel": "push", "credentials": { … }}`; `providerId` is required. With `providerId: "webpush"`, `credentials` is a browser `PushSubscription` (`endpoint`, `keys.p256dh`, `keys.auth` required). See [push](../../channels/push) and [chat](../../channels/chat) for the fields.
 

@@ -72,11 +72,17 @@ A Telegram subscriber with no `chat_id` is a permanent failure for that step.
 
 ## sms
 
-Sends `body` to the subscriber's `phone`.
+Sends `body` to the subscriber's **verified** phone. Only the subscriber can verify a phone, with a code texted to it ([phone verification](../../../inbox-and-agents/subscriber-sessions#verify-a-phone)). A phone you set through the API is stored but never texted. A subscriber with no verified phone gets the step skipped with `skipReason: "no_verified_phone"`; the run carries on and nothing is an error.
 
 | Field | Meaning |
 |---|---|
-| `body` | Message text, inserted as plain text. |
+| `body` | Message text, inserted as plain text. Keep it short; carry a link, never a secret. The link should still require the person's own session. |
+| `integration` | As above. |
+| `defaultEnabled` | `true` sends to a subscriber who has no SMS [preference](../../../channels/preferences#sms-default) for this workflow. Default `false`: SMS is off unless the subscriber turned it on. Set it on workflows that must reach a phone, such as sign-off requests. |
+
+```json
+{ "stepId": "text", "type": "sms", "controlValues": { "body": "Sign-off needed: {{payload.link}}", "defaultEnabled": true } }
+```
 
 ## Inline throttle
 
