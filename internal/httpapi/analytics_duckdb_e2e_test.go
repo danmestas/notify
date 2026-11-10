@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/danmestas/notify/internal/analytics"
 	"github.com/danmestas/notify/internal/analyticsduck"

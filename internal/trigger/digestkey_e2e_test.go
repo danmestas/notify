@@ -11,7 +11,7 @@ import (
 
 	"github.com/danmestas/dagnats/dag"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/dagtest"
@@ -99,7 +99,7 @@ func setupDigest(t *testing.T, cv string) (*trigger.Service, domain.Scope, strin
 // digestKeys returns the digest_key column of every persisted notification.
 func digestKeys(t *testing.T, dbPath string) []string {
 	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatalf("open verify db: %v", err)
 	}

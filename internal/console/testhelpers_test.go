@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/danmestas/notify/internal/a2aauth"
 	"github.com/danmestas/notify/internal/a2areceiver"
@@ -261,7 +261,7 @@ func testBackground() context.Context { return context.Background() }
 // directly (the store does not — and should not — export raw handles).
 func (tc *testConsole) revokeAllKeys(t *testing.T) {
 	t.Helper()
-	db, err := sql.Open("sqlite", tc.dbPath)
+	db, err := sql.Open("sqlite3", tc.dbPath)
 	if err != nil {
 		t.Fatalf("open raw db: %v", err)
 	}

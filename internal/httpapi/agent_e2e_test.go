@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
 
 	agentsapi "github.com/danmestas/notify/internal/agents/api"
 	agentdomain "github.com/danmestas/notify/internal/agents/domain"

@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/danmestas/notify/internal/dagtest"
 	"github.com/danmestas/notify/internal/engine"
@@ -101,7 +101,7 @@ func doReadyz(t *testing.T, e *engine.Engine, db *sql.DB) (*httptest.ResponseRec
 
 func openWorkingDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

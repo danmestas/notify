@@ -568,7 +568,7 @@ func (tc *testConsole) seedInactiveWorkflow(t *testing.T, name, trigger string) 
 		t.Fatalf("seed inactive workflow create: %v", err)
 	}
 	// Mark inactive via a raw handle on the same dbPath (store does not export one).
-	db, err := sql.Open("sqlite", tc.dbPath)
+	db, err := sql.Open("sqlite3", tc.dbPath)
 	if err != nil {
 		t.Fatalf("seed inactive: open raw db: %v", err)
 	}

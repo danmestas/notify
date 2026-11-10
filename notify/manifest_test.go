@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/nats-io/nats.go"
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/danmestas/dagnats/program"
 

@@ -13,7 +13,7 @@ import (
 
 	"github.com/danmestas/dagnats/dag"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/dagtest"
@@ -83,7 +83,7 @@ func setup(t *testing.T) (*trigger.Service, domain.Scope, string) {
 func fetchNotification(t *testing.T, dbPath, transactionID string) (runID string, found bool) {
 	t.Helper()
 	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)", dbPath)
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		t.Fatalf("open verify db: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestIngest_StreamWorkflow_TopicInEnvelope(t *testing.T) {
 func countNotifications(t *testing.T, dbPath, transactionID string) (total, withRun int) {
 	t.Helper()
 	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)", dbPath)
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		t.Fatalf("open verify db: %v", err)
 	}

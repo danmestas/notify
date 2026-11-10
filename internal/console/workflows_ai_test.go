@@ -153,7 +153,7 @@ func onlyBuilderSession(t *testing.T, tc *testConsole) store.BuilderSession {
 // from the temp SQLite file (the repo intentionally exposes no list method).
 func builderSessionIDs(t *testing.T, tc *testConsole) []string {
 	t.Helper()
-	db, err := sql.Open("sqlite", tc.dbPath)
+	db, err := sql.Open("sqlite3", tc.dbPath)
 	if err != nil {
 		t.Fatalf("open raw db: %v", err)
 	}

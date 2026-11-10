@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
 
 	agentstore "github.com/danmestas/notify/internal/agents/store"
 )

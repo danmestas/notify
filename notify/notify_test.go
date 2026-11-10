@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/danmestas/notify/internal/dagtest"
 	"github.com/danmestas/notify/internal/engine"
@@ -93,7 +93,7 @@ func TestNotify_Backup(t *testing.T) {
 		t.Fatalf("Backup: %v", err)
 	}
 
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		t.Fatalf("open backup: %v", err)
 	}

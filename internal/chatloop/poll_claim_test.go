@@ -141,7 +141,7 @@ func TestMastodonPoll_FailedClaimIsRetriedNextPoll(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = core.Close() })
 	// A second connection installs a trigger that makes every claim fail.
-	raw, err := sql.Open("sqlite", path)
+	raw, err := sql.Open("sqlite3", path)
 	if err != nil {
 		t.Fatalf("open raw: %v", err)
 	}

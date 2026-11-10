@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
@@ -73,7 +73,7 @@ func setupIdempotency(t *testing.T) (*trigger.Service, domain.Scope, string) {
 func runIDsForTransaction(t *testing.T, dbPath, transactionID string) []string {
 	t.Helper()
 	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)", dbPath)
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		t.Fatalf("open verify db: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestIngest_SameTransactionID_DedupesToOneRun(t *testing.T) {
 // leaves them: pending, with no run id.
 func forgetRun(t *testing.T, dbPath, transactionID string) {
 	t.Helper()
-	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)", dbPath))
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)", dbPath))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
