@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/httpapi"

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
 // Store holds the writer/reader pools and vends Scope-typed repositories.
@@ -22,22 +22,21 @@ type Store struct {
 // pragmas, runs all embedded migrations to head on the writer, and returns the
 // ready Store. Idempotent w.r.t. already-applied migrations.
 func Open(ctx context.Context, path string) (*Store, error) {
-	// modernc.org/sqlite reads pragmas via _pragma=NAME(VALUE) params; the
-	// mattn-style _journal_mode/_busy_timeout/_foreign_keys form is silently
-	// ignored by this driver. Same semantics as the plan's locked DSN: WAL
-	// journal, 5s busy-timeout, foreign keys on.
+	// ncruces/go-sqlite3 reads pragmas via _pragma=NAME(VALUE) params: WAL
+	// journal, 5s busy-timeout, foreign keys on. It is the driver hosts that
+	// compile notify in already use, so a binary carries one SQLite.
 	dsn := fmt.Sprintf(
 		"file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)",
 		path,
 	)
 
-	writer, err := sql.Open("sqlite", dsn)
+	writer, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: open writer: %w", err)
 	}
 	writer.SetMaxOpenConns(1)
 
-	reader, err := sql.Open("sqlite", dsn)
+	reader, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		_ = writer.Close()
 		return nil, fmt.Errorf("store: open reader: %w", err)

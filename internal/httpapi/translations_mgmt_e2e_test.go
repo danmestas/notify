@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
 // TestTranslationsMgmt_ListEmpty: GET /v1/translations with no data → 200 with
