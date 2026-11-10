@@ -171,9 +171,12 @@ func TestServe_NoMasterKeyNoDev_ExitsNonZero(t *testing.T) {
 	bin := buildNotify(t)
 	addr := freeAddr(t)
 
-	// Bounded so old (buggy) behavior — booting and serving forever — fails
-	// the test promptly instead of hanging until the suite's own timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// The bug is serve booting and serving. Its signal is the listener
+	// accepting connections, not the clock: a freshly built binary's first
+	// exec can take seconds (macOS scans it), and a 10s wall-clock budget
+	// for build, exec and refusal together failed on unmodified main. The
+	// bound below only stops a wedged process from hanging the suite.
+	ctx, cancel := context.WithTimeout(context.Background(), serveRefusalWaitMax)
 	defer cancel()
 
 	serve := exec.CommandContext(ctx, bin, "serve",
@@ -181,10 +184,13 @@ func TestServe_NoMasterKeyNoDev_ExitsNonZero(t *testing.T) {
 	serve.Env = envWithout(os.Environ(), "NOTIFY_MASTER_KEY_HEX", "NOTIFY_DEV")
 	var stderr bytes.Buffer
 	serve.Stderr = &stderr
-
-	err := serve.Run()
+	if err := serve.Start(); err != nil {
+		t.Fatalf("start serve: %v", err)
+	}
+	err := waitRefusedNotServing(t, ctx, serve, addr)
 	if ctx.Err() != nil {
-		t.Fatalf("serve did not exit within 10s with no master key and no -dev (should fail fast); stderr=%s", stderr.String())
+		t.Fatalf("serve neither exited nor served within %s; stderr=%s",
+			serveRefusalWaitMax, stderr.String())
 	}
 	if err == nil {
 		t.Fatalf("serve exited 0 with no master key and no -dev; want non-zero exit (stderr=%s)", stderr.String())
@@ -197,6 +203,41 @@ func TestServe_NoMasterKeyNoDev_ExitsNonZero(t *testing.T) {
 		t.Errorf("serve ExitCode = 0, want non-zero (stderr=%s)", stderr.String())
 	}
 	t.Logf("serve correctly refused to boot: stderr=%s", stderr.String())
+}
+
+// serveRefusalWaitMax bounds how long a serve that refuses to boot may take
+// to exit. It only guards against a wedged process; the failure the test
+// looks for is serve listening, which waitRefusedNotServing reports at once.
+const serveRefusalWaitMax = 60 * time.Second
+
+// waitRefusedNotServing waits for serve to exit and returns its error. It
+// fails the test as soon as addr accepts a connection: serve booted, which
+// is exactly what a missing master key must prevent.
+func waitRefusedNotServing(t *testing.T, ctx context.Context, serve *exec.Cmd, addr string) error {
+	t.Helper()
+	if serve.Process == nil || addr == "" {
+		t.Fatal("waitRefusedNotServing: serve must be started and addr set")
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- serve.Wait() }()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case err := <-exited:
+			return err
+		case <-ctx.Done():
+			return <-exited // CommandContext kills serve; Wait then returns
+		case <-tick.C:
+			conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+			if err == nil {
+				_ = conn.Close()
+				_ = serve.Process.Kill()
+				<-exited
+				t.Fatalf("serve is listening on %s with no master key and no -dev", addr)
+			}
+		}
+	}
 }
 
 // envWithout returns env with the given keys removed (case-sensitive,
