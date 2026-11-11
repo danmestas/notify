@@ -7,7 +7,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.53.0
 	github.com/aymerick/raymond v2.0.2+incompatible
 	github.com/coder/websocket v1.8.15
-	github.com/danmestas/dagnats v0.0.63
+	github.com/danmestas/dagnats v0.0.64
 	github.com/danmestas/dagnats/lake v0.4.0
 	github.com/duckdb/duckdb-go/v2 v2.20000.0
 	github.com/emersion/go-smtp v0.25.0
