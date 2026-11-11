@@ -174,7 +174,7 @@ func (c *Console) handleWorkflowTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !wf.Active {
-		http.Redirect(w, r, testURL+"?error="+
+		c.redirect(w, r, testURL+"?error="+
 			url.QueryEscape("Workflow is inactive. Activate it before sending a test trigger."),
 			http.StatusSeeOther)
 		return
@@ -183,7 +183,7 @@ func (c *Console) handleWorkflowTest(w http.ResponseWriter, r *http.Request) {
 	subscriberID := strings.TrimSpace(r.FormValue("subscriber_id"))
 	payloadRaw := strings.TrimSpace(r.FormValue("payload"))
 	if subscriberID == "" {
-		http.Redirect(w, r, testURL+"?error="+
+		c.redirect(w, r, testURL+"?error="+
 			url.QueryEscape("Subscriber ID is required."), http.StatusSeeOther)
 		return
 	}
@@ -191,13 +191,13 @@ func (c *Console) handleWorkflowTest(w http.ResponseWriter, r *http.Request) {
 		payloadRaw = "{}"
 	}
 	if !json.Valid([]byte(payloadRaw)) {
-		http.Redirect(w, r, testURL+"?error="+
+		c.redirect(w, r, testURL+"?error="+
 			url.QueryEscape("Payload must be valid JSON."), http.StatusSeeOther)
 		return
 	}
 
 	if c.deps.Trigger == nil {
-		http.Redirect(w, r, testURL+"?error="+
+		c.redirect(w, r, testURL+"?error="+
 			url.QueryEscape("Trigger service unavailable."), http.StatusSeeOther)
 		return
 	}
@@ -212,7 +212,7 @@ func (c *Console) handleWorkflowTest(w http.ResponseWriter, r *http.Request) {
 	resp, err := c.deps.Trigger.Ingest(r.Context(), scope, req)
 	if err != nil {
 		c.deps.Logger.Error("console: test trigger ingest", "slug", slug, "err", err)
-		http.Redirect(w, r, testURL+"?error="+
+		c.redirect(w, r, testURL+"?error="+
 			url.QueryEscape("Trigger failed: "+err.Error()), http.StatusSeeOther)
 		return
 	}
@@ -221,14 +221,14 @@ func (c *Console) handleWorkflowTest(w http.ResponseWriter, r *http.Request) {
 		if len(resp.Error) > 0 {
 			msg = resp.Error[0]
 		}
-		http.Redirect(w, r, testURL+"?error="+url.QueryEscape(msg), http.StatusSeeOther)
+		c.redirect(w, r, testURL+"?error="+url.QueryEscape(msg), http.StatusSeeOther)
 		return
 	}
 
 	// Success: redirect to the test page with the transaction id surfaced.
 	activityHref := "/console/workflows/" + slug + "/activity"
 	_ = activityHref // surfaced in template via TransactionID link
-	http.Redirect(w, r, testURL+"?txid="+url.QueryEscape(resp.TransactionID),
+	c.redirect(w, r, testURL+"?txid="+url.QueryEscape(resp.TransactionID),
 		http.StatusSeeOther)
 }
 

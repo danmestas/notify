@@ -13,7 +13,7 @@
   <ul class="page-header-tiles" role="list">
     {{range .Tiles}}
     <li class="page-header-tile {{.Tone.Class}}" data-tone="{{.Tone}}">
-      {{if .Href}}<a class="page-header-tile-link" href="{{.Href}}"{{if .Tooltip}} title="{{.Tooltip}}"{{end}}>{{end}}
+      {{if .Href}}<a class="page-header-tile-link" href="{{href .Href}}"{{if .Tooltip}} title="{{.Tooltip}}"{{end}}>{{end}}
       <span class="page-header-tile-count">{{.Count}}</span>
       <span class="page-header-tile-label">{{.Label}}</span>
       {{if .Href}}</a>{{end}}

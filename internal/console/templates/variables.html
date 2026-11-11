@@ -12,7 +12,7 @@
            placeholder="Filter by key…"
            aria-label="Filter variables by key"
            data-bind="variablesSearch"
-           data-on:input__debounce.300ms="@get('/console/api/fragments/variables-list')">
+           data-on:input__debounce.300ms="@get('{{base}}/console/api/fragments/variables-list')">
     {{if not $page.ReadOnly}}
     <button type="button" class="btn btn-primary" data-on:click="$variableNewOpen = true">+ Add variable</button>
     {{end}}
@@ -32,7 +32,7 @@
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
                 data-on:click="$variableNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
-      <form method="POST" action="/console/api/variables">
+      <form method="POST" action="{{base}}/console/api/variables">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="var-key">Key *</label>
@@ -60,7 +60,7 @@
   </div>
 
   {{/* Main table */}}
-  <div data-on-load="@get('/console/api/fragments/variables-list')">
+  <div data-on-load="@get('{{base}}/console/api/fragments/variables-list')">
     {{template "variables-tbody" $page.Fragment}}
   </div>
 </section>

@@ -8,7 +8,7 @@
 
   <div class="console-card" style="max-width:480px">
     <h2 class="console-card-title">Translation settings</h2>
-    <form method="POST" action="/console/api/translations/settings">
+    <form method="POST" action="{{base}}/console/api/translations/settings">
       <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
       <div class="form-row">
         <label class="form-label" for="default-locale">Default locale</label>
@@ -27,7 +27,7 @@
       </div>
       {{if not $page.ReadOnly}}
       <div class="console-form-actions">
-        <a class="btn btn-outline" href="/console/translations">Cancel</a>
+        <a class="btn btn-outline" href="{{base}}/console/translations">Cancel</a>
         <button type="submit" class="btn btn-primary">Save settings</button>
       </div>
       {{end}}

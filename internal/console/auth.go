@@ -147,15 +147,15 @@ func (c *Console) sessionMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s, ok := c.sessionFrom(r)
 		if !ok {
-			redirectToLogin(w, r)
+			c.redirectToLogin(w, r)
 			return
 		}
 		scope, err := c.deps.Identity.Authenticate(r.Context(), s.Key)
 		if err != nil {
 			// Key revoked (or store unreachable). Clear the dead cookie so
 			// the browser stops re-presenting it, then ask for a fresh key.
-			clearSessionCookie(w, r)
-			redirectToLogin(w, r)
+			c.clearSessionCookie(w, r)
+			c.redirectToLogin(w, r)
 			return
 		}
 		ctx := domain.ContextWithScope(r.Context(), scope)
@@ -166,14 +166,14 @@ func (c *Console) sessionMiddleware(next http.Handler) http.Handler {
 
 // redirectToLogin sends the browser to the login page. 303 forces the
 // follow-up to be a GET even when the guarded request was a mutation.
-func redirectToLogin(w http.ResponseWriter, r *http.Request) {
+func (c *Console) redirectToLogin(w http.ResponseWriter, r *http.Request) {
 	if w == nil {
 		panic("redirectToLogin: w is nil")
 	}
 	if r == nil {
 		panic("redirectToLogin: r is nil")
 	}
-	http.Redirect(w, r, "/console/login", http.StatusSeeOther)
+	c.redirect(w, r, "/console/login", http.StatusSeeOther)
 }
 
 // loginView powers the login page template.
@@ -227,11 +227,11 @@ const loginCSRFTokenLen = 64
 // The length/charset check keeps a garbage or attacker-planted cookie value from
 // being adopted as the token: anything not shaped like a minted token is
 // replaced rather than trusted.
-func mintLoginCSRF(w http.ResponseWriter, r *http.Request) (string, error) {
+func (c *Console) mintLoginCSRF(w http.ResponseWriter, r *http.Request) (string, error) {
 	if existing, err := r.Cookie(loginCSRFCookieName); err == nil && isMintedLoginToken(existing.Value) {
 		// Re-set it so a long-lived tab keeps a live cookie rather than
 		// silently ageing out mid-form.
-		setLoginCSRFCookie(w, r, existing.Value)
+		c.setLoginCSRFCookie(w, r, existing.Value)
 		return existing.Value, nil
 	}
 
@@ -240,7 +240,7 @@ func mintLoginCSRF(w http.ResponseWriter, r *http.Request) (string, error) {
 		return "", err
 	}
 	token := hex.EncodeToString(raw)
-	setLoginCSRFCookie(w, r, token)
+	c.setLoginCSRFCookie(w, r, token)
 	return token, nil
 }
 
@@ -259,11 +259,11 @@ func isMintedLoginToken(v string) bool {
 
 // setLoginCSRFCookie writes the pre-session cookie. Scoped to the login path:
 // it has no business travelling with authenticated console requests.
-func setLoginCSRFCookie(w http.ResponseWriter, r *http.Request, token string) {
+func (c *Console) setLoginCSRFCookie(w http.ResponseWriter, r *http.Request, token string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     loginCSRFCookieName,
 		Value:    token,
-		Path:     "/console/login",
+		Path:     c.href("/console/login"),
 		MaxAge:   int(loginCSRFTTL / time.Second),
 		HttpOnly: true,
 		Secure:   requestIsTLS(r),
@@ -274,11 +274,11 @@ func setLoginCSRFCookie(w http.ResponseWriter, r *http.Request, token string) {
 // clearLoginCSRF expires the pre-session cookie. Called once a real session
 // exists so the login token cannot linger or be mistaken for the session's own
 // CSRF token.
-func clearLoginCSRF(w http.ResponseWriter, r *http.Request) {
+func (c *Console) clearLoginCSRF(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     loginCSRFCookieName,
 		Value:    "",
-		Path:     "/console/login",
+		Path:     c.href("/console/login"),
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   requestIsTLS(r),
@@ -307,7 +307,7 @@ func loginCSRFValid(r *http.Request) bool {
 // authenticated operator is bounced straight to the dashboard.
 func (c *Console) serveLoginPage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := c.sessionFrom(r); ok {
-		http.Redirect(w, r, "/console/", http.StatusSeeOther)
+		c.redirect(w, r, "/console/", http.StatusSeeOther)
 		return
 	}
 	c.renderLogin(w, r, http.StatusOK, loginView{})
@@ -355,11 +355,11 @@ func (c *Console) serveLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		c.serveError(w, r)
 		return
 	}
-	setSessionCookie(w, r, value)
+	c.setSessionCookie(w, r, value)
 	// The pre-session token has done its job; a real session CSRF token now
 	// exists. Leaving it set would keep a second, weaker token in play.
-	clearLoginCSRF(w, r)
-	http.Redirect(w, r, "/console/", http.StatusSeeOther)
+	c.clearLoginCSRF(w, r)
+	c.redirect(w, r, "/console/", http.StatusSeeOther)
 }
 
 // setSessionCookie sets the sealed session cookie value on the response.
@@ -367,7 +367,7 @@ func (c *Console) serveLoginSubmit(w http.ResponseWriter, r *http.Request) {
 // operator's own active key must re-seal the cookie with the new key in the
 // same response, or the very next request would bounce the operator to
 // login (the old key's row is gone) before the reveal card ever renders.
-func setSessionCookie(w http.ResponseWriter, r *http.Request, value string) {
+func (c *Console) setSessionCookie(w http.ResponseWriter, r *http.Request, value string) {
 	if w == nil {
 		panic("setSessionCookie: w is nil")
 	}
@@ -377,7 +377,7 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, value string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    value,
-		Path:     "/console",
+		Path:     c.href("/console"),
 		MaxAge:   int(sessionTTL / time.Second),
 		HttpOnly: true,
 		Secure:   requestIsTLS(r),
@@ -395,8 +395,8 @@ func (c *Console) serveLogout(w http.ResponseWriter, r *http.Request) {
 	if r == nil {
 		panic("serveLogout: r is nil")
 	}
-	clearSessionCookie(w, r)
-	redirectToLogin(w, r)
+	c.clearSessionCookie(w, r)
+	c.redirectToLogin(w, r)
 }
 
 // requestIsTLS reports whether the request arrived over TLS, either
@@ -413,14 +413,14 @@ func requestIsTLS(r *http.Request) bool {
 // clearSessionCookie expires the session cookie on the browser. The
 // attribute set must mirror the login path's (including Secure) so the
 // browser treats it as the same cookie and actually drops it.
-func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+func (c *Console) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	if w == nil {
 		panic("clearSessionCookie: w is nil")
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
-		Path:     "/console",
+		Path:     c.href("/console"),
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   requestIsTLS(r),
@@ -440,7 +440,7 @@ func (c *Console) renderLogin(w http.ResponseWriter, r *http.Request, status int
 	// Mint a fresh pre-session token on EVERY render, including error
 	// re-renders: a re-rendered form carrying a spent token would fail the
 	// operator's retry for a reason that looks nothing like the real cause.
-	token, err := mintLoginCSRF(w, r)
+	token, err := c.mintLoginCSRF(w, r)
 	if err != nil {
 		c.deps.Logger.Error("console: mint login csrf", "err", err)
 		http.Error(w, "render failed", http.StatusInternalServerError)

@@ -8,7 +8,7 @@
       </p>
     </div>
     {{if not $page.ReadOnly}}
-    <a href="/console/workflows" class="btn btn-primary dashboard-trigger">
+    <a href="{{base}}/console/workflows" class="btn btn-primary dashboard-trigger">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg>
       Trigger workflow
     </a>
@@ -47,7 +47,7 @@
       </div>
       <p class="kpi-card-value">{{$page.Cards.Workflows.Active}} <span class="kpi-card-of">of {{$page.Cards.Workflows.Total}}</span></p>
       <p class="kpi-card-note">
-        {{if $page.Cards.Workflows.Inactive}}<a href="/console/workflows">{{$page.Cards.Workflows.Inactive}} inactive — review {{ uiIcon "arrow-right" }}</a>{{else}}all active{{end}}
+        {{if $page.Cards.Workflows.Inactive}}<a href="{{base}}/console/workflows">{{$page.Cards.Workflows.Inactive}} inactive — review {{ uiIcon "arrow-right" }}</a>{{else}}all active{{end}}
       </p>
     </article>
 
@@ -92,10 +92,10 @@
                #dashboard-kpis fragment the chart's counts come from). */}}
           <div class="pill-group" role="group" aria-label="Filter deliveries by channel">
             <button type="button" class="pill pill-channel"
-                    data-on:click="@get('/console/api/fragments/dashboard-kpis')">all</button>
+                    data-on:click="@get('{{base}}/console/api/fragments/dashboard-kpis')">all</button>
             {{range $page.Chart.Lines}}
             <button type="button" class="pill pill-channel {{.Class}}"
-                    data-on:click="@get('/console/api/fragments/dashboard-kpis?channel={{.Channel}}')"><span class="kpi-dot {{.Class}}" aria-hidden="true"></span>{{.Channel}}</button>
+                    data-on:click="@get('{{base}}/console/api/fragments/dashboard-kpis?channel={{.Channel}}')"><span class="kpi-dot {{.Class}}" aria-hidden="true"></span>{{.Channel}}</button>
             {{end}}
           </div>
           <div class="pill-group seg" role="group" aria-label="Time range (display only)">
@@ -127,7 +127,7 @@
     <section class="card dashboard-activity" aria-label="Recent activity">
       <header class="dashboard-activity-head">
         <h3 class="card-title">Recent activity</h3>
-        <a href="/console/activity" class="dashboard-activity-all">View all {{ uiIcon "arrow-right" }}</a>
+        <a href="{{base}}/console/activity" class="dashboard-activity-all">View all {{ uiIcon "arrow-right" }}</a>
       </header>
       <ul class="dashboard-activity-list" role="list">
         {{range $page.Activity}}

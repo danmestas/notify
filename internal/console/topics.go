@@ -487,32 +487,32 @@ func (c *Console) handleTopicCreate(w http.ResponseWriter, r *http.Request) {
 	// existence and reject the create instead; an intentional rename stays via
 	// handleTopicUpdate, which legitimately relies on the upsert.
 	if _, err := c.deps.Audience.GetTopic(r.Context(), scope, key); err == nil {
-		redirectTopicNewErr(w, r, "Topic key already exists.")
+		c.redirectTopicNewErr(w, r, "Topic key already exists.")
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {
 		c.deps.Logger.Error("console: check existing topic", "err", err)
-		redirectTopicNewErr(w, r, "Create failed.")
+		c.redirectTopicNewErr(w, r, "Create failed.")
 		return
 	}
 
 	created, err := c.deps.Audience.CreateTopic(r.Context(), scope, key, name)
 	if err != nil {
 		if errors.Is(err, audience.ErrInvalidTopicKey) {
-			redirectTopicNewErr(w, r, "Topic key may only contain lowercase letters, numbers, hyphens, and underscores.")
+			c.redirectTopicNewErr(w, r, "Topic key may only contain lowercase letters, numbers, hyphens, and underscores.")
 			return
 		}
 		c.deps.Logger.Error("console: create topic", "err", err)
-		redirectTopicNewErr(w, r, "Create failed.")
+		c.redirectTopicNewErr(w, r, "Create failed.")
 		return
 	}
 
-	http.Redirect(w, r, "/console/topics/"+created.Key, http.StatusSeeOther)
+	c.redirect(w, r, "/console/topics/"+created.Key, http.StatusSeeOther)
 }
 
 // redirectTopicNewErr 303-redirects back to /console/topics/new with an
 // inline ?error= banner instead of a raw 4xx/5xx plaintext response (M3).
-func redirectTopicNewErr(w http.ResponseWriter, r *http.Request, msg string) {
-	http.Redirect(w, r, "/console/topics/new?error="+url.QueryEscape(msg), http.StatusSeeOther)
+func (c *Console) redirectTopicNewErr(w http.ResponseWriter, r *http.Request, msg string) {
+	c.redirect(w, r, "/console/topics/new?error="+url.QueryEscape(msg), http.StatusSeeOther)
 }
 
 // handleTopicUpdate handles POST /console/topics/{key} (?_method=PATCH).
@@ -553,7 +553,7 @@ func (c *Console) handleTopicUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/console/topics/"+key, http.StatusSeeOther)
+	c.redirect(w, r, "/console/topics/"+key, http.StatusSeeOther)
 }
 
 // handleTopicDelete handles POST /console/topics/{key}/delete.
@@ -589,7 +589,7 @@ func (c *Console) handleTopicDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/console/topics", http.StatusSeeOther)
+	c.redirect(w, r, "/console/topics", http.StatusSeeOther)
 }
 
 // handleTopicAddSubscriber handles POST /console/topics/{key}/subscribers.
@@ -633,32 +633,32 @@ func (c *Console) handleTopicAddSubscriber(w http.ResponseWriter, r *http.Reques
 			// A nonexistent subscriber id must not surface a raw 422 plaintext
 			// dead-end (no console chrome, no way back) — redirect to the topic
 			// page with an inline error banner instead (M4).
-			redirectTopicAddSubscriberErr(w, r, key, "Subscriber not found.")
+			c.redirectTopicAddSubscriberErr(w, r, key, "Subscriber not found.")
 			return
 		}
 		c.deps.Logger.Error("console: add topic subscriber lookup", "err", err)
-		redirectTopicAddSubscriberErr(w, r, key, "Add failed.")
+		c.redirectTopicAddSubscriberErr(w, r, key, "Add failed.")
 		return
 	}
 
 	if err := c.deps.Audience.AddTopicSubscriber(r.Context(), scope, key, subID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			redirectTopicAddSubscriberErr(w, r, key, "Topic not found.")
+			c.redirectTopicAddSubscriberErr(w, r, key, "Topic not found.")
 			return
 		}
 		c.deps.Logger.Error("console: add topic subscriber", "err", err)
-		redirectTopicAddSubscriberErr(w, r, key, "Add failed.")
+		c.redirectTopicAddSubscriberErr(w, r, key, "Add failed.")
 		return
 	}
 
-	http.Redirect(w, r, "/console/topics/"+key+"?tab=subscribers", http.StatusSeeOther)
+	c.redirect(w, r, "/console/topics/"+key+"?tab=subscribers", http.StatusSeeOther)
 }
 
 // redirectTopicAddSubscriberErr 303-redirects back to the topic's subscribers
 // tab with an inline ?error= banner instead of a raw 4xx/5xx plaintext
 // response (M4).
-func redirectTopicAddSubscriberErr(w http.ResponseWriter, r *http.Request, key, msg string) {
-	http.Redirect(w, r,
+func (c *Console) redirectTopicAddSubscriberErr(w http.ResponseWriter, r *http.Request, key, msg string) {
+	c.redirect(w, r,
 		"/console/topics/"+key+"?tab=subscribers&error="+url.QueryEscape(msg),
 		http.StatusSeeOther)
 }
@@ -697,5 +697,5 @@ func (c *Console) handleTopicRemoveSubscriber(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	http.Redirect(w, r, "/console/topics/"+key+"?tab=subscribers", http.StatusSeeOther)
+	c.redirect(w, r, "/console/topics/"+key+"?tab=subscribers", http.StatusSeeOther)
 }

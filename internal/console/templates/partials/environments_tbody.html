@@ -27,8 +27,8 @@
         </td>
         <td>
           <button type="button" class="btn btn-outline btn-sm"
-                  data-on:click="@get('/console/api/fragments/environments-list')">Cancel</button>
-          <form method="POST" action="/console/api/environments/{{.ID}}/delete" style="display:inline">
+                  data-on:click="@get('{{base}}/console/api/fragments/environments-list')">Cancel</button>
+          <form method="POST" action="{{base}}/console/api/environments/{{.ID}}/delete" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
             <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
           </form>
@@ -55,7 +55,7 @@
                   data-on:click="$envEditID = '{{.ID}}'; $envEditName = '{{.Name}}'; $envEditOpen = true">Edit</button>
           {{if not .IsCurrent}}
           <button type="button" class="btn btn-outline btn-sm btn-danger"
-                  data-on:click="@get('/console/api/fragments/environments-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
+                  data-on:click="@get('{{base}}/console/api/fragments/environments-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
           {{end}}
           {{end}}
         </td>

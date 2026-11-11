@@ -86,7 +86,7 @@ func (c *Console) handleReceiverKeyCreate(w http.ResponseWriter, r *http.Request
 		c.serveNotFound(w, r)
 		return
 	case errors.Is(err, a2areceiver.ErrInvalidName):
-		http.Redirect(w, r, overviewURL(identifier)+"?keyError="+url.QueryEscape("Name is required (max 64 characters)."), http.StatusSeeOther)
+		c.redirect(w, r, overviewURL(identifier)+"?keyError="+url.QueryEscape("Name is required (max 64 characters)."), http.StatusSeeOther)
 		return
 	case err != nil:
 		c.deps.Logger.Error("console: mint receiver key", "err", err)
@@ -99,7 +99,7 @@ func (c *Console) handleReceiverKeyCreate(w http.ResponseWriter, r *http.Request
 		http.Error(w, "mint failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, overviewURL(identifier)+"?revealed="+reveal, http.StatusSeeOther)
+	c.redirect(w, r, overviewURL(identifier)+"?revealed="+reveal, http.StatusSeeOther)
 }
 
 // handleReceiverKeyRevoke handles POST /console/agents/{identifier}/receiver-keys/{id}/revoke.
@@ -118,5 +118,5 @@ func (c *Console) handleReceiverKeyRevoke(w http.ResponseWriter, r *http.Request
 		http.Error(w, "revoke failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, overviewURL(identifier), http.StatusSeeOther)
+	c.redirect(w, r, overviewURL(identifier), http.StatusSeeOther)
 }

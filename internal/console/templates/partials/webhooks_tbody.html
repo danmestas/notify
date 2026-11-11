@@ -26,8 +26,8 @@
         </td>
         <td>
           <button type="button" class="btn btn-outline btn-sm"
-                  data-on:click="@get('/console/api/fragments/webhooks-list')">Cancel</button>
-          <form method="POST" action="/console/api/webhooks/{{.ID}}/delete" style="display:inline">
+                  data-on:click="@get('{{base}}/console/api/fragments/webhooks-list')">Cancel</button>
+          <form method="POST" action="{{base}}/console/api/webhooks/{{.ID}}/delete" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
             <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
           </form>
@@ -41,8 +41,8 @@
         </td>
         <td>
           <button type="button" class="btn btn-outline btn-sm"
-                  data-on:click="@get('/console/api/fragments/webhooks-list')">Cancel</button>
-          <form method="POST" action="/console/api/webhooks/{{.ID}}/secret" style="display:inline">
+                  data-on:click="@get('{{base}}/console/api/fragments/webhooks-list')">Cancel</button>
+          <form method="POST" action="{{base}}/console/api/webhooks/{{.ID}}/secret" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
             <button type="submit" class="btn btn-primary btn-sm">Rotate secret</button>
           </form>
@@ -70,15 +70,15 @@
         <td class="console-action-row">
           {{if not $v.ReadOnly}}
           <button type="button" class="btn btn-outline btn-sm"
-                  data-on:click="@get('/console/api/fragments/webhooks-list?confirmRotate={{.ID | urlquery}}')">{{if .Signed}}Rotate secret{{else}}Add secret{{end}}</button>
-          <form method="POST" action="/console/api/webhooks/{{.ID}}/toggle" style="display:inline">
+                  data-on:click="@get('{{base}}/console/api/fragments/webhooks-list?confirmRotate={{.ID | urlquery}}')">{{if .Signed}}Rotate secret{{else}}Add secret{{end}}</button>
+          <form method="POST" action="{{base}}/console/api/webhooks/{{.ID}}/toggle" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
             <button type="submit" class="btn btn-outline btn-sm">
               {{if .Active}}Disable{{else}}Enable{{end}}
             </button>
           </form>
           <button type="button" class="btn btn-outline btn-sm btn-danger"
-                  data-on:click="@get('/console/api/fragments/webhooks-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
+                  data-on:click="@get('{{base}}/console/api/fragments/webhooks-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
           {{end}}
         </td>
       </tr>

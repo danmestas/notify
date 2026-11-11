@@ -120,7 +120,7 @@ func (c *Console) handleA2AKeyCreate(w http.ResponseWriter, r *http.Request) {
 		default:
 			c.deps.Logger.Error("console: mint a2a client key", "err", err)
 		}
-		http.Redirect(w, r, "/console/a2a-keys?createError="+url.QueryEscape(msg), http.StatusSeeOther)
+		c.redirect(w, r, "/console/a2a-keys?createError="+url.QueryEscape(msg), http.StatusSeeOther)
 		return
 	}
 	reveal, err := c.stashReveal(token)
@@ -129,7 +129,7 @@ func (c *Console) handleA2AKeyCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "mint failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/a2a-keys?revealed="+reveal, http.StatusSeeOther)
+	c.redirect(w, r, "/console/a2a-keys?revealed="+reveal, http.StatusSeeOther)
 }
 
 // handleA2AKeyRevoke handles POST /console/a2a-keys/{id}/revoke.
@@ -147,5 +147,5 @@ func (c *Console) handleA2AKeyRevoke(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "revoke failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/a2a-keys", http.StatusSeeOther)
+	c.redirect(w, r, "/console/a2a-keys", http.StatusSeeOther)
 }

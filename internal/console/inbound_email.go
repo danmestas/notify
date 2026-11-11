@@ -81,7 +81,7 @@ func (c *Console) serveInboundEmailPage(w http.ResponseWriter, r *http.Request) 
 	webhookURL := "{base_url}/v1/inbound/email"
 	publicBaseURLSet := false
 	if base := strings.TrimRight(c.deps.PublicBaseURL, "/"); base != "" {
-		webhookURL = base + "/v1/inbound/email"
+		webhookURL = base + c.deps.BasePath + "/v1/inbound/email"
 		publicBaseURLSet = true
 	}
 

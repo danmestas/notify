@@ -491,7 +491,7 @@ func (c *Console) handleSubscriberCreate(w http.ResponseWriter, r *http.Request)
 	// store so a malformed email or pathological free-text value never
 	// reaches the subscriber record or the rendered detail page.
 	if msg := validateSubscriberProfileInput(in); msg != "" {
-		http.Redirect(w, r,
+		c.redirect(w, r,
 			"/console/subscribers/new?error="+url.QueryEscape(msg),
 			http.StatusSeeOther)
 		return
@@ -502,7 +502,7 @@ func (c *Console) handleSubscriberCreate(w http.ResponseWriter, r *http.Request)
 	// just yields "{}".
 	customData, customMsg := subscriberCustomFieldsFromForm(r)
 	if customMsg != "" {
-		http.Redirect(w, r,
+		c.redirect(w, r,
 			"/console/subscribers/new?error="+url.QueryEscape(customMsg),
 			http.StatusSeeOther)
 		return
@@ -539,7 +539,7 @@ func (c *Console) handleSubscriberCreate(w http.ResponseWriter, r *http.Request)
 			// GetByExternalID has no deleted=0 filter; only block when the
 			// found record is still live.
 			if !existing.Deleted {
-				http.Redirect(w, r,
+				c.redirect(w, r,
 					"/console/subscribers/new?error="+url.QueryEscape("That Subscriber ID is taken"),
 					http.StatusSeeOther)
 				return
@@ -568,7 +568,7 @@ func (c *Console) handleSubscriberCreate(w http.ResponseWriter, r *http.Request)
 		// error, not a server fault.
 		var verr *audience.ValidationError
 		if errors.As(err, &verr) {
-			http.Redirect(w, r,
+			c.redirect(w, r,
 				"/console/subscribers/new?error="+url.QueryEscape(verr.Msg),
 				http.StatusSeeOther)
 			return
@@ -578,7 +578,7 @@ func (c *Console) handleSubscriberCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	http.Redirect(w, r, "/console/subscribers/"+created.ID, http.StatusSeeOther)
+	c.redirect(w, r, "/console/subscribers/"+created.ID, http.StatusSeeOther)
 }
 
 // handleSubscriberUpdate handles POST /console/subscribers/{subscriberId} (?_method=PATCH).
@@ -621,7 +621,7 @@ func (c *Console) handleSubscriberUpdate(w http.ResponseWriter, r *http.Request)
 	// touching the store, redirect back to the detail page (overview tab)
 	// with an inline error instead of persisting garbage.
 	if msg := validateSubscriberProfileInput(in); msg != "" {
-		http.Redirect(w, r,
+		c.redirect(w, r,
 			"/console/subscribers/"+id+"?error="+url.QueryEscape(msg),
 			http.StatusSeeOther)
 		return
@@ -636,7 +636,7 @@ func (c *Console) handleSubscriberUpdate(w http.ResponseWriter, r *http.Request)
 	if r.Form.Has("custom_key_0") {
 		customData, customMsg := subscriberCustomFieldsFromForm(r)
 		if customMsg != "" {
-			http.Redirect(w, r,
+			c.redirect(w, r,
 				"/console/subscribers/"+id+"?error="+url.QueryEscape(customMsg),
 				http.StatusSeeOther)
 			return
@@ -656,7 +656,7 @@ func (c *Console) handleSubscriberUpdate(w http.ResponseWriter, r *http.Request)
 		// console's own pre-checks above rather than a generic 500.
 		var verr *audience.ValidationError
 		if errors.As(err, &verr) {
-			http.Redirect(w, r,
+			c.redirect(w, r,
 				"/console/subscribers/"+id+"?error="+url.QueryEscape(verr.Msg),
 				http.StatusSeeOther)
 			return
@@ -666,7 +666,7 @@ func (c *Console) handleSubscriberUpdate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	http.Redirect(w, r, "/console/subscribers/"+id, http.StatusSeeOther)
+	c.redirect(w, r, "/console/subscribers/"+id, http.StatusSeeOther)
 }
 
 // handleSubscriberDelete handles POST /console/subscribers/{subscriberId}/delete.
@@ -702,5 +702,5 @@ func (c *Console) handleSubscriberDelete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	http.Redirect(w, r, "/console/subscribers", http.StatusSeeOther)
+	c.redirect(w, r, "/console/subscribers", http.StatusSeeOther)
 }

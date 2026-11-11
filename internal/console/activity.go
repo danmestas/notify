@@ -721,7 +721,7 @@ func (c *Console) handleNotificationResend(w http.ResponseWriter, r *http.Reques
 	backURL := "/console/activity?notification_id=" + url.QueryEscape(notifID)
 
 	if c.deps.Trigger == nil {
-		http.Redirect(w, r, backURL+"&resendError="+
+		c.redirect(w, r, backURL+"&resendError="+
 			url.QueryEscape("Resend service unavailable."), http.StatusSeeOther)
 		return
 	}
@@ -729,7 +729,7 @@ func (c *Console) handleNotificationResend(w http.ResponseWriter, r *http.Reques
 	n, err := c.deps.Notifications.Get(r.Context(), scope, notifID)
 	if err != nil {
 		c.deps.Logger.Warn("console: resend get notification", "id", notifID, "err", err)
-		http.Redirect(w, r, backURL+"&resendError="+
+		c.redirect(w, r, backURL+"&resendError="+
 			url.QueryEscape("Notification not found."), http.StatusSeeOther)
 		return
 	}
@@ -740,7 +740,7 @@ func (c *Console) handleNotificationResend(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		c.deps.Logger.Warn("console: resend workflow lookup",
 			"workflow_id", n.WorkflowID, "err", err)
-		http.Redirect(w, r, backURL+"&resendError="+
+		c.redirect(w, r, backURL+"&resendError="+
 			url.QueryEscape("Workflow for this notification no longer exists."),
 			http.StatusSeeOther)
 		return
@@ -757,7 +757,7 @@ func (c *Console) handleNotificationResend(w http.ResponseWriter, r *http.Reques
 	})
 	if err != nil {
 		c.deps.Logger.Error("console: resend ingest", "id", notifID, "err", err)
-		http.Redirect(w, r, backURL+"&resendError="+
+		c.redirect(w, r, backURL+"&resendError="+
 			url.QueryEscape("Resend failed: "+err.Error()), http.StatusSeeOther)
 		return
 	}
@@ -766,7 +766,7 @@ func (c *Console) handleNotificationResend(w http.ResponseWriter, r *http.Reques
 		if len(resp.Error) > 0 {
 			msg = resp.Error[0]
 		}
-		http.Redirect(w, r, backURL+"&resendError="+url.QueryEscape(msg),
+		c.redirect(w, r, backURL+"&resendError="+url.QueryEscape(msg),
 			http.StatusSeeOther)
 		return
 	}
@@ -778,7 +778,7 @@ func (c *Console) handleNotificationResend(w http.ResponseWriter, r *http.Reques
 	if newRunID != "" {
 		dest += "&resendRun=" + url.QueryEscape(newRunID)
 	}
-	http.Redirect(w, r, dest, http.StatusSeeOther)
+	c.redirect(w, r, dest, http.StatusSeeOther)
 }
 
 // runIDFromTransaction looks up the most recent notification for a transaction

@@ -43,7 +43,7 @@
 <div id="ai-msg-{{.TurnID}}-actions" class="ai-msg-actions">
   {{if .Saved}}
   <span class="ai-msg-saved">{{uiIcon "check"}} Saved</span>
-  <a class="ai-msg-open-link" href="/console/workflows/{{.Slug}}">Open workflow {{uiIcon "arrow-up-right"}}</a>
+  <a class="ai-msg-open-link" href="{{base}}/console/workflows/{{.Slug}}">Open workflow {{uiIcon "arrow-up-right"}}</a>
   {{else if .Error}}
   <span class="ai-msg-action-error" role="alert">{{.Error}}</span>
   {{else}}
@@ -51,15 +51,15 @@
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <input type="hidden" name="msg_id" value="{{.TurnID}}">
     <button type="button" class="btn btn-primary btn-sm ai-action ai-action-keep"
-            data-on:click="@post('/console/api/workflows/ai/{{.SessionID}}/keep', {contentType: 'form', selector: '#ai-actions-{{.TurnID}}', headers: {'X-CSRF-Token': '{{.CSRF}}'}})">
+            data-on:click="@post('{{base}}/console/api/workflows/ai/{{.SessionID}}/keep', {contentType: 'form', selector: '#ai-actions-{{.TurnID}}', headers: {'X-CSRF-Token': '{{.CSRF}}'}})">
       {{uiIcon "check"}}<span>Keep all</span>
     </button>
     <button type="button" class="btn btn-sm ai-action ai-action-discard"
-            data-on:click="@post('/console/api/workflows/ai/{{.SessionID}}/discard-turn', {contentType: 'form', selector: '#ai-actions-{{.TurnID}}', headers: {'X-CSRF-Token': '{{.CSRF}}'}})">
+            data-on:click="@post('{{base}}/console/api/workflows/ai/{{.SessionID}}/discard-turn', {contentType: 'form', selector: '#ai-actions-{{.TurnID}}', headers: {'X-CSRF-Token': '{{.CSRF}}'}})">
       {{uiIcon "x"}}<span>Discard</span>
     </button>
     <button type="button" class="btn btn-sm ai-action ai-action-retry"
-            data-on:click="@post('/console/api/workflows/ai/{{.SessionID}}/retry', {contentType: 'form', selector: '#ai-actions-{{.TurnID}}', headers: {'X-CSRF-Token': '{{.CSRF}}'}})">
+            data-on:click="@post('{{base}}/console/api/workflows/ai/{{.SessionID}}/retry', {contentType: 'form', selector: '#ai-actions-{{.TurnID}}', headers: {'X-CSRF-Token': '{{.CSRF}}'}})">
       {{uiIcon "rotate-ccw"}}<span>Try again</span>
     </button>
   </form>

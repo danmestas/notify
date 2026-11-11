@@ -13,7 +13,7 @@
            placeholder="Search domains…"
            aria-label="Search domains"
            data-bind="domainsSearch"
-           data-on:input__debounce.300ms="@get('/console/api/fragments/domains-list')">
+           data-on:input__debounce.300ms="@get('{{base}}/console/api/fragments/domains-list')">
     {{if not $page.ReadOnly}}
     <button type="button" class="btn btn-primary" data-on:click="$domainNewOpen = true">+ Add domain</button>
     {{end}}
@@ -36,7 +36,7 @@
       {{if $page.FormError}}
       <p class="console-form-error" role="alert">{{$page.FormError}}</p>
       {{end}}
-      <form method="POST" action="/console/domains">
+      <form method="POST" action="{{base}}/console/domains">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="domain-name">Domain name *</label>
@@ -53,7 +53,7 @@
   </div>
 
   {{/* Main table — loads via Datastar on-load; initial server render ensures no-JS fallback */}}
-  <div data-on-load="@get('/console/api/fragments/domains-list')">
+  <div data-on-load="@get('{{base}}/console/api/fragments/domains-list')">
     {{template "domains-tbody" $page.Fragment}}
   </div>
 </section>

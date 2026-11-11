@@ -480,7 +480,7 @@ func (c *Console) handleWorkflowCreate(w http.ResponseWriter, r *http.Request) {
 	// inline error, preserving the submitted Name + Trigger id (M7) so a
 	// failure on one field doesn't force retyping the other.
 	redirectWithError := func(msg string) {
-		http.Redirect(w, r, "/console/workflows/new?error="+url.QueryEscape(msg)+
+		c.redirect(w, r, "/console/workflows/new?error="+url.QueryEscape(msg)+
 			"&name="+url.QueryEscape(name)+"&trigger_identifier="+url.QueryEscape(trigger),
 			http.StatusSeeOther)
 	}
@@ -517,7 +517,7 @@ func (c *Console) handleWorkflowCreate(w http.ResponseWriter, r *http.Request) {
 		c.deps.Logger.Error("console: publish new workflow", "err", err)
 		// The row exists; the editor is still reachable. Send the operator there.
 	}
-	http.Redirect(w, r, "/console/workflows/"+wf.TriggerIdentifier, http.StatusSeeOther)
+	c.redirect(w, r, "/console/workflows/"+wf.TriggerIdentifier, http.StatusSeeOther)
 }
 
 // handleWorkflowDuplicate handles POST /console/api/workflows/{slug}/duplicate.
@@ -549,7 +549,7 @@ func (c *Console) handleWorkflowDuplicate(w http.ResponseWriter, r *http.Request
 	trigger := strings.TrimSpace(r.FormValue("trigger_identifier"))
 	dupURL := "/console/workflows/" + slug + "/duplicate"
 	if name == "" || trigger == "" {
-		http.Redirect(w, r, dupURL+"?error="+
+		c.redirect(w, r, dupURL+"?error="+
 			url.QueryEscape("Name and trigger identifier are required."), http.StatusSeeOther)
 		return
 	}
@@ -560,7 +560,7 @@ func (c *Console) handleWorkflowDuplicate(w http.ResponseWriter, r *http.Request
 	})
 	if err != nil {
 		if errors.Is(err, authoring.ErrIdentifierConflict) {
-			http.Redirect(w, r, dupURL+"?error="+
+			c.redirect(w, r, dupURL+"?error="+
 				url.QueryEscape("Trigger identifier already exists."), http.StatusSeeOther)
 			return
 		}
@@ -569,11 +569,11 @@ func (c *Console) handleWorkflowDuplicate(w http.ResponseWriter, r *http.Request
 			return
 		}
 		c.deps.Logger.Error("console: duplicate workflow", "slug", slug, "err", err)
-		http.Redirect(w, r, dupURL+"?error="+
+		c.redirect(w, r, dupURL+"?error="+
 			url.QueryEscape("Duplicate failed."), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, "/console/workflows/"+created.TriggerIdentifier, http.StatusSeeOther)
+	c.redirect(w, r, "/console/workflows/"+created.TriggerIdentifier, http.StatusSeeOther)
 }
 
 // isNotFound reports whether err is a store not-found sentinel.

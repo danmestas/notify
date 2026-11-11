@@ -50,7 +50,7 @@
         {{end}}
         {{if .Cursor}}
         <button type="button" class="btn btn-outline activity-load-more"
-                data-on:click="@get('/console/api/fragments/workflow-activity/{{.Slug}}?cursor={{.Cursor}}&limit={{.Limit}}&status={{.FilterStatus}}&range={{.FilterRange}}')">
+                data-on:click="@get('{{base}}/console/api/fragments/workflow-activity/{{.Slug}}?cursor={{.Cursor}}&limit={{.Limit}}&status={{.FilterStatus}}&range={{.FilterRange}}')">
           Load more
         </button>
         {{end}}
@@ -65,7 +65,7 @@
         <h2 class="console-empty-state-title">No runs match your filters</h2>
         <p class="console-empty-state-description">
           Try adjusting or
-          <a class="console-link" href="/console/workflows/{{.Slug}}/activity">resetting</a>
+          <a class="console-link" href="{{base}}/console/workflows/{{.Slug}}/activity">resetting</a>
           the filter bar.
         </p>
       </div>
@@ -74,7 +74,7 @@
         <span class="console-empty-state-icon" aria-hidden="true">&#9654;</span>
         <h2 class="console-empty-state-title">No runs yet for this workflow</h2>
         <p class="console-empty-state-description">
-          Use the <a class="console-link" href="/console/workflows/{{.Slug}}/test">Test</a>
+          Use the <a class="console-link" href="{{base}}/console/workflows/{{.Slug}}/test">Test</a>
           tab to fire your first trigger.
         </p>
       </div>

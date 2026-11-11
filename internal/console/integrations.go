@@ -829,7 +829,7 @@ func (c *Console) handleIntegrationVerify(w http.ResponseWriter, r *http.Request
 	backURL := "/console/integrations/" + url.PathEscape(id)
 
 	if c.deps.CredVerifier == nil {
-		http.Redirect(w, r, backURL+"?verifyError="+
+		c.redirect(w, r, backURL+"?verifyError="+
 			url.QueryEscape("Credential verification is unavailable."), http.StatusSeeOther)
 		return
 	}
@@ -837,7 +837,7 @@ func (c *Console) handleIntegrationVerify(w http.ResponseWriter, r *http.Request
 	runID, err := c.deps.CredVerifier.Start(r.Context(), scope, id)
 	if err != nil {
 		c.deps.Logger.Error("console: credential verify start", "id", id, "err", err)
-		http.Redirect(w, r, backURL+"?verifyError="+
+		c.redirect(w, r, backURL+"?verifyError="+
 			url.QueryEscape("Verification failed to start: "+err.Error()), http.StatusSeeOther)
 		return
 	}
@@ -857,19 +857,19 @@ func (c *Console) handleIntegrationVerify(w http.ResponseWriter, r *http.Request
 	case c.deps.Connectivity != nil:
 		probe = c.deps.Connectivity.VerifyByID
 	default:
-		http.Redirect(w, r, backURL+"?verifyRun="+url.QueryEscape(runID), http.StatusSeeOther)
+		c.redirect(w, r, backURL+"?verifyRun="+url.QueryEscape(runID), http.StatusSeeOther)
 		return
 	}
 	res, verr := probe(r.Context(), scope, id)
 	switch {
 	case verr != nil:
 		c.deps.Logger.Error("console: credential verify probe", "id", id, "err", verr)
-		http.Redirect(w, r, backURL+"?verifyError="+
+		c.redirect(w, r, backURL+"?verifyError="+
 			url.QueryEscape("Verification could not complete: "+verr.Error())+runParam, http.StatusSeeOther)
 	case !res.OK:
-		http.Redirect(w, r, backURL+"?verifyError="+url.QueryEscape(res.Detail)+runParam, http.StatusSeeOther)
+		c.redirect(w, r, backURL+"?verifyError="+url.QueryEscape(res.Detail)+runParam, http.StatusSeeOther)
 	default:
-		http.Redirect(w, r, backURL+"?verified=1&verifyDetail="+url.QueryEscape(res.Detail)+runParam, http.StatusSeeOther)
+		c.redirect(w, r, backURL+"?verified=1&verifyDetail="+url.QueryEscape(res.Detail)+runParam, http.StatusSeeOther)
 	}
 }
 
@@ -909,24 +909,24 @@ func (c *Console) handleIntegrationTestSend(w http.ResponseWriter, r *http.Reque
 	backURL := "/console/integrations/" + url.PathEscape(id)
 
 	if destination == "" {
-		http.Redirect(w, r, backURL+"?testSendError="+
+		c.redirect(w, r, backURL+"?testSendError="+
 			url.QueryEscape("Destination is required."), http.StatusSeeOther)
 		return
 	}
 
 	if c.deps.Connectivity == nil {
-		http.Redirect(w, r, backURL+"?testSendError="+
+		c.redirect(w, r, backURL+"?testSendError="+
 			url.QueryEscape("Test send is unavailable."), http.StatusSeeOther)
 		return
 	}
 
 	if _, err := c.deps.Connectivity.TestSend(r.Context(), scope, id, destination, message); err != nil {
 		c.deps.Logger.Error("console: integration test-send", "id", id, "err", err)
-		http.Redirect(w, r, backURL+"?testSendError="+
+		c.redirect(w, r, backURL+"?testSendError="+
 			url.QueryEscape("Test send failed."), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, backURL+"?testSendOK=1", http.StatusSeeOther)
+	c.redirect(w, r, backURL+"?testSendOK=1", http.StatusSeeOther)
 }
 
 // ─── fragment: integration activity tab ─────────────────────────────────────
@@ -1247,26 +1247,26 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 		// Surface it as an inline error, matching the Agents duplicate-identifier
 		// pattern — never a raw 500 dead-end (H4).
 		if errors.Is(createErr, store.ErrConflict) || strings.Contains(createErr.Error(), "UNIQUE constraint failed") {
-			redirectIntegrationsCreateErr(w, r, "Identifier already exists.")
+			c.redirectIntegrationsCreateErr(w, r, "Identifier already exists.")
 			return
 		}
 		if errors.Is(createErr, connectivity.ErrInvalidIdentifier) {
-			redirectIntegrationsCreateErr(w, r, "Identifier may only contain lowercase letters, numbers, hyphens, and underscores.")
+			c.redirectIntegrationsCreateErr(w, r, "Identifier may only contain lowercase letters, numbers, hyphens, and underscores.")
 			return
 		}
 		c.deps.Logger.Error("console: create integration", "provider", providerID, "err", createErr)
-		redirectIntegrationsCreateErr(w, r, "Create failed.")
+		c.redirectIntegrationsCreateErr(w, r, "Create failed.")
 		return
 	}
 
-	http.Redirect(w, r, "/console/integrations", http.StatusSeeOther)
+	c.redirect(w, r, "/console/integrations", http.StatusSeeOther)
 }
 
 // redirectIntegrationsCreateErr 303-redirects back to the integrations list
 // with an inline ?createError= banner instead of a raw 4xx/5xx plaintext
 // response (H4).
-func redirectIntegrationsCreateErr(w http.ResponseWriter, r *http.Request, msg string) {
-	http.Redirect(w, r, "/console/integrations?createError="+url.QueryEscape(msg), http.StatusSeeOther)
+func (c *Console) redirectIntegrationsCreateErr(w http.ResponseWriter, r *http.Request, msg string) {
+	c.redirect(w, r, "/console/integrations?createError="+url.QueryEscape(msg), http.StatusSeeOther)
 }
 
 // handleIntegrationUpdate handles POST /console/integrations/{id}
@@ -1349,7 +1349,7 @@ func (c *Console) handleIntegrationUpdate(w http.ResponseWriter, r *http.Request
 				http.Error(w, "update failed", http.StatusInternalServerError)
 				return
 			}
-			http.Redirect(w, r, "/console/integrations/"+id, http.StatusSeeOther)
+			c.redirect(w, r, "/console/integrations/"+id, http.StatusSeeOther)
 			return
 		}
 		if errors.Is(err, store.ErrNotFound) {
@@ -1361,7 +1361,7 @@ func (c *Console) handleIntegrationUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	http.Redirect(w, r, "/console/integrations/"+id, http.StatusSeeOther)
+	c.redirect(w, r, "/console/integrations/"+id, http.StatusSeeOther)
 }
 
 // handleIntegrationDelete handles POST /console/integrations/{id}/delete
@@ -1399,7 +1399,7 @@ func (c *Console) handleIntegrationDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	http.Redirect(w, r, "/console/integrations", http.StatusSeeOther)
+	c.redirect(w, r, "/console/integrations", http.StatusSeeOther)
 }
 
 // handleIntegrationToggleActive handles POST /console/integrations/{id}/active
@@ -1467,7 +1467,7 @@ func (c *Console) handleIntegrationToggleActive(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	http.Redirect(w, r, "/console/integrations/"+id, http.StatusSeeOther)
+	c.redirect(w, r, "/console/integrations/"+id, http.StatusSeeOther)
 }
 
 // handleWebPushSubject handles POST /console/integrations/{id}/webpush-subject.
@@ -1501,12 +1501,12 @@ func (c *Console) handleWebPushSubject(w http.ResponseWriter, r *http.Request) {
 	back := "/console/integrations/" + url.PathEscape(id)
 	if err := c.deps.Connectivity.SetWebPushSubject(r.Context(), scope, r.FormValue("subject")); err != nil {
 		if errors.Is(err, connectivity.ErrInvalidVAPIDSubject) {
-			http.Redirect(w, r, back+"?subjectError="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			c.redirect(w, r, back+"?subjectError="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 			return
 		}
 		c.deps.Logger.Error("console: set webpush subject", "id", id, "err", err)
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, back, http.StatusSeeOther)
+	c.redirect(w, r, back, http.StatusSeeOther)
 }

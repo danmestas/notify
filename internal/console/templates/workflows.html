@@ -32,16 +32,16 @@
            placeholder="Search by name or identifier"
            value="{{$frag.FilterQ}}"
            data-bind="wfFilter"
-           data-on:input__debounce.300ms="@get('/console/api/fragments/workflows-list')"
+           data-on:input__debounce.300ms="@get('{{base}}/console/api/fragments/workflows-list')"
            aria-label="Search workflows">
     {{template "ui-select" (uiSelect "wf-status" "" "wfStatus"
       (uiSelectOptions "" "All statuses" "active" "Active" "inactive" "Inactive")
-      "All statuses" "@get('/console/api/fragments/workflows-list')" false)}}
+      "All statuses" (printf "@get('%s/console/api/fragments/workflows-list')" base) false)}}
     {{/* Reset clears all filter signals reactively; data-show hides it when
          no filters are active so no server round-trip is needed to toggle it. */}}
     <button type="button" class="btn btn-outline"
             data-show="$wfFilter !== '' || $wfStatus !== ''"
-            data-on:click="$wfFilter = ''; $wfStatus = ''; $wfConfirmDelete = ''; @get('/console/api/fragments/workflows-list')">Reset</button>
+            data-on:click="$wfFilter = ''; $wfStatus = ''; $wfConfirmDelete = ''; @get('{{base}}/console/api/fragments/workflows-list')">Reset</button>
     {{if not $page.ReadOnly}}
     <button type="button" class="btn btn-primary" data-on:click="$workflowNewOpen = true">+ New workflow</button>
     {{end}}
@@ -65,13 +65,13 @@
       </div>
 
       {{/* AI entry point: the docked-copilot builder view (create mode). */}}
-      <a class="btn btn-outline wf-create-ai-link" href="/console/workflows/ai">{{ uiIcon "star" }} Build with AI</a>
+      <a class="btn btn-outline wf-create-ai-link" href="{{base}}/console/workflows/ai">{{ uiIcon "star" }} Build with AI</a>
 
       {{if $page.FormError}}
       <p id="wf-form-error" class="console-form-error" role="alert">{{$page.FormError}}</p>
       {{end}}
 
-      <form method="POST" action="/console/api/workflows">
+      <form method="POST" action="{{base}}/console/api/workflows">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="new-wf-name">Name *</label>
@@ -107,15 +107,15 @@
     {{if $page.ShowDuplicate}}
     <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="wf-dup-heading"
          data-component="workflow-duplicate"
-         data-on:keydown__window="evt.key === 'Escape' && (window.location = '/console/workflows/{{$page.SourceSlug}}')">
+         data-on:keydown__window="evt.key === 'Escape' && (window.location = '{{base}}/console/workflows/{{$page.SourceSlug}}')">
       <div class="console-slideover-header">
         <h2 id="wf-dup-heading" class="console-card-title">Duplicate workflow</h2>
-        <a class="btn-icon console-slideover-close" href="/console/workflows/{{$page.SourceSlug}}" aria-label="Close">{{ uiIcon "x" }}</a>
+        <a class="btn-icon console-slideover-close" href="{{base}}/console/workflows/{{$page.SourceSlug}}" aria-label="Close">{{ uiIcon "x" }}</a>
       </div>
       {{if $page.FormError}}
       <p class="console-form-error" role="alert">{{$page.FormError}}</p>
       {{end}}
-      <form method="POST" action="/console/api/workflows/{{$page.SourceSlug}}/duplicate">
+      <form method="POST" action="{{base}}/console/api/workflows/{{$page.SourceSlug}}/duplicate">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="dup-wf-name">Name *</label>
@@ -129,7 +129,7 @@
                  pattern="[a-z0-9_-]+" required aria-required="true">
         </div>
         <div class="console-slideover-actions">
-          <a class="btn btn-outline" href="/console/workflows/{{$page.SourceSlug}}">Cancel</a>
+          <a class="btn btn-outline" href="{{base}}/console/workflows/{{$page.SourceSlug}}">Cancel</a>
           <button type="submit" class="btn btn-primary">Duplicate workflow</button>
         </div>
       </form>

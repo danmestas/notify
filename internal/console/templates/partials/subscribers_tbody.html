@@ -22,7 +22,7 @@
     <div class="subscriber-avatar-cell">
       <span class="subscriber-avatar" aria-hidden="true">{{.Initials}}</span>
       <div class="subscriber-name-stack">
-        <a class="subscriber-display-name" href="/console/subscribers/{{.ID}}">{{.DisplayName}}</a>
+        <a class="subscriber-display-name" href="{{base}}/console/subscribers/{{.ID}}">{{.DisplayName}}</a>
         <code class="subscriber-id-code">{{.SubscriberID}}</code>
       </div>
     </div>
@@ -35,23 +35,23 @@
   </td>
   <td>
     <div class="subscriber-row-actions">
-      <a class="btn-icon" href="/console/subscribers/{{.ID}}" title="View subscriber">{{ uiIcon "arrow-up-right" }}</a>
+      <a class="btn-icon" href="{{base}}/console/subscribers/{{.ID}}" title="View subscriber">{{ uiIcon "arrow-up-right" }}</a>
       {{if not $.ReadOnly}}
       {{if eq $.ConfirmDelete .ID}}
       {{/* Two-step inline confirm (chassis idiom): first click swapped
            this row into confirm state via the fragment; Cancel
            re-fetches the plain list, the POST form really deletes. */}}
       <button type="button" class="btn btn-outline"
-              data-on:click="@get('/console/api/fragments/subscribers-list')">
+              data-on:click="@get('{{base}}/console/api/fragments/subscribers-list')">
         Cancel
       </button>
-      <form method="POST" action="/console/subscribers/{{.ID}}/delete" style="display:inline">
+      <form method="POST" action="{{base}}/console/subscribers/{{.ID}}/delete" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <button type="submit" class="btn btn-danger">Confirm delete</button>
       </form>
       {{else}}
       <button type="button" class="btn-icon" title="Delete subscriber"
-              data-on:click="@get('/console/api/fragments/subscribers-list?confirmDelete={{.ID}}')">
+              data-on:click="@get('{{base}}/console/api/fragments/subscribers-list?confirmDelete={{.ID}}')">
         {{ uiIcon "x" }}
       </button>
       {{end}}
@@ -72,7 +72,7 @@
       {{end}}
       {{if .NextCursor}}
       <button type="button" class="btn btn-outline subscribers-load-more"
-              data-on:click="@get('/console/api/fragments/subscribers-list?after={{.NextCursor}}&limit={{.Limit}}')">
+              data-on:click="@get('{{base}}/console/api/fragments/subscribers-list?after={{.NextCursor}}&limit={{.Limit}}')">
         Load more
       </button>
       {{end}}
@@ -98,7 +98,7 @@
   {{/* No results state — filters active */}}
   <div class="console-empty-state" data-component="no-results">
     <h2 class="console-empty-state-title">No subscribers match your filters.</h2>
-    <a class="btn btn-outline" href="/console/subscribers">Reset filters</a>
+    <a class="btn btn-outline" href="{{base}}/console/subscribers">Reset filters</a>
   </div>
   {{else}}
   <div class="console-table-wrap">

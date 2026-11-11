@@ -27,9 +27,9 @@
   workflow-row — one <tr> in the workflows table. Binds a workflowRow.
 */}}
 {{define "workflow-row"}}
-<tr class="console-table-row" data-component="workflow-row" onclick="location.href='{{.Href}}'" style="cursor:pointer">
+<tr class="console-table-row" data-component="workflow-row" onclick="location.href='{{href .Href}}'" style="cursor:pointer">
   <td class="wf-col-name">
-    <a class="wf-name-link" href="{{.Href}}" title="{{.Name}}">{{.Name}}</a>
+    <a class="wf-name-link" href="{{href .Href}}" title="{{.Name}}">{{.Name}}</a>
     <span class="wf-trigger-id" onclick="event.stopPropagation()">
       <code class="wf-trigger-id-text">{{.TriggerIdentifier}}</code>
       <button type="button"
@@ -63,8 +63,8 @@
     {{if not .ReadOnly}}
     {{if .ConfirmDelete}}
     <span class="console-confirm-label">Delete?</span>
-    <a class="btn btn-outline btn-sm" href="/console/workflows">Cancel</a>
-    <form method="POST" action="/console/api/workflows/{{.TriggerIdentifier}}/delete" style="display:inline">
+    <a class="btn btn-outline btn-sm" href="{{base}}/console/workflows">Cancel</a>
+    <form method="POST" action="{{base}}/console/api/workflows/{{.TriggerIdentifier}}/delete" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <button type="submit" class="btn btn-danger btn-sm">Confirm</button>
     </form>
@@ -72,14 +72,14 @@
     <div class="wf-kebab">
       <button type="button" class="btn-icon" aria-label="Actions" onclick="this.nextElementSibling.classList.toggle('is-open')">{{ uiIcon "more-horizontal" }}</button>
       <div class="wf-kebab-menu">
-        <a class="wf-kebab-item" href="/console/workflows/{{.TriggerIdentifier}}/activity">Activity</a>
-        <a class="wf-kebab-item" href="/console/workflows/{{.TriggerIdentifier}}/test">Test</a>
-        <a class="wf-kebab-item" href="/console/workflows/{{.TriggerIdentifier}}/duplicate">Duplicate</a>
+        <a class="wf-kebab-item" href="{{base}}/console/workflows/{{.TriggerIdentifier}}/activity">Activity</a>
+        <a class="wf-kebab-item" href="{{base}}/console/workflows/{{.TriggerIdentifier}}/test">Test</a>
+        <a class="wf-kebab-item" href="{{base}}/console/workflows/{{.TriggerIdentifier}}/duplicate">Duplicate</a>
         {{/* Set wfConfirmDelete signal then @get — Datastar drops literal
              query params from @get URLs so the value must travel as a signal.
              The tbody re-renders with ConfirmDelete=true for this row. */}}
         <a class="wf-kebab-item wf-kebab-item--danger"
-           data-on:click="$wfConfirmDelete = '{{.TriggerIdentifier}}'; @get('/console/api/fragments/workflows-list')">Delete</a>
+           data-on:click="$wfConfirmDelete = '{{.TriggerIdentifier}}'; @get('{{base}}/console/api/fragments/workflows-list')">Delete</a>
       </div>
     </div>
     {{end}}

@@ -90,7 +90,7 @@ func (c *Console) handleWorkflowDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "delete failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/workflows", http.StatusSeeOther)
+	c.redirect(w, r, "/console/workflows", http.StatusSeeOther)
 }
 
 // handleWorkflowActivate handles POST /console/api/workflows/{slug}/activate.
@@ -129,7 +129,7 @@ func (c *Console) handleWorkflowActivate(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "activate failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/workflows/"+slug, http.StatusSeeOther)
+	c.redirect(w, r, "/console/workflows/"+slug, http.StatusSeeOther)
 }
 
 // handleWorkflowRollback handles POST /console/api/workflows/{slug}/rollback:
@@ -165,7 +165,7 @@ func (c *Console) handleWorkflowRollback(w http.ResponseWriter, r *http.Request)
 	editURL := "/console/workflows/" + slug
 	versionID := strings.TrimSpace(r.FormValue("versionId"))
 	if versionID == "" {
-		http.Redirect(w, r, editURL+"?error="+
+		c.redirect(w, r, editURL+"?error="+
 			url.QueryEscape("Version is required."), http.StatusSeeOther)
 		return
 	}
@@ -176,11 +176,11 @@ func (c *Console) handleWorkflowRollback(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		c.deps.Logger.Error("console: rollback workflow", "slug", slug, "err", err)
-		http.Redirect(w, r, editURL+"?error="+
+		c.redirect(w, r, editURL+"?error="+
 			url.QueryEscape("Rollback failed."), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, editURL, http.StatusSeeOther)
+	c.redirect(w, r, editURL, http.StatusSeeOther)
 }
 
 // ─── W2-A6: workflow activity tab ─────────────────────────────────────────────

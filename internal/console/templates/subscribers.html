@@ -14,13 +14,13 @@
            placeholder="Search by name…"
            aria-label="Search subscribers by name"
            data-bind="subscribersName"
-           data-on:input__debounce.300ms="@get('/console/api/fragments/subscribers-list')">
+           data-on:input__debounce.300ms="@get('{{base}}/console/api/fragments/subscribers-list')">
     <input type="search" class="console-input"
            placeholder="Search by email…"
            aria-label="Search subscribers by email"
            inputmode="email"
            data-bind="subscribersEmail"
-           data-on:input__debounce.300ms="@get('/console/api/fragments/subscribers-list')">
+           data-on:input__debounce.300ms="@get('{{base}}/console/api/fragments/subscribers-list')">
     {{if not $page.ReadOnly}}
     <button type="button" class="btn btn-primary" data-on:click="$subNewOpen = true">+ Add Subscriber</button>
     {{end}}
@@ -40,7 +40,7 @@
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
                 data-on:click="$subNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
-      <form method="POST" action="/console/subscribers" class="subscriber-edit-form">
+      <form method="POST" action="{{base}}/console/subscribers" class="subscriber-edit-form">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         {{if $page.FormError}}
         <p class="console-form-error" role="alert">{{$page.FormError}}</p>
@@ -94,7 +94,7 @@
   </div>
 
   {{/* Main table — loads via Datastar on-load; initial server render ensures no-JS fallback */}}
-  <div data-on-load="@get('/console/api/fragments/subscribers-list')">
+  <div data-on-load="@get('{{base}}/console/api/fragments/subscribers-list')">
     {{template "subscribers-tbody" $page.Fragment}}
   </div>
 </section>

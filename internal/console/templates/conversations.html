@@ -12,7 +12,7 @@
     <input type="text" class="console-input"
            placeholder="Filter by agent identifier…"
            data-bind="globalConvAgent"
-           data-on:input__debounce.300ms="$globalConvCursor = ''; @get('/console/api/fragments/global-conversations')">
+           data-on:input__debounce.300ms="$globalConvCursor = ''; @get('{{base}}/console/api/fragments/global-conversations')">
   </div>
 
   {{template "global-conversations-tbody" $page.Fragment}}

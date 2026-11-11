@@ -3,22 +3,22 @@
   {{template "page-header" $page.Header}}
 
   <div class="console-action-row">
-    <a class="btn btn-outline" href="/console/workflows">{{ uiIcon "arrow-left" }} Back</a>
+    <a class="btn btn-outline" href="{{base}}/console/workflows">{{ uiIcon "arrow-left" }} Back</a>
     {{/* Activity is read-only, so it stays available in read-only mode. Test
          fires a real trigger, so it is gated with the other mutations below. */}}
-    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}/activity">Activity</a>
+    <a class="btn btn-outline" href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}/activity">Activity</a>
     {{if not $page.ReadOnly}}
-    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}/test">Test</a>
-    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}/duplicate">Duplicate</a>
+    <a class="btn btn-outline" href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}/test">Test</a>
+    <a class="btn btn-outline" href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}/duplicate">Duplicate</a>
     {{if $page.ConfirmDelete}}
     <span class="console-confirm-label">Delete "{{$page.Name}}"? All history is retained.</span>
-    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}">Cancel</a>
-    <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/delete" style="display:inline">
+    <a class="btn btn-outline" href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}">Cancel</a>
+    <form method="POST" action="{{base}}/console/api/workflows/{{$page.TriggerIdentifier}}/delete" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
       <button type="submit" class="btn btn-danger">Confirm delete</button>
     </form>
     {{else}}
-    <a class="btn btn-danger" href="/console/workflows/{{$page.TriggerIdentifier}}?confirmDelete=true">Delete</a>
+    <a class="btn btn-danger" href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}?confirmDelete=true">Delete</a>
     {{end}}
     {{end}}
   </div>
@@ -33,7 +33,7 @@
         {{range $i, $step := $page.Steps}}
         <li class="wf-step-item" data-step-index="{{$i}}">
           <header class="wf-step-header" style="cursor:pointer"
-                  data-on:click="@get('/console/api/fragments/workflow-step-editor/{{$page.TriggerIdentifier}}/{{$step.StepID}}')">
+                  data-on:click="@get('{{base}}/console/api/fragments/workflow-step-editor/{{$page.TriggerIdentifier}}/{{$step.StepID}}')">
             <span class="chip chip-step chip-step--{{$step.Type}}">{{$step.Type}}</span>
             <span class="wf-step-id"><code>{{$step.StepID}}</code></span>
             {{if $step.Name}}<span class="wf-step-name">{{$step.Name}}</span>{{end}}
@@ -41,7 +41,7 @@
           {{if not $page.ReadOnly}}
           <div class="wf-step-actions">
             {{if gt $i 0}}
-            <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/steps/reorder" style="display:inline">
+            <form method="POST" action="{{base}}/console/api/workflows/{{$page.TriggerIdentifier}}/steps/reorder" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
               <input type="hidden" name="stepId" value="{{$step.StepID}}">
               <input type="hidden" name="direction" value="up">
@@ -49,7 +49,7 @@
             </form>
             {{end}}
             {{if lt $i (sub (len $page.Steps) 1)}}
-            <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/steps/reorder" style="display:inline">
+            <form method="POST" action="{{base}}/console/api/workflows/{{$page.TriggerIdentifier}}/steps/reorder" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
               <input type="hidden" name="stepId" value="{{$step.StepID}}">
               <input type="hidden" name="direction" value="down">
@@ -63,14 +63,14 @@
             {{if eq $page.ConfirmDeleteStep $step.StepID}}
             <span class="wf-step-confirm-delete">
               Remove <strong>{{$step.StepID}}</strong>?
-              <a href="/console/workflows/{{$page.TriggerIdentifier}}" class="btn btn-sm btn-outline">Cancel</a>
-              <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/steps/{{$step.StepID}}/delete" style="display:inline">
+              <a href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}" class="btn btn-sm btn-outline">Cancel</a>
+              <form method="POST" action="{{base}}/console/api/workflows/{{$page.TriggerIdentifier}}/steps/{{$step.StepID}}/delete" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
                 <button type="submit" class="btn btn-sm btn-danger">Remove</button>
               </form>
             </span>
             {{else}}
-            <a href="/console/workflows/{{$page.TriggerIdentifier}}?confirmDeleteStep={{$step.StepID}}"
+            <a href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}?confirmDeleteStep={{$step.StepID}}"
                class="btn-icon btn-icon-danger" title="Remove step" aria-label="Remove step {{$step.StepID}}">{{ uiIcon "x" }}</a>
             {{end}}
           </div>
@@ -93,7 +93,7 @@
         <h3 class="console-card-title" style="margin-top:var(--space-4)">Add step</h3>
         <div class="wf-step-type-buttons">
           {{range $entry := $page.StepCatalog}}
-          <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/steps" style="display:inline">
+          <form method="POST" action="{{base}}/console/api/workflows/{{$page.TriggerIdentifier}}/steps" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
             <input type="hidden" name="type" value="{{$entry.Name}}">
             <button type="submit" class="btn btn-outline btn-sm">+ {{$entry.Label}}</button>
@@ -113,7 +113,7 @@
       {{end}}
 
       {{if not $page.ReadOnly}}
-      <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/save">
+      <form method="POST" action="{{base}}/console/api/workflows/{{$page.TriggerIdentifier}}/save">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="wf-name">Name</label>
@@ -144,7 +144,7 @@
         <p class="wf-status-current">
           {{if $page.Active}}<span class="chip chip-success">active</span>{{else}}<span class="chip chip-warning">inactive</span>{{end}}
         </p>
-        <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/activate">
+        <form method="POST" action="{{base}}/console/api/workflows/{{$page.TriggerIdentifier}}/activate">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           {{if $page.Active}}
           <input type="hidden" name="active" value="0">
@@ -216,14 +216,14 @@
             {{else if not $page.ReadOnly}}
               {{if eq $page.ConfirmRollback $v.ID}}
               <span class="console-confirm-label">Roll back to v{{$v.Seq}}? This restores the workflow to that version — steps, name, and settings — and re-registers it immediately.</span>
-              <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}">Cancel</a>
-              <form method="POST" action="/console/api/workflows/{{$page.TriggerIdentifier}}/rollback" style="display:inline">
+              <a class="btn btn-outline" href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}">Cancel</a>
+              <form method="POST" action="{{base}}/console/api/workflows/{{$page.TriggerIdentifier}}/rollback" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
                 <input type="hidden" name="versionId" value="{{$v.ID}}">
                 <button type="submit" class="btn btn-danger">Confirm roll back</button>
               </form>
               {{else}}
-              <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}?confirmRollback={{$v.ID}}">Roll back</a>
+              <a class="btn btn-outline" href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}?confirmRollback={{$v.ID}}">Roll back</a>
               {{end}}
             {{end}}
           </header>
@@ -247,7 +247,7 @@
     <h2 id="wf-ai-refine-heading" class="console-card-title">{{ uiIcon "star" }} Refine with AI</h2>
     <p class="console-lede">Chat with the copilot to modify this workflow — it edits the live steps and you Keep the changes when you're happy.</p>
     <div class="console-action-row">
-      <a class="btn btn-primary" href="/console/workflows/ai?slug={{$page.TriggerIdentifier}}">{{ uiIcon "star" }} Refine with AI</a>
+      <a class="btn btn-primary" href="{{base}}/console/workflows/ai?slug={{$page.TriggerIdentifier}}">{{ uiIcon "star" }} Refine with AI</a>
     </div>
   </section>
   {{end}}

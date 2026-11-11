@@ -20,7 +20,7 @@
 
   <button type="button"
           class="integration-provider-back"
-          data-on:click="$integrationProviderPick='';@get('/console/api/fragments/integration-provider-form')">
+          data-on:click="$integrationProviderPick='';@get('{{base}}/console/api/fragments/integration-provider-form')">
     {{ uiIcon "arrow-left" }} Back
   </button>
 
@@ -28,7 +28,7 @@
   <p class="console-lede">Console is read-only; mutations are disabled.</p>
   {{else}}
   <form method="post"
-        action="/console/integrations"
+        action="{{base}}/console/integrations"
         class="console-form"
         autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
@@ -118,7 +118,7 @@
     <button type="button"
             class="integration-provider-row"
             data-show="$connectChannel === '{{.Channel}}'"
-            data-on:click="$integrationProviderPick='{{.ID}}';@get('/console/api/fragments/integration-provider-form')">
+            data-on:click="$integrationProviderPick='{{.ID}}';@get('{{base}}/console/api/fragments/integration-provider-form')">
       <span class="integration-provider-icon">{{providerIcon .ID}}</span>
       <span class="integration-provider-row-label">{{.Label}}</span>
       <span class="integration-provider-row-chevron" aria-hidden="true">{{ uiIcon "arrow-right" }}</span>

@@ -440,6 +440,8 @@ func (c *Console) channelSetupURL(integrationID string) string {
 	base := strings.TrimRight(c.deps.PublicBaseURL, "/")
 	if base == "" {
 		base = "{base_url}"
+	} else {
+		base += c.deps.BasePath // the API is mounted under the prefix too
 	}
 	return base + "/v1/inbound/" + integrationID
 }
@@ -592,12 +594,12 @@ func (c *Console) handleConversationRetry(w http.ResponseWriter, r *http.Request
 	err := c.deps.Retrier.RetryTurn(r.Context(), scope, identifier, convID, chi.URLParam(r, "activityId"))
 	switch {
 	case err == nil:
-		http.Redirect(w, r, back, http.StatusSeeOther)
+		c.redirect(w, r, back, http.StatusSeeOther)
 	case errors.Is(err, agentstore.ErrNotFound):
 		c.serveNotFound(w, r)
 	default:
 		c.deps.Logger.Error("console: retry turn", "identifier", identifier, "conv", convID, "err", err)
-		http.Redirect(w, r, back+"?error="+url.QueryEscape("Retry failed."), http.StatusSeeOther)
+		c.redirect(w, r, back+"?error="+url.QueryEscape("Retry failed."), http.StatusSeeOther)
 	}
 }
 
@@ -723,7 +725,7 @@ func (c *Console) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	identifier := strings.TrimSpace(r.FormValue("identifier"))
 	if identifier == "" {
-		redirectAgentNewErr(w, r, "Identifier is required.")
+		c.redirectAgentNewErr(w, r, "Identifier is required.")
 		return
 	}
 	// Reject identifiers outside the URL-safe slug allowlist — the identifier
@@ -731,7 +733,7 @@ func (c *Console) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 	// routes), so an unvalidated identifier would create an agent every
 	// console route 404s on, permanently orphaning it (same class as H2).
 	if !agentdomain.ValidIdentifier(identifier) {
-		redirectAgentNewErr(w, r, "Identifier may only contain lowercase letters, numbers, hyphens, and underscores.")
+		c.redirectAgentNewErr(w, r, "Identifier may only contain lowercase letters, numbers, hyphens, and underscores.")
 		return
 	}
 	runtime := strings.TrimSpace(r.FormValue("runtime"))
@@ -740,7 +742,7 @@ func (c *Console) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 	// dead-letter every turn (#103). Defense in depth behind the form, which
 	// only offers domain.SupportedRuntimes.
 	if !agentdomain.IsSupportedRuntime(runtime) {
-		redirectAgentNewErr(w, r, "Unsupported runtime.")
+		c.redirectAgentNewErr(w, r, "Unsupported runtime.")
 		return
 	}
 	agent, err := c.deps.Agents.Agents().Create(r.Context(), scope, agentdomain.Agent{
@@ -755,18 +757,18 @@ func (c *Console) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			redirectAgentNewErr(w, r, "Identifier already exists.")
+			c.redirectAgentNewErr(w, r, "Identifier already exists.")
 			return
 		}
 		c.deps.Logger.Error("console: create agent", "err", err)
-		redirectAgentNewErr(w, r, "Create failed.")
+		c.redirectAgentNewErr(w, r, "Create failed.")
 		return
 	}
-	http.Redirect(w, r, "/console/agents/"+url.PathEscape(agent.Identifier), http.StatusSeeOther)
+	c.redirect(w, r, "/console/agents/"+url.PathEscape(agent.Identifier), http.StatusSeeOther)
 }
 
-func redirectAgentNewErr(w http.ResponseWriter, r *http.Request, msg string) {
-	http.Redirect(w, r, "/console/agents/new?error="+url.QueryEscape(msg), http.StatusSeeOther)
+func (c *Console) redirectAgentNewErr(w http.ResponseWriter, r *http.Request, msg string) {
+	c.redirect(w, r, "/console/agents/new?error="+url.QueryEscape(msg), http.StatusSeeOther)
 }
 
 func (c *Console) handleAgentSave(w http.ResponseWriter, r *http.Request) {
@@ -800,7 +802,7 @@ func (c *Console) handleAgentSave(w http.ResponseWriter, r *http.Request) {
 	// crafted POST that changes runtime to an unsupported value is rejected
 	// (#113 Part B relaxes #103's blanket stored-runtime guard).
 	if rt := strings.TrimSpace(r.FormValue("runtime")); rt != "" && rt != agent.Runtime && !agentdomain.IsSupportedRuntime(rt) {
-		http.Redirect(w, r, "/console/agents/"+url.PathEscape(identifier)+"?error="+url.QueryEscape("Unsupported runtime."), http.StatusSeeOther)
+		c.redirect(w, r, "/console/agents/"+url.PathEscape(identifier)+"?error="+url.QueryEscape("Unsupported runtime."), http.StatusSeeOther)
 		return
 	}
 	agent.Name = strings.TrimSpace(r.FormValue("name"))
@@ -810,10 +812,10 @@ func (c *Console) handleAgentSave(w http.ResponseWriter, r *http.Request) {
 	agent.BridgeURL = strings.TrimSpace(r.FormValue("bridgeUrl"))
 	if _, err := c.deps.Agents.Agents().Update(r.Context(), scope, agent); err != nil {
 		c.deps.Logger.Error("console: save agent", "identifier", identifier, "err", err)
-		http.Redirect(w, r, "/console/agents/"+url.PathEscape(identifier)+"?error="+url.QueryEscape("Save failed."), http.StatusSeeOther)
+		c.redirect(w, r, "/console/agents/"+url.PathEscape(identifier)+"?error="+url.QueryEscape("Save failed."), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, "/console/agents/"+url.PathEscape(identifier), http.StatusSeeOther)
+	c.redirect(w, r, "/console/agents/"+url.PathEscape(identifier), http.StatusSeeOther)
 }
 
 func (c *Console) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
@@ -835,7 +837,7 @@ func (c *Console) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 		c.serveError(w, r)
 		return
 	}
-	http.Redirect(w, r, "/console/agents", http.StatusSeeOther)
+	c.redirect(w, r, "/console/agents", http.StatusSeeOther)
 }
 
 func (c *Console) handleAgentToggleActive(w http.ResponseWriter, r *http.Request) {
@@ -863,7 +865,7 @@ func (c *Console) handleAgentToggleActive(w http.ResponseWriter, r *http.Request
 		c.serveError(w, r)
 		return
 	}
-	http.Redirect(w, r, "/console/agents/"+url.PathEscape(identifier), http.StatusSeeOther)
+	c.redirect(w, r, "/console/agents/"+url.PathEscape(identifier), http.StatusSeeOther)
 }
 
 // channelsTabURL is the 303 target both channel mutations redirect to. msg,
@@ -907,14 +909,14 @@ func (c *Console) handleAgentChannelLink(w http.ResponseWriter, r *http.Request)
 	}
 	integrationID := strings.TrimSpace(r.FormValue("integrationId"))
 	if integrationID == "" {
-		http.Redirect(w, r, channelsTabURL(identifier, "Choose an integration to link."), http.StatusSeeOther)
+		c.redirect(w, r, channelsTabURL(identifier, "Choose an integration to link."), http.StatusSeeOther)
 		return
 	}
 	// Scope guard: only an integration visible in this tenant may be linked.
 	// This rejects both unknown ids and cross-tenant ids without panicking.
 	if _, err := c.deps.Integrations.GetByID(r.Context(), scope, integrationID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			http.Redirect(w, r, channelsTabURL(identifier, "That integration was not found."), http.StatusSeeOther)
+			c.redirect(w, r, channelsTabURL(identifier, "That integration was not found."), http.StatusSeeOther)
 			return
 		}
 		c.deps.Logger.Error("console: link channel get integration", "id", integrationID, "err", err)
@@ -926,10 +928,10 @@ func (c *Console) handleAgentChannelLink(w http.ResponseWriter, r *http.Request)
 		IntegrationID: integrationID,
 	}); err != nil {
 		c.deps.Logger.Error("console: link channel", "identifier", identifier, "integration", integrationID, "err", err)
-		http.Redirect(w, r, channelsTabURL(identifier, "Link failed."), http.StatusSeeOther)
+		c.redirect(w, r, channelsTabURL(identifier, "Link failed."), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, channelsTabURL(identifier, ""), http.StatusSeeOther)
+	c.redirect(w, r, channelsTabURL(identifier, ""), http.StatusSeeOther)
 }
 
 // handleAgentChannelUnlink removes the agent↔integration link and 303-redirects
@@ -959,14 +961,14 @@ func (c *Console) handleAgentChannelUnlink(w http.ResponseWriter, r *http.Reques
 	if err := c.deps.Agents.Links().Unlink(r.Context(), scope, agent.ID, integrationID); err != nil {
 		if errors.Is(err, agentstore.ErrNotFound) {
 			// Already gone (or never in scope) — converge on the tab quietly.
-			http.Redirect(w, r, channelsTabURL(identifier, ""), http.StatusSeeOther)
+			c.redirect(w, r, channelsTabURL(identifier, ""), http.StatusSeeOther)
 			return
 		}
 		c.deps.Logger.Error("console: unlink channel", "identifier", identifier, "integration", integrationID, "err", err)
-		http.Redirect(w, r, channelsTabURL(identifier, "Unlink failed."), http.StatusSeeOther)
+		c.redirect(w, r, channelsTabURL(identifier, "Unlink failed."), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, channelsTabURL(identifier, ""), http.StatusSeeOther)
+	c.redirect(w, r, channelsTabURL(identifier, ""), http.StatusSeeOther)
 }
 
 // handleConversationCompose relays the conversation view's send-message form
@@ -995,7 +997,7 @@ func (c *Console) handleConversationCompose(w http.ResponseWriter, r *http.Reque
 	}
 	text := strings.TrimSpace(r.FormValue("text"))
 	if text == "" {
-		http.Redirect(w, r, back, http.StatusSeeOther)
+		c.redirect(w, r, back, http.StatusSeeOther)
 		return
 	}
 	conv, err := c.deps.Agents.Conversations().Get(r.Context(), scope, convID)
@@ -1009,8 +1011,8 @@ func (c *Console) handleConversationCompose(w http.ResponseWriter, r *http.Reque
 	}
 	if _, err := c.deps.Composer.ComposeMessage(r.Context(), scope, identifier, conv.PlatformThreadID, "operator", text); err != nil {
 		c.deps.Logger.Error("console: compose message", "identifier", identifier, "conv", convID, "err", err)
-		http.Redirect(w, r, back+"?error="+url.QueryEscape("Send failed."), http.StatusSeeOther)
+		c.redirect(w, r, back+"?error="+url.QueryEscape("Send failed."), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, back, http.StatusSeeOther)
+	c.redirect(w, r, back, http.StatusSeeOther)
 }

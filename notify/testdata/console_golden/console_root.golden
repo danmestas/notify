@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard — notify console</title>
+  <link rel="stylesheet" href="/console/assets/app.623890b23e51.css">
+  <script>
+    
+    
+    
+    
+    (function () {
+      try {
+        var t = localStorage.getItem("notify-console-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (_) {}
+    })();
+  </script>
+  <script type="module">
+    
+    
+    
+    
+    import * as datastar from "\/console\/assets\/datastar.7eab056d9593.js";
+    window.datastar = datastar;
+  </script>
+  <script src="/console/assets/theme.d398b6d00ca7.js" defer></script>
+</head>
+<body class="console-shell">
+  <aside class="console-sidebar">
+    
+    <a href="/console/" class="console-brand">
+      <span class="console-name">noti<span class="console-name-accent">.fy</span><span class="console-name-scheme">://</span></span>
+      <span class="console-glyph" aria-hidden="true">://</span>
+    </a>
+    <nav class="console-nav" aria-label="primary">
+      
+      <div class="console-nav-section">
+        <p class="console-nav-group" aria-hidden="true">NOTIFY</p>
+        <ul class="console-nav-list" role="list">
+          
+          <li>
+            <a href="/console/" class="console-nav-link is-active"
+               aria-current="page">
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+              <span class="console-nav-text">Dashboard</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/workflows" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 6h6a4 4 0 0 1 4 4v0M6 8v8"/></svg>
+              <span class="console-nav-text">Workflows</span>
+              <span class="console-nav-badge">1</span>
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/activity" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+              <span class="console-nav-text">Activity</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/subscribers" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>
+              <span class="console-nav-text">Subscribers</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/topics" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+              <span class="console-nav-text">Topics</span>
+              
+            </a>
+          </li>
+          
+        </ul>
+      </div>
+      
+      <div class="console-nav-section">
+        <p class="console-nav-group" aria-hidden="true">CHANNELS</p>
+        <ul class="console-nav-list" role="list">
+          
+          <li>
+            <a href="/console/integrations" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M7 14v2a2 2 0 0 0 2 2h2M14 7h2a2 2 0 0 1 2 2v2"/></svg>
+              <span class="console-nav-text">Integrations</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/stream-sources" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.9 19.1a10 10 0 0 1 0-14.2"/><path d="M7.8 16.2a6 6 0 0 1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.5"/><path d="M19.1 4.9a10 10 0 0 1 0 14.2"/></svg>
+              <span class="console-nav-text">Stream Sources</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/webhooks" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 16.98a4 4 0 1 0-2.5-7.4M6.5 9.5A4 4 0 1 0 9 16.98M12 8v4l3 3"/></svg>
+              <span class="console-nav-text">Webhooks</span>
+              
+            </a>
+          </li>
+          
+        </ul>
+      </div>
+      
+      <div class="console-nav-section">
+        <p class="console-nav-group" aria-hidden="true">AGENTS</p>
+        <ul class="console-nav-list" role="list">
+          
+          <li>
+            <a href="/console/agents" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 2v4M9 13h.01M15 13h.01M2 14h2M20 14h2"/></svg>
+              <span class="console-nav-text">Agents</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/conversations" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span class="console-nav-text">Conversations</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/a2a-keys" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2M16 7l3 3M14 9l2 2"/></svg>
+              <span class="console-nav-text">A2A Client Keys</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/chat" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9a2 2 0 0 1-2 2H6l-4 3V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v10l-4-3h-6a2 2 0 0 1-2-2"/></svg>
+              <span class="console-nav-text">Chat Inbound</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/inbound-email" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/></svg>
+              <span class="console-nav-text">Inbound Email</span>
+              
+            </a>
+          </li>
+          
+        </ul>
+      </div>
+      
+      <div class="console-nav-section">
+        <p class="console-nav-group" aria-hidden="true">SYSTEM</p>
+        <ul class="console-nav-list" role="list">
+          
+          <li>
+            <a href="/console/analytics" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6"/><rect x="13" y="7" width="3" height="10"/></svg>
+              <span class="console-nav-text">Analytics</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/variables" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+              <span class="console-nav-text">Variables</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/contexts" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/></svg>
+              <span class="console-nav-text">Contexts</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/layouts" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+              <span class="console-nav-text">Layouts</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/translations" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h7M9 3v2c0 4-2 7-5 9M5 9c0 3 3 5 7 5"/><path d="M14 19l3-7 3 7M14.5 17h5"/></svg>
+              <span class="console-nav-text">Translations</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/domains" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20z"/></svg>
+              <span class="console-nav-text">Domains</span>
+              
+            </a>
+          </li>
+          
+        </ul>
+      </div>
+      
+      <div class="console-nav-section">
+        <p class="console-nav-group" aria-hidden="true">SETTINGS</p>
+        <ul class="console-nav-list" role="list">
+          
+          <li>
+            <a href="/console/settings/environments" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+              <span class="console-nav-text">Environments</span>
+              
+            </a>
+          </li>
+          
+          <li>
+            <a href="/console/settings/api-keys" class="console-nav-link"
+               >
+              <svg class="console-nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <span class="console-nav-text">API Keys</span>
+              
+            </a>
+          </li>
+          
+        </ul>
+      </div>
+      
+    </nav>
+    <div class="console-sidebar-footer">
+      
+      <p class="console-sidebar-version">notify v0.9.2 · :3000</p>
+    </div>
+  </aside>
+
+  <div class="console-content">
+    <header class="console-topbar">
+      <h1 class="console-topbar-title" title="Dashboard">Dashboard</h1>
+      <form class="console-search" role="search" data-on:submit="evt.preventDefault()">
+        <span class="console-search-icon" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        </span>
+        <input type="search" class="console-search-input" name="q"
+               placeholder="Search workflows, subscribers…"
+               aria-label="Search the console" autocomplete="off">
+        <kbd class="console-search-kbd" aria-hidden="true">⌘K</kbd>
+      </form>
+      <div class="console-topbar-utils">
+        <div class="console-env" data-signals="{envMenuOpen: false}">
+          <button type="button" class="console-env-trigger" aria-haspopup="menu"
+                  data-attr:aria-expanded="$envMenuOpen ? 'true' : 'false'"
+                  data-on:click="$envMenuOpen = !$envMenuOpen">
+            <span class="console-env-dot" aria-hidden="true"></span>
+            <span class="console-env-name">ULID</span>
+            <span class="console-env-chevron" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </span>
+          </button>
+          <div class="console-env-menu" role="menu" data-show="$envMenuOpen">
+            <p class="console-env-menu-head">Environment</p>
+            <span class="console-env-menu-item is-active" role="menuitemradio" aria-checked="true">
+              <span class="console-env-dot" aria-hidden="true"></span>
+              ULID
+            </span>
+            <p class="console-env-menu-meta">org ULID</p>
+            <div class="console-env-menu-sep" role="separator"></div>
+            <form method="post" action="/console/logout" class="console-logout" role="none">
+              <input type="hidden" name="csrf_token" value="CSRF">
+              <button type="submit" class="console-env-menu-action" role="menuitem">Sign out</button>
+            </form>
+          </div>
+        </div>
+        <button type="button" id="theme-toggle" class="theme-toggle"
+                data-theme-mode="system"
+                aria-label="Theme: system (click to cycle)" title="Toggle theme">
+          <span aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+          </span>
+          <span class="theme-toggle-label">System</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="console-main">
+      
+      
+      
+<section class="console-section dashboard">
+  <header class="dashboard-head">
+    <div>
+      <h2 class="dashboard-title">Delivery health</h2>
+      <p class="dashboard-subtitle">
+        Across the <strong>ULID</strong> environment · Wednesday, Nov 11
+      </p>
+    </div>
+    
+    <a href="/console/workflows" class="btn btn-primary dashboard-trigger">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg>
+      Trigger workflow
+    </a>
+    
+  </header>
+
+  <div class="dashboard-cards">
+    
+    <article class="kpi-card">
+      <div class="kpi-card-head">
+        <span class="kpi-card-label">Sent today</span>
+        <span class="kpi-card-glyph" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg>
+        </span>
+      </div>
+      <p class="kpi-card-value">
+        0
+        
+      </p>
+      <ul class="kpi-breakdown" role="list">
+        
+        <li class="kpi-breakdown-empty">No deliveries yet</li>
+        
+      </ul>
+    </article>
+
+    
+    <article class="kpi-card">
+      <div class="kpi-card-head">
+        <span class="kpi-card-label">Active workflows</span>
+        <span class="kpi-card-glyph" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 6h6a4 4 0 0 1 4 4M6 8v8"/></svg>
+        </span>
+      </div>
+      <p class="kpi-card-value">1 <span class="kpi-card-of">of 1</span></p>
+      <p class="kpi-card-note">
+        all active
+      </p>
+    </article>
+
+    
+    <article class="kpi-card">
+      <div class="kpi-card-head">
+        <span class="kpi-card-label">Agents</span>
+        <span class="kpi-card-glyph" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 2v4M9 13h.01M15 13h.01"/></svg>
+        </span>
+      </div>
+      <p class="kpi-card-value">0</p>
+      <p class="kpi-card-sub">0 mesh · 0 bridge</p>
+    </article>
+
+    
+    <article class="kpi-card kpi-card-danger">
+      <div class="kpi-card-head">
+        <span class="kpi-card-label">Errors · 24h</span>
+        <span class="kpi-card-glyph" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+        </span>
+      </div>
+      <p class="kpi-card-value">0</p>
+      <p class="kpi-card-note">
+        <span class="kpi-link-danger">DLQ in dagnats</span>
+      </p>
+    </article>
+  </div>
+
+  <div class="dashboard-lower">
+    
+    <section class="card dashboard-chart" aria-label="Deliveries per channel, last 7 days">
+      <header class="dashboard-chart-head">
+        <div>
+          <h3 class="card-title">Deliveries</h3>
+          <p class="card-subtitle">per channel, 7d</p>
+        </div>
+        <div class="dashboard-chart-toggles">
+          
+          <div class="pill-group" role="group" aria-label="Filter deliveries by channel">
+            <button type="button" class="pill pill-channel"
+                    data-on:click="@get('/console/api/fragments/dashboard-kpis')">all</button>
+            
+          </div>
+          <div class="pill-group seg" role="group" aria-label="Time range (display only)">
+            <span class="pill seg-item">24h</span>
+            <span class="pill seg-item is-active">7d</span>
+            <span class="pill seg-item">30d</span>
+          </div>
+        </div>
+      </header>
+      
+      <p class="console-empty-state-description dashboard-chart-empty">No deliveries in the last 7 days.</p>
+      
+      
+      
+<div id="dashboard-kpis" class="dashboard-kpis-strip" data-channel=""
+     aria-label="Deliveries by status">
+  
+  <span class="kpi-stat tile-tone-default" data-tone="default">
+    <span class="page-header-tile-count">0</span>
+    <span class="page-header-tile-label">deliveries</span>
+  </span>
+  
+  <span class="kpi-stat tile-tone-info" data-tone="info">
+    <span class="page-header-tile-count">1</span>
+    <span class="page-header-tile-label">workflows</span>
+  </span>
+</div>
+
+    </section>
+
+    
+    <section class="card dashboard-activity" aria-label="Recent activity">
+      <header class="dashboard-activity-head">
+        <h3 class="card-title">Recent activity</h3>
+        <a href="/console/activity" class="dashboard-activity-all">View all <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
+</a>
+      </header>
+      <ul class="dashboard-activity-list" role="list">
+        
+        <li class="dashboard-activity-empty">No recent activity in this environment.</li>
+        
+      </ul>
+    </section>
+  </div>
+</section>
+
+    </main>
+  </div>
+  <div id="toast-outlet">
+<div id="console-toast" class="console-toast"
+     role="status" aria-live="polite"></div>
+</div>
+</body>
+</html>

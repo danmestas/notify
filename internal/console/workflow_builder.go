@@ -306,7 +306,7 @@ func (c *Console) handleWorkflowSave(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.FormValue("name"))
 	editURL := "/console/workflows/" + slug
 	if name == "" {
-		http.Redirect(w, r, editURL+"?error="+
+		c.redirect(w, r, editURL+"?error="+
 			url.QueryEscape("Name is required."), http.StatusSeeOther)
 		return
 	}
@@ -331,7 +331,7 @@ func (c *Console) handleWorkflowSave(w http.ResponseWriter, r *http.Request) {
 	var schema json.RawMessage
 	if raw := strings.TrimSpace(r.FormValue("payload_schema")); raw != "" {
 		if !json.Valid([]byte(raw)) {
-			http.Redirect(w, r, editURL+"?error="+
+			c.redirect(w, r, editURL+"?error="+
 				url.QueryEscape("Payload schema is not valid JSON."), http.StatusSeeOther)
 			return
 		}
@@ -351,13 +351,13 @@ func (c *Console) handleWorkflowSave(w http.ResponseWriter, r *http.Request) {
 		// A blanket "Save failed." would be false: the operator's edits are
 		// on the row. Say so accurately instead (M6).
 		if errors.Is(err, authoring.ErrNoSteps) {
-			http.Redirect(w, r, editURL+"?error="+
+			c.redirect(w, r, editURL+"?error="+
 				url.QueryEscape("Configuration saved, but the workflow needs at least one step to publish."), http.StatusSeeOther)
 			return
 		}
 		var compileErr *authoring.ErrCompileFailure
 		if errors.As(err, &compileErr) {
-			http.Redirect(w, r, editURL+"?error="+
+			c.redirect(w, r, editURL+"?error="+
 				url.QueryEscape("Step configuration is invalid: "+compileErr.Error()), http.StatusSeeOther)
 			return
 		}
@@ -366,11 +366,11 @@ func (c *Console) handleWorkflowSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.deps.Logger.Error("console: save workflow", "slug", slug, "err", err)
-		http.Redirect(w, r, editURL+"?error="+
+		c.redirect(w, r, editURL+"?error="+
 			url.QueryEscape("Save failed."), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, editURL, http.StatusSeeOther)
+	c.redirect(w, r, editURL, http.StatusSeeOther)
 }
 
 // handleWorkflowStepAdd handles POST /console/api/workflows/{slug}/steps.
@@ -435,7 +435,7 @@ func (c *Console) handleWorkflowStepAdd(w http.ResponseWriter, r *http.Request) 
 	}); err != nil {
 		var compileErr *authoring.ErrCompileFailure
 		if errors.As(err, &compileErr) {
-			http.Redirect(w, r, "/console/workflows/"+slug+"?error="+
+			c.redirect(w, r, "/console/workflows/"+slug+"?error="+
 				url.QueryEscape(compileErr.Error()), http.StatusSeeOther)
 			return
 		}
@@ -443,7 +443,7 @@ func (c *Console) handleWorkflowStepAdd(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "add step failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/workflows/"+slug, http.StatusSeeOther)
+	c.redirect(w, r, "/console/workflows/"+slug, http.StatusSeeOther)
 }
 
 // handleWorkflowStepDelete handles POST /console/api/workflows/{slug}/steps/{stepId}/delete.
@@ -508,7 +508,7 @@ func (c *Console) handleWorkflowStepDelete(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "delete step failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/workflows/"+slug, http.StatusSeeOther)
+	c.redirect(w, r, "/console/workflows/"+slug, http.StatusSeeOther)
 }
 
 // handleWorkflowStepReorder handles POST /console/api/workflows/{slug}/steps/reorder.
@@ -569,7 +569,7 @@ func (c *Console) handleWorkflowStepReorder(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if idx == -1 {
-		http.Redirect(w, r, "/console/workflows/"+slug, http.StatusSeeOther)
+		c.redirect(w, r, "/console/workflows/"+slug, http.StatusSeeOther)
 		return
 	}
 	swap := idx + 1
@@ -590,7 +590,7 @@ func (c *Console) handleWorkflowStepReorder(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "reorder failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/workflows/"+slug, http.StatusSeeOther)
+	c.redirect(w, r, "/console/workflows/"+slug, http.StatusSeeOther)
 }
 
 // handleWorkflowStepSave handles POST /console/api/workflows/{slug}/steps/{stepId}/save.
@@ -647,13 +647,13 @@ func (c *Console) handleWorkflowStepSave(w http.ResponseWriter, r *http.Request)
 		found = true
 		cv, cvErr := c.controlValuesFromForm(steps[i].Type, r)
 		if cvErr != nil {
-			http.Redirect(w, r, editURL+"?error="+url.QueryEscape(cvErr.Error()), http.StatusSeeOther)
+			c.redirect(w, r, editURL+"?error="+url.QueryEscape(cvErr.Error()), http.StatusSeeOther)
 			return
 		}
 		steps[i].ControlValues = cv
 		filters, fErr := conditionsFromForm(r)
 		if fErr != nil {
-			http.Redirect(w, r, editURL+"?error="+url.QueryEscape(fErr.Error()), http.StatusSeeOther)
+			c.redirect(w, r, editURL+"?error="+url.QueryEscape(fErr.Error()), http.StatusSeeOther)
 			return
 		}
 		steps[i].Filters = filters
@@ -672,14 +672,14 @@ func (c *Console) handleWorkflowStepSave(w http.ResponseWriter, r *http.Request)
 	}); err != nil {
 		var compileErr *authoring.ErrCompileFailure
 		if errors.As(err, &compileErr) {
-			http.Redirect(w, r, editURL+"?error="+url.QueryEscape(compileErr.Error()), http.StatusSeeOther)
+			c.redirect(w, r, editURL+"?error="+url.QueryEscape(compileErr.Error()), http.StatusSeeOther)
 			return
 		}
 		c.deps.Logger.Error("console: step save update", "slug", slug, "err", err)
 		http.Error(w, "save step failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, editURL, http.StatusSeeOther)
+	c.redirect(w, r, editURL, http.StatusSeeOther)
 }
 
 // serveFragmentWorkflowStepEditor answers

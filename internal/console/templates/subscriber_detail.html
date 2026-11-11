@@ -4,40 +4,40 @@
   {{template "page-header" $page.Header}}
 
   <div class="console-action-row">
-    <a class="btn btn-outline" href="/console/subscribers">{{ uiIcon "arrow-left" }} Back to subscribers</a>
+    <a class="btn btn-outline" href="{{base}}/console/subscribers">{{ uiIcon "arrow-left" }} Back to subscribers</a>
     {{if not $page.ReadOnly}}
     {{if $page.ConfirmDelete}}
     {{/* Two-step inline confirm (chassis idiom): the first click navigated
          here with ?confirmDelete=true; this server-rendered state offers
          Cancel + a real POST form. No native confirm() dialogs. */}}
     <span class="console-confirm-label">Delete this subscriber? This cannot be undone.</span>
-    <a class="btn btn-outline" href="/console/subscribers/{{$page.Sub.ID}}?tab={{$page.ActiveTab}}">Cancel</a>
-    <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}/delete" style="display:inline">
+    <a class="btn btn-outline" href="{{base}}/console/subscribers/{{$page.Sub.ID}}?tab={{$page.ActiveTab}}">Cancel</a>
+    <form method="POST" action="{{base}}/console/subscribers/{{$page.Sub.ID}}/delete" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
       <button type="submit" class="btn btn-danger">Confirm delete</button>
     </form>
     {{else}}
     <a class="btn btn-danger"
-       href="/console/subscribers/{{$page.Sub.ID}}?tab={{$page.ActiveTab}}&confirmDelete=true">Delete subscriber</a>
+       href="{{base}}/console/subscribers/{{$page.Sub.ID}}?tab={{$page.ActiveTab}}&confirmDelete=true">Delete subscriber</a>
     {{end}}
     {{end}}
   </div>
 
   {{/* Tab bar */}}
   <nav class="console-tab-bar" aria-label="Subscriber tabs">
-    <a href="/console/subscribers/{{$page.Sub.ID}}?tab=overview"
+    <a href="{{base}}/console/subscribers/{{$page.Sub.ID}}?tab=overview"
        class="console-tab{{if eq $page.ActiveTab "overview"}} is-active{{end}}">
       Overview
     </a>
-    <a href="/console/subscribers/{{$page.Sub.ID}}?tab=activity"
+    <a href="{{base}}/console/subscribers/{{$page.Sub.ID}}?tab=activity"
        class="console-tab{{if eq $page.ActiveTab "activity"}} is-active{{end}}">
       Activity
     </a>
-    <a href="/console/subscribers/{{$page.Sub.ID}}?tab=preferences"
+    <a href="{{base}}/console/subscribers/{{$page.Sub.ID}}?tab=preferences"
        class="console-tab{{if eq $page.ActiveTab "preferences"}} is-active{{end}}">
       Preferences
     </a>
-    <a href="/console/subscribers/{{$page.Sub.ID}}?tab=channels"
+    <a href="{{base}}/console/subscribers/{{$page.Sub.ID}}?tab=channels"
        class="console-tab{{if eq $page.ActiveTab "channels"}} is-active{{end}}">
       Channels
     </a>
@@ -103,7 +103,7 @@
         {{if $page.FormError}}
         <p class="console-form-error" role="alert">{{$page.FormError}}</p>
         {{end}}
-        <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}" class="subscriber-edit-form">
+        <form method="POST" action="{{base}}/console/subscribers/{{$page.Sub.ID}}" class="subscriber-edit-form">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           <div class="form-row">
             <label class="form-label" for="sub-firstName">First name</label>
@@ -194,7 +194,7 @@
         {{if $page.Preferences.Global.Channels}}
         <div class="console-prefs-channels">
           {{range $page.Preferences.Global.Channels}}
-          <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}/preferences"
+          <form method="POST" action="{{base}}/console/subscribers/{{$page.Sub.ID}}/preferences"
                 class="console-pref-toggle-form">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
             <input type="hidden" name="channel" value="{{.Channel}}">
@@ -225,7 +225,7 @@
           <span class="console-prefs-workflow-label"><code>{{$wfRow.Label}}</code></span>
           <div class="console-prefs-channels">
             {{range $wfRow.Channels}}
-            <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}/preferences"
+            <form method="POST" action="{{base}}/console/subscribers/{{$page.Sub.ID}}/preferences"
                   class="console-pref-toggle-form">
               <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
               <input type="hidden" name="channel" value="{{.Channel}}">
@@ -259,7 +259,7 @@
           {{$readOnly := $page.ReadOnly}}
           {{$csrf := $.CSRF}}
           {{range $ch := mkDefaultChannels}}
-          <form method="POST" action="/console/subscribers/{{$subID}}/preferences"
+          <form method="POST" action="{{base}}/console/subscribers/{{$subID}}/preferences"
                 class="console-pref-toggle-form">
             <input type="hidden" name="csrf_token" value="{{$csrf}}">
             <input type="hidden" name="channel" value="{{$ch}}">
@@ -325,7 +325,7 @@
         <p class="console-form-error" role="alert">{{$page.Channels.FormError}}</p>
         {{end}}
         {{if $page.Channels.Connectable}}
-        <form method="POST" action="/console/subscribers/{{$page.Sub.ID}}/channels" class="console-form">
+        <form method="POST" action="{{base}}/console/subscribers/{{$page.Sub.ID}}/channels" class="console-form">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           <div class="form-row">
             <label class="form-label" for="channel-provider-trigger">Provider *</label>
@@ -351,7 +351,7 @@
             Connect an active chat or push integration first, then return here to
             set a delivery address.
           </p>
-          <a class="btn btn-primary" href="/console/integrations">Go to integrations</a>
+          <a class="btn btn-primary" href="{{base}}/console/integrations">Go to integrations</a>
         </div>
         {{end}}
       </div>

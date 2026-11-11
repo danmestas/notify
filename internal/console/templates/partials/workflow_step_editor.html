@@ -6,7 +6,7 @@
     <h3 class="console-card-title">{{$step.Type}} — <code>{{$step.StepID}}</code></h3>
   </div>
   {{if not $readOnly}}
-  <form method="POST" action="/console/api/workflows/{{$slug}}/steps/{{$step.StepID}}/save">
+  <form method="POST" action="{{base}}/console/api/workflows/{{$slug}}/steps/{{$step.StepID}}/save">
     <input type="hidden" name="csrf_token" value="{{$csrf}}">
     {{partial $step.EditorPartial $step}}
     <fieldset class="wf-conditions">
@@ -111,19 +111,19 @@
       <label class="form-label" for="cv-body">{{.BodyLabel}}</label>
       <textarea class="console-input wf-preview-textarea" id="cv-body" name="body" rows="{{.Rows}}"
                 data-bind="wfPreviewTmpl"
-                data-on:input__debounce.400ms="@get('/console/api/fragments/step-preview')">{{.Body}}</textarea>
+                data-on:input__debounce.400ms="@get('{{base}}/console/api/fragments/step-preview')">{{.Body}}</textarea>
     </div>
     <div class="form-row">
       <label class="form-label" for="wf-preview-payload">Sample payload (JSON)</label>
       <textarea class="console-input console-input-mono" id="wf-preview-payload" rows="3"
                 data-bind="wfPreviewPayload"
-                data-on:input__debounce.400ms="@get('/console/api/fragments/step-preview')">{}</textarea>
+                data-on:input__debounce.400ms="@get('{{base}}/console/api/fragments/step-preview')">{}</textarea>
     </div>
   </div>
   <div class="wf-preview-split-preview">
     <p class="form-label wf-preview-label">Preview</p>
     <p class="wf-preview-hint console-lede">Variables: <code>{{"{{payload.*}}"}}</code>, <code>{{"{{subscriber.firstName}}"}}</code></p>
-    <div data-on:load="@get('/console/api/fragments/step-preview')">
+    <div data-on:load="@get('{{base}}/console/api/fragments/step-preview')">
       <div id="step-preview-pane" class="step-preview-pane">
         <pre class="step-preview-output wf-code-block"></pre>
       </div>

@@ -361,7 +361,7 @@ func (c *Console) handleLayoutCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/layouts/"+key, http.StatusSeeOther)
+	c.redirect(w, r, "/console/layouts/"+key, http.StatusSeeOther)
 }
 
 // renderLayoutsCreateConflict re-renders the layouts page with the create
@@ -426,7 +426,7 @@ func (c *Console) handleLayoutSave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/layouts/"+key, http.StatusSeeOther)
+	c.redirect(w, r, "/console/layouts/"+key, http.StatusSeeOther)
 }
 
 // handleLayoutDelete handles POST /console/api/layouts/{key}/delete.
@@ -456,7 +456,7 @@ func (c *Console) handleLayoutDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "delete failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/layouts", http.StatusSeeOther)
+	c.redirect(w, r, "/console/layouts", http.StatusSeeOther)
 }
 
 // handleLayoutSetDefault handles POST /console/api/layouts/{key}/default. It
@@ -488,5 +488,5 @@ func (c *Console) handleLayoutSetDefault(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "set default failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/layouts", http.StatusSeeOther)
+	c.redirect(w, r, "/console/layouts", http.StatusSeeOther)
 }

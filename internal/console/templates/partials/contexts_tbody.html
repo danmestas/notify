@@ -25,8 +25,8 @@
         </td>
         <td>
           <button type="button" class="btn btn-outline btn-sm"
-                  data-on:click="@get('/console/api/fragments/contexts-list')">Cancel</button>
-          <form method="POST" action="/console/api/contexts/{{.Type}}/{{.ExternalID}}/delete" style="display:inline">
+                  data-on:click="@get('{{base}}/console/api/fragments/contexts-list')">Cancel</button>
+          <form method="POST" action="{{base}}/console/api/contexts/{{.Type}}/{{.ExternalID}}/delete" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
             <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
           </form>
@@ -35,13 +35,13 @@
       {{else}}
       <tr id="context-row-{{.ID}}">
         <td><code class="chip chip-default">{{.Type}}</code></td>
-        <td><a href="/console/contexts/{{.Type}}/{{.ExternalID}}">{{.ExternalID}}</a></td>
+        <td><a href="{{base}}/console/contexts/{{.Type}}/{{.ExternalID}}">{{.ExternalID}}</a></td>
         <td class="console-muted">{{.UpdatedAt}}</td>
         <td class="console-action-row">
           {{if not $v.ReadOnly}}
-          <a class="btn btn-outline btn-sm" href="/console/contexts/{{.Type}}/{{.ExternalID}}">Edit</a>
+          <a class="btn btn-outline btn-sm" href="{{base}}/console/contexts/{{.Type}}/{{.ExternalID}}">Edit</a>
           <button type="button" class="btn btn-outline btn-sm btn-danger"
-                  data-on:click="@get('/console/api/fragments/contexts-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
+                  data-on:click="@get('{{base}}/console/api/fragments/contexts-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
           {{end}}
         </td>
       </tr>

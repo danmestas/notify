@@ -21,7 +21,7 @@
     {{if .Error}}
     <p class="console-form-error" role="alert">{{.Error}}</p>
     {{end}}
-    <form method="post" action="/console/login">
+    <form method="post" action="{{base}}/console/login">
       {{/* Pre-session double-submit token: must equal the login cookie. No
            session exists yet, so this is what stops a cross-site page from
            silently signing the operator into the attacker's tenant. */}}
@@ -55,7 +55,7 @@
     </script>
     <p class="console-login-hint">
       Keys are minted by <code class="console-mono">notify bootstrap</code>.
-      The session lives in an encrypted cookie scoped to /console.
+      The session lives in an encrypted cookie scoped to {{base}}/console.
     </p>
   </main>
 </body>

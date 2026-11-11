@@ -11,7 +11,7 @@
      303-redirects, which reload the page with integrationDetailId set but
      leave the body on the placeholder until something fetches it (#bug-3). */}}
 <div id="integration-detail" class="integration-detail-inner"
-     {{if .Empty}}data-on-load="$integrationDetailId && @get('/console/api/fragments/integration-detail')"{{end}}>
+     {{if .Empty}}data-on-load="$integrationDetailId && @get('{{base}}/console/api/fragments/integration-detail')"{{end}}>
   {{if .Empty}}
   <div class="integration-detail-empty">
     <p class="console-lede">Select an integration to configure it.</p>
@@ -41,12 +41,12 @@
   <nav class="console-tabs" aria-label="Integration detail tabs">
     <button type="button"
             class="integration-detail-tab{{if or (eq $.ActiveTab "settings") (eq $.ActiveTab "")}} is-active{{end}}"
-            data-on:click="@get('/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}})">
+            data-on:click="@get('{{base}}/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}})">
       Settings
     </button>
     <button type="button"
             class="integration-detail-tab{{if eq $.ActiveTab "activity"}} is-active{{end}}"
-            data-on:click="@get('/console/api/fragments/integration-activity?id='+{{$in.ID | jsEscape}})">
+            data-on:click="@get('{{base}}/console/api/fragments/integration-activity?id='+{{$in.ID | jsEscape}})">
       Activity
     </button>
   </nav>
@@ -64,7 +64,7 @@
     {{end}}
     {{if not $.ReadOnly}}
     <form method="post"
-          action="/console/integrations/{{$in.ID}}/active">
+          action="{{base}}/console/integrations/{{$in.ID}}/active">
       <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
       {{if $in.Active}}
       <input type="hidden" name="active" value="false">
@@ -121,16 +121,16 @@
     {{else if $.ConfirmVerify}}
     <span class="console-confirm-label">Verify credentials? This performs a real provider handshake.</span>
     <button type="button" class="btn btn-outline"
-            data-on:click="@get('/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}})">
+            data-on:click="@get('{{base}}/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}})">
       Cancel
     </button>
-    <form method="post" action="/console/integrations/{{$in.ID}}/verify" style="display:inline">
+    <form method="post" action="{{base}}/console/integrations/{{$in.ID}}/verify" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
       <button type="submit" class="btn btn-primary">Confirm verify</button>
     </form>
     {{else}}
     <button type="button" class="btn btn-outline integration-verify-btn"
-            data-on:click="@get('/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}}+'&confirmVerify=true')">
+            data-on:click="@get('{{base}}/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}}+'&confirmVerify=true')">
       Verify credentials
     </button>
     {{end}}
@@ -155,7 +155,7 @@
     {{end}}
 
     {{if $.CanTestSend}}
-    <form method="post" action="/console/integrations/{{$in.ID}}/test-send" class="console-form">
+    <form method="post" action="{{base}}/console/integrations/{{$in.ID}}/test-send" class="console-form">
       <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
       <div class="form-row">
         <label class="form-label" for="testsend-destination-{{$in.ID}}">
@@ -208,7 +208,7 @@
     {{end}}
     {{if $.WebPushSubjectError}}<p class="console-alert console-alert-danger" role="alert">{{$.WebPushSubjectError}}</p>{{end}}
     {{if not $.ReadOnly}}
-    <form method="POST" action="/console/integrations/{{$in.ID}}/webpush-subject">
+    <form method="POST" action="{{base}}/console/integrations/{{$in.ID}}/webpush-subject">
       <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
       <input class="console-input" type="text" name="subject" aria-label="VAPID subject"
              placeholder="mailto:ops@example.com or https://example.com"
@@ -235,7 +235,7 @@
   </div>
   {{else}}
   <form method="post"
-        action="/console/integrations/{{$in.ID}}"
+        action="{{base}}/console/integrations/{{$in.ID}}"
         class="console-form"
         autocomplete="off">
     <input type="hidden" name="_method" value="PUT">
@@ -299,10 +299,10 @@
     <div class="console-form-actions">
       <button type="button"
               class="btn btn-outline"
-              data-on:click="@get('/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}})">
+              data-on:click="@get('{{base}}/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}})">
         Cancel
       </button>
-      <form method="post" action="/console/integrations/{{$in.ID}}/delete">
+      <form method="post" action="{{base}}/console/integrations/{{$in.ID}}/delete">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <button type="submit" class="btn btn-outline">Confirm delete</button>
       </form>
@@ -310,7 +310,7 @@
     {{else}}
     <button type="button"
             class="btn btn-outline"
-            data-on:click="@get('/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}}+'&confirmDelete=true')">
+            data-on:click="@get('{{base}}/console/api/fragments/integration-detail?id='+{{$in.ID | jsEscape}}+'&confirmDelete=true')">
       Delete integration
     </button>
     {{end}}
