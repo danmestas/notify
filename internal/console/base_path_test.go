@@ -19,6 +19,8 @@ func TestIngestBase_IncludesBasePath(t *testing.T) {
 		{"http addr", Deps{HTTPAddr: "http://127.0.0.1:3000", BasePath: "/notify"}, "http://127.0.0.1:3000/notify"},
 		{"http addr no prefix", Deps{HTTPAddr: "http://127.0.0.1:3000"}, "http://127.0.0.1:3000"},
 		{"placeholder", Deps{BasePath: "/notify"}, "$BASE"},
+		{"public url trailing slash", Deps{PublicBaseURL: "https://n.example.com/", BasePath: "/notify"}, "https://n.example.com/notify"},
+		{"http addr trailing slash", Deps{HTTPAddr: "http://127.0.0.1:3000/"}, "http://127.0.0.1:3000"},
 	}
 	for _, tc := range cases {
 		c := &Console{deps: tc.deps}

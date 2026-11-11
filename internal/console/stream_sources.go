@@ -32,6 +32,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -117,10 +118,10 @@ func (c *Console) streamSourceToRow(src domain.StreamSource) streamSourceRow {
 // ingestBase returns the origin the producer snippet points at.
 func (c *Console) ingestBase() string {
 	if c.deps.PublicBaseURL != "" {
-		return c.deps.PublicBaseURL + c.deps.BasePath
+		return strings.TrimRight(c.deps.PublicBaseURL, "/") + c.deps.BasePath
 	}
 	if c.deps.HTTPAddr != "" {
-		return c.deps.HTTPAddr + c.deps.BasePath
+		return strings.TrimRight(c.deps.HTTPAddr, "/") + c.deps.BasePath
 	}
 	return "$BASE"
 }
