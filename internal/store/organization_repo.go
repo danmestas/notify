@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/timestamp"
@@ -18,8 +17,8 @@ type OrganizationRepo interface {
 }
 
 type orgRepo struct {
-	w *sql.DB
-	r *sql.DB
+	w queryer
+	r queryer
 }
 
 func (repo *orgRepo) Create(ctx context.Context, name string) (domain.Organization, error) {

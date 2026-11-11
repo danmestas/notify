@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
@@ -38,9 +37,6 @@ type Service struct {
 	sessionKey []byte
 	store      *store.Store
 	gcm        cipher.AEAD
-	// ensureMu serialises EnsureTenant: organization names are not unique in
-	// the schema, so two concurrent first calls would each create one.
-	ensureMu sync.Mutex
 }
 
 // New builds a Service. masterKey must be exactly 32 bytes (AES-256-GCM); New
@@ -117,7 +113,7 @@ func (svc *Service) provisionEnv(ctx context.Context, orgID, envIdentifier strin
 func (svc *Service) CreateEnvironment(ctx context.Context, orgID, name, envType string) (string, domain.Environment, domain.Scope, error) {
 	env := domain.Environment{
 		Name:       name,
-		Identifier: strings.ToLower(strings.ReplaceAll(name, " ", "-")),
+		Identifier: envIdentifier(name),
 		Type:       envType,
 	}
 	created, scope, err := svc.store.Environments().Create(ctx, orgID, env)

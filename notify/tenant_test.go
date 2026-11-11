@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/danmestas/dagnats/program"
@@ -37,8 +36,8 @@ func TestNotify_EnsureTenant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureTenant: %v", err)
 	}
-	if !first.Created || first.APIKey == "" || first.OrgID == "" || first.EnvID == "" {
-		t.Fatalf("first = %+v, want Created with a key and ids", first)
+	if !first.KeyIssued || first.APIKey == "" || first.OrgID == "" || first.EnvID == "" {
+		t.Fatalf("first = %+v, want KeyIssued with a key and ids", first)
 	}
 	if got := subscribersStatus(t, n.Handler(), first.APIKey); got != http.StatusOK {
 		t.Fatalf("authenticated request with the minted key = %d, want 200", got)
@@ -51,8 +50,24 @@ func TestNotify_EnsureTenant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureTenant again: %v", err)
 	}
-	if again.Created || again.APIKey != "" || again.OrgID != first.OrgID || again.EnvID != first.EnvID {
-		t.Fatalf("again = %+v, want the same ids, no key, Created=false", again)
+	if again.KeyIssued || again.APIKey != "" || again.OrgID != first.OrgID || again.EnvID != first.EnvID {
+		t.Fatalf("again = %+v, want the same ids, no key, KeyIssued=false", again)
+	}
+}
+
+func TestNotify_EnsureTenantNormalisesAndStaysIdempotent(t *testing.T) {
+	n, _ := newNotify(t, "")
+	ctx := context.Background()
+	first, err := n.EnsureTenant(ctx, notify.TenantSpec{Organization: " Acme ", Environment: "Staging East"})
+	if err != nil {
+		t.Fatalf("EnsureTenant: %v", err)
+	}
+	again, err := n.EnsureTenant(ctx, notify.TenantSpec{Organization: "Acme", Environment: "staging-east"})
+	if err != nil || again.EnvID != first.EnvID || again.KeyIssued {
+		t.Fatalf("again = %+v, %v; want the same env, no key", again, err)
+	}
+	if _, err := n.EnsureTenant(ctx, notify.TenantSpec{Organization: "  ", Environment: "dev"}); !errors.Is(err, notify.ErrTenantSpec) {
+		t.Fatalf("blank org = %v, want ErrTenantSpec", err)
 	}
 }
 
@@ -72,8 +87,8 @@ func TestProgram_EnsureTenant(t *testing.T) {
 		DBPath:    filepath.Join(t.TempDir(), "notify.db"),
 		MasterKey: make([]byte, 32),
 	}}
-	if _, err := p.EnsureTenant(ctx, spec); err == nil || !strings.Contains(err.Error(), "not running") {
-		t.Fatalf("EnsureTenant before Start = %v, want a not-running error", err)
+	if _, err := p.EnsureTenant(ctx, spec); !errors.Is(err, notify.ErrNotRunning) {
+		t.Fatalf("EnsureTenant before Start = %v, want ErrNotRunning", err)
 	}
 
 	opts := program.Options{URL: dagtest.StartSidecar(t), SeedPath: filepath.Join(t.TempDir(), "notify.seed")}
@@ -87,10 +102,17 @@ func TestProgram_EnsureTenant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureTenant after Start: %v", err)
 	}
-	if !tenant.Created || tenant.APIKey == "" {
-		t.Fatalf("tenant = %+v, want Created with a key", tenant)
+	if !tenant.KeyIssued || tenant.APIKey == "" {
+		t.Fatalf("tenant = %+v, want KeyIssued with a key", tenant)
 	}
 	if got := subscribersStatus(t, p.Handler(), tenant.APIKey); got != http.StatusOK {
 		t.Fatalf("request through Program.Handler = %d, want 200", got)
+	}
+
+	if err := running.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if _, err := p.EnsureTenant(ctx, spec); !errors.Is(err, notify.ErrNotRunning) {
+		t.Fatalf("EnsureTenant after Stop = %v, want ErrNotRunning", err)
 	}
 }

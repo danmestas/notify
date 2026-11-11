@@ -71,8 +71,8 @@ type Notify struct {
 	eng *engine.Engine
 	ags *agentstore.Store
 	au  *authoring.Service
-	// identity is the one service that mints tenants, shared with the HTTP
-	// layer so EnsureTenant's lock covers every caller of this Notify.
+	// identity mints and authenticates API keys; it is the same service the
+	// HTTP layer and console are wired with.
 	identity *identity.Service
 
 	credVerify *credverify.Service

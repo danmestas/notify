@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -133,8 +134,11 @@ func collectIDs(rows *sql.Rows) ([]string, error) {
 }
 
 // runBootstrap provisions a tenant (org + env + API key) and prints the key and
-// scope so an operator can begin triggering.
-func runBootstrap(args []string) error {
+// scope so an operator can begin triggering. It is idempotent: when the tenant
+// already has a key it says so rather than creating a second organization.
+func runBootstrap(args []string) error { return bootstrapTo(os.Stdout, args) }
+
+func bootstrapTo(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("bootstrap", flag.ExitOnError)
 	org := fs.String("org", "", "organization name")
 	env := fs.String("env", "", "environment identifier")
@@ -160,16 +164,21 @@ func runBootstrap(args []string) error {
 	}
 	defer func() { _ = st.Close() }()
 
-	key, scope, err := identity.New(st, mk).Bootstrap(ctx, *org, *env)
+	tenant, err := identity.New(st, mk).EnsureTenant(ctx, *org, *env)
 	if err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
+	}
+	if !tenant.KeyIssued {
+		_, err := fmt.Fprintf(w, "tenant already exists (orgId %s, envId %s); its API key cannot be "+
+			"shown again, run `notify rotate-key` to mint a new one\n", tenant.Scope.OrgID, tenant.Scope.EnvID)
+		return err
 	}
 
 	out, _ := json.MarshalIndent(struct {
 		APIKey string `json:"apiKey"`
 		OrgID  string `json:"orgId"`
 		EnvID  string `json:"envId"`
-	}{key, scope.OrgID, scope.EnvID}, "", "  ")
-	fmt.Println(string(out))
-	return nil
+	}{tenant.APIKey, tenant.Scope.OrgID, tenant.Scope.EnvID}, "", "  ")
+	_, err = fmt.Fprintln(w, string(out))
+	return err
 }
