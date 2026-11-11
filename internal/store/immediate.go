@@ -25,7 +25,8 @@ func (t *Tx) ApiKeys() ApiKeyRepo             { return &apiKeyRepo{w: t.conn, r:
 // connection. IMMEDIATE takes SQLite's write lock before fn's first read, so
 // a find-then-create inside fn is atomic against every other writer, including
 // other processes sharing the database file (they wait out the busy timeout).
-// fn's error rolls the transaction back and is returned unchanged.
+// fn's error rolls the transaction back and is returned unchanged; a panic in
+// fn rolls it back and is re-raised.
 func (s *Store) WithImmediateTx(ctx context.Context, fn func(*Tx) error) error {
 	conn, err := s.writer.Conn(ctx)
 	if err != nil {
@@ -36,6 +37,16 @@ func (s *Store) WithImmediateTx(ctx context.Context, fn func(*Tx) error) error {
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return fmt.Errorf("store: begin immediate: %w", err)
 	}
+	// A panic in fn must not hand the pinned connection back to the pool
+	// mid-transaction: the writer pool has one connection, so every later
+	// write would fail or wait forever. Roll back, then let the panic go on.
+	// Deferred after conn.Close's defer, so it runs first.
+	defer func() {
+		if p := recover(); p != nil {
+			_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+			panic(p)
+		}
+	}()
 	if err := fn(&Tx{conn: conn}); err != nil {
 		// Roll back even when ctx is already cancelled, or the lock leaks
 		// with the pooled connection.
