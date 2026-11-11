@@ -318,10 +318,13 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 		return nil, fmt.Errorf("envvars.New: %w", err)
 	}
 
-	an, anClose, err := analyticsBackend(ctx, st, bus, cfg)
+	an, anClose, backend, err := analyticsBackend(ctx, st, bus, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("analyticsBackend: %w", err)
 	}
+	// The lake and SQLite answer the same API, so this line is the only way
+	// an operator can tell which one a process serves (#119).
+	log.Info("notify: analytics backend", "backend", backend)
 	n.an = an
 	n.push(anClose)
 
