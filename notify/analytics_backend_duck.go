@@ -21,17 +21,17 @@ import (
 // With Config.AnalyticsLake set (NOTIFY_ANALYTICS_LAKE), queries read the
 // analytics lake instead and the projector keeps writing SQLite; DuckDBPath is
 // not opened.
-func analyticsBackend(ctx context.Context, st *store.Store, bus *eventbus.Bus, cfg Config) (*analytics.Service, func() error, error) {
+func analyticsBackend(ctx context.Context, st *store.Store, bus *eventbus.Bus, cfg Config) (*analytics.Service, func() error, string, error) {
 	if cfg.AnalyticsLake.Enabled() {
 		repo, err := analyticsduck.OpenLake(ctx, cfg.AnalyticsLake, st.Analytics())
 		if err != nil {
-			return nil, nil, fmt.Errorf("analyticsduck.OpenLake: %w", err)
+			return nil, nil, "", fmt.Errorf("analyticsduck.OpenLake: %w", err)
 		}
-		return analytics.NewWithRepo(repo, bus), repo.Close, nil
+		return analytics.NewWithRepo(repo, bus), repo.Close, "lake " + cfg.AnalyticsLake.String(), nil
 	}
 	repo, err := analyticsduck.Open(ctx, cfg.DuckDBPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("analyticsduck.Open: %w", err)
+		return nil, nil, "", fmt.Errorf("analyticsduck.Open: %w", err)
 	}
-	return analytics.NewWithRepo(repo, bus), repo.Close, nil
+	return analytics.NewWithRepo(repo, bus), repo.Close, "duckdb " + cfg.DuckDBPath, nil
 }
