@@ -37,6 +37,6 @@
 <span class="btn btn-outline" aria-disabled="true"
       title="Console is read-only; mutations are disabled.">{{.Label}}</span>
 {{else}}
-<a class="btn btn-outline" href="{{.Href}}">{{.Label}}</a>
+<a class="btn btn-outline" href="{{href .Href}}">{{.Label}}</a>
 {{end}}
 {{end}}

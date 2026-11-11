@@ -24,7 +24,7 @@
   {{end}}
 
   {{if not $page.ReadOnly}}
-  <form method="POST" action="/console/a2a-keys" class="console-filter-bar" id="a2a-key-create-form">
+  <form method="POST" action="{{base}}/console/a2a-keys" class="console-filter-bar" id="a2a-key-create-form">
     <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
     <label class="form-inline-label" for="new-a2a-key-name">Name
       <input class="console-input" type="text" id="new-a2a-key-name" name="name" placeholder="billing-agent" required aria-required="true" maxlength="64"></label>
@@ -47,8 +47,8 @@
       <tr id="a2a-key-row-{{.ID}}" class="confirm-row">
         <td colspan="4"><span class="console-confirm-label">Revoke <code>{{.Name}}</code>? It stops working immediately and this cannot be undone.</span></td>
         <td colspan="2">
-          <a class="btn btn-outline btn-sm" href="/console/a2a-keys">Cancel</a>
-          <form method="POST" action="/console/a2a-keys/{{.ID}}/revoke" style="display:inline">
+          <a class="btn btn-outline btn-sm" href="{{base}}/console/a2a-keys">Cancel</a>
+          <form method="POST" action="{{base}}/console/a2a-keys/{{.ID}}/revoke" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
             <button type="submit" class="btn btn-danger btn-sm">Confirm revoke</button>
           </form>
@@ -63,7 +63,7 @@
         <td>{{if .Revoked}}<span class="chip chip-warning" title="{{.RevokedAt}}">Revoked</span>{{else}}<span class="chip chip-success">Active</span>{{end}}</td>
         <td class="console-action-row">
           {{if and (not $page.ReadOnly) (not .Revoked)}}
-          <a class="btn btn-outline btn-sm btn-danger" href="/console/a2a-keys?confirmRevoke={{.ID | urlquery}}">Revoke</a>
+          <a class="btn btn-outline btn-sm btn-danger" href="{{base}}/console/a2a-keys?confirmRevoke={{.ID | urlquery}}">Revoke</a>
           {{end}}
         </td>
       </tr>

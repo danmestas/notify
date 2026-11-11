@@ -234,6 +234,9 @@ type Deps struct {
 	// /v1/inbound/email endpoint is live. False renders the "endpoint disabled"
 	// warning. The console never sees the secret value.
 	InboundSecretConfigured bool
+	// BasePath is the cleaned mount prefix ("" or "/x", no trailing slash) that
+	// notify strips before routing. Every URL the console emits carries it.
+	BasePath string
 	// PublicBaseURL is the server's public origin (e.g.
 	// "https://notify.example.com"). The agent channels tab uses it to render a
 	// ready-to-register inbound webhook URL for each linked chat integration,

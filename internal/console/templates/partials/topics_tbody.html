@@ -17,7 +17,7 @@
   {{else if and (eq (len .Rows) 0) .HasFilters}}
   <div class="console-empty-state" data-component="no-results">
     <h2 class="console-empty-state-title">No topics match your filters.</h2>
-    <a class="btn btn-outline" href="/console/topics">Reset filters</a>
+    <a class="btn btn-outline" href="{{base}}/console/topics">Reset filters</a>
   </div>
   {{else}}
   <div class="console-table-wrap">
@@ -35,7 +35,7 @@
         <tr class="console-table-row"
             data-component="topic-row">
           <td>
-            <a href="/console/topics/{{.Key}}"><code class="chip chip-default">{{.Key}}</code></a>
+            <a href="{{base}}/console/topics/{{.Key}}"><code class="chip chip-default">{{.Key}}</code></a>
           </td>
           <td>{{.Name}}</td>
           <td>
@@ -43,23 +43,23 @@
           </td>
           <td>
             <div class="subscriber-row-actions">
-              <a class="btn-icon" href="/console/topics/{{.Key}}" title="View topic">{{ uiIcon "arrow-up-right" }}</a>
+              <a class="btn-icon" href="{{base}}/console/topics/{{.Key}}" title="View topic">{{ uiIcon "arrow-up-right" }}</a>
               {{if not $.ReadOnly}}
               {{if eq $.ConfirmDelete .Key}}
               {{/* Two-step inline confirm (chassis idiom): first click swapped
                    this row into confirm state via the fragment; Cancel
                    re-fetches the plain list, the POST form really deletes. */}}
               <button type="button" class="btn btn-outline"
-                      data-on:click="@get('/console/api/fragments/topics-list')">
+                      data-on:click="@get('{{base}}/console/api/fragments/topics-list')">
                 Cancel
               </button>
-              <form method="POST" action="/console/topics/{{.Key}}/delete" style="display:inline">
+              <form method="POST" action="{{base}}/console/topics/{{.Key}}/delete" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
                 <button type="submit" class="btn btn-danger">Confirm delete</button>
               </form>
               {{else}}
               <button type="button" class="btn-icon" title="Delete topic"
-                      data-on:click="@get('/console/api/fragments/topics-list?confirmDelete={{.Key | urlquery}}')">
+                      data-on:click="@get('{{base}}/console/api/fragments/topics-list?confirmDelete={{.Key | urlquery}}')">
                 {{ uiIcon "x" }}
               </button>
               {{end}}

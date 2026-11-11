@@ -21,14 +21,14 @@
 {{define "activity-rows"}}
 {{range .Rows}}
 <tr class="activity-row" data-id="{{.ID}}"
-    data-on:click="$selectedNotificationId = '{{.ID}}'; @get('/console/api/fragments/activity-detail?notification_id={{.ID}}')">
+    data-on:click="$selectedNotificationId = '{{.ID}}'; @get('{{base}}/console/api/fragments/activity-detail?notification_id={{.ID}}')">
   <td class="activity-col-status">
     <span class="activity-status-chip activity-status-chip--{{.Status}} tile-tone-{{.StatusTone}}"
           title="{{.Status}}">{{.Status}}</span>
   </td>
   <td class="activity-col-workflow">
     {{if .WorkflowURL}}
-    <a class="activity-workflow-name console-link" href="{{.WorkflowURL}}" title="{{.WorkflowID}}">{{.WorkflowName}}</a>
+    <a class="activity-workflow-name console-link" href="{{href .WorkflowURL}}" title="{{.WorkflowID}}">{{.WorkflowName}}</a>
     {{else}}
     <span class="activity-workflow-name" title="{{.WorkflowID}}">{{.WorkflowName}}</span>
     {{end}}
@@ -63,7 +63,7 @@
       {{end}}
       {{if .Cursor}}
       <button type="button" class="btn btn-outline activity-load-more"
-              data-on:click="@get('/console/api/fragments/activity-list?cursor={{.Cursor}}&limit={{.Limit}}')">
+              data-on:click="@get('{{base}}/console/api/fragments/activity-list?cursor={{.Cursor}}&limit={{.Limit}}')">
         Load more
       </button>
       {{end}}
@@ -87,7 +87,7 @@
         <h2 class="console-empty-state-title">No runs match your filters</h2>
         <p class="console-empty-state-description">
           Try adjusting or
-          <a class="console-link" href="/console/activity">resetting</a>
+          <a class="console-link" href="{{base}}/console/activity">resetting</a>
           the filter bar.
         </p>
       </div>

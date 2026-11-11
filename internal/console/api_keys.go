@@ -181,7 +181,7 @@ func (c *Console) handleAPIKeyRegenerate(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "rotate failed", http.StatusInternalServerError)
 		return
 	}
-	setSessionCookie(w, r, sealed)
+	c.setSessionCookie(w, r, sealed)
 
 	// Stash the raw key server-side and redirect with an opaque one-shot
 	// token — never the key — so the secret never transits the URL,
@@ -192,7 +192,7 @@ func (c *Console) handleAPIKeyRegenerate(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "rotate failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(
+	c.redirect(
 		w, r,
 		"/console/settings/api-keys?revealed="+token+"&rotated=1",
 		http.StatusSeeOther,

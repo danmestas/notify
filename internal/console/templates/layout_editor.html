@@ -6,9 +6,9 @@
   {{if $page.ConfirmDelete}}
   <div class="console-confirm-banner">
     <span class="console-confirm-label">Delete layout <code>{{$page.Layout.Key}}</code>? This cannot be undone.</span>
-    <a class="btn btn-outline btn-sm" href="/console/layouts/{{$page.Layout.Key}}">Cancel</a>
+    <a class="btn btn-outline btn-sm" href="{{base}}/console/layouts/{{$page.Layout.Key}}">Cancel</a>
     {{if not $page.ReadOnly}}
-    <form method="POST" action="/console/api/layouts/{{$page.Layout.Key}}/delete" style="display:inline">
+    <form method="POST" action="{{base}}/console/api/layouts/{{$page.Layout.Key}}/delete" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
       <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
     </form>
@@ -17,7 +17,7 @@
   {{end}}
 
   {{if not $page.ReadOnly}}
-  <form method="POST" action="/console/api/layouts/{{$page.Layout.Key}}/save" class="layout-editor-form">
+  <form method="POST" action="{{base}}/console/api/layouts/{{$page.Layout.Key}}/save" class="layout-editor-form">
     <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
     <div class="form-row">
       <label class="form-label" for="layout-name">Name</label>
@@ -31,10 +31,10 @@
       <p class="form-hint">Use <code>&#123;&#123;content&#125;&#125;</code> where the step body should be injected.</p>
     </div>
     <div class="console-form-actions">
-      <a href="/console/layouts" class="btn btn-outline">Back to list</a>
+      <a href="{{base}}/console/layouts" class="btn btn-outline">Back to list</a>
       <button type="submit" class="btn btn-primary">Save changes</button>
       {{if not $page.ConfirmDelete}}
-      <a href="/console/layouts/{{$page.Layout.Key}}?confirmDelete=true"
+      <a href="{{base}}/console/layouts/{{$page.Layout.Key}}?confirmDelete=true"
          class="btn btn-outline btn-danger">Delete…</a>
       {{end}}
     </div>
@@ -49,7 +49,7 @@
     <pre class="console-textarea-mono">{{$page.Layout.Content}}</pre>
   </div>
   <div class="console-form-actions">
-    <a href="/console/layouts" class="btn btn-outline">Back to list</a>
+    <a href="{{base}}/console/layouts" class="btn btn-outline">Back to list</a>
   </div>
   {{end}}
 </section>

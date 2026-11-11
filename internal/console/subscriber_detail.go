@@ -536,7 +536,7 @@ func (c *Console) handleSubscriberPreferencesPatch(w http.ResponseWriter, r *htt
 		}
 	}
 
-	http.Redirect(w, r, "/console/subscribers/"+id+"?tab=preferences", http.StatusSeeOther)
+	c.redirect(w, r, "/console/subscribers/"+id+"?tab=preferences", http.StatusSeeOther)
 }
 
 // handleSubscriberChannels handles POST /console/subscribers/{subscriberId}/channels.
@@ -593,7 +593,7 @@ func (c *Console) handleSubscriberChannels(w http.ResponseWriter, r *http.Reques
 		// Missing provider_id: redirect back to the channels tab with an
 		// inline error rather than a raw text/plain response.
 		chanTabURL := "/console/subscribers/" + id + "?tab=channels"
-		http.Redirect(w, r, chanTabURL+"&error="+url.QueryEscape("provider_id is required"), http.StatusSeeOther)
+		c.redirect(w, r, chanTabURL+"&error="+url.QueryEscape("provider_id is required"), http.StatusSeeOther)
 		return
 	}
 	if value == "" {
@@ -633,5 +633,5 @@ func (c *Console) handleSubscriberChannels(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	http.Redirect(w, r, "/console/subscribers/"+id+"?tab=channels", http.StatusSeeOther)
+	c.redirect(w, r, "/console/subscribers/"+id+"?tab=channels", http.StatusSeeOther)
 }

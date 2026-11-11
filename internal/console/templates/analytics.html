@@ -16,11 +16,11 @@
        data-signals="{{$page.KPIs.Signals}}">
 
     <nav class="analytics-range-tabs" aria-label="Time range">
-      <a href="/console/analytics?range=24h{{if $page.KPIs.WorkflowID}}&workflow_id={{$page.KPIs.WorkflowID}}{{end}}"
+      <a href="{{base}}/console/analytics?range=24h{{if $page.KPIs.WorkflowID}}&workflow_id={{$page.KPIs.WorkflowID}}{{end}}"
          class="analytics-range-tab{{if eq $page.KPIs.Range "24h"}} is-active{{end}}">24h</a>
-      <a href="/console/analytics?range=7d{{if $page.KPIs.WorkflowID}}&workflow_id={{$page.KPIs.WorkflowID}}{{end}}"
+      <a href="{{base}}/console/analytics?range=7d{{if $page.KPIs.WorkflowID}}&workflow_id={{$page.KPIs.WorkflowID}}{{end}}"
          class="analytics-range-tab{{if eq $page.KPIs.Range "7d"}} is-active{{end}}">7d</a>
-      <a href="/console/analytics?range=30d{{if $page.KPIs.WorkflowID}}&workflow_id={{$page.KPIs.WorkflowID}}{{end}}"
+      <a href="{{base}}/console/analytics?range=30d{{if $page.KPIs.WorkflowID}}&workflow_id={{$page.KPIs.WorkflowID}}{{end}}"
          class="analytics-range-tab{{if eq $page.KPIs.Range "30d"}} is-active{{end}}">30d</a>
     </nav>
 
@@ -33,7 +33,7 @@
       {{template "ui-select" (uiSelect "analytics-workflow-select" "" "analyticsWorkflow"
         $page.WorkflowSelectOptions
         "All workflows"
-        (print "window.location.href = '/console/analytics?range=" $page.KPIs.Range "' + ($analyticsWorkflow ? '&workflow_id=' + encodeURIComponent($analyticsWorkflow) : '')")
+        (print "window.location.href = '" base "/console/analytics?range=" $page.KPIs.Range "' + ($analyticsWorkflow ? '&workflow_id=' + encodeURIComponent($analyticsWorkflow) : '')")
         false)}}
     </div>
     {{end}}

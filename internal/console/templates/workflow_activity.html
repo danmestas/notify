@@ -5,25 +5,25 @@
      ?target=wf selects the per-workflow tbody + row template. Same endpoint as
      the global feed (gate 4.2: one slice, both consumers). */}}
 <section class="console-section" data-signals="{{$page.Signals}}"
-         data-init="@get('/console/api/stream/activity?target=wf&workflow={{$page.WorkflowID}}', {openWhenHidden: true})">
+         data-init="@get('{{base}}/console/api/stream/activity?target=wf&workflow={{$page.WorkflowID}}', {openWhenHidden: true})">
   {{template "page-header" $page.Header}}
 
   <div class="console-action-row">
-    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}">{{ uiIcon "arrow-left" }} Editor</a>
-    <a class="btn btn-outline" href="/console/workflows/{{$page.TriggerIdentifier}}/test">Test</a>
+    <a class="btn btn-outline" href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}">{{ uiIcon "arrow-left" }} Editor</a>
+    <a class="btn btn-outline" href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}/test">Test</a>
   </div>
 
   {{/* Tab bar */}}
   <nav class="console-tab-bar" aria-label="Workflow tabs">
-    <a href="/console/workflows/{{$page.TriggerIdentifier}}"
+    <a href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}"
        class="console-tab">
       Editor
     </a>
-    <a href="/console/workflows/{{$page.TriggerIdentifier}}/test"
+    <a href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}/test"
        class="console-tab">
       Test
     </a>
-    <a href="/console/workflows/{{$page.TriggerIdentifier}}/activity"
+    <a href="{{base}}/console/workflows/{{$page.TriggerIdentifier}}/activity"
        class="console-tab is-active">
       Activity
     </a>
@@ -34,10 +34,10 @@
        data-signals="{wfActStatus: '', wfActRange: ''}">
     {{template "ui-select" (uiSelect "wf-act-status" "" "wfActStatus"
       (uiSelectOptions "" "All statuses" "pending" "Pending" "sent" "Sent" "delivered" "Delivered" "failed" "Failed")
-      "All statuses" (print "@get('/console/api/fragments/workflow-activity/" $page.TriggerIdentifier "?status=' + $wfActStatus + '&range=' + $wfActRange)") false)}}
+      "All statuses" (print "@get('{{base}}/console/api/fragments/workflow-activity/" $page.TriggerIdentifier "?status=' + $wfActStatus + '&range=' + $wfActRange)") false)}}
     {{template "ui-select" (uiSelect "wf-act-range" "" "wfActRange"
       (uiSelectOptions "" "All time" "1h" "Last 1 hour" "24h" "Last 24 hours" "7d" "Last 7 days")
-      "All time" (print "@get('/console/api/fragments/workflow-activity/" $page.TriggerIdentifier "?status=' + $wfActStatus + '&range=' + $wfActRange)") false)}}
+      "All time" (print "@get('{{base}}/console/api/fragments/workflow-activity/" $page.TriggerIdentifier "?status=' + $wfActStatus + '&range=' + $wfActRange)") false)}}
   </div>
 
   <table class="activity-table wf-activity-table" id="wf-activity-table">

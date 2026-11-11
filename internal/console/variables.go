@@ -329,30 +329,30 @@ func (c *Console) handleVariableCreate(w http.ResponseWriter, r *http.Request) {
 	// the create instead; an intentional edit of an existing var stays via
 	// the update route.
 	if _, err := c.deps.EnvVars.Get(r.Context(), scope, key); err == nil {
-		redirectVariableNewErr(w, r, "Variable already exists.")
+		c.redirectVariableNewErr(w, r, "Variable already exists.")
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {
 		c.deps.Logger.Error("console: check existing variable", "err", err)
-		redirectVariableNewErr(w, r, "Create failed.")
+		c.redirectVariableNewErr(w, r, "Create failed.")
 		return
 	}
 
 	if _, err := c.deps.EnvVars.Set(r.Context(), scope, key, isSecret, value); err != nil {
 		if errors.Is(err, envvars.ErrInvalidKey) {
-			redirectVariableNewErr(w, r, "Variable key may only contain letters, numbers, hyphens, and underscores.")
+			c.redirectVariableNewErr(w, r, "Variable key may only contain letters, numbers, hyphens, and underscores.")
 			return
 		}
 		c.deps.Logger.Error("console: create variable", "err", err)
-		redirectVariableNewErr(w, r, "Create failed.")
+		c.redirectVariableNewErr(w, r, "Create failed.")
 		return
 	}
-	http.Redirect(w, r, "/console/variables/"+key, http.StatusSeeOther)
+	c.redirect(w, r, "/console/variables/"+key, http.StatusSeeOther)
 }
 
 // redirectVariableNewErr 303-redirects back to /console/variables/new with an
 // inline ?error= banner instead of a raw 4xx/5xx plaintext response (H5).
-func redirectVariableNewErr(w http.ResponseWriter, r *http.Request, msg string) {
-	http.Redirect(w, r, "/console/variables/new?error="+url.QueryEscape(msg), http.StatusSeeOther)
+func (c *Console) redirectVariableNewErr(w http.ResponseWriter, r *http.Request, msg string) {
+	c.redirect(w, r, "/console/variables/new?error="+url.QueryEscape(msg), http.StatusSeeOther)
 }
 
 func (c *Console) handleVariableUpdate(w http.ResponseWriter, r *http.Request) {
@@ -405,7 +405,7 @@ func (c *Console) handleVariableUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "update failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/variables/"+key, http.StatusSeeOther)
+	c.redirect(w, r, "/console/variables/"+key, http.StatusSeeOther)
 }
 
 func (c *Console) handleVariableDelete(w http.ResponseWriter, r *http.Request) {
@@ -435,5 +435,5 @@ func (c *Console) handleVariableDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "delete failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/variables", http.StatusSeeOther)
+	c.redirect(w, r, "/console/variables", http.StatusSeeOther)
 }

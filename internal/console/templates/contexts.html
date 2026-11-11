@@ -8,7 +8,7 @@
            placeholder="Filter by type…"
            aria-label="Filter contexts by type"
            data-bind="contextsType"
-           data-on:input__debounce.300ms="@get('/console/api/fragments/contexts-list')">
+           data-on:input__debounce.300ms="@get('{{base}}/console/api/fragments/contexts-list')">
     {{if not $page.ReadOnly}}
     <button type="button" class="btn btn-primary" data-on:click="$contextNewOpen = true">+ New context</button>
     {{end}}
@@ -31,7 +31,7 @@
       {{if $page.FormError}}
       <p class="console-form-error" role="alert">{{$page.FormError}}</p>
       {{end}}
-      <form method="POST" action="/console/contexts">
+      <form method="POST" action="{{base}}/console/contexts">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="ctx-type">Context type *</label>
@@ -58,7 +58,7 @@
   </div>
 
   {{/* Main table */}}
-  <div data-on-load="@get('/console/api/fragments/contexts-list')">
+  <div data-on-load="@get('{{base}}/console/api/fragments/contexts-list')">
     {{template "contexts-tbody" $page.Fragment}}
   </div>
 </section>

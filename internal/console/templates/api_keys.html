@@ -39,22 +39,22 @@
       <code id="secret-key-value" class="console-secret-value">{{$page.RawKey}}</code>
       <button type="button" class="btn btn-outline btn-sm"
               data-on:click="navigator.clipboard.writeText(document.getElementById('secret-key-value').textContent)">Copy</button>
-      <a class="btn btn-outline btn-sm" href="/console/settings/api-keys" aria-label="Hide key">Hide</a>
+      <a class="btn btn-outline btn-sm" href="{{base}}/console/settings/api-keys" aria-label="Hide key">Hide</a>
       {{else}}
       <code class="console-secret-value">{{$page.MaskedKey}}</code>
-      <a class="btn btn-outline btn-sm" href="/console/settings/api-keys?reveal=1" aria-label="Reveal key">Reveal</a>
+      <a class="btn btn-outline btn-sm" href="{{base}}/console/settings/api-keys?reveal=1" aria-label="Reveal key">Reveal</a>
       {{end}}
       {{if not $page.ReadOnly}}
       <div class="console-card-actions">
         {{if $page.ConfirmRotate}}
-        <form method="POST" action="/console/settings/api-keys/regenerate">
+        <form method="POST" action="{{base}}/console/settings/api-keys/regenerate">
           <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
           <span class="console-confirm-label">Rotate the active key? The old key stops working immediately.</span>
-          <a class="btn btn-outline btn-sm" href="/console/settings/api-keys">Cancel</a>
+          <a class="btn btn-outline btn-sm" href="{{base}}/console/settings/api-keys">Cancel</a>
           <button type="submit" class="btn btn-danger btn-sm">Confirm rotate</button>
         </form>
         {{else}}
-        <a class="btn btn-outline btn-sm" href="/console/settings/api-keys?confirmRotate=1">Rotate key</a>
+        <a class="btn btn-outline btn-sm" href="{{base}}/console/settings/api-keys?confirmRotate=1">Rotate key</a>
         {{end}}
       </div>
       {{end}}

@@ -47,16 +47,16 @@
       {{if .ConfirmResend}}
       <span class="console-confirm-label">Resend this notification? It sends a real message to the subscriber.</span>
       <button type="button" class="btn btn-outline"
-              data-on:click="@get('/console/api/fragments/activity-detail?notification_id={{$n.ID}}')">
+              data-on:click="@get('{{base}}/console/api/fragments/activity-detail?notification_id={{$n.ID}}')">
         Cancel
       </button>
-      <form method="POST" action="/console/activity/{{$n.ID}}/resend" style="display:inline">
+      <form method="POST" action="{{base}}/console/activity/{{$n.ID}}/resend" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{.CSRF}}">
         <button type="submit" class="btn btn-primary">Confirm resend</button>
       </form>
       {{else}}
       <button type="button" class="btn btn-outline activity-resend-btn"
-              data-on:click="@get('/console/api/fragments/activity-detail?notification_id={{$n.ID}}&confirmResend=true')">
+              data-on:click="@get('{{base}}/console/api/fragments/activity-detail?notification_id={{$n.ID}}&confirmResend=true')">
         Resend
       </button>
       {{end}}
@@ -73,7 +73,7 @@
       <dt>Workflow</dt>
       <dd>
         {{if .WorkflowURL}}
-        <a class="console-link" href="{{.WorkflowURL}}" title="{{$n.WorkflowID}}">{{.WorkflowName}}</a>
+        <a class="console-link" href="{{href .WorkflowURL}}" title="{{$n.WorkflowID}}">{{.WorkflowName}}</a>
         {{else}}
         <span title="{{$n.WorkflowID}}">{{.WorkflowName}}</span>
         {{end}}

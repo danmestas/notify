@@ -57,7 +57,7 @@
              signal patch), not here, so a rejection preserves what was typed
              (M8). */}}
         <button type="button" class="ai-copilot-starter"
-                data-on:click="document.getElementById('ai-copilot-input').value = {{jsEscape $s}}; document.getElementById('ai-copilot-input').dispatchEvent(new Event('input')); $aiStarted = true; ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}))">
+                data-on:click="document.getElementById('ai-copilot-input').value = {{jsEscape $s}}; document.getElementById('ai-copilot-input').dispatchEvent(new Event('input')); $aiStarted = true; ($aiSessionID ? @post('{{base}}/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}) : @post('{{base}}/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}))">
           {{uiIcon "star"}}
           <span>{{$s}}</span>
         </button>
@@ -96,10 +96,10 @@
       <textarea id="ai-copilot-input" class="console-input ai-copilot-input" name="prompt" rows="2"
                 placeholder="Message the copilot…"
                 data-bind="aiPrompt"
-                data-on:keydown="evt.key === 'Enter' && !evt.shiftKey && (evt.preventDefault(), $aiPrompt.trim() && ($aiStarted = true, ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}))))"></textarea>
+                data-on:keydown="evt.key === 'Enter' && !evt.shiftKey && (evt.preventDefault(), $aiPrompt.trim() && ($aiStarted = true, ($aiSessionID ? @post('{{base}}/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}) : @post('{{base}}/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}))))"></textarea>
       <button type="button" class="btn btn-primary ai-copilot-send"
               data-attr:disabled="$aiPrompt.trim() === '' ? 'disabled' : null"
-              data-on:click="$aiPrompt.trim() && ($aiStarted = true, ($aiSessionID ? @post('/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}) : @post('/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'})))">Send</button>
+              data-on:click="$aiPrompt.trim() && ($aiStarted = true, ($aiSessionID ? @post('{{base}}/console/api/workflows/ai/' + $aiSessionID + '/message', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'}) : @post('{{base}}/console/api/workflows/ai-generate', {contentType: 'form', selector: '#ai-copilot-form', headers: {'X-CSRF-Token': '{{$csrf}}'}, requestCancellation: 'disabled'})))">Send</button>
     </form>
     {{else}}
     <div class="ai-copilot-empty">

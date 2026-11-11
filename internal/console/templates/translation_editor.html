@@ -9,7 +9,7 @@
 
   <div class="console-editor-layout">
     <div class="console-editor-main">
-      <form method="POST" action="/console/api/translations/{{$page.Locale}}/save"
+      <form method="POST" action="{{base}}/console/api/translations/{{$page.Locale}}/save"
             class="translation-editor-form">
         <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
         <div class="form-row">
@@ -26,7 +26,7 @@
         </div>
         {{if not $page.ReadOnly}}
         <div class="console-form-actions">
-          <a class="btn btn-outline" href="/console/translations">{{ uiIcon "arrow-left" }} Back to locales</a>
+          <a class="btn btn-outline" href="{{base}}/console/translations">{{ uiIcon "arrow-left" }} Back to locales</a>
           <button type="submit" class="btn btn-primary">Save changes</button>
         </div>
         {{end}}
@@ -45,14 +45,14 @@
         {{if $page.ConfirmDelete}}
         <p>Delete <strong>{{$page.Locale}}</strong> and all its keys?</p>
         <div class="console-card-actions">
-          <a href="/console/translations/{{$page.Locale}}" class="btn btn-sm btn-outline">Cancel</a>
-          <form method="POST" action="/console/api/translations/{{$page.Locale}}/delete" style="display:inline">
+          <a href="{{base}}/console/translations/{{$page.Locale}}" class="btn btn-sm btn-outline">Cancel</a>
+          <form method="POST" action="{{base}}/console/api/translations/{{$page.Locale}}/delete" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
             <button type="submit" class="btn btn-sm btn-danger">Confirm delete</button>
           </form>
         </div>
         {{else}}
-        <a href="/console/translations/{{$page.Locale}}?confirmDelete=true"
+        <a href="{{base}}/console/translations/{{$page.Locale}}?confirmDelete=true"
            class="btn btn-sm btn-outline btn-danger">Delete locale</a>
         {{end}}
       </div>

@@ -24,9 +24,9 @@
         </td>
         <td class="console-action-row">
           <button type="button" class="btn btn-outline btn-sm"
-                  data-on:click="@get('/console/api/fragments/translations-list')">Cancel</button>
+                  data-on:click="@get('{{base}}/console/api/fragments/translations-list')">Cancel</button>
           {{if not $v.ReadOnly}}
-          <form method="POST" action="/console/api/translations/{{.Locale}}/delete" style="display:inline">
+          <form method="POST" action="{{base}}/console/api/translations/{{.Locale}}/delete" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
             <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
           </form>
@@ -35,13 +35,13 @@
       </tr>
       {{else}}
       <tr id="translation-row-{{.Locale}}">
-        <td><a href="/console/translations/{{.Locale}}"><code class="chip chip-default">{{.Locale}}</code></a></td>
+        <td><a href="{{base}}/console/translations/{{.Locale}}"><code class="chip chip-default">{{.Locale}}</code></a></td>
         <td>{{.KeyCount}}</td>
         <td class="console-action-row">
-          <a href="/console/translations/{{.Locale}}" class="btn btn-outline btn-sm">Edit</a>
+          <a href="{{base}}/console/translations/{{.Locale}}" class="btn btn-outline btn-sm">Edit</a>
           {{if not $v.ReadOnly}}
           <button type="button" class="btn btn-outline btn-sm btn-danger"
-                  data-on:click="@get('/console/api/fragments/translations-list?confirmDelete={{.Locale | urlquery}}')">Delete</button>
+                  data-on:click="@get('{{base}}/console/api/fragments/translations-list?confirmDelete={{.Locale | urlquery}}')">Delete</button>
           {{end}}
         </td>
       </tr>

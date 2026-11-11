@@ -41,20 +41,20 @@
           <td class="console-muted">{{.UpdatedAt}}</td>
           <td>
             <div class="subscriber-row-actions">
-              <a class="btn-icon" href="/console/agents/{{.Identifier}}" title="View agent">{{ uiIcon "arrow-up-right" }}</a>
+              <a class="btn-icon" href="{{base}}/console/agents/{{.Identifier}}" title="View agent">{{ uiIcon "arrow-up-right" }}</a>
               {{if not $frag.ReadOnly}}
               {{if eq $frag.ConfirmDelete .Identifier}}
               <button type="button" class="btn btn-outline"
-                      data-on:click="@get('/console/api/fragments/agents-list')">
+                      data-on:click="@get('{{base}}/console/api/fragments/agents-list')">
                 Cancel
               </button>
-              <form method="POST" action="/console/agents/{{.Identifier}}/delete" style="display:inline">
+              <form method="POST" action="{{base}}/console/agents/{{.Identifier}}/delete" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{$frag.CSRF}}">
                 <button type="submit" class="btn btn-danger">Confirm delete</button>
               </form>
               {{else}}
               <button type="button" class="btn-icon" title="Delete agent"
-                      data-on:click="@get('/console/api/fragments/agents-list?confirmDelete={{.Identifier}}')">
+                      data-on:click="@get('{{base}}/console/api/fragments/agents-list?confirmDelete={{.Identifier}}')">
                 {{ uiIcon "x" }}
               </button>
               {{end}}

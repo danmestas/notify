@@ -317,7 +317,7 @@ func (c *Console) handleTranslationLocaleCreate(w http.ResponseWriter, r *http.R
 		http.Error(w, "locale is required", http.StatusBadRequest)
 		return
 	}
-	http.Redirect(w, r, "/console/translations/"+locale, http.StatusSeeOther)
+	c.redirect(w, r, "/console/translations/"+locale, http.StatusSeeOther)
 }
 
 // handleTranslationLocaleSave handles
@@ -359,7 +359,7 @@ func (c *Console) handleTranslationLocaleSave(w http.ResponseWriter, r *http.Req
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/translations/"+locale, http.StatusSeeOther)
+	c.redirect(w, r, "/console/translations/"+locale, http.StatusSeeOther)
 }
 
 // renderLocaleEditorError re-renders the editor with an inline parse error and
@@ -410,7 +410,7 @@ func (c *Console) handleTranslationLocaleDelete(w http.ResponseWriter, r *http.R
 			return
 		}
 	}
-	http.Redirect(w, r, "/console/translations", http.StatusSeeOther)
+	c.redirect(w, r, "/console/translations", http.StatusSeeOther)
 }
 
 // handleTranslationSettingsSave handles POST /console/api/translations/settings.
@@ -449,7 +449,7 @@ func (c *Console) handleTranslationSettingsSave(w http.ResponseWriter, r *http.R
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/translations/settings", http.StatusSeeOther)
+	c.redirect(w, r, "/console/translations/settings", http.StatusSeeOther)
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

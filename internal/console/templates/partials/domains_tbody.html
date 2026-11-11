@@ -19,7 +19,7 @@
     <tbody>
       {{range $v.Rows}}
       <tr>
-        <td><a href="/console/domains/{{.Name}}">{{.Name}}</a></td>
+        <td><a href="{{base}}/console/domains/{{.Name}}">{{.Name}}</a></td>
         <td>
           {{if eq .Status "verified"}}
           <span class="chip chip-success">Verified</span>
@@ -37,7 +37,7 @@
           {{end}}
         </td>
         <td>
-          <a href="/console/domains/{{.Name}}" class="btn btn-sm btn-outline">View</a>
+          <a href="{{base}}/console/domains/{{.Name}}" class="btn btn-sm btn-outline">View</a>
         </td>
       </tr>
       {{end}}

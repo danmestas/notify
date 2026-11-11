@@ -24,7 +24,7 @@
         {{range .Rows}}
         <tr class="console-table-row">
           <td>
-            <a href="/console/agents/{{.AgentIdentifier}}">
+            <a href="{{base}}/console/agents/{{.AgentIdentifier}}">
               {{if .AgentName}}{{.AgentName}}{{else}}{{.AgentIdentifier}}{{end}}
             </a>
           </td>
@@ -34,7 +34,7 @@
           <td><code class="console-truncate" title="{{.PlatformThreadID}}">{{.PlatformThreadID}}</code></td>
           <td>
             <a class="btn btn-sm btn-outline"
-               href="/console/agents/{{.AgentIdentifier}}/conversations/{{.ConversationID}}">Open</a>
+               href="{{base}}/console/agents/{{.AgentIdentifier}}/conversations/{{.ConversationID}}">Open</a>
           </td>
         </tr>
         {{end}}
@@ -44,7 +44,7 @@
   {{if .NextCursor}}
   <div class="console-pagination">
     <button class="btn btn-outline"
-            data-on:click="$globalConvCursor = {{jsEscape .NextCursor}}; @get('/console/api/fragments/global-conversations')">
+            data-on:click="$globalConvCursor = {{jsEscape .NextCursor}}; @get('{{base}}/console/api/fragments/global-conversations')">
       Load older
     </button>
   </div>

@@ -347,6 +347,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// services in-process.
 	consoleDeps := console.Deps{
 		Logger:            log,
+		BasePath:          base,
 		DevMode:           cfg.Dev,
 		Identity:          id,
 		Authoring:         n.au,

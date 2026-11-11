@@ -4,18 +4,18 @@
   {{template "page-header" $page.Header}}
 
   <div class="console-action-row">
-    <a class="btn btn-outline" href="/console/agents">{{ uiIcon "arrow-left" }} Back to agents</a>
+    <a class="btn btn-outline" href="{{base}}/console/agents">{{ uiIcon "arrow-left" }} Back to agents</a>
     <code class="console-muted">{{$page.Agent.Identifier}}</code>
     {{if not $page.ReadOnly}}
     {{if $page.ConfirmDelete}}
     <span class="console-confirm-label">Delete this agent? This cannot be undone.</span>
-    <a class="btn btn-outline" href="/console/agents/{{$page.Agent.Identifier}}">Cancel</a>
-    <form method="POST" action="/console/agents/{{$page.Agent.Identifier}}/delete" style="display:inline">
+    <a class="btn btn-outline" href="{{base}}/console/agents/{{$page.Agent.Identifier}}">Cancel</a>
+    <form method="POST" action="{{base}}/console/agents/{{$page.Agent.Identifier}}/delete" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
       <button type="submit" class="btn btn-danger">Confirm delete</button>
     </form>
     {{else}}
-    <form method="POST" action="/console/agents/{{$page.Agent.Identifier}}/activate" style="display:inline">
+    <form method="POST" action="{{base}}/console/agents/{{$page.Agent.Identifier}}/activate" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
       {{if $page.Agent.Active}}
       <button type="submit" class="btn btn-outline btn-danger">Deactivate</button>
@@ -24,7 +24,7 @@
       {{end}}
     </form>
     <a class="btn btn-danger"
-       href="/console/agents/{{$page.Agent.Identifier}}?confirmDelete=true">Delete agent</a>
+       href="{{base}}/console/agents/{{$page.Agent.Identifier}}?confirmDelete=true">Delete agent</a>
     {{end}}
     {{end}}
   </div>
@@ -35,11 +35,11 @@
 
   {{/* Tab bar — bookmarkable deep links, one history entry per tab */}}
   <nav class="console-tab-bar" aria-label="Agent tabs">
-    <a href="/console/agents/{{$page.Agent.Identifier}}/tabs/overview"
+    <a href="{{base}}/console/agents/{{$page.Agent.Identifier}}/tabs/overview"
        class="console-tab{{if eq $page.ActiveTab "overview"}} is-active{{end}}">Overview</a>
-    <a href="/console/agents/{{$page.Agent.Identifier}}/tabs/channels"
+    <a href="{{base}}/console/agents/{{$page.Agent.Identifier}}/tabs/channels"
        class="console-tab{{if eq $page.ActiveTab "channels"}} is-active{{end}}">Channels</a>
-    <a href="/console/agents/{{$page.Agent.Identifier}}/tabs/conversations"
+    <a href="{{base}}/console/agents/{{$page.Agent.Identifier}}/tabs/conversations"
        class="console-tab{{if eq $page.ActiveTab "conversations"}} is-active{{end}}">Conversations</a>
   </nav>
 
@@ -93,7 +93,7 @@
     {{if $page.Receiver.Enabled}}
     <section class="console-card" aria-labelledby="agent-receiver-heading">
       <h2 id="agent-receiver-heading" class="console-card-title">Live receiver keys</h2>
-      <p class="console-muted">A harness connects to <code>/a2a/{{$page.Agent.ID}}/receive</code> with one of these keys to answer this agent's turns.</p>
+      <p class="console-muted">A harness connects to <code>{{base}}/a2a/{{$page.Agent.ID}}/receive</code> with one of these keys to answer this agent's turns.</p>
       {{if $page.Receiver.Error}}
       <p class="console-form-error" role="alert">{{$page.Receiver.Error}}</p>
       {{end}}
@@ -109,7 +109,7 @@
       </div>
       {{end}}
       {{if not $page.ReadOnly}}
-      <form method="POST" action="/console/agents/{{$page.Agent.Identifier}}/receiver-keys" class="console-filter-bar" id="receiver-key-create-form">
+      <form method="POST" action="{{base}}/console/agents/{{$page.Agent.Identifier}}/receiver-keys" class="console-filter-bar" id="receiver-key-create-form">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <label class="form-inline-label" for="new-receiver-key-name">Name
           <input class="console-input" type="text" id="new-receiver-key-name" name="name" placeholder="my-laptop" required aria-required="true" maxlength="64"></label>
@@ -127,7 +127,7 @@
             <td class="console-muted">{{if .LastUsedAt}}{{.LastUsedAt}}{{else}}never{{end}}</td>
             <td>{{if .Revoked}}<span class="chip chip-default">revoked</span>{{else}}<span class="chip chip-success">active</span>{{end}}</td>
             <td>{{if and (not .Revoked) (not $page.ReadOnly)}}
-              <form method="POST" action="/console/agents/{{$page.Agent.Identifier}}/receiver-keys/{{.ID}}/revoke" style="display:inline">
+              <form method="POST" action="{{base}}/console/agents/{{$page.Agent.Identifier}}/receiver-keys/{{.ID}}/revoke" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
                 <button type="submit" class="btn btn-outline btn-danger btn-sm">Revoke</button>
               </form>{{end}}</td>
@@ -142,7 +142,7 @@
     {{if not $page.ReadOnly}}
     <section class="console-card" aria-labelledby="agent-edit-heading">
       <h2 id="agent-edit-heading" class="console-card-title">Edit</h2>
-      <form method="POST" action="/console/agents/{{$page.Agent.Identifier}}/save" class="console-form">
+      <form method="POST" action="{{base}}/console/agents/{{$page.Agent.Identifier}}/save" class="console-form">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="edit-name">Name</label>
@@ -190,7 +190,7 @@
         {{if not $page.ReadOnly}}
         {{if $page.Linkable}}
         <a class="btn btn-primary"
-           href="/console/agents/{{$page.Agent.Identifier}}/tabs/channels?link=true">+ Link channel</a>
+           href="{{base}}/console/agents/{{$page.Agent.Identifier}}/tabs/channels?link=true">+ Link channel</a>
         {{end}}
         {{end}}
       </div>
@@ -200,13 +200,13 @@
       {{if $page.ShowLink}}
       <div class="console-slideover" role="dialog" aria-modal="true" aria-labelledby="agent-link-heading"
            data-component="agent-channel-link"
-           data-on:keydown__window="evt.key === 'Escape' && (window.location = '/console/agents/{{$page.Agent.Identifier}}/tabs/channels')">
+           data-on:keydown__window="evt.key === 'Escape' && (window.location = '{{base}}/console/agents/{{$page.Agent.Identifier}}/tabs/channels')">
         <div class="console-slideover-header">
           <h2 id="agent-link-heading" class="console-card-title">Link channel</h2>
           <a class="btn-icon console-slideover-close"
-             href="/console/agents/{{$page.Agent.Identifier}}/tabs/channels" aria-label="Close">{{ uiIcon "x" }}</a>
+             href="{{base}}/console/agents/{{$page.Agent.Identifier}}/tabs/channels" aria-label="Close">{{ uiIcon "x" }}</a>
         </div>
-        <form method="POST" action="/console/agents/{{$page.Agent.Identifier}}/channels" class="console-form">
+        <form method="POST" action="{{base}}/console/agents/{{$page.Agent.Identifier}}/channels" class="console-form">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           <div class="form-row">
             <label class="form-label" for="link-integration-trigger">Integration *</label>
@@ -220,7 +220,7 @@
           </div>
           <div class="console-slideover-actions">
             <a class="btn btn-outline"
-               href="/console/agents/{{$page.Agent.Identifier}}/tabs/channels">Cancel</a>
+               href="{{base}}/console/agents/{{$page.Agent.Identifier}}/tabs/channels">Cancel</a>
             <button type="submit" class="btn btn-primary">Link channel</button>
           </div>
         </form>
@@ -263,7 +263,7 @@
               {{if not $page.ReadOnly}}
               <td>
                 <form method="POST"
-                      action="/console/agents/{{$page.Agent.Identifier}}/channels/{{.IntegrationID}}/unlink"
+                      action="{{base}}/console/agents/{{$page.Agent.Identifier}}/channels/{{.IntegrationID}}/unlink"
                       style="display:inline">
                   <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
                   <button type="submit" class="btn btn-outline btn-danger">Unlink</button>
@@ -290,7 +290,7 @@
         {{else}}
         <p class="console-empty-state-description">
           Create a channel integration in the
-          <a href="/console/integrations">Integration Store</a> first, then link it here.
+          <a href="{{base}}/console/integrations">Integration Store</a> first, then link it here.
         </p>
         {{end}}
       </div>

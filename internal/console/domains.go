@@ -256,7 +256,7 @@ func (c *Console) handleDomainCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := c.deps.InboundDomains.Create(r.Context(), scope, name); err != nil {
 		if errors.Is(err, store.ErrInboundDomainConflict) {
-			http.Redirect(w, r, "/console/domains/new?error="+
+			c.redirect(w, r, "/console/domains/new?error="+
 				url.QueryEscape("Domain "+name+" already exists."), http.StatusSeeOther)
 			return
 		}
@@ -264,7 +264,7 @@ func (c *Console) handleDomainCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/domains/"+name, http.StatusSeeOther)
+	c.redirect(w, r, "/console/domains/"+name, http.StatusSeeOther)
 }
 
 func (c *Console) handleDomainVerify(w http.ResponseWriter, r *http.Request) {
@@ -293,7 +293,7 @@ func (c *Console) handleDomainVerify(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "verify failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, fmt.Sprintf("/console/domains/%s?verifyResult=%s", name, d.Status), http.StatusSeeOther)
+	c.redirect(w, r, fmt.Sprintf("/console/domains/%s?verifyResult=%s", name, d.Status), http.StatusSeeOther)
 }
 
 func (c *Console) handleDomainDelete(w http.ResponseWriter, r *http.Request) {
@@ -321,5 +321,5 @@ func (c *Console) handleDomainDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "delete failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/domains", http.StatusSeeOther)
+	c.redirect(w, r, "/console/domains", http.StatusSeeOther)
 }

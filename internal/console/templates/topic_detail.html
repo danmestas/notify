@@ -8,39 +8,39 @@
   {{end}}
 
   <div class="console-action-row">
-    <a class="btn btn-outline" href="/console/topics">{{ uiIcon "arrow-left" }} Back to topics</a>
+    <a class="btn btn-outline" href="{{base}}/console/topics">{{ uiIcon "arrow-left" }} Back to topics</a>
     {{if not $page.ReadOnly}}
     {{if $page.ConfirmDelete}}
     {{/* Two-step inline confirm (chassis idiom): the first click navigated
          here with ?confirmDelete=true; this server-rendered state offers
          Cancel + a real POST form. No native confirm() dialogs. */}}
     <span class="console-confirm-label">Delete topic {{$page.Topic.Key}}? This will remove all memberships.</span>
-    <a class="btn btn-outline" href="/console/topics/{{$page.Topic.Key}}?tab={{$page.ActiveTab}}">Cancel</a>
-    <form method="POST" action="/console/topics/{{$page.Topic.Key}}/delete" style="display:inline">
+    <a class="btn btn-outline" href="{{base}}/console/topics/{{$page.Topic.Key}}?tab={{$page.ActiveTab}}">Cancel</a>
+    <form method="POST" action="{{base}}/console/topics/{{$page.Topic.Key}}/delete" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
       <button type="submit" class="btn btn-danger">Confirm delete</button>
     </form>
     {{else}}
     <a class="btn btn-danger"
-       href="/console/topics/{{$page.Topic.Key}}?tab={{$page.ActiveTab}}&confirmDelete=true">Delete topic</a>
+       href="{{base}}/console/topics/{{$page.Topic.Key}}?tab={{$page.ActiveTab}}&confirmDelete=true">Delete topic</a>
     {{end}}
     {{end}}
   </div>
 
   {{/* Tab bar */}}
   <nav class="console-tab-bar" aria-label="Topic tabs">
-    <a href="/console/topics/{{$page.Topic.Key}}?tab=overview"
+    <a href="{{base}}/console/topics/{{$page.Topic.Key}}?tab=overview"
        class="console-tab{{if eq $page.ActiveTab "overview"}} is-active{{end}}">
       Overview
     </a>
-    <a href="/console/topics/{{$page.Topic.Key}}?tab=subscribers"
+    <a href="{{base}}/console/topics/{{$page.Topic.Key}}?tab=subscribers"
        class="console-tab{{if eq $page.ActiveTab "subscribers"}} is-active{{end}}">
       Subscribers
       {{if $page.MemberCount}}
       <span class="chip chip-default">{{$page.MemberCount}}</span>
       {{end}}
     </a>
-    <a href="/console/topics/{{$page.Topic.Key}}?tab=activity"
+    <a href="{{base}}/console/topics/{{$page.Topic.Key}}?tab=activity"
        class="console-tab{{if eq $page.ActiveTab "activity"}} is-active{{end}}">
       Activity
     </a>
@@ -69,7 +69,7 @@
       {{if not $page.ReadOnly}}
       <div class="console-card-actions">
         <h3 class="console-card-title" style="margin-top:var(--space-4)">Rename topic</h3>
-        <form method="POST" action="/console/topics/{{$page.Topic.Key}}" class="topic-edit-form">
+        <form method="POST" action="{{base}}/console/topics/{{$page.Topic.Key}}" class="topic-edit-form">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           <div class="form-row">
             <label class="form-label" for="topic-name">Name</label>
@@ -93,7 +93,7 @@
       {{if not $page.ReadOnly}}
       {{/* Add subscriber form */}}
       <div class="topic-add-member">
-        <form method="POST" action="/console/topics/{{$page.Topic.Key}}/subscribers"
+        <form method="POST" action="{{base}}/console/topics/{{$page.Topic.Key}}/subscribers"
               class="console-filter-bar">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           <input class="console-input" type="text" name="subscriberId"
@@ -101,7 +101,7 @@
                  list="subscriber-autocomplete-list"
                  placeholder="Subscriber ID…"
                  autocomplete="off"
-                 data-on:focus="@get('/console/api/fragments/subscriber-autocomplete')"
+                 data-on:focus="@get('{{base}}/console/api/fragments/subscriber-autocomplete')"
                  required>
           <div id="subscriber-autocomplete"></div>
           <button type="submit" class="btn btn-primary">Add member</button>
@@ -126,7 +126,7 @@
                 <div class="subscriber-avatar-cell">
                   <span class="subscriber-avatar" aria-hidden="true">{{.Initials}}</span>
                   <div class="subscriber-name-stack">
-                    <a class="subscriber-display-name" href="/console/subscribers/{{.ID}}">{{.DisplayName}}</a>
+                    <a class="subscriber-display-name" href="{{base}}/console/subscribers/{{.ID}}">{{.DisplayName}}</a>
                     <code class="subscriber-id-code">{{.SubscriberID}}</code>
                   </div>
                 </div>
@@ -138,9 +138,9 @@
                 {{/* Two-step inline confirm for member removal. */}}
                 <div class="subscriber-row-actions">
                   <a class="btn btn-outline"
-                     href="/console/topics/{{$page.Topic.Key}}?tab=subscribers">Cancel</a>
+                     href="{{base}}/console/topics/{{$page.Topic.Key}}?tab=subscribers">Cancel</a>
                   <form method="POST"
-                        action="/console/topics/{{$page.Topic.Key}}/subscribers/{{.SubscriberID}}/remove"
+                        action="{{base}}/console/topics/{{$page.Topic.Key}}/subscribers/{{.SubscriberID}}/remove"
                         style="display:inline">
                     <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
                     <button type="submit" class="btn btn-danger">Confirm remove</button>
@@ -148,7 +148,7 @@
                 </div>
                 {{else}}
                 <a class="btn-icon" title="Remove from topic"
-                   href="/console/topics/{{$page.Topic.Key}}?tab=subscribers&confirmRemove={{.SubscriberID | urlquery}}">{{ uiIcon "x" }}</a>
+                   href="{{base}}/console/topics/{{$page.Topic.Key}}?tab=subscribers&confirmRemove={{.SubscriberID | urlquery}}">{{ uiIcon "x" }}</a>
                 {{end}}
                 {{end}}
               </td>
@@ -219,7 +219,7 @@
       {{if $page.Activity.NextCursor}}
       <div class="console-pagination">
         <a class="btn btn-outline"
-           href="/console/topics/{{$page.Topic.Key}}?tab=activity&cursor={{$page.Activity.NextCursor | urlquery}}">
+           href="{{base}}/console/topics/{{$page.Topic.Key}}?tab=activity&cursor={{$page.Activity.NextCursor | urlquery}}">
           Load more
         </a>
       </div>

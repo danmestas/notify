@@ -246,7 +246,7 @@ func (c *Console) handleEnvironmentCreate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	http.Redirect(w, r, "/console/settings/environments", http.StatusSeeOther)
+	c.redirect(w, r, "/console/settings/environments", http.StatusSeeOther)
 }
 
 // handleEnvironmentUpdate handles POST /console/api/environments/{id}.
@@ -289,7 +289,7 @@ func (c *Console) handleEnvironmentUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	http.Redirect(w, r, "/console/settings/environments", http.StatusSeeOther)
+	c.redirect(w, r, "/console/settings/environments", http.StatusSeeOther)
 }
 
 // handleEnvironmentDelete handles POST /console/api/environments/{id}/delete.
@@ -317,7 +317,7 @@ func (c *Console) handleEnvironmentDelete(w http.ResponseWriter, r *http.Request
 
 	// Guard: cannot delete the current session environment.
 	if id == scope.EnvID {
-		http.Redirect(w, r, "/console/settings/environments?error=current", http.StatusSeeOther)
+		c.redirect(w, r, "/console/settings/environments?error=current", http.StatusSeeOther)
 		return
 	}
 
@@ -329,7 +329,7 @@ func (c *Console) handleEnvironmentDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if count <= 1 {
-		http.Redirect(w, r, "/console/settings/environments?error=last", http.StatusSeeOther)
+		c.redirect(w, r, "/console/settings/environments?error=last", http.StatusSeeOther)
 		return
 	}
 
@@ -339,5 +339,5 @@ func (c *Console) handleEnvironmentDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	http.Redirect(w, r, "/console/settings/environments", http.StatusSeeOther)
+	c.redirect(w, r, "/console/settings/environments", http.StatusSeeOther)
 }

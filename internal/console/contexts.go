@@ -322,7 +322,7 @@ func (c *Console) handleContextCreate(w http.ResponseWriter, r *http.Request) {
 		if !json.Valid([]byte(rawData)) {
 			// Surface JSON parse errors inline via redirect — stays pure HTML,
 			// no JS, and never a 500.
-			http.Redirect(w, r, "/console/contexts/new?dataError=invalid+JSON", http.StatusSeeOther)
+			c.redirect(w, r, "/console/contexts/new?dataError=invalid+JSON", http.StatusSeeOther)
 			return
 		}
 		data = json.RawMessage(rawData)
@@ -331,14 +331,14 @@ func (c *Console) handleContextCreate(w http.ResponseWriter, r *http.Request) {
 	created, err := c.deps.Contexts.Create(r.Context(), scope, ctype, externalID, data)
 	if err != nil {
 		if errors.Is(err, store.ErrContextConflict) {
-			http.Redirect(w, r, "/console/contexts/new?conflict=1", http.StatusSeeOther)
+			c.redirect(w, r, "/console/contexts/new?conflict=1", http.StatusSeeOther)
 			return
 		}
 		c.deps.Logger.Error("console: create context", "err", err)
 		http.Error(w, "create failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/contexts/"+created.Type+"/"+created.ExternalID, http.StatusSeeOther)
+	c.redirect(w, r, "/console/contexts/"+created.Type+"/"+created.ExternalID, http.StatusSeeOther)
 }
 
 func (c *Console) handleContextUpdate(w http.ResponseWriter, r *http.Request) {
@@ -371,7 +371,7 @@ func (c *Console) handleContextUpdate(w http.ResponseWriter, r *http.Request) {
 		data = json.RawMessage("{}")
 	} else {
 		if !json.Valid([]byte(rawData)) {
-			http.Redirect(w, r, "/console/contexts/"+ctype+"/"+externalID+"?dataError=invalid+JSON", http.StatusSeeOther)
+			c.redirect(w, r, "/console/contexts/"+ctype+"/"+externalID+"?dataError=invalid+JSON", http.StatusSeeOther)
 			return
 		}
 		data = json.RawMessage(rawData)
@@ -386,7 +386,7 @@ func (c *Console) handleContextUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "update failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/contexts/"+ctype+"/"+externalID, http.StatusSeeOther)
+	c.redirect(w, r, "/console/contexts/"+ctype+"/"+externalID, http.StatusSeeOther)
 }
 
 func (c *Console) handleContextDelete(w http.ResponseWriter, r *http.Request) {
@@ -417,5 +417,5 @@ func (c *Console) handleContextDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "delete failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/contexts", http.StatusSeeOther)
+	c.redirect(w, r, "/console/contexts", http.StatusSeeOther)
 }

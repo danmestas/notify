@@ -37,7 +37,7 @@
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
                 data-on:click="$webhookNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
-      <form method="POST" action="/console/webhooks">
+      <form method="POST" action="{{base}}/console/webhooks">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="new-webhook-url">URL *</label>
@@ -59,7 +59,7 @@
   </div>
 
   {{/* Main table */}}
-  <div data-on-load="@get('/console/api/fragments/webhooks-list')">
+  <div data-on-load="@get('{{base}}/console/api/fragments/webhooks-list')">
     {{template "webhooks-tbody" $page.Fragment}}
   </div>
 </section>

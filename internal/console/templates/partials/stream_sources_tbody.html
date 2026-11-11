@@ -27,7 +27,7 @@
       {{/* Inline limits edit form row — native POST → 303. */}}
       <tr id="stream-source-row-{{.ID}}" class="edit-row">
         <td colspan="7">
-          <form method="POST" action="/console/stream-sources/{{.ID}}" class="stream-source-limits-form">
+          <form method="POST" action="{{base}}/console/stream-sources/{{.ID}}" class="stream-source-limits-form">
             <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
             <span class="console-confirm-label">Ingest limits for <code>{{.Name}}</code> (values are server-clamped to safe bounds):</span>
             <label class="form-inline-label">Events/min
@@ -39,7 +39,7 @@
             <label class="form-inline-label">Byte budget/hr
               <input class="console-input console-input-sm" type="number" name="byte_budget" min="1" value="{{.ByteBudget}}"></label>
             <button type="button" class="btn btn-outline btn-sm"
-                    data-on:click="@get('/console/api/fragments/stream-sources-list')">Cancel</button>
+                    data-on:click="@get('{{base}}/console/api/fragments/stream-sources-list')">Cancel</button>
             <button type="submit" class="btn btn-primary btn-sm">Save limits</button>
           </form>
         </td>
@@ -52,8 +52,8 @@
         </td>
         <td colspan="2">
           <button type="button" class="btn btn-outline btn-sm"
-                  data-on:click="@get('/console/api/fragments/stream-sources-list')">Cancel</button>
-          <form method="POST" action="/console/stream-sources/{{.ID}}/delete" style="display:inline">
+                  data-on:click="@get('{{base}}/console/api/fragments/stream-sources-list')">Cancel</button>
+          <form method="POST" action="{{base}}/console/stream-sources/{{.ID}}/delete" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
             <button type="submit" class="btn btn-danger btn-sm">Confirm delete</button>
           </form>
@@ -85,19 +85,19 @@
         </td>
         <td class="console-action-row">
           {{if not $v.ReadOnly}}
-          <form method="POST" action="/console/stream-sources/{{.ID}}/active" style="display:inline">
+          <form method="POST" action="{{base}}/console/stream-sources/{{.ID}}/active" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
             <input type="hidden" name="active" value="{{if .Active}}false{{else}}true{{end}}">
             <button type="submit" class="btn btn-outline btn-sm">{{if .Active}}Disable{{else}}Enable{{end}}</button>
           </form>
           <button type="button" class="btn btn-outline btn-sm"
-                  data-on:click="@get('/console/api/fragments/stream-sources-list?editLimits={{.ID | urlquery}}')">Edit limits</button>
-          <form method="POST" action="/console/stream-sources/{{.ID}}/rotate" style="display:inline">
+                  data-on:click="@get('{{base}}/console/api/fragments/stream-sources-list?editLimits={{.ID | urlquery}}')">Edit limits</button>
+          <form method="POST" action="{{base}}/console/stream-sources/{{.ID}}/rotate" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{$v.CSRF}}">
             <button type="submit" class="btn btn-outline btn-sm">Rotate secret</button>
           </form>
           <button type="button" class="btn btn-outline btn-sm btn-danger"
-                  data-on:click="@get('/console/api/fragments/stream-sources-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
+                  data-on:click="@get('{{base}}/console/api/fragments/stream-sources-list?confirmDelete={{.ID | urlquery}}')">Delete</button>
           {{end}}
         </td>
       </tr>

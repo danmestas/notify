@@ -37,7 +37,7 @@
          deletion with a test, so notify carrying one made the two consoles
          disagree about their own family look. The bare "://" glyph stands in
          when the rail collapses and the name is hidden. */}}
-    <a href="/console/" class="console-brand">
+    <a href="{{base}}/console/" class="console-brand">
       <span class="console-name">noti<span class="console-name-accent">.fy</span><span class="console-name-scheme">://</span></span>
       <span class="console-glyph" aria-hidden="true">://</span>
     </a>
@@ -48,7 +48,7 @@
         <ul class="console-nav-list" role="list">
           {{range .Entries}}
           <li>
-            <a href="{{.Href}}" class="console-nav-link{{if eq $.Section .Section}} is-active{{end}}"
+            <a href="{{href .Href}}" class="console-nav-link{{if eq $.Section .Section}} is-active{{end}}"
                {{if eq $.Section .Section}}aria-current="page"{{end}}>
               {{if .Icon}}{{navIcon .Icon}}{{end}}
               <span class="console-nav-text">{{.Label}}</span>
@@ -102,7 +102,7 @@
             </span>
             {{if .Scope.OrgID}}<p class="console-env-menu-meta">org {{.Scope.OrgID}}</p>{{end}}
             <div class="console-env-menu-sep" role="separator"></div>
-            <form method="post" action="/console/logout" class="console-logout" role="none">
+            <form method="post" action="{{base}}/console/logout" class="console-logout" role="none">
               <input type="hidden" name="csrf_token" value="{{.CSRF}}">
               <button type="submit" class="console-env-menu-action" role="menuitem">Sign out</button>
             </form>
@@ -129,7 +129,7 @@
       {{with .HealthBanner}}
       <div class="console-banner console-banner--danger console-health-banner" role="alert" id="integration-health-banner">
         <strong>Integration failing.</strong>
-        <span><a class="console-link" href="{{.Href}}">{{.Name}}</a> is not delivering{{if .Class}} ({{.Class}}){{end}}{{if .Message}}: {{.Message}}{{end}}.{{if .More}} {{.More}} more {{if eq .More 1}}integration is{{else}}integrations are{{end}} failing.{{end}}</span>
+        <span><a class="console-link" href="{{href .Href}}">{{.Name}}</a> is not delivering{{if .Class}} ({{.Class}}){{end}}{{if .Message}}: {{.Message}}{{end}}.{{if .More}} {{.More}} more {{if eq .More 1}}integration is{{else}}integrations are{{end}} failing.{{end}}</span>
       </div>
       {{end}}
       {{template "content" .}}

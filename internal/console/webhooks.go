@@ -189,16 +189,16 @@ func (c *Console) serveWebhooksPage(w http.ResponseWriter, r *http.Request) {
 // plain redirect.
 func (c *Console) redirectWithSecret(w http.ResponseWriter, r *http.Request, created webhooksout.Created) {
 	if created.Secret == "" {
-		http.Redirect(w, r, "/console/webhooks", http.StatusSeeOther)
+		c.redirect(w, r, "/console/webhooks", http.StatusSeeOther)
 		return
 	}
 	token, err := c.stashReveal(created.Secret)
 	if err != nil {
 		c.deps.Logger.Error("console: stash webhook secret", "err", err)
-		http.Redirect(w, r, "/console/webhooks", http.StatusSeeOther)
+		c.redirect(w, r, "/console/webhooks", http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, "/console/webhooks?revealed="+token+"&for="+created.Endpoint.ID, http.StatusSeeOther)
+	c.redirect(w, r, "/console/webhooks?revealed="+token+"&for="+created.Endpoint.ID, http.StatusSeeOther)
 }
 
 // serveWebhookNew renders GET /console/webhooks/new with the create slide-over
@@ -402,7 +402,7 @@ func (c *Console) handleWebhookUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/console/webhooks", http.StatusSeeOther)
+	c.redirect(w, r, "/console/webhooks", http.StatusSeeOther)
 }
 
 // handleWebhookToggle handles POST /console/api/webhooks/{id}/toggle. It flips
@@ -444,7 +444,7 @@ func (c *Console) handleWebhookToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/console/webhooks", http.StatusSeeOther)
+	c.redirect(w, r, "/console/webhooks", http.StatusSeeOther)
 }
 
 // handleWebhookDelete handles POST /console/api/webhooks/{id}/delete. It
@@ -478,5 +478,5 @@ func (c *Console) handleWebhookDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/console/webhooks", http.StatusSeeOther)
+	c.redirect(w, r, "/console/webhooks", http.StatusSeeOther)
 }

@@ -23,7 +23,7 @@
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
                 data-on:click="$envNewOpen = false">{{ uiIcon "x" }}</button>
       </div>
-      <form method="POST" action="/console/settings/environments">
+      <form method="POST" action="{{base}}/console/settings/environments">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="new-env-name">Name *</label>
@@ -61,7 +61,7 @@
         <button type="button" class="btn-icon console-slideover-close" aria-label="Close"
                 data-on:click="$envEditOpen = false">{{ uiIcon "x" }}</button>
       </div>
-      <form method="POST" data-attr:action="'/console/api/environments/' + $envEditID">
+      <form method="POST" data-attr:action="'{{base}}/console/api/environments/' + $envEditID">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
         <div class="form-row">
           <label class="form-label" for="edit-env-name">Name *</label>
@@ -79,7 +79,7 @@
   </div>
 
   {{/* Main table */}}
-  <div data-on-load="@get('/console/api/fragments/environments-list')">
+  <div data-on-load="@get('{{base}}/console/api/fragments/environments-list')">
     {{template "environments-tbody" $page.Fragment}}
   </div>
 </section>

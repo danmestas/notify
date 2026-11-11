@@ -45,14 +45,14 @@
     <h2 class="console-card-title">Verified domains</h2>
     <p>{{$page.VerifiedDomains}} of {{$page.TotalDomains}} domains verified.</p>
     <p>
-      <a class="console-link" href="/console/domains">Manage domains {{ uiIcon "arrow-up-right" }}</a>
+      <a class="console-link" href="{{base}}/console/domains">Manage domains {{ uiIcon "arrow-up-right" }}</a>
     </p>
   </div>
 
   {{/* Received-thread activity log. */}}
   <div class="console-card">
     <h2 class="console-card-title">Received threads</h2>
-    <div data-on-load="@get('/console/api/fragments/inbound-email-list')">
+    <div data-on-load="@get('{{base}}/console/api/fragments/inbound-email-list')">
       {{template "inbound-email-tbody" $page.Fragment}}
     </div>
   </div>

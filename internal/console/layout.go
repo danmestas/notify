@@ -126,6 +126,10 @@ func staticFuncMap() template.FuncMap {
 		// loadTemplates parseable in isolation (template.Funcs must know
 		// every name before Parse).
 		"runURL": func(string) string { return "" },
+		// href and base are overridden in Console.funcMap with the mount
+		// prefix; the stubs only make parse succeed.
+		"href": func(p string) string { return p },
+		"base": func() string { return "" },
 		// partial is overridden in Console.funcMap with the registry-driven
 		// dynamic dispatcher; this parse-time stub keeps loadTemplates
 		// parseable (every helper name must exist before Parse).
@@ -315,6 +319,13 @@ func (c *Console) funcMap() template.FuncMap {
 	}
 	return template.FuncMap{
 		"runURL": c.runURL,
+		// href prefixes a console-local path with the mount prefix; base is the
+		// bare prefix, for templates that splice it ahead of a literal path.
+		"href": c.href,
+		"base": func() string { return c.deps.BasePath },
+		// assetURL layers the mount prefix over the unprefixed manifest URL
+		// the routes are registered under.
+		"assetURL": func(logical string) string { return c.href(assetURL(logical)) },
 		// partial executes a named template against data and returns its
 		// rendered HTML, enabling DYNAMIC dispatch (the editor renders the
 		// per-type step fields by the partial name the step-type registry

@@ -117,7 +117,7 @@ func (c *Console) streamSourceToRow(src domain.StreamSource) streamSourceRow {
 // ingestBase returns the origin the producer snippet points at.
 func (c *Console) ingestBase() string {
 	if c.deps.PublicBaseURL != "" {
-		return c.deps.PublicBaseURL
+		return c.deps.PublicBaseURL + c.deps.BasePath
 	}
 	if c.deps.HTTPAddr != "" {
 		return c.deps.HTTPAddr
@@ -286,7 +286,7 @@ func (c *Console) handleStreamSourceCreate(w http.ResponseWriter, r *http.Reques
 		default:
 			c.deps.Logger.Error("console: create stream source", "err", err)
 		}
-		http.Redirect(w, r, "/console/stream-sources?createError="+url.QueryEscape(msg), http.StatusSeeOther)
+		c.redirect(w, r, "/console/stream-sources?createError="+url.QueryEscape(msg), http.StatusSeeOther)
 		return
 	}
 	token, err := c.stashReveal(raw)
@@ -295,7 +295,7 @@ func (c *Console) handleStreamSourceCreate(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "create failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r,
+	c.redirect(w, r,
 		"/console/stream-sources?revealed="+token+"&newId="+url.QueryEscape(src.ID),
 		http.StatusSeeOther)
 }
@@ -329,7 +329,7 @@ func (c *Console) handleStreamSourceRotate(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "rotate failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r,
+	c.redirect(w, r,
 		"/console/stream-sources?revealed="+token+"&newId="+url.QueryEscape(id)+"&rotated=1",
 		http.StatusSeeOther)
 }
@@ -367,7 +367,7 @@ func (c *Console) handleStreamSourceUpdateLimits(w http.ResponseWriter, r *http.
 		http.Error(w, "update failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/stream-sources", http.StatusSeeOther)
+	c.redirect(w, r, "/console/stream-sources", http.StatusSeeOther)
 }
 
 // handleStreamSourceToggleActive handles POST /console/stream-sources/{id}/active.
@@ -396,7 +396,7 @@ func (c *Console) handleStreamSourceToggleActive(w http.ResponseWriter, r *http.
 		http.Error(w, "toggle failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/stream-sources", http.StatusSeeOther)
+	c.redirect(w, r, "/console/stream-sources", http.StatusSeeOther)
 }
 
 // handleStreamSourceDelete handles POST /console/stream-sources/{id}/delete.
@@ -419,7 +419,7 @@ func (c *Console) handleStreamSourceDelete(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "delete failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/console/stream-sources", http.StatusSeeOther)
+	c.redirect(w, r, "/console/stream-sources", http.StatusSeeOther)
 }
 
 // ─── small helpers ────────────────────────────────────────────────────────────
