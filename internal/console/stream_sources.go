@@ -120,7 +120,7 @@ func (c *Console) ingestBase() string {
 		return c.deps.PublicBaseURL + c.deps.BasePath
 	}
 	if c.deps.HTTPAddr != "" {
-		return c.deps.HTTPAddr
+		return c.deps.HTTPAddr + c.deps.BasePath
 	}
 	return "$BASE"
 }

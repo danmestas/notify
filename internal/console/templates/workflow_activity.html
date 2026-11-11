@@ -34,10 +34,10 @@
        data-signals="{wfActStatus: '', wfActRange: ''}">
     {{template "ui-select" (uiSelect "wf-act-status" "" "wfActStatus"
       (uiSelectOptions "" "All statuses" "pending" "Pending" "sent" "Sent" "delivered" "Delivered" "failed" "Failed")
-      "All statuses" (print "@get('{{base}}/console/api/fragments/workflow-activity/" $page.TriggerIdentifier "?status=' + $wfActStatus + '&range=' + $wfActRange)") false)}}
+      "All statuses" (print "@get('" base "/console/api/fragments/workflow-activity/" $page.TriggerIdentifier "?status=' + $wfActStatus + '&range=' + $wfActRange)") false)}}
     {{template "ui-select" (uiSelect "wf-act-range" "" "wfActRange"
       (uiSelectOptions "" "All time" "1h" "Last 1 hour" "24h" "Last 24 hours" "7d" "Last 7 days")
-      "All time" (print "@get('{{base}}/console/api/fragments/workflow-activity/" $page.TriggerIdentifier "?status=' + $wfActStatus + '&range=' + $wfActRange)") false)}}
+      "All time" (print "@get('" base "/console/api/fragments/workflow-activity/" $page.TriggerIdentifier "?status=' + $wfActStatus + '&range=' + $wfActRange)") false)}}
   </div>
 
   <table class="activity-table wf-activity-table" id="wf-activity-table">

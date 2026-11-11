@@ -36,7 +36,7 @@
            aria-label="Search workflows">
     {{template "ui-select" (uiSelect "wf-status" "" "wfStatus"
       (uiSelectOptions "" "All statuses" "active" "Active" "inactive" "Inactive")
-      "All statuses" "@get('{{base}}/console/api/fragments/workflows-list')" false)}}
+      "All statuses" (printf "@get('%s/console/api/fragments/workflows-list')" base) false)}}
     {{/* Reset clears all filter signals reactively; data-show hides it when
          no filters are active so no server round-trip is needed to toggle it. */}}
     <button type="button" class="btn btn-outline"

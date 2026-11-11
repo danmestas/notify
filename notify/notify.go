@@ -460,11 +460,23 @@ func routes(consoleRoutes, api http.Handler, readyz http.HandlerFunc) *http.Serv
 	return root
 }
 
-// cleanBasePath accepts "" or an absolute path, and drops a trailing slash.
+// cleanBasePath accepts "" or /seg(/seg)*, dropping one trailing slash. Every
+// segment must be non-empty and free of ?, # and backslash: a "//" start is a
+// protocol-relative URL (an open redirect), and the others would split the
+// prefix out of the path wherever it is concatenated into a URL.
 func cleanBasePath(p string) (string, error) {
-	p = strings.TrimRight(p, "/")
-	if p != "" && !strings.HasPrefix(p, "/") {
+	p = strings.TrimSuffix(p, "/")
+	if p == "" {
+		return "", nil
+	}
+	if !strings.HasPrefix(p, "/") {
 		return "", fmt.Errorf("notify: Host.BasePath %q must start with /", p)
+	}
+	for _, seg := range strings.Split(p[1:], "/") {
+		if seg == "" || strings.ContainsAny(seg, "?#\\") {
+			return "", fmt.Errorf("notify: Host.BasePath %q must be /segment(/segment)* "+
+				"with non-empty segments and no ?, # or backslash", p)
+		}
 	}
 	return p, nil
 }

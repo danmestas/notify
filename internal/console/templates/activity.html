@@ -22,7 +22,7 @@
         <span class="activity-filter-pill-label">Range</span>
         {{template "ui-select" (uiSelect "activity-range" "" "activityRange"
           (uiSelectOptions "" "All time" "1h" "Last 1 hour" "6h" "Last 6 hours" "24h" "Last 24 hours" "7d" "Last 7 days" "30d" "Last 30 days")
-          "All time" "@get('{{base}}/console/api/fragments/activity-list')" false)}}
+          "All time" (printf "@get('%s/console/api/fragments/activity-list')" base) false)}}
       </label>
 
       {{/* Channel */}}
@@ -30,7 +30,7 @@
         <span class="activity-filter-pill-label">Channel</span>
         {{template "ui-select" (uiSelect "activity-channel" "" "activityChannel"
           (uiSelectOptions "" "All channels" "in_app" "In-app" "email" "Email" "push" "Push" "sms" "SMS" "chat" "Chat" "stream" "Stream")
-          "All channels" "@get('{{base}}/console/api/fragments/activity-list')" false)}}
+          "All channels" (printf "@get('%s/console/api/fragments/activity-list')" base) false)}}
       </label>
 
       {{/* Status */}}
@@ -38,7 +38,7 @@
         <span class="activity-filter-pill-label">Status</span>
         {{template "ui-select" (uiSelect "activity-status" "" "activityStatus"
           (uiSelectOptions "" "All statuses" "sent" "Sent" "failed" "Failed" "pending" "Pending" "merged" "Merged")
-          "All statuses" "@get('{{base}}/console/api/fragments/activity-list')" false)}}
+          "All statuses" (printf "@get('%s/console/api/fragments/activity-list')" base) false)}}
       </label>
 
       {{/* Subscriber ID free-text */}}

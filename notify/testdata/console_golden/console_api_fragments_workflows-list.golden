@@ -1,0 +1,63 @@
+event: datastar-patch-elements
+data: elements 
+data: elements <tbody id="workflows-tbody">
+data: elements   
+data: elements   
+data: elements   
+data: elements <tr class="console-table-row" data-component="workflow-row" onclick="location.href='\/console\/workflows\/welcome-flow'" style="cursor:pointer">
+data: elements   <td class="wf-col-name">
+data: elements     <a class="wf-name-link" href="/console/workflows/welcome-flow" title="Welcome flow">Welcome flow</a>
+data: elements     <span class="wf-trigger-id" onclick="event.stopPropagation()">
+data: elements       <code class="wf-trigger-id-text">welcome-flow</code>
+data: elements       <button type="button"
+data: elements               class="btn-icon"
+data: elements               title="Copy trigger identifier"
+data: elements               aria-label="Copy welcome-flow"
+data: elements               data-on:click="navigator.clipboard.writeText(&#39;welcome-flow&#39;)">
+data: elements         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+data: elements 
+data: elements       </button>
+data: elements     </span>
+data: elements   </td>
+data: elements   <td class="wf-col-status">
+data: elements     
+data: elements     <span class="chip chip-success" aria-label="active">Active</span>
+data: elements     
+data: elements   </td>
+data: elements   <td class="wf-col-steps">
+data: elements     <span class="chip-strip" role="list" aria-label="steps">
+data: elements       
+data: elements       <span class="chip chip-step chip-step--in_app" role="listitem">in_app</span>
+data: elements       
+data: elements       
+data: elements     </span>
+data: elements   </td>
+data: elements   <td class="wf-col-updated">just now</td>
+data: elements   <td class="wf-col-actions" onclick="event.stopPropagation()">
+data: elements     
+data: elements     
+data: elements     <div class="wf-kebab">
+data: elements       <button type="button" class="btn-icon" aria-label="Actions" onclick="this.nextElementSibling.classList.toggle('is-open')"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+data: elements </button>
+data: elements       <div class="wf-kebab-menu">
+data: elements         <a class="wf-kebab-item" href="/console/workflows/welcome-flow/activity">Activity</a>
+data: elements         <a class="wf-kebab-item" href="/console/workflows/welcome-flow/test">Test</a>
+data: elements         <a class="wf-kebab-item" href="/console/workflows/welcome-flow/duplicate">Duplicate</a>
+data: elements         
+data: elements         <a class="wf-kebab-item wf-kebab-item--danger"
+data: elements            data-on:click="$wfConfirmDelete = 'welcome-flow'; @get('/console/api/fragments/workflows-list')">Delete</a>
+data: elements       </div>
+data: elements     </div>
+data: elements     
+data: elements     
+data: elements   </td>
+data: elements </tr>
+data: elements 
+data: elements   
+data: elements   
+data: elements </tbody>
+data: elements 
+data: elements <p id="wf-footer-note" class="wf-footer-note">1 of 1 workflows · click a row to open the editor</p>
+data: elements 
+
+

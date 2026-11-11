@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -38,6 +39,7 @@ type consoleHarness struct {
 	apiKey string
 	slug   string
 	paths  []emitted
+	leaks  []string // bodies holding a literal {{base}} in a body
 }
 
 // emitted is one path the console told the browser about.
@@ -89,9 +91,48 @@ func newConsoleHarness(t *testing.T, base string) *consoleHarness {
 	return &consoleHarness{h: n.Handler(), base: base, apiKey: key, slug: slug}
 }
 
-// rootedPath finds a quoted or parenthesised rooted path such as
-// "/console/x", '/console/x' or (/assets/x) in decoded markup or JS.
-var rootedPath = regexp.MustCompile(`["'(](/[A-Za-z][^"'<>\s)]*)`)
+// rootedPath finds a rooted or protocol-relative path that follows a quote
+// (", ' or `) or an opening parenthesis, optionally with whitespace and a
+// quote between them: "/console/x", '/console/x', `/console/x`, (/assets/x),
+// url( "/assets/x" ), "//host/x". Attribute values in either quote style and
+// JS string literals are all covered.
+var rootedPath = regexp.MustCompile("[\"'`(]\\s*[\"'`]?(/{1,2}[A-Za-z][^\"'`<>\\s)]*)")
+
+// rootedPathCases pin what the guard does and does not see.
+var rootedPathCases = []struct {
+	in   string
+	want string // "" means no match
+}{
+	{`<a href="/console/x">`, "/console/x"},
+	{`<a href='/console/x'>`, "/console/x"},
+	{"const u = `/console/x`", "/console/x"},
+	{"const u = `${a}`+`/console/x`", "/console/x"},
+	{`background:url(/assets/x.png)`, "/assets/x.png"},
+	{`background:url( /assets/x.png )`, "/assets/x.png"},
+	{`background:url( "/assets/x.png" )`, "/assets/x.png"},
+	{`background:url('/assets/x.png')`, "/assets/x.png"},
+	{`<img src="//cdn.evil.com/a.js">`, "//cdn.evil.com/a.js"},
+	{`@get('/console/api/x?y=1')`, "/console/api/x?y=1"},
+	{`<a href="#top">`, ""},
+	{`<a href="https://example.com/x">`, ""},
+	{`<a href="/">`, ""},
+	{`some text /console/x without a quote`, ""},
+	{`<a href="relative/path">`, ""},
+	{`<a href="mailto:a@b.c">`, ""},
+}
+
+func TestRootedPathRegexp(t *testing.T) {
+	for _, tc := range rootedPathCases {
+		m := rootedPath.FindStringSubmatch(tc.in)
+		got := ""
+		if m != nil {
+			got = m[1]
+		}
+		if got != tc.want {
+			t.Errorf("rootedPath on %q = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
 
 // do serves one request and records every path the response emits.
 func (c *consoleHarness) do(t *testing.T, req *http.Request) *httptest.ResponseRecorder {
@@ -106,6 +147,9 @@ func (c *consoleHarness) do(t *testing.T, req *http.Request) *httptest.ResponseR
 		c.paths = append(c.paths, emitted{label + " Set-Cookie " + ck.Name + " Path", ck.Path})
 	}
 	body := strings.ReplaceAll(html.UnescapeString(rec.Body.String()), `\/`, `/`)
+	if strings.Contains(body, "{{base}}") {
+		c.leaks = append(c.leaks, label)
+	}
 	for _, m := range rootedPath.FindAllStringSubmatch(body, -1) {
 		c.paths = append(c.paths, emitted{label + " body", m[1]})
 	}
@@ -219,6 +263,9 @@ func TestConsoleBasePath_NoPathEscapesPrefix(t *testing.T) {
 	c := newConsoleHarness(t, "/notify")
 	c.browse(t)
 
+	if len(c.leaks) > 0 {
+		t.Errorf("responses contain a literal {{base}} (template action not interpolated): %v", c.leaks)
+	}
 	if len(c.paths) < 100 {
 		t.Fatalf("scanned only %d emitted paths; the scan is not seeing the console", len(c.paths))
 	}
@@ -257,6 +304,91 @@ func TestConsoleBasePath_LoginSurfaces(t *testing.T) {
 		if strings.Contains(e.via, "Set-Cookie") && !strings.HasPrefix(e.path, "/notify/console") {
 			t.Errorf("%s = %q, want under /notify/console", e.via, e.path)
 		}
+	}
+}
+
+// goldenPages are the pages rendered at BasePath "" and compared byte-for-byte
+// against testdata/console_golden/*, generated from origin/main before the
+// BasePath change. Regenerate with NOTIFY_WRITE_GOLDEN=1 (only ever on main).
+var goldenPages = []string{
+	"/console/login",
+	"/console/",
+	"/console/workflows",
+	"/console/topics",
+	"/console/stream-sources",
+	"/console/api/fragments/workflows-list", // Datastar SSE patch
+}
+
+// goldenNormalisers blank out per-run values (random keys, tokens, ids,
+// timestamps) so two renders of the same page compare equal. Each is
+// documented; anything not listed here must match byte-for-byte.
+var goldenNormalisers = []struct {
+	re   *regexp.Regexp
+	repl string
+}{
+	// CSRF tokens and nonces are random per request.
+	{regexp.MustCompile(`(csrf_token[^>]*?value=")[^"]*`), `${1}CSRF`},
+	{regexp.MustCompile(`(value="[^"]*)("[^>]*name="csrf_token")`), `value="CSRF$2`},
+	{regexp.MustCompile(`(?i)(nonce=")[^"]*`), `${1}NONCE`},
+	// The test API key and any UUID/ULID/hex id are random per bootstrap.
+	{regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`), `UUID`},
+	{regexp.MustCompile(`\b[0-9A-HJKMNP-TV-Z]{26}\b`), `ULID`},
+	// RFC3339 timestamps and relative durations ("3s ago") move with the clock.
+	{regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)`), `TIMESTAMP`},
+	{regexp.MustCompile(`\d+(s|m|h|d) ago`), `AGO`},
+}
+
+func normaliseGolden(body string) string {
+	for _, n := range goldenNormalisers {
+		body = n.re.ReplaceAllString(body, n.repl)
+	}
+	return body
+}
+
+func goldenName(page string) string {
+	name := strings.Trim(strings.NewReplacer("/", "_").Replace(page), "_")
+	if name == "console" {
+		name = "console_root"
+	}
+	return filepath.Join("testdata", "console_golden", name+".golden")
+}
+
+func TestConsoleBasePath_EmptyPrefixByteIdentical(t *testing.T) {
+	c := newConsoleHarness(t, "")
+	write := os.Getenv("NOTIFY_WRITE_GOLDEN") != ""
+	login := c.get(t, "/console/login").Body.String()
+	session := c.login(t)
+	for _, page := range goldenPages {
+		body := login
+		if page != "/console/login" {
+			rec := c.get(t, page, session)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d", page, rec.Code)
+			}
+			body = rec.Body.String()
+		}
+		got := normaliseGolden(body)
+		file := goldenName(page)
+		if write {
+			if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, []byte(got), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		want, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read golden: %v", err)
+		}
+		if got != string(want) {
+			t.Errorf("%s differs from the pre-BasePath golden %s (len got %d, want %d)",
+				page, file, len(got), len(want))
+		}
+	}
+	if len(goldenPages) < 5 {
+		t.Fatal("golden page set shrank")
 	}
 }
 
