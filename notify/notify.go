@@ -71,6 +71,9 @@ type Notify struct {
 	eng *engine.Engine
 	ags *agentstore.Store
 	au  *authoring.Service
+	// identity mints and authenticates API keys; it is the same service the
+	// HTTP layer and console are wired with.
+	identity *identity.Service
 
 	credVerify *credverify.Service
 	// healthVerifyCron is the daily credential check's schedule (see
@@ -291,6 +294,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	n.webhooks = webhooksout.New(bus, st).WithSecrets(secrets)
 
 	id := identity.New(st, mk)
+	n.identity = id
 	aud := audience.New(st)
 	n.au = authoring.New(st, eng, authoring.WithSecretBox(secrets))
 	trg := trigger.New(aud, st, eng).WithDigester(bus).WithDigestWindows(prefs)

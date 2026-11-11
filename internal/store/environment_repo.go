@@ -35,8 +35,8 @@ type TranslationSettings struct {
 }
 
 type envRepo struct {
-	w *sql.DB
-	r *sql.DB
+	w queryer
+	r queryer
 }
 
 func (repo *envRepo) Create(ctx context.Context, orgID string, env domain.Environment) (domain.Environment, domain.Scope, error) {

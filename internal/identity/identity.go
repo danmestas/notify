@@ -71,7 +71,13 @@ func (svc *Service) Bootstrap(ctx context.Context, orgName, envIdentifier string
 		return "", domain.Scope{}, fmt.Errorf("identity: create org: %w", err)
 	}
 
-	_, scope, err := svc.store.Environments().Create(ctx, org.ID, domain.Environment{
+	return svc.provisionEnv(ctx, org.ID, envIdentifier)
+}
+
+// provisionEnv adds an environment named envIdentifier to org and mints its
+// first API key. It is the one place a bootstrapped tenant's key is created.
+func (svc *Service) provisionEnv(ctx context.Context, orgID, envIdentifier string) (string, domain.Scope, error) {
+	_, scope, err := svc.store.Environments().Create(ctx, orgID, domain.Environment{
 		Name:       envIdentifier,
 		Identifier: envIdentifier,
 	})
@@ -107,7 +113,7 @@ func (svc *Service) Bootstrap(ctx context.Context, orgName, envIdentifier string
 func (svc *Service) CreateEnvironment(ctx context.Context, orgID, name, envType string) (string, domain.Environment, domain.Scope, error) {
 	env := domain.Environment{
 		Name:       name,
-		Identifier: strings.ToLower(strings.ReplaceAll(name, " ", "-")),
+		Identifier: envIdentifier(name),
 		Type:       envType,
 	}
 	created, scope, err := svc.store.Environments().Create(ctx, orgID, env)

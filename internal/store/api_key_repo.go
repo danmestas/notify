@@ -24,8 +24,8 @@ type ApiKeyRepo interface {
 }
 
 type apiKeyRepo struct {
-	w *sql.DB
-	r *sql.DB
+	w queryer
+	r queryer
 }
 
 func (repo *apiKeyRepo) Create(ctx context.Context, scope domain.Scope, key domain.APIKey) (domain.APIKey, error) {
