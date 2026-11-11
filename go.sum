@@ -61,8 +61,8 @@ github.com/cevatbarisyilmaz/ara v0.0.4 h1:SGH10hXpBJhhTlObuZzTuFn1rrdmjQImITXnZV
 github.com/cevatbarisyilmaz/ara v0.0.4/go.mod h1:BfFOxnUd6Mj6xmcvRxHN3Sr21Z1T3U2MYkYOmoQe4Ts=
 github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNUA=
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
-github.com/danmestas/dagnats v0.0.59 h1:JlyxM1tWRRqx1Azjkbu/UcZaG+v5L7kXklzwOBu9y7k=
-github.com/danmestas/dagnats v0.0.59/go.mod h1:offBIoJdcqs7A/r3cYMLv/JgZ++58mlm/lKZX7RHOwk=
+github.com/danmestas/dagnats v0.0.63 h1:OgvUefgLhmy7KpksMl+QvkKsN0yck8KB1fdlu963TjU=
+github.com/danmestas/dagnats v0.0.63/go.mod h1:offBIoJdcqs7A/r3cYMLv/JgZ++58mlm/lKZX7RHOwk=
 github.com/danmestas/dagnats/lake v0.4.0 h1:+tVYs+KikAsUfXX0QRd1MZXk8nrqtPQLjWzh7OvpTmk=
 github.com/danmestas/dagnats/lake v0.4.0/go.mod h1:nD6y79vlhXj56ggVmNdStT5AJG/06hGyKKUoW3u43Dg=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
