@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
@@ -37,6 +38,9 @@ type Service struct {
 	sessionKey []byte
 	store      *store.Store
 	gcm        cipher.AEAD
+	// ensureMu serialises EnsureTenant: organization names are not unique in
+	// the schema, so two concurrent first calls would each create one.
+	ensureMu sync.Mutex
 }
 
 // New builds a Service. masterKey must be exactly 32 bytes (AES-256-GCM); New
@@ -71,7 +75,13 @@ func (svc *Service) Bootstrap(ctx context.Context, orgName, envIdentifier string
 		return "", domain.Scope{}, fmt.Errorf("identity: create org: %w", err)
 	}
 
-	_, scope, err := svc.store.Environments().Create(ctx, org.ID, domain.Environment{
+	return svc.provisionEnv(ctx, org.ID, envIdentifier)
+}
+
+// provisionEnv adds an environment named envIdentifier to org and mints its
+// first API key. It is the one place a bootstrapped tenant's key is created.
+func (svc *Service) provisionEnv(ctx context.Context, orgID, envIdentifier string) (string, domain.Scope, error) {
+	_, scope, err := svc.store.Environments().Create(ctx, orgID, domain.Environment{
 		Name:       envIdentifier,
 		Identifier: envIdentifier,
 	})
