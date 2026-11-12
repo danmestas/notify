@@ -25,12 +25,10 @@ package console
 //     POSTs the rotate action.
 
 import (
-	"errors"
 	"net/http"
 	"time"
 
 	"github.com/danmestas/notify/internal/domain"
-	"github.com/danmestas/notify/internal/phoneverify"
 )
 
 // ─── view structs ─────────────────────────────────────────────────────────────
@@ -54,19 +52,9 @@ type apiKeysPageView struct {
 	Revealed bool
 	ReadOnly bool
 	CSRF     string
-	// SMSConsent is the SMS consent card; nil hides it.
-	SMSConsent *smsConsentView
-}
-
-// smsConsentView binds the SMS consent card: the environment's
-// operator-attestation setting and the key's permission.
-type smsConsentView struct {
-	Enabled   bool
-	PolicyURL string
-	// KeyMayAttest: the active key may attest consent.
-	KeyMayAttest bool
-	// Error is the refusal of the last save, if any.
-	Error string
+	// ShowTextingLink shows the pointer to the texting switch on the
+	// Integrations page.
+	ShowTextingLink bool
 }
 
 // ─── page handlers ────────────────────────────────────────────────────────────
@@ -144,77 +132,8 @@ func (c *Console) serveAPIKeysPage(w http.ResponseWriter, r *http.Request) {
 		ReadOnly:      c.deps.ReadOnly,
 		CSRF:          s.CSRF,
 	}
-	if c.deps.Phone != nil {
-		consent, err := c.smsConsentView(r, scope)
-		if err != nil {
-			c.deps.Logger.Error("console: api-keys page: sms consent", "err", err)
-			c.serveError(w, r)
-			return
-		}
-		view.SMSConsent = consent
-	}
+	view.ShowTextingLink = c.deps.Phone != nil
 	c.renderPage(w, r, http.StatusOK, "api-keys", "API Keys", view)
-}
-
-func (c *Console) smsConsentView(r *http.Request, scope domain.Scope) (*smsConsentView, error) {
-	settings, err := c.deps.Phone.ConsentSettings(r.Context(), scope)
-	if err != nil {
-		return nil, err
-	}
-	allowed, err := c.deps.Identity.AttestSMSConsentAllowed(r.Context(), scope)
-	if err != nil {
-		return nil, err
-	}
-	v := &smsConsentView{Enabled: settings.Enabled, PolicyURL: settings.PolicyURL, KeyMayAttest: allowed}
-	if r.URL.Query().Get("smsConsentError") == "1" {
-		v.Error = "Allowing operator-attested consent needs an https privacy policy URL."
-	}
-	return v, nil
-}
-
-// handleSMSConsentSettings handles POST /console/settings/api-keys/sms-consent:
-// it allows or stops operator-attested SMS consent in the environment. A
-// refused save (no https policy URL) redirects back with smsConsentError=1.
-func (c *Console) handleSMSConsentSettings(w http.ResponseWriter, r *http.Request) {
-	scope, ok := domain.ScopeFromContext(r.Context())
-	if !ok {
-		panic("handleSMSConsentSettings: no scope in context")
-	}
-	if c.deps.ReadOnly {
-		http.Error(w, "console is read-only", http.StatusForbidden)
-		return
-	}
-	err := c.deps.Phone.SetConsentSettings(r.Context(), scope, r.FormValue("enabled") == "on", r.FormValue("policy_url"))
-	if errors.Is(err, phoneverify.ErrPolicyURLRequired) {
-		c.redirect(w, r, "/console/settings/api-keys?smsConsentError=1#sms-consent", http.StatusSeeOther)
-		return
-	}
-	if err != nil {
-		c.deps.Logger.Error("console: save sms consent setting", "err", err)
-		http.Error(w, "save failed", http.StatusInternalServerError)
-		return
-	}
-	c.redirect(w, r, "/console/settings/api-keys#sms-consent", http.StatusSeeOther)
-}
-
-// handleAttestPermission handles POST
-// /console/settings/api-keys/attest-permission: it grants or withdraws the
-// active key's permission to attest SMS consent.
-func (c *Console) handleAttestPermission(w http.ResponseWriter, r *http.Request) {
-	scope, ok := domain.ScopeFromContext(r.Context())
-	if !ok {
-		panic("handleAttestPermission: no scope in context")
-	}
-	if c.deps.ReadOnly {
-		http.Error(w, "console is read-only", http.StatusForbidden)
-		return
-	}
-	if err := c.deps.Identity.SetAttestSMSConsent(r.Context(), scope, r.FormValue("allow") == "on"); err != nil {
-		c.deps.Logger.Error("console: save attest permission", "err", err)
-		http.Error(w, "save failed", http.StatusInternalServerError)
-		return
-	}
-	c.redirect(w, r, "/console/settings/api-keys#sms-consent", http.StatusSeeOther)
 }
 
 // ─── mutation handlers ────────────────────────────────────────────────────────

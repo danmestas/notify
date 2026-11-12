@@ -72,38 +72,11 @@
     </div>
   </div>
 
-  {{/* SMS consent card: the environment's operator-attestation setting and
-       the key's permission to attest (POST /v1/subscribers/{id}/phone/consent). */}}
-  {{with $page.SMSConsent}}
-  <div class="console-card" id="sms-consent">
-    <h2 class="console-card-title">SMS consent</h2>
-    <p class="console-card-subtitle">Let this environment's API key attest that a subscriber agreed to texts, under your published privacy policy. You are responsible for having that consent (TCPA and similar laws). A STOP from the number always wins.</p>
-    {{if .Error}}<div class="console-alert console-alert-danger" role="alert">{{.Error}}</div>{{end}}
-    <form method="POST" action="{{base}}/console/settings/api-keys/sms-consent">
-      <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
-      <div class="form-row">
-        <label class="form-label">
-          <input type="checkbox" id="sms-consent-enabled" name="enabled" value="on"{{if .Enabled}} checked{{end}}{{if $page.ReadOnly}} disabled{{end}}> Allow operator-attested SMS consent
-        </label>
-      </div>
-      <div class="form-row">
-        <label class="form-label" for="sms-consent-policy-url">Privacy policy URL</label>
-        <input class="console-input" type="url" id="sms-consent-policy-url" name="policy_url"
-               value="{{.PolicyURL}}" placeholder="https://example.com/privacy"{{if $page.ReadOnly}} disabled{{end}}>
-        <span class="form-hint">Required to allow it. Must be https; recorded with every attestation.</span>
-      </div>
-      {{if not $page.ReadOnly}}<button type="submit" class="btn btn-outline btn-sm">Save setting</button>{{end}}
-    </form>
-    <form method="POST" action="{{base}}/console/settings/api-keys/attest-permission">
-      <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
-      <div class="form-row">
-        <label class="form-label">
-          <input type="checkbox" id="attest-sms-consent" name="allow" value="on"{{if .KeyMayAttest}} checked{{end}}{{if $page.ReadOnly}} disabled{{end}}> This API key may attest SMS consent
-        </label>
-        <span class="form-hint">Kept when the key is rotated.</span>
-      </div>
-      {{if not $page.ReadOnly}}<button type="submit" class="btn btn-outline btn-sm">Save permission</button>{{end}}
-    </form>
+  {{/* Pointer to the texting switch, which lives on the Integrations page. */}}
+  {{if $page.ShowTextingLink}}
+  <div class="console-card">
+    <h2 class="console-card-title">Texting customers</h2>
+    <p class="console-card-subtitle">Turn on texting for customers who opted in at your shop on the <a class="console-link" href="{{base}}/console/integrations#sms-consent">Integrations page</a>.</p>
   </div>
   {{end}}
 </section>
