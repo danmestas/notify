@@ -68,7 +68,7 @@ Every rejection happens before anything is published.
 
 ## Outbound webhooks
 
-Outbound webhook endpoints receive **delivery events**: the message JSON of every terminal channel result (`sent`, `error`, `skipped`, `throttled`), and `email.reply` events from the [reply loop](../inbound-email/reply-loop).
+Outbound webhook endpoints receive **delivery events**: the message JSON of every terminal channel result (`sent`, `error`, `skipped`, `throttled`), `email.reply` events from the [reply loop](../inbound-email/reply-loop), and the [SMS](../channels/sms#inbound-texts-and-delivery-status) events `sms.inbound`, `sms.opt_out`, `sms.opt_in` and `sms.status`. Events other than message JSON carry a `type`.
 
 ```bash
 curl -X POST localhost:3000/v1/webhooks/endpoints \
@@ -93,4 +93,20 @@ An `email.reply` event:
 ```json
 { "type": "email.reply", "subscriberId": "user-1", "transactionId": "…", "workflow": "order-shipped",
   "notificationId": "…", "text": "Thanks!", "from": "ada@example.com", "messageId": "<…>", "receivedAt": "…" }
+```
+
+An `sms.inbound` event. `subscriberId` is absent when no subscriber has the sender's phone; `phoneVerified` is false when the match has not verified it. `sms.opt_out` and `sms.opt_in` have the same shape plus `keyword` (`STOP`, `START`, …), one per subscriber with the number (or one with no `subscriberId`):
+
+```json
+{ "type": "sms.inbound", "subscriberId": "user-1", "phoneVerified": true, "from": "+15551112222",
+  "to": "+15559990000", "body": "Running late", "integrationId": "…", "providerId": "twilio",
+  "providerMessageId": "SM…", "inboundMessageId": "…", "receivedAt": "…" }
+```
+
+An `sms.status` event, sent when a delivery-status callback moves a message to `delivered` or `error`:
+
+```json
+{ "type": "sms.status", "messageId": "…", "status": "error", "errorClass": "recipient",
+  "errorText": "twilio: undelivered (error 30003)", "subscriberId": "user-1", "notificationId": "…",
+  "transactionId": "…", "workflowId": "…", "integrationId": "…", "providerMessageId": "SM…", "updatedAt": "…" }
 ```

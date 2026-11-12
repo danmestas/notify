@@ -57,10 +57,11 @@ Serialized with Go field names, plus a lowercase `extras`:
 | `Channel` | `in_app`, `email`, `push`, `chat`, `sms` or `stream`. |
 | `ProviderID`, `IntegrationID` | The provider and integration that sent it. |
 | `Subject`, `Content` | The rendered subject and body. For `stream`, `Subject` is the topic. |
-| `Status` | `sent`, `error`, `skipped` or `throttled`. |
+| `Status` | `sent`, `error`, `skipped` or `throttled`. An `sms` message may later move from `sent` to `delivered` or `error` by [delivery status](../../channels/sms#delivery-status). |
+| `ProviderMessageID` | The id the provider gave the message at send (an SMS `MessageSid`), when it gave one. |
 | `ErrorText` | The failure, when `Status` is `error`. |
 | `ErrorClass` | Why it failed, when `Status` is `error`: `auth` (the provider refused the credentials), `rate_limited`, `provider_down` (5xx, timeout, unreachable), `rejected_message` (the provider refused this message) `recipient` (a bad or unknown address) or `not_configured` (the scope has no integration for the channel). |
-| `SkipReason` | Why a step was skipped, when `Status` is `skipped`: `condition`, `condition_invalid`, `preference`, `no_verified_phone` (sms), `no_email` (email), `no_device` (push) or `no_channel` (chat). A recipient with no address for the channel is skipped, not failed. |
+| `SkipReason` | Why a step was skipped, when `Status` is `skipped`: `condition`, `condition_invalid`, `preference`, `no_verified_phone` (sms), `opted_out` (sms: the number texted STOP), `no_email` (email), `no_device` (push) or `no_channel` (chat). A recipient with no address for the channel is skipped, not failed. |
 | `Seen`, `Read`, `Archived` | Inbox state. |
 | `TransactionID` | The transaction. |
 | `CreatedAt` | RFC 3339. |

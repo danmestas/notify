@@ -19,11 +19,59 @@ Twilio integrations are covered by the credential check (on credential change, o
 
 | `providerId` | Credentials |
 |---|---|
-| `twilio` | `account_sid`, `auth_token` (**secret**), `from` |
-| `signalwire` | `project_id`, `token` (**secret**), `space_url`, `from` |
+| `twilio` | `account_sid`, `auth_token` (**secret**), `from`, `help_text` |
+| `signalwire` | `project_id`, `token` (**secret**), `space_url`, `from`, `signing_key` (**secret**), `help_text` |
 | `sns` | `access_key_id`, `secret_access_key` (**secret**), `region` |
 
-`from` is the sender number. Amazon SNS publishes straight to the recipient number and has no `from`.
+`from` is the sender number. Amazon SNS publishes straight to the recipient number and has no `from`. `help_text` is the reply to HELP (see [keywords](#keywords)). `signing_key` is the SignalWire project's Signing Key, which signs its callbacks; see [callbacks](#inbound-texts-and-delivery-status).
+
+## Inbound texts and delivery status
+
+Twilio and SignalWire integrations can send notify the texts people send to your number, and the delivery status of the texts notify sends. Each integration has two URLs, shown on its page in the console (Integrations, open the integration):
+
+| URL | Paste it into |
+|---|---|
+| `{base}/v1/inbound/sms/{integrationId}` | The number's "A message comes in" webhook, HTTP POST. |
+| `{base}/v1/inbound/sms/{integrationId}/status` | The status callback of the number or Messaging Service. |
+
+`{base}` is `NOTIFY_PUBLIC_BASE_URL` plus the base path notify is mounted at. The routes take no API key: the provider's signature is the credential, and the integration in the URL names the environment. A request that does not verify gets `403`, as does an id that names no Twilio or SignalWire integration. Without `NOTIFY_PUBLIC_BASE_URL` every callback gets `503`, because the signature covers the public URL and notify never trusts the `Host` header to rebuild it. The URL you paste must be exactly the one notify computes, scheme and any port included.
+
+| Provider | Header | Key | Scheme |
+|---|---|---|---|
+| Twilio | `X-Twilio-Signature` | The integration's `auth_token` | base64 HMAC-SHA1 of the URL followed by each form parameter's name and value, names sorted. |
+| SignalWire | `X-SignalWire-Signature` (or `X-Twilio-Signature`) | The integration's `signing_key` (Dashboard, API Credentials), not the API token | hex HMAC-SHA1 of the URL followed by the raw body; the Twilio-compatible form above, over the same key, is also accepted. |
+
+A SignalWire integration with no `signing_key` refuses every callback; set it with `PUT /v1/integrations/{id}` (`credentials.signing_key`) or in the console.
+
+### Inbound texts
+
+Each text is stored with the environment's [inbound messages](../../api/inbound) (`channel: "sms"`, with `body`, `from`, `recipient`, `integrationId`, `subscriberId`, `phoneVerified`) and sent to your [webhook endpoints](../../streams-and-webhooks#outbound-webhooks) as an `sms.inbound` event. The sender (normalised to E.164) is matched to a subscriber in the integration's environment by phone, preferring one who verified it. A match on an unverified phone is still delivered, with `phoneVerified: false`. A sender no subscriber has is delivered with no `subscriberId`. A provider retry of the same `MessageSid` is stored and sent once.
+
+### Keywords
+
+A text whose whole body, trimmed and in any case, is a keyword also does this:
+
+| Keywords | Effect | Event |
+|---|---|---|
+| `STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT` | The number is opted out in the environment, and every subscriber with it gets `sms: false` at their global [preference](../preferences). | `sms.opt_out` |
+| `START`, `YES`, `UNSTOP` | The opt-out is lifted, and those subscribers get `sms: true` at their global preference. | `sms.opt_in` |
+| `HELP`, `INFO` | notify replies through the same integration with `help_text`, or a default naming the number. The reply goes to the sender even if their phone is not verified, since it answers them. It is recorded as an `sms` message. | none |
+
+An opted-out number gets no sms step: it is skipped with `skipReason: "opted_out"`, not `preference`. The opt-out belongs to the number, so it holds for every workflow, including `critical` ones, which bypass preferences but not an opt-out, and for every subscriber with that number, including one added later. A subscriber's own per-workflow preference cannot override it either. Only `START` lifts it. `START` turns sms on at the global level, so afterwards workflows whose sms step is off by default (`defaultEnabled: false`) send too.
+
+Twilio's Advanced Opt-Out (and the carriers) may also handle STOP themselves and stop delivering to the number. The text still reaches notify, which records the opt-out and preference as above, so notify's view stays right and the skipped step says why rather than failing at the provider.
+
+### Delivery status
+
+A status callback updates the `sms` message notify sent with that `MessageSid` (kept on the message as `ProviderMessageID`):
+
+| Provider status | Message |
+|---|---|
+| `accepted`, `queued`, `sending`, `sent` | Stays `sent`. |
+| `delivered` | `delivered`. |
+| `undelivered`, `failed` | `error`, with `ErrorText` naming the status and `ErrorCode`, and an `ErrorClass` from the code: `recipient` for 30003-30006, 21211, 21610, 21612, 21614 (unreachable, blocked, unknown, landline or unsubscribed numbers); `rate_limited` for 30001; `auth` for 30002; `provider_down` for 30008 and 30500; `rejected_message` otherwise. |
+
+`delivered` and `error` are final. A repeated or late callback (a `sent` after `delivered`, a second `failed`) changes nothing, so callbacks may arrive in any order. A move to `error` counts once against the integration's delivery health; `recipient` failures never do, as elsewhere. Each change is sent to your webhook endpoints as an `sms.status` event. A callback for a message notify does not know (sent before this release, or not by notify) is acknowledged and ignored.
 
 ## Legacy create
 

@@ -252,6 +252,9 @@ type TwilioConfig struct {
 	AccountSID string `json:"account_sid"`
 	AuthToken  string `json:"auth_token"`
 	From       string `json:"from"`
+	// HelpText is the reply to an inbound HELP or INFO. Empty uses a default
+	// naming the sender number.
+	HelpText string `json:"help_text,omitempty"`
 }
 
 // SignalWireConfig is the credential payload for a SignalWire SMS integration:
@@ -264,6 +267,13 @@ type SignalWireConfig struct {
 	Token     string `json:"token"`
 	SpaceURL  string `json:"space_url"`
 	From      string `json:"from"`
+	// SigningKey is the project's Signing Key (Dashboard, API Credentials).
+	// SignalWire signs inbound and status callbacks with it, not with Token;
+	// without it notify refuses every callback for the integration.
+	SigningKey string `json:"signing_key,omitempty"`
+	// HelpText is the reply to an inbound HELP or INFO. Empty uses a default
+	// naming the sender number.
+	HelpText string `json:"help_text,omitempty"`
 }
 
 // Service stores integrations and resolves active providers per Scope.

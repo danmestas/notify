@@ -234,6 +234,9 @@ type Deps struct {
 	// /v1/inbound/email endpoint is live. False renders the "endpoint disabled"
 	// warning. The console never sees the secret value.
 	InboundSecretConfigured bool
+	// InboundMessages lists the texts that arrived through an SMS
+	// integration on its Activity tab (#143). Nil hides that list.
+	InboundMessages store.InboundMessageRepo
 	// BasePath is the cleaned mount prefix ("" or "/x", no trailing slash) that
 	// notify strips before routing. Every URL the console emits carries it.
 	BasePath string

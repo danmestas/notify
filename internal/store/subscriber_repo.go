@@ -33,6 +33,9 @@ type SubscriberRepo interface {
 	// SetVerifiedPhone sets the subscriber's phone and marks it verified. It is
 	// the only write that sets phone_verified_at; Upsert never does.
 	SetVerifiedPhone(ctx context.Context, scope domain.Scope, subscriberID, phone, verifiedAt string) error
+	// ListByPhone returns the live subscribers whose phone is phone (E.164),
+	// those who verified it first.
+	ListByPhone(ctx context.Context, scope domain.Scope, phone string) ([]domain.Subscriber, error)
 }
 
 // SubscriberPage is the result of a keyset-paginated List call.
@@ -196,6 +199,38 @@ func (repo *subscriberRepo) SetVerifiedPhone(ctx context.Context, scope domain.S
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ListByPhone returns the live subscribers whose phone is phone (E.164),
+// those who verified it first, then oldest first. At most 50.
+func (repo *subscriberRepo) ListByPhone(ctx context.Context, scope domain.Scope, phone string) ([]domain.Subscriber, error) {
+	rows, err := repo.r.QueryContext(
+		ctx,
+		`SELECT id, org_id, environment_id, subscriber_id, email, phone, phone_verified_at, first_name, last_name, locale, timezone, data, deleted
+		 FROM subscribers
+		 WHERE org_id = ? AND environment_id = ? AND phone = ? AND phone <> '' AND deleted = 0
+		 ORDER BY (phone_verified_at = '') ASC, id ASC
+		 LIMIT 50`,
+		scope.OrgID, scope.EnvID, phone,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var subs []domain.Subscriber
+	for rows.Next() {
+		var (
+			sub  domain.Subscriber
+			data []byte
+		)
+		if err := rows.Scan(&sub.ID, &sub.OrgID, &sub.EnvID, &sub.SubscriberID, &sub.Email, &sub.Phone, &sub.PhoneVerifiedAt,
+			&sub.FirstName, &sub.LastName, &sub.Locale, &sub.Timezone, &data, &sub.Deleted); err != nil {
+			return nil, err
+		}
+		sub.Data = data
+		subs = append(subs, sub)
+	}
+	return subs, rows.Err()
 }
 
 // List returns a cursor-paginated page of non-deleted subscribers ordered by

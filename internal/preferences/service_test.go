@@ -200,3 +200,29 @@ func TestChannelEnabled_AbsentFallsBackToTheWorkflowDefault(t *testing.T) {
 		t.Error("critical workflow did not send")
 	}
 }
+
+// TestSetGlobalChannel: setting one channel at the global level keeps the
+// subscriber's other global choices.
+func TestSetGlobalChannel(t *testing.T) {
+	ctx := context.Background()
+	svc, scope := newService(t)
+	if err := svc.SetGlobal(ctx, scope, "sub1", map[string]bool{"email": false}); err != nil {
+		t.Fatalf("SetGlobal: %v", err)
+	}
+	if err := svc.SetGlobalChannel(ctx, scope, "sub1", "sms", false); err != nil {
+		t.Fatalf("SetGlobalChannel: %v", err)
+	}
+	got, err := svc.ResolveChannels(ctx, scope, "sub1", "wf1")
+	if err != nil {
+		t.Fatalf("ResolveChannels: %v", err)
+	}
+	if len(got) != 2 || got["email"] || got["sms"] {
+		t.Fatalf("channels = %v, want email and sms both off", got)
+	}
+	if err := svc.SetGlobalChannel(ctx, scope, "sub2", "sms", true); err != nil {
+		t.Fatalf("SetGlobalChannel(no prior row): %v", err)
+	}
+	if got, _ := svc.ResolveChannels(ctx, scope, "sub2", "wf1"); len(got) != 1 || !got["sms"] {
+		t.Fatalf("sub2 channels = %v, want sms on", got)
+	}
+}

@@ -289,6 +289,10 @@ type Message struct {
 	// fault to anyone inspecting the row.
 	SkipReason string `db:"skip_reason"`
 	CreatedAt  string `db:"created_at"`
+	// ProviderMessageID is the id the provider returned at send (an SMS
+	// MessageSid). A delivery-status callback finds the message by it. Empty
+	// when the provider gave none, and for rows written before migration 0057.
+	ProviderMessageID string `db:"provider_message_id"`
 	// Extras is the in_app rich-field snapshot (avatar, primaryAction,
 	// secondaryAction, redirect, data) captured at send time, in the
 	// inbox notification shape. Non-in_app messages and rows written before

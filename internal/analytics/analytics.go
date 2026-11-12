@@ -70,6 +70,10 @@ func (svc *Service) Start(ctx context.Context) (stop func() error, err error) {
 // event key makes that redelivery idempotent.
 func (svc *Service) ingest(ctx context.Context, data []byte) error {
 	var ev struct {
+		// Type is set on events that are not a delivery result (email.reply,
+		// sms.inbound, sms.opt_out, sms.opt_in, sms.status); a message event
+		// has none.
+		Type          string `json:"type"`
 		OrgID         string
 		EnvID         string
 		Channel       string
@@ -82,6 +86,9 @@ func (svc *Service) ingest(ctx context.Context, data []byte) error {
 	}
 	if err := json.Unmarshal(data, &ev); err != nil {
 		log.Printf("analytics: drop event: unmarshal: %v", err)
+		return nil
+	}
+	if ev.Type != "" {
 		return nil
 	}
 	if ev.OrgID == "" || ev.EnvID == "" {
