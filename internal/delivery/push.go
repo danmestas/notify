@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -208,7 +209,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	// malformed condition fails closed (skip) so a broken condition never blasts
 	// a send to every subscriber.
 	if !conditionMet(env.Step.Filters, subMap, payloadMap, stepOutputs) {
-		return h.persistPushSkipped(ctx, env, t, scope, subject, content)
+		return h.persistPushSkipped(ctx, env, t, scope, subject, content, "")
 	}
 
 	// Optional throttle gate. When the step configures a limit and a throttler
@@ -228,13 +229,22 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	if h.prefs != nil {
 		enabled, perr := h.prefs.ChannelEnabled(ctx, scope, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical, true)
 		if perr == nil && !enabled {
-			return h.persistPushSkipped(ctx, env, t, scope, subject, content)
+			return h.persistPushSkipped(ctx, env, t, scope, subject, content, "")
 		}
+	}
+
+	// No device, no send. Which address a push needs depends on the provider
+	// (a topic or token, or web push subscriptions), so this only catches a
+	// subscriber with none of them; the provider-specific checks below catch
+	// the rest. Together they skip rather than fail, with or without an
+	// integration. A lookup error falls through to the normal path.
+	if none, cerr := h.hasNoPushAddress(ctx, scope, env.SubscriberID); cerr == nil && none {
+		return h.persistPushSkipped(ctx, env, t, scope, subject, content, SkipReasonNoDevice)
 	}
 
 	provider, providerID, integrationID, err := h.resolvePushProvider(ctx, scope, env.Step.Integration)
 	if err != nil {
-		return h.persistPushError(ctx, env, t, "ntfy", "", err)
+		return h.persistPushError(ctx, env, t, "ntfy", "", resolveFailure("push", err))
 	}
 
 	// Web Push fans out to every device subscription registered for the
@@ -249,6 +259,9 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	// From here on error rows carry the resolved provider id, so they cannot
 	// disagree with sent rows when another push provider is active.
 	ch, err := h.store.SubscriberChannels().GetByProvider(ctx, scope, env.SubscriberID, providerID)
+	if errors.Is(err, store.ErrNotFound) {
+		return h.persistPushSkipped(ctx, env, t, scope, subject, content, SkipReasonNoDevice)
+	}
 	if err != nil {
 		return h.persistPushError(ctx, env, t, providerID, integrationID, fmt.Errorf("push: subscriber channel for %q/%q: %w", env.SubscriberID, providerID, err))
 	}
@@ -261,7 +274,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 		}
 	}
 	if creds.Topic == "" {
-		return h.persistPushError(ctx, env, t, providerID, integrationID, fmt.Errorf("push: subscriber %q has no topic for provider %q", env.SubscriberID, providerID))
+		return h.persistPushSkipped(ctx, env, t, scope, subject, content, SkipReasonNoDevice)
 	}
 
 	if _, err := provider.Send(ctx, providers.PushMessage{
@@ -316,6 +329,25 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	return out, nil
 }
 
+// hasNoPushAddress reports whether the subscriber has no push address of any
+// kind: no push subscriber_channels row and no web push subscription.
+func (h *PushHandler) hasNoPushAddress(ctx context.Context, scope domain.Scope, subscriberID string) (bool, error) {
+	chs, err := h.store.SubscriberChannels().ListBySubscriber(ctx, scope, subscriberID)
+	if err != nil {
+		return false, err
+	}
+	for _, ch := range chs {
+		if ch.Type == "push" {
+			return false, nil
+		}
+	}
+	subs, err := h.store.WebPushSubscriptions().ListBySubscriber(ctx, scope, subscriberID)
+	if err != nil {
+		return false, err
+	}
+	return len(subs) == 0, nil
+}
+
 // handleWebPushSend fans the rendered subject/content out to every device
 // subscription webpush_subscriptions holds for env.SubscriberID: one
 // SendToSubscription call per row (there is no single "topic" to address, so
@@ -342,7 +374,7 @@ func (h *PushHandler) handleWebPushSend(ctx context.Context, env runenv.InAppEnv
 		return h.persistPushError(ctx, env, t, webPushProviderID, integrationID, fmt.Errorf("webpush: list subscriptions: %w", err))
 	}
 	if len(subs) == 0 {
-		return h.persistPushSkipped(ctx, env, t, scope, subject, content)
+		return h.persistPushSkipped(ctx, env, t, scope, subject, content, SkipReasonNoDevice)
 	}
 
 	msg := providers.PushMessage{
@@ -360,7 +392,7 @@ func (h *PushHandler) handleWebPushSend(ctx context.Context, env runenv.InAppEnv
 		if lastErr == nil {
 			// Every subscription was gone (pruned): nothing left to address,
 			// same outcome as no rows at all.
-			return h.persistPushSkipped(ctx, env, t, scope, subject, content)
+			return h.persistPushSkipped(ctx, env, t, scope, subject, content, SkipReasonNoDevice)
 		}
 		if providers.IsTransient(lastErr) {
 			// Every attempt failed transiently (5xx/timeout) and nothing was
@@ -424,7 +456,7 @@ func (h *PushHandler) handleWebPushSend(ctx context.Context, env runenv.InAppEnv
 // disabled by subscriber preference) and returns its JSON with a nil error.
 // No push is sent; this mirrors the existing skipped/failed-message pattern.
 // resolve is attempted best-effort to populate providerID and integrationID.
-func (h *PushHandler) persistPushSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+func (h *PushHandler) persistPushSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content, reason string) (json.RawMessage, error) {
 	metrics.Delivery("push", metrics.OutcomeSkipped)
 	providerID, integrationID := h.resolvePushIDs(ctx, scope, env.Step.Integration)
 	if providerID == "" {
@@ -445,6 +477,7 @@ func (h *PushHandler) persistPushSkipped(ctx context.Context, env runenv.InAppEn
 		Content:        content,
 		Subject:        subject,
 		Status:         "skipped",
+		SkipReason:     reason,
 		Seen:           false,
 		Read:           false,
 		Archived:       false,

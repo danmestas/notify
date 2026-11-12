@@ -164,9 +164,9 @@ func (t *Tracker) AttemptFailed(ctx context.Context, scope domain.Scope, integra
 }
 
 // record folds one delivery outcome into the integration's health. Outcomes
-// with no integration, and recipient errors, are ignored.
+// with no integration, and recipient or not-configured errors, are ignored.
 func (t *Tracker) record(ctx context.Context, scope domain.Scope, integrationID string, ok bool, class providers.ErrorClass, text string) {
-	if integrationID == "" || (!ok && class == providers.ClassRecipient) {
+	if integrationID == "" || (!ok && (class == providers.ClassRecipient || class == providers.ClassNotConfigured)) {
 		return
 	}
 	t.update(ctx, scope, integrationID, func(h *domain.IntegrationHealth, now time.Time) error {

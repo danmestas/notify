@@ -155,9 +155,9 @@ func TestHandlePush_RoutesToResolvedProvider(t *testing.T) {
 }
 
 // TestHandlePush_MissingTokenForProviderIsError proves a subscriber with no
-// push address for the resolved provider records a permanent "error" message
-// (not a crashed run), and never invokes the provider.
-func TestHandlePush_MissingTokenForProviderIsError(t *testing.T) {
+// push address for the resolved provider records a "skipped" message (not a
+// crashed run or an error), and never invokes the provider.
+func TestHandlePush_MissingTokenForProviderIsSkipped(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 	// Seed only an ntfy address; resolve to expo so the lookup misses.
@@ -180,11 +180,8 @@ func TestHandlePush_MissingTokenForProviderIsError(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected exactly one message, got %d", len(msgs))
 	}
-	if msgs[0].Status != "error" {
-		t.Errorf("Status = %q, want error", msgs[0].Status)
-	}
-	if msgs[0].ProviderID != "expo" {
-		t.Errorf("ProviderID = %q, want expo (resolved provider on the error row)", msgs[0].ProviderID)
+	if msgs[0].Status != "skipped" || msgs[0].SkipReason != SkipReasonNoDevice {
+		t.Errorf("Status/SkipReason = %q/%q, want skipped/%s", msgs[0].Status, msgs[0].SkipReason, SkipReasonNoDevice)
 	}
 	if got := len(capt.Sent()); got != 0 {
 		t.Errorf("provider invoked %d times on missing address, want 0", got)
@@ -317,10 +314,10 @@ func TestHandlePush_ThrottledWhenOverLimit(t *testing.T) {
 	}
 }
 
-// TestHandlePush_MissingTopicRecordsError: a subscriber with no
-// subscriber_channels row for the provider is a permanent fault — a recorded
-// "error" message, not a crashed (or retried) run.
-func TestHandlePush_MissingTopicRecordsError(t *testing.T) {
+// TestHandlePush_MissingTopicIsSkipped: a subscriber with no
+// subscriber_channels row for the provider has nowhere to send to — a
+// recorded "skipped" message, not a crashed (or retried) run.
+func TestHandlePush_MissingTopicIsSkipped(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 	capt := providers.NewCapturePush()
@@ -338,11 +335,8 @@ func TestHandlePush_MissingTopicRecordsError(t *testing.T) {
 	if uerr := json.Unmarshal(out, &m); uerr != nil {
 		t.Fatalf("unmarshal handler output: %v", uerr)
 	}
-	if m.Status != "error" {
-		t.Errorf("Status = %q, want %q", m.Status, "error")
-	}
-	if m.ErrorText == "" {
-		t.Error("ErrorText is empty, want the missing-channel cause")
+	if m.Status != "skipped" || m.SkipReason != SkipReasonNoDevice {
+		t.Errorf("Status/SkipReason = %q/%q, want skipped/%s", m.Status, m.SkipReason, SkipReasonNoDevice)
 	}
 	if got := len(capt.Sent()); got != 0 {
 		t.Errorf("provider invoked %d times without a topic, want 0", got)
@@ -508,6 +502,7 @@ func TestHandlePush_ExplicitIntegration_RoutesToThatProvider(t *testing.T) {
 func TestHandlePush_UnknownIntegration_ErrorPersistedNoRetry(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
+	seedTopic(t, s, "agent-alerts") // an addressed subscriber, so the step reaches resolution
 	capt := providers.NewCapturePush()
 	h := NewPush(s, stubPushResolver{p: capt, id: "ntfy"})
 

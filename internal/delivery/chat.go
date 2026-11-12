@@ -159,6 +159,17 @@ func (h *ChatHandler) chatAddress(ctx context.Context, scope domain.Scope, subsc
 	return creds.Address, nil
 }
 
+// chatNeedsAddress reports whether providerID cannot send without a
+// per-recipient address. Discord posts to its webhook; Mastodon and Bluesky
+// broadcast.
+func chatNeedsAddress(providerID string) bool {
+	switch providerID {
+	case "telegram", "slack", "whatsapp":
+		return true
+	}
+	return false
+}
+
 // HandleChat is registered via engine.Handle("notify.send.chat", h.HandleChat).
 // It unmarshals the run envelope, renders the body template against the
 // {subscriber, payload} context, resolves the scope's chat provider and the
@@ -208,7 +219,7 @@ func (h *ChatHandler) HandleChat(ctx context.Context, t engine.TaskPayload) (jso
 	// malformed condition fails closed (skip) so a broken condition never blasts
 	// a send to every subscriber.
 	if !conditionMet(env.Step.Filters, subMap, payloadMap, stepOutputs) {
-		return h.persistChatSkipped(ctx, env, t, scope, subject, content)
+		return h.persistChatSkipped(ctx, env, t, scope, subject, content, "")
 	}
 
 	// Optional throttle gate. When the step configures a limit and a throttler
@@ -228,25 +239,25 @@ func (h *ChatHandler) HandleChat(ctx context.Context, t engine.TaskPayload) (jso
 	if h.prefs != nil {
 		enabled, perr := h.prefs.ChannelEnabled(ctx, scope, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical, true)
 		if perr == nil && !enabled {
-			return h.persistChatSkipped(ctx, env, t, scope, subject, content)
+			return h.persistChatSkipped(ctx, env, t, scope, subject, content, "")
 		}
 	}
 
 	provider, providerID, integrationID, err := h.resolveChatProvider(ctx, scope, env.Step.Integration)
 	if err != nil {
-		return h.persistChatError(ctx, env, t, "", "", err)
+		return h.persistChatError(ctx, env, t, "", "", resolveFailure("chat", err))
 	}
 
 	// Per-subscriber addressing. The chat_id (telegram) / webhook override
 	// (discord) comes from the subscriber_channels row for this provider.
-	// Telegram requires a chat_id; Discord falls back to the integration
-	// webhook when the subscriber has no address.
+	// Telegram, Slack and WhatsApp need one and skip without; Discord falls
+	// back to the integration webhook when the subscriber has no address.
 	address, err := h.chatAddress(ctx, scope, env.SubscriberID, providerID)
 	if err != nil {
 		return h.persistChatError(ctx, env, t, providerID, integrationID, fmt.Errorf("chat: subscriber channel for %q/%q: %w", env.SubscriberID, providerID, err))
 	}
-	if providerID == "telegram" && address == "" {
-		return h.persistChatError(ctx, env, t, providerID, integrationID, fmt.Errorf("chat: subscriber %q has no chat_id for provider %q", env.SubscriberID, providerID))
+	if address == "" && chatNeedsAddress(providerID) {
+		return h.persistChatSkipped(ctx, env, t, scope, subject, content, SkipReasonNoChannel)
 	}
 
 	// Telegram (parse_mode HTML) and Slack (mrkdwn) read markup, so values
@@ -303,10 +314,11 @@ func (h *ChatHandler) HandleChat(ctx context.Context, t engine.TaskPayload) (jso
 	return out, nil
 }
 
-// persistChatSkipped records a status:"skipped" chat message (the channel is
-// disabled by subscriber preference) and returns its JSON with a nil error. No
+// persistChatSkipped records a status:"skipped" chat message carrying the gate
+// that skipped it (reason, "" for the gates that predate skip reasons) and
+// returns its JSON with a nil error. No
 // chat is sent; this mirrors the existing skipped/failed-message pattern.
-func (h *ChatHandler) persistChatSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+func (h *ChatHandler) persistChatSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content, reason string) (json.RawMessage, error) {
 	metrics.Delivery("chat", metrics.OutcomeSkipped)
 	providerID, integrationID := h.resolveChatIDs(ctx, scope, env.Step.Integration)
 	if providerID == "" {
@@ -327,6 +339,7 @@ func (h *ChatHandler) persistChatSkipped(ctx context.Context, env runenv.InAppEn
 		Content:        content,
 		Subject:        subject,
 		Status:         "skipped",
+		SkipReason:     reason,
 		Seen:           false,
 		Read:           false,
 		Archived:       false,

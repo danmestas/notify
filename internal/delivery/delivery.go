@@ -8,6 +8,7 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -238,7 +239,26 @@ const (
 	// SkipReasonNoVerifiedPhone: an sms step for a subscriber with no phone
 	// they verified. Not a fault; the subscriber has not opted a number in.
 	SkipReasonNoVerifiedPhone = "no_verified_phone"
+	// SkipReasonNoEmail: an email step for a subscriber with no email address.
+	SkipReasonNoEmail = "no_email"
+	// SkipReasonNoDevice: a push step for a subscriber with no push address
+	// (no ntfy topic or device token, no web push subscription).
+	SkipReasonNoDevice = "no_device"
+	// SkipReasonNoChannel: a chat step on a provider that addresses each
+	// recipient (telegram, slack, whatsapp), for a subscriber with no address.
+	SkipReasonNoChannel = "no_channel"
 )
+
+// resolveFailure marks a resolver's store.ErrNotFound -- the scope has no
+// active integration for channel -- as a NotConfiguredError so it is recorded
+// as a setup fault rather than a bare "store: not found". Any other resolve
+// error passes through.
+func resolveFailure(channel string, err error) error {
+	if errors.Is(err, store.ErrNotFound) {
+		return &providers.NotConfiguredError{Channel: channel, Err: err}
+	}
+	return err
+}
 
 // persistSkipped records a status:"skipped" in-app message (the channel is
 // disabled by subscriber preference) and returns its JSON with a nil error.

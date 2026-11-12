@@ -58,8 +58,8 @@ Serialized with Go field names, plus a lowercase `extras`:
 | `Subject`, `Content` | The rendered subject and body. For `stream`, `Subject` is the topic. |
 | `Status` | `sent`, `error`, `skipped` or `throttled`. |
 | `ErrorText` | The failure, when `Status` is `error`. |
-| `ErrorClass` | Why it failed, when `Status` is `error`: `auth` (the provider refused the credentials), `rate_limited`, `provider_down` (5xx, timeout, unreachable), `rejected_message` (the provider refused this message) or `recipient` (a bad or unknown address). |
-| `SkipReason` | `condition`, `condition_invalid` or `preference`, when `Status` is `skipped`. |
+| `ErrorClass` | Why it failed, when `Status` is `error`: `auth` (the provider refused the credentials), `rate_limited`, `provider_down` (5xx, timeout, unreachable), `rejected_message` (the provider refused this message) `recipient` (a bad or unknown address) or `not_configured` (the scope has no integration for the channel). |
+| `SkipReason` | Why a step was skipped, when `Status` is `skipped`: `condition`, `condition_invalid`, `preference`, `no_verified_phone` (sms), `no_email` (email), `no_device` (push) or `no_channel` (chat). A recipient with no address for the channel is skipped, not failed. |
 | `Seen`, `Read`, `Archived` | Inbox state. |
 | `TransactionID` | The transaction. |
 | `CreatedAt` | RFC 3339. |
