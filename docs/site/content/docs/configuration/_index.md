@@ -13,7 +13,7 @@ Flags use Go's `flag` package, so `-addr` and `--addr` are the same. Variables m
 |---|---|
 | `notify serve` | Run the API server. |
 | `notify bootstrap -org <name> -env <name>` | Create an organization, an environment and an API key. Prints `{"apiKey", "orgId", "envId"}` as JSON. Takes `-db`, `-master-key-hex`, `-dev`. Both `-org` and `-env` are required. |
-| `notify rotate-key -org <name\|id> -env <name\|id>` | Mint a new key for an existing scope and **revoke every other key** for it. Prints the same JSON. An ambiguous name is an error; pass the id. Takes `-db`, `-master-key-hex`, `-dev`. |
+| `notify rotate-key -org <name\|id> -env <name\|id>` | Mint a new key for an existing scope and **revoke every other key** for it. Prints the same JSON. An ambiguous name is an error; pass the id. Takes `-db`, `-master-key-hex`, `-dev`. The new key keeps the old one's permission to [attest SMS consent](../channels/sms#operator-attested-consent); `-attest-sms-consent=true` or `=false` sets it. |
 | `notify validate-steps` | Re-validate every stored workflow against the current step rules. Read-only; exits `1` if any fail. Takes `-db`. |
 | `notify inbound` | Pipe mode for [inbound email](../inbound-email/reply-loop#2-pipe-mode). Takes `-server`, `-secret`, `-timeout`. |
 | `notify version` (also `-v`, `--version`) | Print the version. |

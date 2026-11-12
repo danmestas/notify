@@ -344,11 +344,12 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// STOP/START/HELP keywords. Signatures cover the public URL, base path
 	// included.
 	sms := smsloop.New(st, conn, publicCallbackBase(cfg.PublicBaseURL, base), log).WithEventPublisher(bus)
+	phone := phoneverify.New(st, conn)
 	api := httpapi.New(httpapi.Deps{
 		A2AAuth:  a2a,
 		Receiver: receiver,
 		A2A:      a2aSvc,
-		Identity: id, Audience: aud, Trigger: trg, Inbox: inboxapi.New(st).WithPhoneVerification(phoneverify.New(st, conn)),
+		Identity: id, Audience: aud, Trigger: trg, Inbox: inboxapi.New(st).WithPhoneVerification(phone), Phone: phone,
 		Realtime: realtime.New(bus), Feed: feedapi.New(bus), Inbound: inbound.New(trg),
 		Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, CredChecker: n.credVerify, Store: st, EnvVars: ev,
 		EmailLoop: eml, SMSLoop: sms, SourceIngest: feedingest.New(srcSvc, bus), Authoring: n.au,
@@ -382,6 +383,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 		Layouts:        st.Layouts(),
 		Translations:   st.Translations(),
 		Environments:   st.Environments(),
+		Phone:          phone,
 		EnvVars:        ev,
 		InboundDomains: inbounddomains.New(st, cfg.InboundMXHost),
 		// Inbound email console page: read-only thread log + endpoint status.

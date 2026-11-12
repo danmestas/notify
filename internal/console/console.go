@@ -25,6 +25,7 @@ import (
 	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inbounddomains"
+	"github.com/danmestas/notify/internal/phoneverify"
 	"github.com/danmestas/notify/internal/preferences"
 
 	"github.com/danmestas/notify/internal/a2aauth"
@@ -184,6 +185,9 @@ type Deps struct {
 	// settings W4-L2). Nil means the settings panel shows read-only with
 	// empty defaults.
 	Environments store.EnvironmentRepo
+	// Phone backs the SMS consent controls on the API keys page: the
+	// environment's operator-attestation setting. Nil hides them.
+	Phone *phoneverify.Service
 	// EnvVars is the env vars service for the variables CRUD pages (W4-V1).
 	// Nil is allowed only when no variables routes are mounted.
 	EnvVars *envvars.Service
@@ -649,6 +653,10 @@ func (c *Console) Routes() http.Handler {
 		pr.Get("/console/api/fragments/environments-list", c.serveFragmentEnvironmentsList)
 		pr.Get("/console/settings/api-keys", c.serveAPIKeysPage)
 		pr.Post("/console/settings/api-keys/regenerate", c.handleAPIKeyRegenerate)
+		if c.deps.Phone != nil {
+			pr.Post("/console/settings/api-keys/sms-consent", c.handleSMSConsentSettings)
+			pr.Post("/console/settings/api-keys/attest-permission", c.handleAttestPermission)
+		}
 		// W4-D1/D2: inbound domain management (#53).
 		if c.deps.InboundDomains != nil {
 			pr.Get("/console/domains", c.serveDomainsPage)

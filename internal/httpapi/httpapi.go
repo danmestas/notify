@@ -41,6 +41,7 @@ import (
 	"github.com/danmestas/notify/internal/inbound"
 	"github.com/danmestas/notify/internal/inbounddomains"
 	"github.com/danmestas/notify/internal/inboxapi"
+	"github.com/danmestas/notify/internal/phoneverify"
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/secretbox"
@@ -140,6 +141,10 @@ type Deps struct {
 	// A2A serves /a2a/{agentId} and its card. Nil leaves them unmounted. It
 	// needs A2AAuth: without it the routes are not mounted either.
 	A2A *a2a.Service
+	// Phone backs operator-attested SMS consent
+	// (POST/DELETE /v1/subscribers/{subscriberId}/phone/consent). Nil leaves
+	// those routes unmounted.
+	Phone *phoneverify.Service
 }
 
 // New builds the notify HTTP handler from d. All authenticated routes are
@@ -245,6 +250,12 @@ func New(d Deps) http.Handler {
 		// already authenticated. The token it returns is the only credential
 		// a browser may hold.
 		pr.Post("/v1/subscribers/{subscriberId}/session", id.PostSubscriberSession)
+		// Operator-attested SMS consent (#142): the environment must allow
+		// it and the key must carry the permission.
+		if d.Phone != nil {
+			pr.Post("/v1/subscribers/{subscriberId}/phone/consent", postPhoneConsent(d.Phone))
+			pr.Delete("/v1/subscribers/{subscriberId}/phone/consent", deletePhoneConsent(d.Phone))
+		}
 		// A2A client keys (#74): machine credentials for the A2A channel.
 		if d.A2AAuth != nil {
 			pr.Post("/v1/a2a/client-keys", postA2AClientKey(d.A2AAuth))
@@ -2547,12 +2558,15 @@ type subscriberDTO struct {
 	Phone        string `json:"phone"`
 	// PhoneVerified is read-only: only the subscriber can verify a phone
 	// (POST /v1/me/phone/verification), and sms steps send only to one.
-	PhoneVerified bool            `json:"phoneVerified"`
-	FirstName     string          `json:"firstName"`
-	LastName      string          `json:"lastName"`
-	Locale        string          `json:"locale"`
-	Timezone      string          `json:"timezone"`
-	Data          json.RawMessage `json:"data,omitempty"`
+	PhoneVerified bool `json:"phoneVerified"`
+	// PhoneConsent is read-only: self_verified, operator_attested
+	// (POST /v1/subscribers/{subscriberId}/phone/consent), or absent.
+	PhoneConsent string          `json:"phoneConsent,omitempty"`
+	FirstName    string          `json:"firstName"`
+	LastName     string          `json:"lastName"`
+	Locale       string          `json:"locale"`
+	Timezone     string          `json:"timezone"`
+	Data         json.RawMessage `json:"data,omitempty"`
 }
 
 func toSubscriberDTO(s domain.Subscriber) subscriberDTO {
@@ -2562,6 +2576,7 @@ func toSubscriberDTO(s domain.Subscriber) subscriberDTO {
 		Email:         s.Email,
 		Phone:         s.Phone,
 		PhoneVerified: s.PhoneVerifiedAt != "",
+		PhoneConsent:  s.PhoneConsent(),
 		FirstName:     s.FirstName,
 		LastName:      s.LastName,
 		Locale:        s.Locale,

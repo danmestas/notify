@@ -236,8 +236,9 @@ const (
 	// SkipReasonPreference: the subscriber has this channel disabled. Not a
 	// fault; the system did exactly what was asked.
 	SkipReasonPreference = "preference"
-	// SkipReasonNoVerifiedPhone: an sms step for a subscriber with no phone
-	// they verified. Not a fault; the subscriber has not opted a number in.
+	// SkipReasonNoVerifiedPhone: an sms step for a subscriber with no
+	// consented phone: none they verified, and none an operator attested
+	// where the environment allows it. Not a fault.
 	SkipReasonNoVerifiedPhone = "no_verified_phone"
 	// SkipReasonOptedOut: an sms step for a subscriber whose number texted
 	// STOP (or a synonym). Unlike a preference it holds for every workflow,

@@ -3,13 +3,50 @@ title: SMS
 weight: 4
 ---
 
-Channel `sms`. The recipient is the subscriber's phone, and only once the subscriber has verified it: they request a code by SMS and confirm it through their own [subscriber session](../../inbox-and-agents/subscriber-sessions#verify-a-phone). The `phone` you write with `POST` or `PATCH /v1/subscribers` is stored unverified, and writing a different number clears an earlier verification. `GET /v1/subscribers/{id}` reports `phoneVerified`. A subscriber with no verified phone has sms steps skipped (`skipReason: "no_verified_phone"`), not failed.
+Channel `sms`. The recipient is the subscriber's phone, and only once it counts as consented, in one of two ways:
+
+- **Self-verified.** The subscriber requests a code by SMS and confirms it through their own [subscriber session](../../inbox-and-agents/subscriber-sessions#verify-a-phone).
+- **Operator-attested.** Where the environment allows it, you state through the API that the subscriber agreed to texts under your privacy policy. See [operator-attested consent](#operator-attested-consent).
+
+The `phone` you write with `POST` or `PATCH /v1/subscribers` is stored without consent, and writing a different number clears consent of either kind. `GET /v1/subscribers/{id}` reports `phoneVerified` and `phoneConsent` (`self_verified`, `operator_attested`, or absent). A subscriber with no consented phone has sms steps skipped (`skipReason: "no_verified_phone"`), not failed. A number that texted STOP is skipped whatever its consent; see [keywords](#keywords).
 
 SMS is off by default for a subscriber with no SMS preference; a workflow turns it on with its step's `defaultEnabled`. See [preferences](../preferences#sms-default).
 
 Upgrading from a release without verification stops existing SMS workflows until subscribers verify and you set `defaultEnabled`; see the [upgrade note](../../operations/releases#upgrade-note-verified-phones-for-sms-130).
 
 Every send, the verification codes included, is recorded as an `sms` message on its integration, with the same `status`, `errorClass` and delivery health as push and email. A verification message never records the code.
+
+## Operator-attested consent
+
+A business whose customers agreed to texts through their dealings with it (in a shop, on a signed form), under its published privacy policy, can attest that consent instead of asking each customer to verify a code.
+
+**You are responsible for having that consent.** notify does not check it. Attesting says you hold consent that meets the law that applies to you (in the US the TCPA, and carrier rules) and your own privacy policy, and notify records that you said so. A STOP from the number always wins over an attestation.
+
+It takes two switches, both off by default:
+
+1. **The environment setting.** In the console, Settings, API keys, SMS consent: check *Allow operator-attested SMS consent* and give your privacy policy URL, which must be `https`. The setting cannot be turned on without it. Turning the setting off suspends every attestation in the environment (sms steps skip them) without clearing them; turning it back on restores them.
+2. **The key permission.** On the same card: *This API key may attest SMS consent*. A key without it gets `403`. The permission stays with the environment's key when you rotate it, in the console or with `notify rotate-key`; `notify rotate-key -attest-sms-consent=true|false` sets it on the new key.
+
+| Method and path | Purpose | Success |
+|---|---|---|
+| `POST /v1/subscribers/{subscriberId}/phone/consent` | Attest consent for `{"phone", "source"?, "attestedAt"?}`. | `201` the attestation |
+| `DELETE /v1/subscribers/{subscriberId}/phone/consent` | Revoke an attestation, with an optional `{"reason"}` (up to 500 bytes). Any API key of the environment may. | `204` |
+
+`{subscriberId}` is your id for the subscriber, who must already exist in the key's environment (`404` otherwise, as for another environment's subscriber). `phone` is normalised to E.164 (`422` when it cannot be). If the subscriber's stored phone is a different number that nobody verified, it is replaced by this one. If the subscriber verified a different number themselves, the attestation is refused with `409` `phone_self_verified` and nothing changes: an attestation never replaces consent the subscriber proved. Attest that number instead, which is recorded and leaves it `self_verified`, or have the subscriber verify the new one. `source` is an optional note of up to 500 bytes on where consent came from (`"opted in at the counter"`). `attestedAt` is an optional RFC 3339 time when consent was given; one before 2000-01-01 or in the future is `400`. Attesting again replaces the earlier attestation.
+
+```json
+{ "id": "01J…", "subscriberId": "cust-1", "phone": "+15551112222", "phoneConsent": "operator_attested",
+  "apiKeyId": "9f86d0…", "source": "opted in at the counter", "attestedAt": "2025-06-01T10:00:00.000000000Z",
+  "policyUrl": "https://shop.example/privacy", "createdAt": "2026-11-12T12:00:00.000000000Z" }
+```
+
+`403` with code `sms_consent_disabled` means the environment setting is off; `403` with code `forbidden` means the key lacks the permission.
+
+An attestation stops counting when it is revoked, when the subscriber's phone changes to another number, or when the subscriber is deleted. Revoking leaves a self-verified phone verified. A self-verified phone reads as `self_verified` even when it is also attested.
+
+Every attestation is kept for audit and is not deleted when it stops counting. The record holds the subscriber, the phone, the attesting key's id (`apiKeyId`, the SHA-256 of the key, kept after the key is rotated), the time, `source`, `attestedAt` and the policy URL in force at the time. Once the attestation stops counting, the record also holds when and why: `revoked` or `superseded`, with the key that did it and any `reason` it gave, or `phone_changed` or `subscriber_deleted`, which name no key. The change that ends an attestation and its audit record are written in one transaction.
+
+Attested consent does not bypass preferences: the subscriber's own `sms` preference and the step's `defaultEnabled` still decide, as for a self-verified phone.
 
 ## Credential check
 
