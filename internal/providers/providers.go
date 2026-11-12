@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"mime/quotedprintable"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"sync"
@@ -134,10 +135,12 @@ func (s *SMTP) send(ctx context.Context, from, to string, mime []byte) error {
 			return err
 		}
 	}
-	if err := c.Mail(from); err != nil {
+	// The envelope takes bare addresses. A From like "Shop <a@b>" is valid in
+	// the header but a server refuses it in MAIL FROM (501 5.5.4).
+	if err := c.Mail(envelopeAddress(from)); err != nil {
 		return err
 	}
-	if err := c.Rcpt(to); err != nil {
+	if err := c.Rcpt(envelopeAddress(to)); err != nil {
 		return err
 	}
 	w, err := c.Data()
@@ -256,4 +259,15 @@ func newMessageID(from string) string {
 		domain = strings.TrimSpace(addr[at+1:])
 	}
 	return hex.EncodeToString(buf[:]) + "@" + domain
+}
+
+// envelopeAddress returns the bare address of an RFC 5322 mailbox, for the
+// SMTP envelope: "Shop <a@b.example>" becomes "a@b.example". A value that
+// does not parse is returned trimmed, so the server reports what is wrong
+// with it.
+func envelopeAddress(mailbox string) string {
+	if a, err := mail.ParseAddress(mailbox); err == nil {
+		return a.Address
+	}
+	return strings.TrimSpace(mailbox)
 }
