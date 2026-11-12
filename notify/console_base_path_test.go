@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -336,6 +337,9 @@ var goldenNormalisers = []struct {
 	// RFC3339 timestamps and relative durations ("3s ago") move with the clock.
 	{regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)`), `TIMESTAMP`},
 	{regexp.MustCompile(`\d+(s|m|h|d) ago`), `AGO`},
+	// The dashboard's DateLine, now.Format("Monday, Jan 2"): today's date,
+	// whose length changes with the weekday and day of month.
+	{regexp.MustCompile(`\b(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day, (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}\b`), `DATELINE`},
 }
 
 func normaliseGolden(body string) string {
@@ -410,5 +414,23 @@ func TestConsoleBasePath_EmptyPrefixUnchanged(t *testing.T) {
 	}
 	if loc := c.get(t, "/console/").Header().Get("Location"); loc != "/console/login" {
 		t.Errorf("login redirect Location = %q, want /console/login", loc)
+	}
+}
+
+// TestNormaliseGolden_DateLine pins the DateLine normaliser: the dashboard
+// prints today's date, so a golden taken on one day failed the next.
+func TestNormaliseGolden_DateLine(t *testing.T) {
+	for _, day := range []time.Time{
+		time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC),
+		time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC),
+		time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC),
+	} {
+		line := "environment \u00b7 " + day.Format("Monday, Jan 2") + "\n"
+		if got := normaliseGolden(line); got != "environment \u00b7 DATELINE\n" {
+			t.Fatalf("DateLine for %s not normalised: %q", day.Format(time.DateOnly), got)
+		}
+	}
+	if got := normaliseGolden("Monday morning, Janet 2 apples"); got != "Monday morning, Janet 2 apples" {
+		t.Fatalf("normaliser touched text that is not a DateLine: %q", got)
 	}
 }
