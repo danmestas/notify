@@ -27,6 +27,17 @@ It takes two switches, both off by default:
 1. **The environment setting.** In the console, Settings, API keys, SMS consent: check *Allow operator-attested SMS consent* and give your privacy policy URL, which must be `https`. The setting cannot be turned on without it. Turning the setting off suspends every attestation in the environment (sms steps skip them) without clearing them; turning it back on restores them.
 2. **The key permission.** On the same card: *This API key may attest SMS consent*. A key without it gets `403`. The permission stays with the environment's key when you rotate it, in the console or with `notify rotate-key`; `notify rotate-key -attest-sms-consent=true|false` sets it on the new key.
 
+Without the console, an operator with access to the database switches both with [`notify sms-consent`](../../configuration#commands), run on the host like `notify bootstrap`:
+
+```sh
+notify sms-consent -org Acme -env production -enable -policy-url https://shop.example/privacy
+notify sms-consent -org Acme -env production -grant-key 9f86d081   # the key's id, never the key
+notify sms-consent -org Acme -env production -revoke-key 9f86d081
+notify sms-consent -org Acme -env production -disable
+```
+
+Run with no action, it prints the setting and each key's id and permission. Granting or revoking changes only the permission, so the key keeps working as before. There is deliberately no HTTP route for either switch: a key must not be able to grant itself the permission. Each change is logged to stderr with the organization, environment and, for a key, its id.
+
 | Method and path | Purpose | Success |
 |---|---|---|
 | `POST /v1/subscribers/{subscriberId}/phone/consent` | Attest consent for `{"phone", "source"?, "attestedAt"?}`. | `201` the attestation |
