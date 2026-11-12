@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -65,13 +66,27 @@ func postPhoneConsent(pv *phoneverify.Service) http.HandlerFunc {
 	}
 }
 
+// phoneConsentRevokeRequest is the optional body of DELETE
+// /v1/subscribers/{subscriberId}/phone/consent.
+type phoneConsentRevokeRequest struct {
+	// Reason is recorded with the revocation. Optional.
+	Reason string `json:"reason"`
+}
+
 // deletePhoneConsent handles DELETE
 // /v1/subscribers/{subscriberId}/phone/consent: it revokes an operator
-// attestation (204), keeping its audit row. A phone the subscriber verified
-// themselves stays verified. Any API key of the environment may revoke.
+// attestation (204), keeping its audit row with the revoking key and the
+// optional reason. A phone the subscriber verified themselves stays verified.
+// Any API key of the environment may revoke.
 func deletePhoneConsent(pv *phoneverify.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := pv.RevokeAttestation(r.Context(), identity.ScopeFrom(r.Context()), chi.URLParam(r, "subscriberId")); err != nil {
+		var body phoneConsentRevokeRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "body must be JSON")
+			return
+		}
+		key, _ := identity.KeyFrom(r.Context())
+		if err := pv.RevokeAttestation(r.Context(), identity.ScopeFrom(r.Context()), key.ID, chi.URLParam(r, "subscriberId"), body.Reason); err != nil {
 			writePhoneConsentError(w, r, err)
 			return
 		}
@@ -91,6 +106,8 @@ var phoneConsentErrors = []struct {
 	{phoneverify.ErrInvalidPhone, http.StatusUnprocessableEntity, "invalid_phone"},
 	{phoneverify.ErrInvalidAttestedAt, http.StatusBadRequest, "bad_request"},
 	{phoneverify.ErrSourceTooLong, http.StatusBadRequest, "bad_request"},
+	{phoneverify.ErrReasonTooLong, http.StatusBadRequest, "bad_request"},
+	{phoneverify.ErrPhoneSelfVerified, http.StatusConflict, "phone_self_verified"},
 }
 
 func writePhoneConsentError(w http.ResponseWriter, r *http.Request, err error) {

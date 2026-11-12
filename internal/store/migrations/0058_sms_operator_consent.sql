@@ -19,6 +19,10 @@ ALTER TABLE subscribers ADD COLUMN phone_attested_at TEXT NOT NULL DEFAULT '';
 -- One row per attestation, kept for audit. revoked_at is set, never the row
 -- deleted, when the attestation stops counting: revoked through the API,
 -- replaced by a newer attestation, or cleared by a phone change or delete.
+-- revoked_reason is the kind (revoked, superseded, phone_changed,
+-- subscriber_deleted). revoked_by_key_id names the API key that revoked or
+-- superseded it, and is empty for the automatic kinds; revoked_note is the
+-- reason that key gave.
 CREATE TABLE sms_consent_attestations (
   id             TEXT PRIMARY KEY,
   org_id         TEXT NOT NULL,
@@ -31,7 +35,9 @@ CREATE TABLE sms_consent_attestations (
   policy_url     TEXT NOT NULL DEFAULT '',
   created_at     TEXT NOT NULL,
   revoked_at     TEXT NOT NULL DEFAULT '',
-  revoked_reason TEXT NOT NULL DEFAULT ''
+  revoked_reason TEXT NOT NULL DEFAULT '',
+  revoked_by_key_id TEXT NOT NULL DEFAULT '',
+  revoked_note   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX sms_consent_attestations_subscriber
   ON sms_consent_attestations (org_id, environment_id, subscriber_id, revoked_at);

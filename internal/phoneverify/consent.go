@@ -25,13 +25,18 @@ import (
 )
 
 const (
-	// MaxSourceLen bounds an attestation's source note, in bytes.
+	// MaxSourceLen bounds an attestation's source note, and a revocation's
+	// reason, in bytes.
 	MaxSourceLen = 500
 	// maxPolicyURLLen bounds the privacy policy URL.
 	maxPolicyURLLen = 2048
 	// attestSkew is how far past now an attestedAt may be, for clock skew.
 	attestSkew = 5 * time.Minute
 )
+
+// earliestAttestedAt is the oldest attestedAt accepted: anything earlier is
+// a placeholder or a mistake, not a record of when consent was given.
+var earliestAttestedAt = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 
 var (
 	// ErrAttestationDisabled: the environment does not allow operators to
@@ -42,10 +47,16 @@ var (
 	// ErrPolicyURLRequired: allowing attestation needs an https privacy
 	// policy URL.
 	ErrPolicyURLRequired = errors.New("phoneverify: allowing operator-attested consent needs an https privacy policy URL")
-	// ErrInvalidAttestedAt: attestedAt is not RFC 3339, or is in the future.
-	ErrInvalidAttestedAt = errors.New("phoneverify: attestedAt must be an RFC 3339 time not in the future")
+	// ErrInvalidAttestedAt: attestedAt is not RFC 3339, is before
+	// earliestAttestedAt, or is in the future.
+	ErrInvalidAttestedAt = errors.New("phoneverify: attestedAt must be an RFC 3339 time from 2000-01-01 on, not in the future")
 	// ErrSourceTooLong: the source note is over MaxSourceLen.
 	ErrSourceTooLong = errors.New("phoneverify: source is too long")
+	// ErrReasonTooLong: a revocation's reason is over MaxSourceLen.
+	ErrReasonTooLong = errors.New("phoneverify: reason is too long")
+	// ErrPhoneSelfVerified: the subscriber verified a different number
+	// themselves; an attestation may not replace consent they proved.
+	ErrPhoneSelfVerified = errors.New("phoneverify: the subscriber verified a different phone themselves; attest that number, or have them verify the new one")
 )
 
 // ConsentSettings is an environment's operator-attestation setting.
@@ -92,8 +103,10 @@ func (s *Service) SetConsentSettings(ctx context.Context, scope domain.Scope, en
 }
 
 // Attest records that the subscriber consented to texts at in.Phone. The
-// subscriber's phone becomes that number (another number they had loses its
-// verification), and the attestation replaces any earlier one.
+// subscriber's phone becomes that number, and the attestation replaces any
+// earlier one. ErrPhoneSelfVerified when the subscriber verified a different
+// number themselves; attesting the number they verified is recorded and
+// leaves it self-verified.
 func (s *Service) Attest(ctx context.Context, scope domain.Scope, by Attester, in AttestInput) (Attestation, error) {
 	settings, err := s.ConsentSettings(ctx, scope)
 	if err != nil {
@@ -116,7 +129,7 @@ func (s *Service) Attest(ctx context.Context, scope domain.Scope, by Attester, i
 	consentedAt := ""
 	if in.AttestedAt != "" {
 		t, err := time.Parse(time.RFC3339, in.AttestedAt)
-		if err != nil || t.After(s.now().Add(attestSkew)) {
+		if err != nil || t.Before(earliestAttestedAt) || t.After(s.now().Add(attestSkew)) {
 			return Attestation{}, ErrInvalidAttestedAt
 		}
 		consentedAt = timestamp.Format(t)
@@ -125,17 +138,24 @@ func (s *Service) Attest(ctx context.Context, scope domain.Scope, by Attester, i
 		SubscriberID: in.SubscriberID, Phone: phone, APIKeyID: by.KeyID,
 		Source: source, ConsentedAt: consentedAt, PolicyURL: settings.PolicyURL,
 	})
-	if errors.Is(err, store.ErrNotFound) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
 		return Attestation{}, ErrUnknownSubscriber
+	case errors.Is(err, store.ErrPhoneSelfVerified):
+		return Attestation{}, ErrPhoneSelfVerified
 	}
 	return a, err
 }
 
 // RevokeAttestation clears the subscriber's operator attestation, keeping its
-// audit row. A self-verified phone stays verified. Revoking where there is no
-// attestation is not an error.
-func (s *Service) RevokeAttestation(ctx context.Context, scope domain.Scope, subscriberID string) error {
-	_, err := s.store.SMSConsents().Revoke(ctx, scope, subscriberID)
+// audit row with the revoking key and reason. A self-verified phone stays
+// verified. Revoking where there is no attestation is not an error.
+func (s *Service) RevokeAttestation(ctx context.Context, scope domain.Scope, keyID, subscriberID, reason string) error {
+	reason = strings.TrimSpace(reason)
+	if len(reason) > MaxSourceLen {
+		return ErrReasonTooLong
+	}
+	_, err := s.store.SMSConsents().Revoke(ctx, scope, subscriberID, keyID, reason)
 	if errors.Is(err, store.ErrNotFound) {
 		return ErrUnknownSubscriber
 	}

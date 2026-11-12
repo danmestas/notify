@@ -30,9 +30,9 @@ It takes two switches, both off by default:
 | Method and path | Purpose | Success |
 |---|---|---|
 | `POST /v1/subscribers/{subscriberId}/phone/consent` | Attest consent for `{"phone", "source"?, "attestedAt"?}`. | `201` the attestation |
-| `DELETE /v1/subscribers/{subscriberId}/phone/consent` | Revoke an attestation. Any API key of the environment may. | `204` |
+| `DELETE /v1/subscribers/{subscriberId}/phone/consent` | Revoke an attestation, with an optional `{"reason"}` (up to 500 bytes). Any API key of the environment may. | `204` |
 
-`{subscriberId}` is your id for the subscriber, who must already exist in the key's environment (`404` otherwise, as for another environment's subscriber). `phone` is normalised to E.164 (`422` when it cannot be). If the subscriber's stored phone is a different number, it is replaced by this one, which clears a self-verification of the old number. `source` is an optional note of up to 500 bytes on where consent came from (`"opted in at the counter"`). `attestedAt` is an optional RFC 3339 time when consent was given; one in the future is `400`. Attesting again replaces the earlier attestation.
+`{subscriberId}` is your id for the subscriber, who must already exist in the key's environment (`404` otherwise, as for another environment's subscriber). `phone` is normalised to E.164 (`422` when it cannot be). If the subscriber's stored phone is a different number that nobody verified, it is replaced by this one. If the subscriber verified a different number themselves, the attestation is refused with `409` `phone_self_verified` and nothing changes: an attestation never replaces consent the subscriber proved. Attest that number instead, which is recorded and leaves it `self_verified`, or have the subscriber verify the new one. `source` is an optional note of up to 500 bytes on where consent came from (`"opted in at the counter"`). `attestedAt` is an optional RFC 3339 time when consent was given; one before 2000-01-01 or in the future is `400`. Attesting again replaces the earlier attestation.
 
 ```json
 { "id": "01J…", "subscriberId": "cust-1", "phone": "+15551112222", "phoneConsent": "operator_attested",
@@ -44,7 +44,7 @@ It takes two switches, both off by default:
 
 An attestation stops counting when it is revoked, when the subscriber's phone changes to another number, or when the subscriber is deleted. Revoking leaves a self-verified phone verified. A self-verified phone reads as `self_verified` even when it is also attested.
 
-Every attestation is kept for audit, never deleted: the subscriber, the phone, the attesting key's id (`apiKeyId`, the SHA-256 of the key, kept after the key is rotated), the time, `source`, `attestedAt`, the policy URL in force at the time, and, once it stops counting, when and why (`revoked`, `superseded`, `phone_changed`, `subscriber_deleted`).
+Every attestation is kept for audit and is not deleted when it stops counting. The record holds the subscriber, the phone, the attesting key's id (`apiKeyId`, the SHA-256 of the key, kept after the key is rotated), the time, `source`, `attestedAt` and the policy URL in force at the time. Once the attestation stops counting, the record also holds when and why: `revoked` or `superseded`, with the key that did it and any `reason` it gave, or `phone_changed` or `subscriber_deleted`, which name no key. The change that ends an attestation and its audit record are written in one transaction.
 
 Attested consent does not bypass preferences: the subscriber's own `sms` preference and the step's `defaultEnabled` still decide, as for a self-verified phone.
 

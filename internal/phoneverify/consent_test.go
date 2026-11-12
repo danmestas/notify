@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,7 +83,7 @@ func TestAttest_Refusals(t *testing.T) {
 	if _, err := svc.Attest(ctx, scope, allowed, phoneverify.AttestInput{SubscriberID: "ghost", Phone: "+15551112222"}); !errors.Is(err, phoneverify.ErrUnknownSubscriber) {
 		t.Fatalf("unknown subscriber: %v, want ErrUnknownSubscriber", err)
 	}
-	for _, when := range []string{"yesterday", "2026-11-13T12:00:00Z"} {
+	for _, when := range []string{"yesterday", "2026-11-13T12:00:00Z", "1999-12-31T23:59:59Z", "0001-01-01T00:00:00Z"} {
 		if _, err := svc.Attest(ctx, scope, allowed, phoneverify.AttestInput{SubscriberID: "cust-1", Phone: "+15551112222", AttestedAt: when}); !errors.Is(err, phoneverify.ErrInvalidAttestedAt) {
 			t.Errorf("attestedAt %q: %v, want ErrInvalidAttestedAt", when, err)
 		}
@@ -131,6 +132,25 @@ func TestAttest_RecordsAndSends(t *testing.T) {
 	}
 }
 
+// TestAttest_OverASelfVerifiedNumber: a different number is refused with
+// ErrPhoneSelfVerified; the verified number itself is accepted.
+func TestAttest_OverASelfVerifiedNumber(t *testing.T) {
+	st, svc, scope := consentFixture(t)
+	ctx := context.Background()
+	if err := svc.SetConsentSettings(ctx, scope, true, "https://shop.example/privacy"); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if err := st.Subscribers().SetVerifiedPhone(ctx, scope, "cust-1", "+15551112222", "2026-11-12T12:00:00Z"); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if _, err := svc.Attest(ctx, scope, allowed, phoneverify.AttestInput{SubscriberID: "cust-1", Phone: "+15559998888"}); !errors.Is(err, phoneverify.ErrPhoneSelfVerified) {
+		t.Fatalf("different number: %v, want ErrPhoneSelfVerified", err)
+	}
+	if _, err := svc.Attest(ctx, scope, allowed, phoneverify.AttestInput{SubscriberID: "cust-1", Phone: "+1 555 111 2222"}); err != nil {
+		t.Fatalf("same number: %v", err)
+	}
+}
+
 func TestRevokeAttestation(t *testing.T) {
 	st, svc, scope := consentFixture(t)
 	ctx := context.Background()
@@ -140,14 +160,21 @@ func TestRevokeAttestation(t *testing.T) {
 	if _, err := svc.Attest(ctx, scope, allowed, phoneverify.AttestInput{SubscriberID: "cust-1", Phone: "+15551112222"}); err != nil {
 		t.Fatalf("Attest: %v", err)
 	}
-	if err := svc.RevokeAttestation(ctx, scope, "cust-1"); err != nil {
+	if err := svc.RevokeAttestation(ctx, scope, "revoker", "cust-1", "asked to stop"); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
 	sub, _ := st.Subscribers().GetByExternalID(ctx, scope, "cust-1")
 	if to, _ := phoneverify.SendablePhone(ctx, st, scope, sub); to != "" {
 		t.Fatalf("revoked phone still sendable: %q", to)
 	}
-	if err := svc.RevokeAttestation(ctx, scope, "ghost"); !errors.Is(err, phoneverify.ErrUnknownSubscriber) {
+	rows, _ := st.SMSConsents().List(ctx, scope, "cust-1")
+	if len(rows) != 1 || rows[0].RevokedByKeyID != "revoker" || rows[0].RevokedNote != "asked to stop" {
+		t.Fatalf("audit = %+v, want the revoking key and its reason", rows)
+	}
+	if err := svc.RevokeAttestation(ctx, scope, "revoker", "cust-1", strings.Repeat("x", phoneverify.MaxSourceLen+1)); !errors.Is(err, phoneverify.ErrReasonTooLong) {
+		t.Fatalf("long reason: %v, want ErrReasonTooLong", err)
+	}
+	if err := svc.RevokeAttestation(ctx, scope, "revoker", "ghost", ""); !errors.Is(err, phoneverify.ErrUnknownSubscriber) {
 		t.Fatalf("revoke unknown: %v", err)
 	}
 }

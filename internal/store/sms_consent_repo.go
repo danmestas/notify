@@ -50,9 +50,21 @@ type SMSAttestation struct {
 	// CreatedAt is when notify recorded the attestation.
 	CreatedAt string
 	// RevokedAt is when the attestation stopped counting; "" while it counts.
-	RevokedAt     string
+	RevokedAt string
+	// RevokedReason is why: RevokedByAPI, RevokedSuperseded,
+	// RevokedPhoneChanged or RevokedSubscriberDeleted.
 	RevokedReason string
+	// RevokedByKeyID is the API key that revoked or superseded it; "" for
+	// the automatic reasons.
+	RevokedByKeyID string
+	// RevokedNote is the reason that key gave, if any.
+	RevokedNote string
 }
+
+// ErrPhoneSelfVerified: an attestation for a number other than the one the
+// subscriber verified themselves. It would replace consent the subscriber
+// proved, so it is refused.
+var ErrPhoneSelfVerified = errors.New("store: the subscriber verified a different phone")
 
 // SMSConsentRepo stores operator-attested SMS consent: the environment
 // setting and the attestations. Scope-first.
@@ -63,14 +75,16 @@ type SMSConsentRepo interface {
 	// SetSettings writes it. ErrNotFound when the scope names no environment.
 	SetSettings(ctx context.Context, scope domain.Scope, s SMSConsentSettings) error
 	// Attest records a for the live subscriber a.SubscriberID: their phone
-	// becomes a.Phone (clearing a self-verification of another number) and is
-	// marked attested, and any earlier open attestation is superseded. It
-	// fills in ID and CreatedAt. ErrNotFound when no live subscriber matches.
+	// becomes a.Phone and is marked attested, and any earlier open
+	// attestation is superseded by a.APIKeyID. It fills in ID and CreatedAt.
+	// ErrNotFound when no live subscriber matches; ErrPhoneSelfVerified when
+	// they verified a different number, which is left as it was.
 	Attest(ctx context.Context, scope domain.Scope, a SMSAttestation) (SMSAttestation, error)
 	// Revoke clears the live subscriber's attestation and closes its audit
-	// rows, returning how many it closed. A self-verification is untouched.
-	// ErrNotFound when no live subscriber matches.
-	Revoke(ctx context.Context, scope domain.Scope, subscriberID string) (int, error)
+	// rows as revoked by keyID with note, returning how many it closed. A
+	// self-verification is untouched. ErrNotFound when no live subscriber
+	// matches.
+	Revoke(ctx context.Context, scope domain.Scope, subscriberID, keyID, note string) (int, error)
 	// List returns the subscriber's attestations, revoked ones included,
 	// oldest first.
 	List(ctx context.Context, scope domain.Scope, subscriberID string) ([]SMSAttestation, error)
@@ -119,23 +133,31 @@ func (repo *smsConsentRepo) SetSettings(ctx context.Context, scope domain.Scope,
 func (repo *smsConsentRepo) Attest(ctx context.Context, scope domain.Scope, a SMSAttestation) (SMSAttestation, error) {
 	a.ID, a.CreatedAt, a.RevokedAt, a.RevokedReason = newULID(), timestamp.Now(), "", ""
 	err := inTx(ctx, repo.w, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(
+		var phone, verifiedAt string
+		err := tx.QueryRowContext(
 			ctx,
-			`UPDATE subscribers SET
-			   phone_verified_at = CASE WHEN phone = ? THEN phone_verified_at ELSE '' END,
-			   phone = ?, phone_attested_at = ?
+			`SELECT phone, phone_verified_at FROM subscribers
 			 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND deleted = 0`,
-			a.Phone, a.Phone, a.CreatedAt, scope.OrgID, scope.EnvID, a.SubscriberID,
-		)
+			scope.OrgID, scope.EnvID, a.SubscriberID,
+		).Scan(&phone, &verifiedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
 		if err != nil {
 			return err
 		}
-		if n, err := res.RowsAffected(); err != nil {
-			return err
-		} else if n == 0 {
-			return ErrNotFound
+		if verifiedAt != "" && phone != a.Phone {
+			return ErrPhoneSelfVerified
 		}
-		if _, err := closeAttestations(ctx, tx, scope, a.SubscriberID, a.CreatedAt, RevokedSuperseded); err != nil {
+		if _, err := tx.ExecContext(
+			ctx,
+			`UPDATE subscribers SET phone = ?, phone_attested_at = ?
+			 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND deleted = 0`,
+			a.Phone, a.CreatedAt, scope.OrgID, scope.EnvID, a.SubscriberID,
+		); err != nil {
+			return err
+		}
+		if _, err := closeAttestations(ctx, tx, scope, a.SubscriberID, a.CreatedAt, RevokedSuperseded, a.APIKeyID, ""); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(
@@ -153,7 +175,7 @@ func (repo *smsConsentRepo) Attest(ctx context.Context, scope domain.Scope, a SM
 	return a, nil
 }
 
-func (repo *smsConsentRepo) Revoke(ctx context.Context, scope domain.Scope, subscriberID string) (int, error) {
+func (repo *smsConsentRepo) Revoke(ctx context.Context, scope domain.Scope, subscriberID, keyID, note string) (int, error) {
 	var closed int
 	err := inTx(ctx, repo.w, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(
@@ -170,7 +192,7 @@ func (repo *smsConsentRepo) Revoke(ctx context.Context, scope domain.Scope, subs
 		} else if n == 0 {
 			return ErrNotFound
 		}
-		closed, err = closeAttestations(ctx, tx, scope, subscriberID, timestamp.Now(), RevokedByAPI)
+		closed, err = closeAttestations(ctx, tx, scope, subscriberID, timestamp.Now(), RevokedByAPI, keyID, note)
 		return err
 	})
 	return closed, err
@@ -179,7 +201,8 @@ func (repo *smsConsentRepo) Revoke(ctx context.Context, scope domain.Scope, subs
 func (repo *smsConsentRepo) List(ctx context.Context, scope domain.Scope, subscriberID string) ([]SMSAttestation, error) {
 	rows, err := repo.r.QueryContext(
 		ctx,
-		`SELECT id, subscriber_id, phone, api_key_id, source, consented_at, policy_url, created_at, revoked_at, revoked_reason
+		`SELECT id, subscriber_id, phone, api_key_id, source, consented_at, policy_url, created_at,
+		   revoked_at, revoked_reason, revoked_by_key_id, revoked_note
 		 FROM sms_consent_attestations
 		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ?
 		 ORDER BY created_at ASC, id ASC`,
@@ -193,7 +216,7 @@ func (repo *smsConsentRepo) List(ctx context.Context, scope domain.Scope, subscr
 	for rows.Next() {
 		var a SMSAttestation
 		if err := rows.Scan(&a.ID, &a.SubscriberID, &a.Phone, &a.APIKeyID, &a.Source, &a.ConsentedAt,
-			&a.PolicyURL, &a.CreatedAt, &a.RevokedAt, &a.RevokedReason); err != nil {
+			&a.PolicyURL, &a.CreatedAt, &a.RevokedAt, &a.RevokedReason, &a.RevokedByKeyID, &a.RevokedNote); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -202,13 +225,13 @@ func (repo *smsConsentRepo) List(ctx context.Context, scope domain.Scope, subscr
 }
 
 // closeAttestations marks every open attestation of the subscriber revoked
-// at at for reason, returning how many it closed.
-func closeAttestations(ctx context.Context, ex execer, scope domain.Scope, subscriberID, at, reason string) (int, error) {
+// at at for reason, by keyID with note, returning how many it closed.
+func closeAttestations(ctx context.Context, ex execer, scope domain.Scope, subscriberID, at, reason, keyID, note string) (int, error) {
 	res, err := ex.ExecContext(
 		ctx,
-		`UPDATE sms_consent_attestations SET revoked_at = ?, revoked_reason = ?
+		`UPDATE sms_consent_attestations SET revoked_at = ?, revoked_reason = ?, revoked_by_key_id = ?, revoked_note = ?
 		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND revoked_at = ''`,
-		at, reason, scope.OrgID, scope.EnvID, subscriberID,
+		at, reason, keyID, note, scope.OrgID, scope.EnvID, subscriberID,
 	)
 	if err != nil {
 		return 0, err
@@ -219,7 +242,8 @@ func closeAttestations(ctx context.Context, ex execer, scope domain.Scope, subsc
 
 // closeStaleAttestations closes the subscriber's open attestations once the
 // subscriber no longer carries one: after a write that changed their phone or
-// deleted them. While the attestation still stands it closes nothing.
+// deleted them. While the attestation still stands it closes nothing. Callers
+// run it in the transaction of that write, so the two commit together.
 func closeStaleAttestations(ctx context.Context, ex execer, scope domain.Scope, subscriberID, reason string) error {
 	_, err := ex.ExecContext(
 		ctx,

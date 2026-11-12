@@ -109,32 +109,34 @@ func (repo *subscriberRepo) Upsert(ctx context.Context, scope domain.Scope, sub 
 	// an update keeps it only while the phone stays the same. SetVerifiedPhone
 	// is the one way to set it, so no API write can produce a verified number.
 	// phone_attested_at follows the same rule; only SMSConsentRepo.Attest sets
-	// it.
-	_, err := repo.w.ExecContext(
-		ctx,
-		`INSERT INTO subscribers
-		   (id, org_id, environment_id, subscriber_id, email, phone, first_name, last_name, locale, timezone, data, deleted)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT (environment_id, subscriber_id) DO UPDATE SET
-		   email=COALESCE(NULLIF(excluded.email, ''), subscribers.email),
-		   phone_verified_at=CASE WHEN excluded.phone <> '' AND excluded.phone <> subscribers.phone
-		     THEN '' ELSE subscribers.phone_verified_at END,
-		   phone_attested_at=CASE WHEN excluded.phone <> '' AND excluded.phone <> subscribers.phone
-		     THEN '' ELSE subscribers.phone_attested_at END,
-		   phone=COALESCE(NULLIF(excluded.phone, ''), subscribers.phone),
-		   first_name=COALESCE(NULLIF(excluded.first_name, ''), subscribers.first_name),
-		   last_name=COALESCE(NULLIF(excluded.last_name, ''), subscribers.last_name),
-		   locale=COALESCE(NULLIF(excluded.locale, ''), subscribers.locale),
-		   timezone=COALESCE(NULLIF(excluded.timezone, ''), subscribers.timezone),
-		   data=COALESCE(NULLIF(excluded.data, X''), subscribers.data),
-		   deleted=excluded.deleted`,
-		sub.ID, sub.OrgID, sub.EnvID, sub.SubscriberID, sub.Email, sub.Phone,
-		sub.FirstName, sub.LastName, sub.Locale, sub.Timezone, []byte(sub.Data), sub.Deleted,
-	)
+	// it. An attestation the write clears is closed in the same transaction.
+	err := inTx(ctx, repo.w, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO subscribers
+			   (id, org_id, environment_id, subscriber_id, email, phone, first_name, last_name, locale, timezone, data, deleted)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT (environment_id, subscriber_id) DO UPDATE SET
+			   email=COALESCE(NULLIF(excluded.email, ''), subscribers.email),
+			   phone_verified_at=CASE WHEN excluded.phone <> '' AND excluded.phone <> subscribers.phone
+			     THEN '' ELSE subscribers.phone_verified_at END,
+			   phone_attested_at=CASE WHEN excluded.phone <> '' AND excluded.phone <> subscribers.phone
+			     THEN '' ELSE subscribers.phone_attested_at END,
+			   phone=COALESCE(NULLIF(excluded.phone, ''), subscribers.phone),
+			   first_name=COALESCE(NULLIF(excluded.first_name, ''), subscribers.first_name),
+			   last_name=COALESCE(NULLIF(excluded.last_name, ''), subscribers.last_name),
+			   locale=COALESCE(NULLIF(excluded.locale, ''), subscribers.locale),
+			   timezone=COALESCE(NULLIF(excluded.timezone, ''), subscribers.timezone),
+			   data=COALESCE(NULLIF(excluded.data, X''), subscribers.data),
+			   deleted=excluded.deleted`,
+			sub.ID, sub.OrgID, sub.EnvID, sub.SubscriberID, sub.Email, sub.Phone,
+			sub.FirstName, sub.LastName, sub.Locale, sub.Timezone, []byte(sub.Data), sub.Deleted,
+		); err != nil {
+			return err
+		}
+		return closeStaleAttestations(ctx, tx, scope, sub.SubscriberID, RevokedPhoneChanged)
+	})
 	if err != nil {
-		return domain.Subscriber{}, err
-	}
-	if err := closeStaleAttestations(ctx, repo.w, scope, sub.SubscriberID, RevokedPhoneChanged); err != nil {
 		return domain.Subscriber{}, err
 	}
 	return repo.GetByExternalID(ctx, scope, sub.SubscriberID)
@@ -190,25 +192,27 @@ func (repo *subscriberRepo) GetByID(ctx context.Context, scope domain.Scope, id 
 // attestation for the old number). Only internal/phoneverify calls it, after
 // a correct code. ErrNotFound when no live subscriber matches.
 func (repo *subscriberRepo) SetVerifiedPhone(ctx context.Context, scope domain.Scope, subscriberID, phone, verifiedAt string) error {
-	res, err := repo.w.ExecContext(
-		ctx,
-		`UPDATE subscribers SET
-		   phone_attested_at = CASE WHEN phone = ? THEN phone_attested_at ELSE '' END,
-		   phone = ?, phone_verified_at = ?
-		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND deleted = 0`,
-		phone, phone, verifiedAt, scope.OrgID, scope.EnvID, subscriberID,
-	)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return closeStaleAttestations(ctx, repo.w, scope, subscriberID, RevokedPhoneChanged)
+	return inTx(ctx, repo.w, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(
+			ctx,
+			`UPDATE subscribers SET
+			   phone_attested_at = CASE WHEN phone = ? THEN phone_attested_at ELSE '' END,
+			   phone = ?, phone_verified_at = ?
+			 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND deleted = 0`,
+			phone, phone, verifiedAt, scope.OrgID, scope.EnvID, subscriberID,
+		)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		return closeStaleAttestations(ctx, tx, scope, subscriberID, RevokedPhoneChanged)
+	})
 }
 
 // ListByPhone returns the live subscribers whose phone is phone (E.164),
@@ -335,39 +339,41 @@ func (repo *subscriberRepo) List(ctx context.Context, scope domain.Scope, after 
 // unconfirmable (the send itself stays counted toward the number's limits).
 // Returns ErrNotFound when no matching active row exists.
 func (repo *subscriberRepo) SoftDelete(ctx context.Context, scope domain.Scope, id string) error {
-	res, err := repo.w.ExecContext(
-		ctx,
-		`UPDATE subscribers SET deleted = 1, phone_verified_at = '', phone_attested_at = ''
-		 WHERE org_id = ? AND environment_id = ? AND id = ? AND deleted = 0`,
-		scope.OrgID, scope.EnvID, id,
-	)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	var subscriberID string
-	if err := repo.w.QueryRowContext(
-		ctx,
-		`SELECT subscriber_id FROM subscribers WHERE org_id = ? AND environment_id = ? AND id = ?`,
-		scope.OrgID, scope.EnvID, id,
-	).Scan(&subscriberID); err != nil {
-		return err
-	}
-	if _, err := repo.w.ExecContext(
-		ctx,
-		`UPDATE phone_verifications SET consumed = 1
-		 WHERE org_id = ? AND environment_id = ? AND consumed = 0 AND subscriber_id = ?`,
-		scope.OrgID, scope.EnvID, subscriberID,
-	); err != nil {
-		return err
-	}
-	return closeStaleAttestations(ctx, repo.w, scope, subscriberID, RevokedSubscriberDeleted)
+	return inTx(ctx, repo.w, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(
+			ctx,
+			`UPDATE subscribers SET deleted = 1, phone_verified_at = '', phone_attested_at = ''
+			 WHERE org_id = ? AND environment_id = ? AND id = ? AND deleted = 0`,
+			scope.OrgID, scope.EnvID, id,
+		)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		var subscriberID string
+		if err := tx.QueryRowContext(
+			ctx,
+			`SELECT subscriber_id FROM subscribers WHERE org_id = ? AND environment_id = ? AND id = ?`,
+			scope.OrgID, scope.EnvID, id,
+		).Scan(&subscriberID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(
+			ctx,
+			`UPDATE phone_verifications SET consumed = 1
+			 WHERE org_id = ? AND environment_id = ? AND consumed = 0 AND subscriber_id = ?`,
+			scope.OrgID, scope.EnvID, subscriberID,
+		); err != nil {
+			return err
+		}
+		return closeStaleAttestations(ctx, tx, scope, subscriberID, RevokedSubscriberDeleted)
+	})
 }
 
 // PurgeDeletedByExternalID hard-deletes ONLY the soft-deleted row for the

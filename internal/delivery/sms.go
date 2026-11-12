@@ -53,11 +53,18 @@ type SMSHandler struct {
 	// statusCallbackBase is notify's public URL (origin plus base path), or
 	// "" when it has none.
 	statusCallbackBase string
+	// loadSubscriber reads the subscriber once per send, so the opt-out
+	// check and the recipient see the same phone.
+	loadSubscriber func(ctx context.Context, scope domain.Scope, subscriberID string) (domain.Subscriber, error)
 }
 
 // NewSMS constructs an SMSHandler backed by s and resolver r.
 func NewSMS(s *store.Store, r SMSResolver) *SMSHandler {
-	return &SMSHandler{store: s, resolver: r}
+	h := &SMSHandler{store: s, resolver: r}
+	h.loadSubscriber = func(ctx context.Context, scope domain.Scope, subscriberID string) (domain.Subscriber, error) {
+		return h.store.Subscribers().GetByExternalID(ctx, scope, subscriberID)
+	}
+	return h
 }
 
 // WithPreferences attaches an optional channel-preference checker and returns
@@ -228,8 +235,16 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 
 	// A number that texted STOP gets nothing, whatever the preferences or the
 	// workflow's criticality say: the opt-out is the sender's legal duty, not
-	// a preference. It is checked first so the skip says why.
-	optedOut, err := h.optedOut(ctx, scope, env.SubscriberID)
+	// a preference. It is checked first so the skip says why. The subscriber
+	// is read once: the number checked here is the number sent to below.
+	sub, err := h.loadSubscriber(ctx, scope, env.SubscriberID)
+	if errors.Is(err, store.ErrNotFound) {
+		sub, err = domain.Subscriber{}, nil
+	}
+	if err != nil {
+		return h.persistSMSError(ctx, env, t, "", "", fmt.Errorf("sms: load subscriber: %w", err))
+	}
+	optedOut, err := h.optedOut(ctx, scope, sub)
 	if err != nil {
 		return h.persistSMSError(ctx, env, t, "", "", err)
 	}
@@ -254,9 +269,9 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 	// the operator attested while its environment allows that. It is read
 	// from the store, not the trigger-time snapshot, so a number changed (and
 	// so no longer consented) since the trigger is never sent to.
-	to, err := h.consentedPhone(ctx, scope, env.SubscriberID)
+	to, err := phoneverify.SendablePhone(ctx, h.store, scope, sub)
 	if err != nil {
-		return h.persistSMSError(ctx, env, t, "", "", err)
+		return h.persistSMSError(ctx, env, t, "", "", fmt.Errorf("sms: consent lookup: %w", err))
 	}
 	if to == "" {
 		return h.persistSMSSkipped(ctx, env, t, scope, subject, content, SkipReasonNoVerifiedPhone)
@@ -320,14 +335,7 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 
 // optedOut reports whether the subscriber's phone, verified or not, texted
 // STOP. A subscriber with no phone, or none stored, is not opted out.
-func (h *SMSHandler) optedOut(ctx context.Context, scope domain.Scope, subscriberID string) (bool, error) {
-	sub, err := h.store.Subscribers().GetByExternalID(ctx, scope, subscriberID)
-	if errors.Is(err, store.ErrNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("sms: load subscriber: %w", err)
-	}
+func (h *SMSHandler) optedOut(ctx context.Context, scope domain.Scope, sub domain.Subscriber) (bool, error) {
 	if sub.Phone == "" {
 		return false, nil
 	}
@@ -336,24 +344,6 @@ func (h *SMSHandler) optedOut(ctx context.Context, scope domain.Scope, subscribe
 		return false, fmt.Errorf("sms: opt-out lookup: %w", err)
 	}
 	return out, nil
-}
-
-// consentedPhone returns the subscriber's consented phone
-// (phoneverify.SendablePhone), or "" when they have none or no stored
-// subscriber at all.
-func (h *SMSHandler) consentedPhone(ctx context.Context, scope domain.Scope, subscriberID string) (string, error) {
-	sub, err := h.store.Subscribers().GetByExternalID(ctx, scope, subscriberID)
-	if errors.Is(err, store.ErrNotFound) {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("sms: load subscriber: %w", err)
-	}
-	to, err := phoneverify.SendablePhone(ctx, h.store, scope, sub)
-	if err != nil {
-		return "", fmt.Errorf("sms: consent lookup: %w", err)
-	}
-	return to, nil
 }
 
 // persistSMSSkipped records a status:"skipped" sms message carrying the gate

@@ -789,7 +789,7 @@ func checkSMSConsents(t *testing.T, ctx context.Context, s *Store, a, b domain.S
 	if _, err := repo.Attest(ctx, b, SMSAttestation{SubscriberID: "consent-sub", Phone: "+15550002222"}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("SMSConsents.Attest crossed tenants: %v", err)
 	}
-	if _, err := repo.Revoke(ctx, b, "consent-sub"); !errors.Is(err, ErrNotFound) {
+	if _, err := repo.Revoke(ctx, b, "consent-sub", "k", ""); !errors.Is(err, ErrNotFound) {
 		t.Errorf("SMSConsents.Revoke crossed tenants: %v", err)
 	}
 	if rows, _ := repo.List(ctx, b, "consent-sub"); len(rows) != 0 {

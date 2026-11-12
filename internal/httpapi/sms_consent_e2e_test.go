@@ -96,7 +96,12 @@ func (f consentFixture) attest(t *testing.T, subscriberID, body string) (int, st
 
 func (f consentFixture) revoke(t *testing.T, subscriberID string) (int, string) {
 	t.Helper()
-	return req(t, http.MethodDelete, f.srv.URL+"/v1/subscribers/"+subscriberID+"/phone/consent", f.apiKey, "")
+	return f.revokeWith(t, subscriberID, "")
+}
+
+func (f consentFixture) revokeWith(t *testing.T, subscriberID, body string) (int, string) {
+	t.Helper()
+	return req(t, http.MethodDelete, f.srv.URL+"/v1/subscribers/"+subscriberID+"/phone/consent", f.apiKey, body)
 }
 
 // sendSMS runs one sms step for cust-1 and returns the message it recorded.
@@ -268,8 +273,9 @@ func TestSMSConsent_RevokeSkips(t *testing.T) {
 		t.Fatalf("after revoke: %v, want the phone kept without consent", m)
 	}
 	rows, _ := f.st.SMSConsents().List(context.Background(), f.scope, "cust-1")
-	if len(rows) != 1 || rows[0].RevokedAt == "" || rows[0].RevokedReason != store.RevokedByAPI {
-		t.Fatalf("audit = %+v, want the row kept, revoked", rows)
+	keys, _ := f.st.ApiKeys().List(context.Background(), f.scope)
+	if len(rows) != 1 || rows[0].RevokedAt == "" || rows[0].RevokedReason != store.RevokedByAPI || rows[0].RevokedByKeyID != keys[0].Hash {
+		t.Fatalf("audit = %+v, want the row kept, revoked by the key", rows)
 	}
 	if status, body := f.revoke(t, "nobody"); status != http.StatusNotFound {
 		t.Fatalf("revoke unknown: %d %s", status, body)
@@ -308,6 +314,7 @@ func TestSMSConsent_BadInput(t *testing.T) {
 		`{"phone":"555"}`: http.StatusUnprocessableEntity,
 		`{"phone":"+15551112222","attestedAt":"2099-01-01T00:00:00Z"}`: http.StatusBadRequest,
 		`{"phone":"+15551112222","attestedAt":"last week"}`:            http.StatusBadRequest,
+		`{"phone":"+15551112222","attestedAt":"1999-12-31T23:59:59Z"}`: http.StatusBadRequest,
 		`not json`: http.StatusBadRequest,
 	} {
 		if status, resp := f.attest(t, "cust-1", body); status != want {
@@ -335,5 +342,54 @@ func TestSMSConsent_SelfVerifiedUnchanged(t *testing.T) {
 	}
 	if m := f.sendSMS(t, "r2"); m.Status != "sent" {
 		t.Fatalf("self-verified after a revoke: %+v, want sent", m)
+	}
+}
+
+// TestSMSConsent_RevokeRecordsTheReason: DELETE takes an optional
+// {"reason"}, stored with the revoking key on the audit row.
+func TestSMSConsent_RevokeRecordsTheReason(t *testing.T) {
+	f := newConsentFixture(t)
+	f.enable(t)
+	if status, body := f.attest(t, "cust-1", `{"phone":"+15551112222"}`); status != http.StatusCreated {
+		t.Fatalf("attest: %d %s", status, body)
+	}
+	if status, body := f.revokeWith(t, "cust-1", `{"reason":`); status != http.StatusBadRequest {
+		t.Fatalf("revoke with bad JSON: %d %s, want 400", status, body)
+	}
+	if status, body := f.revokeWith(t, "cust-1", `{"reason":"customer called to opt out"}`); status != http.StatusNoContent {
+		t.Fatalf("revoke: %d %s", status, body)
+	}
+	rows, _ := f.st.SMSConsents().List(context.Background(), f.scope, "cust-1")
+	keys, _ := f.st.ApiKeys().List(context.Background(), f.scope)
+	if len(rows) != 1 || rows[0].RevokedByKeyID != keys[0].Hash || rows[0].RevokedNote != "customer called to opt out" {
+		t.Fatalf("audit = %+v, want the key and the reason", rows)
+	}
+}
+
+// TestSMSConsent_SelfVerifiedDifferentNumberIs409: an attestation may not
+// replace a number the subscriber verified themselves; attesting that same
+// number succeeds and is recorded.
+func TestSMSConsent_SelfVerifiedDifferentNumberIs409(t *testing.T) {
+	f := newConsentFixture(t)
+	f.enable(t)
+	ctx := context.Background()
+	if err := f.st.Subscribers().SetVerifiedPhone(ctx, f.scope, "cust-1", "+15551112222", "2026-11-12T12:00:00Z"); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	status, body := f.attest(t, "cust-1", `{"phone":"+15559998888"}`)
+	if status != http.StatusConflict || errorCode(t, body) != "phone_self_verified" {
+		t.Fatalf("attest over a different verified number: %d %s, want 409 phone_self_verified", status, body)
+	}
+	if m := f.subscriberJSON(t); m["phone"] != "+15551112222" || m["phoneConsent"] != "self_verified" {
+		t.Fatalf("refused attest changed the subscriber: %v", m)
+	}
+	if status, body := f.attest(t, "cust-1", `{"phone":"+15551112222"}`); status != http.StatusCreated {
+		t.Fatalf("attest the verified number: %d %s", status, body)
+	}
+	if m := f.subscriberJSON(t); m["phoneConsent"] != "self_verified" {
+		t.Fatalf("same-number attest: %v, want still self_verified", m)
+	}
+	if rows, _ := f.st.SMSConsents().List(ctx, f.scope, "cust-1"); len(rows) != 1 {
+		t.Fatalf("audit = %+v, want the same-number attestation recorded", rows)
 	}
 }
