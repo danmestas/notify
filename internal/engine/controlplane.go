@@ -26,7 +26,25 @@ const (
 	subjRegister = "api.p.notify.workflows.register"
 	subjStartRun = "api.p.notify.runs.start"
 	subjGetRun   = "api.p.notify.runs.get"
+	subjCancel   = "api.p.notify.runs.cancel"
 )
+
+// ErrRunNotFound marks a GetRun or CancelRun error for a run dagnats does not
+// know, or one of another program's workflows. Test it with errors.Is.
+var ErrRunNotFound = errors.New("engine: run not found")
+
+// runNotFoundMsg is dagnats' engine.ErrRunNotFound text, which reaches notify
+// flattened into the {"error": ...} envelope.
+const runNotFoundMsg = "workflow run not found"
+
+// runError decodes a run route's error envelope, marking a missing run.
+func runError(reply []byte) error {
+	err := decodeError(reply)
+	if err != nil && strings.Contains(err.Error(), runNotFoundMsg) {
+		return fmt.Errorf("%w: %w", ErrRunNotFound, err)
+	}
+	return err
+}
 
 // RegisterWorkflow registers def with the engine. Returns an error if the
 // engine rejects the definition.
@@ -106,7 +124,7 @@ func (e *Engine) GetRun(ctx context.Context, runID string) (RunSnapshot, error) 
 	if err != nil {
 		return RunSnapshot{}, err
 	}
-	if err := decodeError(reply); err != nil {
+	if err := runError(reply); err != nil {
 		return RunSnapshot{}, err
 	}
 	var snap RunSnapshot
@@ -114,6 +132,21 @@ func (e *Engine) GetRun(ctx context.Context, runID string) (RunSnapshot, error) 
 		return RunSnapshot{}, fmt.Errorf("decode run snapshot: %w", err)
 	}
 	return snap, nil
+}
+
+// CancelRun asks dagnats to cancel a run. The request body is the plain run-id
+// bytes, as for GetRun. dagnats records the cancellation and answers at once;
+// the run turns cancelled when its orchestrator handles it. That stops the
+// run's pending sleeps from advancing it and dispatches none of its remaining
+// steps; a step already running sees its context end. Cancelling a finished
+// run is accepted and changes nothing, so a caller that needs to tell the two
+// apart reads the run first.
+func (e *Engine) CancelRun(ctx context.Context, runID string) error {
+	reply, err := e.request(ctx, subjCancel, []byte(runID))
+	if err != nil {
+		return err
+	}
+	return runError(reply)
 }
 
 // request issues a NATS request/reply, honoring ctx cancellation.

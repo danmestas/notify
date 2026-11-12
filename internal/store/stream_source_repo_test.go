@@ -26,8 +26,8 @@ func sampleStreamSource(name, topic, hash string) domain.StreamSource {
 func TestMigrate_0030_AppliesStreamSources(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 55 {
-		t.Fatalf("expected 55 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 56 {
+		t.Fatalf("expected 56 recorded migrations, got %d", n)
 	}
 
 	var name string

@@ -38,6 +38,8 @@ type Service struct {
 	eng      RunStarter
 	digester Digester
 	windows  DigestWindowResolver
+	// runs is eng when it can also read and cancel runs, else nil.
+	runs RunCanceller
 }
 
 // DigestWindowResolver reports a subscriber's per-workflow digest window
@@ -63,9 +65,17 @@ type RunStarter interface {
 	StartRun(ctx context.Context, workflow string, input json.RawMessage) (string, error)
 }
 
-// New builds a trigger Service over its collaborators.
+// RunCanceller reads and cancels engine runs. *engine.Engine satisfies it.
+type RunCanceller interface {
+	GetRun(ctx context.Context, runID string) (engine.RunSnapshot, error)
+	CancelRun(ctx context.Context, runID string) error
+}
+
+// New builds a trigger Service over its collaborators. Cancel works only when
+// eng is also a RunCanceller, as *engine.Engine is.
 func New(aud *audience.Service, s *store.Store, eng RunStarter) *Service {
-	return &Service{aud: aud, s: s, eng: eng}
+	runs, _ := eng.(RunCanceller)
+	return &Service{aud: aud, s: s, eng: eng, runs: runs}
 }
 
 // WithDigester attaches an optional digester and returns the Service for
@@ -400,9 +410,9 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 	if err != nil {
 		return "", err
 	}
-	if notif.RunID != "" {
+	if notif.RunID != "" || notif.Status == domain.NotificationCancelled {
 		// An earlier attempt of this same trigger started the run and recorded
-		// it; a retry starts nothing.
+		// it, or the transaction was cancelled; a retry starts nothing.
 		return notif.ID, nil
 	}
 
@@ -520,7 +530,29 @@ func (svc *Service) start(ctx context.Context, scope domain.Scope, notificationI
 	if _, err := svc.s.Notifications().AttachRun(wctx, scope, notificationID, runID); err != nil {
 		return "", fmt.Errorf("trigger: record run %s on notification %s: %w", runID, notificationID, err)
 	}
+	if err := svc.cancelIfCancelled(wctx, scope, notificationID, runID); err != nil {
+		return "", err
+	}
 	return runID, nil
+}
+
+// cancelIfCancelled cancels runID when its row was cancelled while the start
+// was in flight: the cancel found no run to stop, so the trigger stops it.
+func (svc *Service) cancelIfCancelled(ctx context.Context, scope domain.Scope, notificationID, runID string) error {
+	if svc.runs == nil {
+		return nil
+	}
+	n, err := svc.s.Notifications().Get(ctx, scope, notificationID)
+	if err != nil {
+		return fmt.Errorf("trigger: reread notification %s: %w", notificationID, err)
+	}
+	if n.Status != domain.NotificationCancelled {
+		return nil
+	}
+	if err := svc.runs.CancelRun(ctx, runID); err != nil {
+		return fmt.Errorf("trigger: cancel run %s of cancelled notification %s: %w", runID, notificationID, err)
+	}
+	return nil
 }
 
 // dynamicDelays resolves every dynamic delay step that compiles to a native

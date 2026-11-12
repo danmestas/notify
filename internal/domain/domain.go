@@ -229,16 +229,22 @@ type Notification struct {
 	// NotificationStarted, the meaning every row had before the trigger began
 	// writing rows ahead of their runs.
 	Status string `db:"status"`
+	// RunStartedAt is when RunID was recorded, in the timestamp layout. Empty
+	// while the row has no run. A retried trigger reuses its row for a fresh
+	// run, so this, not CreatedAt, dates the run.
+	RunStartedAt string `db:"run_started_at"`
 }
 
 // Notification statuses. The trigger writes a row as pending before it starts
 // the row's run, so a crash or a timed-out start never leaves a row that looks
 // sent; it moves to started once the run id is recorded, and to failed when
-// the engine refused the start outright.
+// the engine refused the start outright. Cancelling the trigger's transaction
+// moves it to cancelled, which no later write undoes.
 const (
-	NotificationPending = "pending"
-	NotificationStarted = "started"
-	NotificationFailed  = "failed"
+	NotificationPending   = "pending"
+	NotificationStarted   = "started"
+	NotificationFailed    = "failed"
+	NotificationCancelled = "cancelled"
 )
 
 type Message struct {

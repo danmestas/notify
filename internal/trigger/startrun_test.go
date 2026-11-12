@@ -28,10 +28,15 @@ type fakeEngine struct {
 	byKey  map[string]string          // idempotency key -> run id
 	starts int
 	fail   func(started bool) error
+	// status is a run's dagnats status; a run absent here is running.
+	status  map[string]string
+	cancels []string
+	// cancelErr, when set, is every CancelRun's answer.
+	cancelErr error
 }
 
 func newFakeEngine() *fakeEngine {
-	return &fakeEngine{runs: map[string]json.RawMessage{}, byKey: map[string]string{}}
+	return &fakeEngine{runs: map[string]json.RawMessage{}, byKey: map[string]string{}, status: map[string]string{}}
 }
 
 func (f *fakeEngine) StartRun(_ context.Context, _ string, input json.RawMessage) (string, error) {

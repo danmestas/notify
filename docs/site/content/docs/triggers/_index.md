@@ -55,6 +55,43 @@ A retry is answered like the first call: the notification rows from the first at
 
 A topic trigger starts one run per member, under one transaction id. It records the topic against the transaction so the console's topic activity can find it, even when the topic has no members.
 
+## Cancelling a trigger
+
+A workflow that waits before it sends, such as "follow up on the estimate in 3 days", can be stopped by its `transactionId` before it sends:
+
+```bash
+curl -X POST localhost:3000/v1/events/trigger/order-A-100-shipped/cancel \
+  -H "Authorization: ApiKey $KEY"
+```
+
+```json
+{ "cancelled": ["01J…"], "alreadyFinished": [] }
+```
+
+Every notification of that transaction in the key's environment is cancelled, so a topic trigger stops every member's run. Each notification lands in one list:
+
+| List | Meaning |
+|---|---|
+| `cancelled` | The run is cancelled and the notification's `Status` is now `cancelled`. Its pending delay or digest window no longer advances it, and none of its remaining steps run. A notification whose run never started is cancelled too, and retrying the trigger afterwards starts nothing. If a timed-out start did leave a run behind, that run's first step finds the notification cancelled, cancels the run and sends nothing. |
+| `alreadyFinished` | The run had already completed or failed. Its messages are left as they were. |
+| `failed` | Present only when some notifications could not be settled, as `{"notificationId", "reason"}`. Retry the cancel for them. |
+
+| Outcome | HTTP |
+|---|---|
+| Every notification settled | `200`; `cancelled` and `alreadyFinished` are always present and either may be empty |
+| No notification with that `transactionId` in this environment | `404` |
+| Some notifications in `failed`, worth retrying: the engine was unreachable (`engine_unavailable`), or a run started moments ago is not visible yet (`run_not_visible`) | `503` with `Retry-After: 1` |
+| Some notifications in `failed` because the engine refused (`engine_error`) | `502` |
+| An internal failure | `500` |
+
+A partial failure still settles every notification it can, so the body lists what was cancelled alongside what failed.
+
+Cancelling is idempotent: a second call answers `200` with the same notifications under `cancelled`.
+
+A step already running when the cancel arrives is told to stop, but a send it has already handed to a provider can still go out. Cancelling stops what has not started yet; it does not recall a message.
+
+If you would rather not keep the transaction id, or the decision depends on state you hold, re-check before sending instead: an `http_request` step calls your service, and the send step carries a condition on its response, such as `{"on": "check", "field": "statusCode", "operator": "EQUAL", "value": 200}`. A false condition skips the send with `skipReason: "condition"`. See [Branching on an HTTP call](../workflows/conditions#branching-on-an-http-call). That pattern costs a call to your service per run, and the run still waits out its delay.
+
 ## POST /v1/inbound/{trigger}
 
 A webhook-shaped alternative: the path names the workflow, the body is the same trigger request, and the `name` in the body is ignored.

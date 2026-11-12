@@ -8,6 +8,7 @@ All routes take an API key.
 | Method and path | Purpose | Success |
 |---|---|---|
 | `POST /v1/events/trigger` | [Trigger](../../triggers) a workflow for a subscriber or topic. | `201`; `404` or `422` with `acknowledged: false` when refused. |
+| `POST /v1/events/trigger/{transactionId}/cancel` | [Cancel](../../triggers#cancelling-a-trigger) the runs a trigger started. | `200` `{"cancelled": […], "alreadyFinished": […]}`; `404` for a transaction not in this environment; `502`, `503` or `500` with a `failed` list when some could not be settled. |
 | `POST /v1/inbound/{trigger}` | Trigger by URL. The path is the workflow, the body is the trigger request. | `201` |
 | `POST /v1/workflows` | Create and publish a workflow. | `201` `{id, triggerIdentifier, name, active}` |
 | `GET /v1/workflows` | List workflows. | `200` array of `{id, name, triggerIdentifier, active, critical}` |
