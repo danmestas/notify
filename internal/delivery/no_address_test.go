@@ -194,3 +194,46 @@ func TestHandleSMS_NoIntegration_IsNotConfigured(t *testing.T) {
 		t.Fatalf("message = status %q class %q, want error/%s", m.Status, m.ErrorClass, providers.ClassNotConfigured)
 	}
 }
+
+// Every gate that skips a chat or push step records why, so an operator can
+// tell a false condition, a broken one and a subscriber's choice apart.
+func TestHandleChatAndPush_SkipRecordsGateReason(t *testing.T) {
+	falseCond := json.RawMessage(`[{"combinator":"and","conditions":[{"on":"subscriber","field":"plan","operator":"eq","value":"pro"}]}]`)
+	broken := json.RawMessage(`{"not":"a list of groups"}`)
+	cases := []struct {
+		name    string
+		filters json.RawMessage
+		prefOff bool
+		want    string
+	}{
+		{"condition false", falseCond, false, SkipReasonCondition},
+		{"condition invalid", broken, false, SkipReasonConditionInvalid},
+		{"preference off", nil, true, SkipReasonPreference},
+	}
+	for _, tc := range cases {
+		t.Run("chat/"+tc.name, func(t *testing.T) {
+			s := newStore(t)
+			seedChatAddress(t, s, "telegram", "987654321")
+			capt := providers.NewCaptureChat()
+			h := NewChat(s, stubChatResolver{p: capt, id: "telegram"}).WithPreferences(stubChecker{enabled: !tc.prefOff})
+			env := chatEnvelope()
+			env.Step.Filters = tc.filters
+			wantSkipped(t, runStep(t, h.HandleChat, env), tc.want)
+			if n := len(capt.Sent()); n != 0 {
+				t.Errorf("provider invoked %d times on skip, want 0", n)
+			}
+		})
+		t.Run("push/"+tc.name, func(t *testing.T) {
+			s := newStore(t)
+			seedTopic(t, s, "agent-alerts")
+			capt := providers.NewCapturePush()
+			h := NewPush(s, stubPushResolver{p: capt, id: "ntfy"}).WithPreferences(stubChecker{enabled: !tc.prefOff})
+			env := pushEnvelope()
+			env.Step.Filters = tc.filters
+			wantSkipped(t, runStep(t, h.HandlePush, env), tc.want)
+			if n := len(capt.Sent()); n != 0 {
+				t.Errorf("provider invoked %d times on skip, want 0", n)
+			}
+		})
+	}
+}

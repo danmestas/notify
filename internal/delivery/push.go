@@ -208,8 +208,12 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	// unevaluable) condition SKIPS the send. Absent/empty filters always run. A
 	// malformed condition fails closed (skip) so a broken condition never blasts
 	// a send to every subscriber.
-	if !conditionMet(env.Step.Filters, subMap, payloadMap, stepOutputs) {
-		return h.persistPushSkipped(ctx, env, t, scope, subject, content, "")
+	if met, invalid := conditionOutcome(env.Step.Filters, subMap, payloadMap, stepOutputs); !met {
+		reason := SkipReasonCondition
+		if invalid {
+			reason = SkipReasonConditionInvalid
+		}
+		return h.persistPushSkipped(ctx, env, t, scope, subject, content, reason)
 	}
 
 	// Optional throttle gate. When the step configures a limit and a throttler
@@ -229,7 +233,7 @@ func (h *PushHandler) HandlePush(ctx context.Context, t engine.TaskPayload) (jso
 	if h.prefs != nil {
 		enabled, perr := h.prefs.ChannelEnabled(ctx, scope, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical, true)
 		if perr == nil && !enabled {
-			return h.persistPushSkipped(ctx, env, t, scope, subject, content, "")
+			return h.persistPushSkipped(ctx, env, t, scope, subject, content, SkipReasonPreference)
 		}
 	}
 
