@@ -47,7 +47,22 @@ func (s *Store) ReportFailedAttempt(ctx context.Context, scope domain.Scope, int
 // messageObserverSlot holds the observer shared by every messageRepo the
 // store hands out.
 type messageObserverSlot struct {
-	v atomic.Pointer[DeliveryObserver]
+	v        atomic.Pointer[DeliveryObserver]
+	buffered atomic.Pointer[BufferedStatusHook]
+}
+
+// BufferedStatusHook is told about a message written with the final status
+// that a provider callback delivered before the message existed: m carries
+// that status. It runs on the caller's goroutine, after the write commits.
+type BufferedStatusHook func(ctx context.Context, scope domain.Scope, m domain.Message)
+
+// SetBufferedStatusHook installs fn (nil removes it), like SetDeliveryObserver.
+func (s *Store) SetBufferedStatusHook(fn BufferedStatusHook) {
+	if fn == nil {
+		s.msgObs.buffered.Store(nil)
+		return
+	}
+	s.msgObs.buffered.Store(&fn)
 }
 
 func (s *messageObserverSlot) store(o DeliveryObserver) {

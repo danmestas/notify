@@ -154,8 +154,10 @@ func (repo *messageRepo) Create(ctx context.Context, scope domain.Scope, m domai
 	// A sent message whose final status already arrived takes it now, in the
 	// same transaction as the write, so a callback racing the write is never
 	// lost: either it found this row, or it left its status here.
+	var tookStatus bool
 	if m.ProviderMessageID != "" && m.Status == "sent" {
-		if err := takePendingStatus(ctx, tx, scope, &m); err != nil {
+		var err error
+		if tookStatus, err = takePendingStatus(ctx, tx, scope, &m); err != nil {
 			return domain.Message{}, err
 		}
 	}
@@ -179,6 +181,9 @@ func (repo *messageRepo) Create(ctx context.Context, scope domain.Scope, m domai
 	if repo.obs != nil {
 		if o := repo.obs.load(); o != nil {
 			o.MessageCreated(ctx, scope, m)
+		}
+		if p := repo.obs.buffered.Load(); tookStatus && p != nil {
+			(*p)(ctx, scope, m)
 		}
 	}
 	return m, nil

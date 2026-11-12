@@ -223,3 +223,34 @@ func runPendingNotificationSweep(ctx context.Context, log *slog.Logger, st *stor
 		}
 	}
 }
+
+// pendingStatusPurgeInterval is how often expired buffered SMS statuses are
+// deleted; their life is an hour.
+const pendingStatusPurgeInterval = 15 * time.Minute
+
+// runPendingStatusPurge deletes buffered SMS statuses whose message never
+// appeared, once at boot and then on an interval, in the same shape as the
+// purges above.
+func runPendingStatusPurge(ctx context.Context, log *slog.Logger, st *store.Store) {
+	purge := func() {
+		n, err := st.PurgeExpiredPendingStatuses(ctx)
+		switch {
+		case err != nil:
+			log.Error("retention: sms_status_pending purge failed", "err", err)
+		case n > 0:
+			log.Info("retention: purged sms_status_pending", "rows", n)
+		}
+	}
+
+	purge()
+	t := time.NewTicker(pendingStatusPurgeInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			purge()
+		}
+	}
+}

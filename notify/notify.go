@@ -544,6 +544,9 @@ func (n *Notify) start(ctx context.Context) error {
 	n.goLoop(func() { runDelayDeadlinePurge(ctx, n.log, n.st) })
 	// chat_inbound_handled would otherwise keep one row per inbound chat message forever.
 	n.goLoop(func() { runChatInboundPurge(ctx, n.log, n.st) })
+	// Buffered SMS statuses whose message never appeared would otherwise stay
+	// until the next such status arrived.
+	n.goLoop(func() { runPendingStatusPurge(ctx, n.log, n.st) })
 	// A notification whose start timed out and was never retried would
 	// otherwise read pending forever.
 	n.goLoop(func() { runPendingNotificationSweep(ctx, n.log, n.st) })

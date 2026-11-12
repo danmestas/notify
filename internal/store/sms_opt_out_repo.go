@@ -25,6 +25,9 @@ type SMSOptOutRepo interface {
 	// integrationID now, at most one per window, and records the reply when
 	// it may. Concurrent claims for one number grant one.
 	ClaimHelpReply(ctx context.Context, scope domain.Scope, integrationID, phone string, window time.Duration) (bool, error)
+	// ReleaseHelpReply gives back a claim whose reply was not sent, so the
+	// next HELP from phone may be answered.
+	ReleaseHelpReply(ctx context.Context, scope domain.Scope, integrationID, phone string) error
 }
 
 type smsOptOutRepo struct {
@@ -120,4 +123,13 @@ func (repo *smsOptOutRepo) ClaimHelpReply(ctx context.Context, scope domain.Scop
 		return false, fmt.Errorf("store: claim help reply: %w", err)
 	}
 	return n == 1, nil
+}
+
+func (repo *smsOptOutRepo) ReleaseHelpReply(ctx context.Context, scope domain.Scope, integrationID, phone string) error {
+	if _, err := repo.w.ExecContext(ctx,
+		`DELETE FROM sms_help_replies WHERE org_id = ? AND environment_id = ? AND integration_id = ? AND phone = ?`,
+		scope.OrgID, scope.EnvID, integrationID, phone); err != nil {
+		return fmt.Errorf("store: release help reply: %w", err)
+	}
+	return nil
 }

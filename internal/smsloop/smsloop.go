@@ -87,7 +87,9 @@ func New(st *store.Store, cbs Callbacks, publicURL string, log *slog.Logger) *Se
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{st: st, cbs: cbs, publicURL: strings.TrimRight(publicURL, "/"), log: log}
+	s := &Service{st: st, cbs: cbs, publicURL: strings.TrimRight(publicURL, "/"), log: log}
+	st.SetBufferedStatusHook(s.bufferedStatus)
+	return s
 }
 
 // WithEventPublisher sets where tenant events go. Without one, texts are
@@ -262,7 +264,12 @@ func (s *Service) HandleInbound(w http.ResponseWriter, r *http.Request) {
 		change = store.OptIn
 	}
 	// The text and its opt change commit together: if either fails, neither
-	// is kept, and the provider's retry (it retries a 5xx) applies both.
+	// is kept and we answer 500. Twilio does not retry inbound message
+	// webhooks by default, so a failed STOP is not re-sent by the provider;
+	// the docs recommend Advanced Opt-Out as the backstop. Applying the
+	// keyword alone on failure is deliberately not done: it would fail for
+	// the same cause, and when it did not, a retry would find the opt-out
+	// already made and send no sms.opt_out event.
 	rec, created, changed, err := s.st.InboundMessages().RecordSMS(ctx, cb.Scope, store.InboundMessage{
 		IntegrationID: cb.IntegrationID, MessageID: sid, Sender: from, Recipient: to, Body: body,
 		SubscriberID: primary.SubscriberID, PhoneVerified: verified,
@@ -344,6 +351,10 @@ func (s *Service) reply(ctx context.Context, cb connectivity.SMSCallback, to, ou
 	}
 	res, err := cb.Sender.Send(ctx, providers.SMSMessage{To: to, From: from, Body: text, StatusCallback: s.statusCallback(cb.IntegrationID)})
 	if err != nil {
+		// The reply did not go out, so it must not hold the slot.
+		if rerr := s.st.SMSOptOuts().ReleaseHelpReply(ctx, cb.Scope, cb.IntegrationID, to); rerr != nil {
+			s.log.Error("smsloop: release HELP claim", "err", rerr)
+		}
 		msg.Status, msg.ErrorText, msg.ErrorClass = "error", err.Error(), string(providers.ClassifyError(err))
 		s.log.Warn("smsloop: HELP reply failed", "integration", cb.IntegrationID, "err", err)
 	}
@@ -390,15 +401,30 @@ func (s *Service) HandleStatus(w http.ResponseWriter, r *http.Request) {
 			// the integration.
 			s.st.ReportFailedAttempt(ctx, cb.Scope, cb.IntegrationID, class, text)
 		}
-		s.publish(cb.Scope, StatusEvent{
-			OrgID: cb.Scope.OrgID, EnvID: cb.Scope.EnvID, Type: EventStatus,
-			MessageID: m.ID, Status: next, ErrorClass: class, ErrorText: text,
-			SubscriberID: m.SubscriberID, NotificationID: m.NotificationID, TransactionID: m.TransactionID,
-			WorkflowID: m.WorkflowID, IntegrationID: cb.IntegrationID, ProviderMessageID: sid,
-			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-		})
+		s.publish(cb.Scope, statusEvent(cb.Scope, m, next, class, text))
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// statusEvent is the sms.status event for m having moved to status.
+func statusEvent(scope domain.Scope, m domain.Message, status, class, text string) StatusEvent {
+	return StatusEvent{
+		OrgID: scope.OrgID, EnvID: scope.EnvID, Type: EventStatus,
+		MessageID: m.ID, Status: status, ErrorClass: class, ErrorText: text,
+		SubscriberID: m.SubscriberID, NotificationID: m.NotificationID, TransactionID: m.TransactionID,
+		WorkflowID: m.WorkflowID, IntegrationID: m.IntegrationID, ProviderMessageID: m.ProviderMessageID,
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+// bufferedStatus tells the tenant about a status that beat its message: the
+// message was just written carrying it, and a live callback would have sent
+// this same event.
+func (s *Service) bufferedStatus(_ context.Context, scope domain.Scope, m domain.Message) {
+	if m.Channel != "sms" {
+		return
+	}
+	s.publish(scope, statusEvent(scope, m, m.Status, m.ErrorClass, m.ErrorText))
 }
 
 // mapStatus maps a provider MessageStatus to the final notify status it
