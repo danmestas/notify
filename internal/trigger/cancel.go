@@ -152,9 +152,8 @@ func (svc *Service) cancelOne(ctx context.Context, scope domain.Scope, n domain.
 	}
 	if !snap.IsTerminal() {
 		// A pending run (accepted, snapshot not written yet) is cancelled like a
-		// running one. dagnats#1008: a cancel of a run queued behind a
-		// concurrency limit is ignored though it replies cancelled; notify sets
-		// no concurrency limits, so no run of ours queues.
+		// running one, and so is a run queued behind a concurrency limit
+		// (dagnats#1008, fixed in v0.0.66).
 		if err := svc.runs.CancelRun(ctx, n.RunID); err != nil {
 			return false, fmt.Errorf("%w: cancel run %s: %w", ErrEngine, n.RunID, err)
 		}
