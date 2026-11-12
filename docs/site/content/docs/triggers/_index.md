@@ -29,8 +29,11 @@ curl -X POST localhost:3000/v1/events/trigger \
 The response:
 
 ```json
-{ "acknowledged": true, "status": "processed", "transactionId": "01J…" }
+{ "acknowledged": true, "status": "processed", "transactionId": "01J…",
+  "notificationIds": ["01J…"] }
 ```
+
+`notificationIds` lists the notification each recipient got, one id per recipient in recipient order (a topic trigger lists its members in member order). Pass an id straight to `GET /v1/notifications/{id}/messages` to follow delivery. It is absent when the trigger was refused. A recipient whose event is merged into an open [digest](../workflows/step-types/digest) window has no notification of its own, so has no id.
 
 | Outcome | HTTP | Body |
 |---|---|---|
@@ -40,11 +43,13 @@ The response:
 | Workflow has no steps | `422` | `error: ["workflow has no steps"]` |
 | Unknown topic | `404` | `error: ["topic not found"]` (an `error` entry ending in `not found` maps to 404) |
 
-Acceptance means the run was started, not that delivery succeeded; delivery is asynchronous. Follow it with `GET /v1/notifications?transactionId=…` and `GET /v1/notifications/{id}/messages`.
+Acceptance means the run was started, not that delivery succeeded; delivery is asynchronous. Follow it with `GET /v1/notifications/{id}/messages` using an id from `notificationIds`; `GET /v1/notifications?transactionId=…` finds the same rows.
 
 ### Idempotency
 
 The engine admits one run per transaction id and recipient. Repeating a trigger with the same `transactionId` and `to` is a retry and does not start a second run. For a topic trigger, all recipients share the transaction id, and each recipient still gets one run.
+
+A retry is answered like the first call: the notification rows from the first attempt are reused rather than rewritten, so `notificationIds` returns the same ids.
 
 ### Topic fan-out
 
