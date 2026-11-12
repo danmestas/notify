@@ -21,9 +21,8 @@ func TestCancelFailureStatus(t *testing.T) {
 		failed []trigger.CancelFailure
 		want   int
 	}{
-		{f("run_not_visible"), http.StatusServiceUnavailable},
-		{f("engine_unavailable", "run_not_visible"), http.StatusServiceUnavailable},
-		{f("run_not_visible", "engine_error"), http.StatusBadGateway},
+		{f("engine_unavailable"), http.StatusServiceUnavailable},
+		{f("engine_unavailable", "engine_error"), http.StatusBadGateway},
 		{f("engine_error", "internal"), http.StatusInternalServerError},
 	}
 	for _, tc := range tests {

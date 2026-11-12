@@ -167,17 +167,12 @@ func (h cancelHarness) trigger(t *testing.T, workflow, to, tx string) []string {
 	return resp.NotificationIDs
 }
 
-// cancel posts the cancel route and returns the status and the decoded body,
-// keyed by its literal wire keys. Like a client, it retries a 503: a run
-// started moments ago is not visible in dagnats yet (dagnats#1006).
+// cancel posts the cancel route once and returns the status and the decoded
+// body, keyed by its literal wire keys. A run started moments ago is never
+// "not found" in dagnats (v0.0.65), so it does not retry a 503.
 func (h cancelHarness) cancel(t *testing.T, auth, tx string) (int, map[string][]string) {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
 	status, rb := doPost(t, h.srv.URL+"/v1/events/trigger/"+tx+"/cancel", auth, "")
-	for status == http.StatusServiceUnavailable && time.Now().Before(deadline) {
-		time.Sleep(100 * time.Millisecond)
-		status, rb = doPost(t, h.srv.URL+"/v1/events/trigger/"+tx+"/cancel", auth, "")
-	}
 	if status != http.StatusOK {
 		return status, nil
 	}
@@ -369,5 +364,38 @@ func TestTriggerCancel_TimedOutStart(t *testing.T) {
 	}
 	if msgs := h.messages(t, row.ID); len(msgs) != 0 {
 		t.Fatalf("messages = %+v, want none", msgs)
+	}
+}
+
+// TestTriggerCancel_ImmediatelyAfterTrigger cancels a run the instant the
+// trigger returns, before dagnats has written its snapshot. With v0.0.65 the
+// cancel is a plain 200 (never 503), the run ends cancelled and nothing is
+// sent, even once the workers start.
+func TestTriggerCancel_ImmediatelyAfterTrigger(t *testing.T) {
+	h := newCancelHarnessWith(t, cancelHarnessOpts{deferWorkers: true})
+	ids := h.trigger(t, "now", `{"subscriberId":"s1"}`, "tx-immediate")
+	if len(ids) != 1 {
+		t.Fatalf("notificationIds = %v, want one", ids)
+	}
+	runID := h.row(t, ids[0]).RunID
+	if runID == "" {
+		t.Fatal("row has no run id after the trigger returned")
+	}
+
+	status, wire := h.cancel(t, h.authHeader, "tx-immediate")
+	if status != http.StatusOK || !slices.Equal(wire["cancelled"], ids) || len(wire["alreadyFinished"]) != 0 {
+		t.Fatalf("cancel = %d %v, want 200 cancelled %v", status, wire, ids)
+	}
+	h.startWorkers()
+	h.waitRun(t, runID, "cancelled")
+	if got := h.row(t, ids[0]).Status; got != domain.NotificationCancelled {
+		t.Fatalf("notification status = %q, want cancelled", got)
+	}
+	time.Sleep(2 * time.Second)
+	if n := len(h.cap.Sent()); n != 0 {
+		t.Fatalf("emails sent = %d, want none", n)
+	}
+	if msgs := h.messages(t, ids[0]); len(msgs) != 0 {
+		t.Fatalf("cancelled notification has messages %+v, want none", msgs)
 	}
 }

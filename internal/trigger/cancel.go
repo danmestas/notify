@@ -4,37 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/store"
-	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // ErrTransactionNotFound is Cancel's error for a transaction with no
 // notification in the caller's environment.
 var ErrTransactionNotFound = errors.New("trigger: transaction not found")
 
-// ErrRunNotVisible marks a failure for a run dagnats started but does not show
-// yet (dagnats#1006), so it can be neither read nor cancelled. A retry shortly
-// after succeeds.
-var ErrRunNotVisible = errors.New("trigger: run not visible in the engine yet")
-
 // ErrEngine marks a failure dagnats answered or never answered while Cancel read
 // or cancelled a run. engine.IsTransient tells a timeout from a refusal.
 var ErrEngine = errors.New("trigger: engine request failed")
-
-// prunedAfter is how long ago a run must have started before a run dagnats does
-// not know is taken as pruned, and so finished, rather than not yet recorded.
-const prunedAfter = time.Hour
-
-// runStartedBefore reports whether n's run was recorded before t. A missing or
-// unparsable time counts as recent, so an unknown run is never taken as done.
-func runStartedBefore(n domain.Notification, t time.Time) bool {
-	started, err := timestamp.Parse(n.RunStartedAt)
-	return err == nil && started.Before(t)
-}
 
 // errNoCanceller is Cancel's error when the Service's engine cannot cancel runs.
 var errNoCanceller = errors.New("trigger: cancel needs an engine that can cancel runs")
@@ -57,7 +39,7 @@ type CancelResult struct {
 // CancelFailure is one notification Cancel could not settle.
 type CancelFailure struct {
 	NotificationID string `json:"notificationId"`
-	// Reason is run_not_visible, engine_unavailable, engine_error or internal.
+	// Reason is engine_unavailable, engine_error or internal.
 	Reason string `json:"reason"`
 }
 
@@ -112,8 +94,6 @@ func (svc *Service) Cancel(ctx context.Context, scope domain.Scope, transactionI
 // failureReason names err's class for CancelFailure.Reason.
 func failureReason(err error) string {
 	switch {
-	case errors.Is(err, ErrRunNotVisible):
-		return "run_not_visible"
 	case errors.Is(err, ErrEngine) && engine.IsTransient(err):
 		return "engine_unavailable"
 	case errors.Is(err, ErrEngine):
@@ -161,12 +141,8 @@ func (svc *Service) cancelOne(ctx context.Context, scope domain.Scope, n domain.
 	snap, err := svc.runs.GetRun(ctx, n.RunID)
 	switch {
 	case errors.Is(err, engine.ErrRunNotFound):
-		// dagnats answers not found both for a run it has pruned and for one
-		// it started moments ago but has not yet recorded (dagnats#1006).
-		// Only the first has certainly finished.
-		if !runStartedBefore(n, time.Now().Add(-prunedAfter)) {
-			return false, fmt.Errorf("%w: run %s of notification %s", ErrRunNotVisible, n.RunID, n.ID)
-		}
+		// A run dagnats started is never not found (v0.0.65), so a missing one
+		// has been pruned and has finished.
 		return n.Status != domain.NotificationCancelled, nil
 	case err != nil:
 		return false, fmt.Errorf("%w: read run %s: %w", ErrEngine, n.RunID, err)
@@ -175,6 +151,10 @@ func (svc *Service) cancelOne(ctx context.Context, scope domain.Scope, n domain.
 		return true, nil
 	}
 	if !snap.IsTerminal() {
+		// A pending run (accepted, snapshot not written yet) is cancelled like a
+		// running one. dagnats#1008: a cancel of a run queued behind a
+		// concurrency limit is ignored though it replies cancelled; notify sets
+		// no concurrency limits, so no run of ours queues.
 		if err := svc.runs.CancelRun(ctx, n.RunID); err != nil {
 			return false, fmt.Errorf("%w: cancel run %s: %w", ErrEngine, n.RunID, err)
 		}
