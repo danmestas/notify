@@ -35,7 +35,7 @@ Each unauthenticated-by-key door has its own secret that works nowhere else: `X-
 
 ## Outbound requests (SSRF)
 
-Workflow `http_request` steps, webhook providers, ntfy, outbound webhook endpoints and the other clients that call a URL a tenant supplies go through a guard that refuses, after DNS resolution, loopback, link-local, private, unique-local, unspecified, multicast, CGNAT (including Tailscale), `0.0.0.0/8`, NAT64 and broadcast addresses. Checking at dial time defeats DNS rebinding. Open exceptions deliberately with `NOTIFY_SSRF_ALLOWED_HOSTS`: exact hosts only, no wildcards.
+Workflow `http_request` steps, webhook providers, ntfy, outbound webhook endpoints and the other clients that call a URL a tenant supplies go through a guard that refuses, after DNS resolution, loopback, link-local, private, unique-local, unspecified, multicast, CGNAT (including Tailscale), `0.0.0.0/8`, NAT64 and broadcast addresses. Checking at dial time defeats DNS rebinding. Open exceptions deliberately with `NOTIFY_SSRF_ALLOWED_HOSTS`: exact hosts only, no wildcards. Scope each exception to one port (`127.0.0.1:3738`): a bare `127.0.0.1` opens every loopback port to every tenant, including other local services such as the dagnats control plane.
 
 ## Host configuration that tenants cannot reach
 

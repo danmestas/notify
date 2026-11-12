@@ -3,6 +3,7 @@ package httpaction
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync/atomic"
 )
@@ -20,6 +21,9 @@ import (
 //     intent loosely is how allowlists become the vulnerability they were meant
 //     to contain, so a pattern that looks like it should match a family of hosts
 //     is rejected at parse time rather than silently never matching.
+//   - An entry is a bare host (any port) or host:port (that port only; IPv6 as
+//     "[::1]:3738"). Prefer the port form: allowing 127.0.0.1 on every port
+//     exposes every local service, not just the one the operator meant.
 //   - An allowlisted host bypasses the IP-range check entirely. That is the
 //     point: the host resolves to an internal address, which is why it needed
 //     listing. The operator is asserting they trust that name.
@@ -28,7 +32,14 @@ import (
 // client (internal/providers/webhook) is built in a package-level var, before
 // main can read any configuration. Consulting it at dial time instead of
 // capturing it at construction keeps every existing call site unchanged.
-var allowedHosts atomic.Pointer[map[string]struct{}]
+var allowedHosts atomic.Pointer[allowlist]
+
+// allowlist holds bare-host entries (any port) and host:port entries apart, so
+// a port-scoped entry never widens into a host-wide one.
+type allowlist struct {
+	hosts     map[string]struct{}
+	hostPorts map[string]struct{}
+}
 
 // ConfigureAllowlist parses raw -- a comma-separated list of exact hostnames or
 // IP literals -- and installs it as the process-wide SSRF allowlist, replacing
@@ -38,24 +49,47 @@ var allowedHosts atomic.Pointer[map[string]struct{}]
 // It returns an error on any entry that cannot mean what it appears to mean, so
 // a mistyped allowlist fails at startup rather than quietly admitting nothing.
 func ConfigureAllowlist(raw string) error {
-	hosts := make(map[string]struct{})
+	list := &allowlist{hosts: map[string]struct{}{}, hostPorts: map[string]struct{}{}}
 	for _, field := range strings.Split(raw, ",") {
 		entry := strings.TrimSpace(field)
 		if entry == "" {
 			continue
 		}
-		key, err := allowlistKey(entry)
+		host, port, err := parseEntry(entry)
 		if err != nil {
 			return fmt.Errorf("ssrf allowlist: %w", err)
 		}
-		hosts[key] = struct{}{}
+		if port == "" {
+			list.hosts[host] = struct{}{}
+		} else {
+			list.hostPorts[net.JoinHostPort(host, port)] = struct{}{}
+		}
 	}
-	allowedHosts.Store(&hosts)
+	allowedHosts.Store(list)
 	return nil
 }
 
-// allowlistKey validates one entry and reduces it to the form hostAllowed
-// compares against.
+// parseEntry splits one entry into a validated host and an optional port
+// ("" means any port).
+func parseEntry(entry string) (host, port string, err error) {
+	if net.ParseIP(entry) == nil && strings.Contains(entry, ":") && !strings.Contains(entry, "://") {
+		h, p, serr := net.SplitHostPort(entry)
+		if serr != nil {
+			return "", "", fmt.Errorf("entry %q is not a valid host:port (IPv6 needs brackets, e.g. [::1]:3738): %v", entry, serr)
+		}
+		n, perr := strconv.Atoi(p)
+		if perr != nil || n < 1 || n > 65535 {
+			return "", "", fmt.Errorf("entry %q has invalid port %q; the port must be a number from 1 to 65535", entry, p)
+		}
+		host, err = allowlistKey(h)
+		return host, strconv.Itoa(n), err
+	}
+	host, err = allowlistKey(entry)
+	return host, "", err
+}
+
+// allowlistKey validates one host (no port) and reduces it to the form
+// hostAllowed compares against.
 func allowlistKey(entry string) (string, error) {
 	switch {
 	case strings.Contains(entry, "*"):
@@ -73,10 +107,8 @@ func allowlistKey(entry string) (string, error) {
 	if ip := net.ParseIP(host); ip != nil {
 		return ip.String(), nil
 	}
-	// A bare colon in a non-IP entry is a port, which the guard never sees:
-	// dialing splits it off before the host is compared.
 	if strings.Contains(host, ":") {
-		return "", fmt.Errorf("entry %q contains a port; list the host alone", entry)
+		return "", fmt.Errorf("entry %q is not a usable host", entry)
 	}
 	for _, r := range host {
 		if r <= ' ' || r == '?' || r == '#' || r == '@' {
@@ -112,18 +144,27 @@ func normalizeHost(host string) string {
 	return out
 }
 
-// hostAllowed reports whether host was explicitly listed by the operator and is
-// therefore exempt from the IP-range check. host is the name as it appeared in
-// the request URL, before DNS resolution.
-func hostAllowed(host string) bool {
-	hosts := allowedHosts.Load()
-	if hosts == nil || len(*hosts) == 0 {
+// hostAllowed reports whether host:port was explicitly listed by the operator
+// and is therefore exempt from the IP-range check. host is the name as it
+// appeared in the request URL, before DNS resolution; for a literal IP that is
+// the very address dialed, so a port-scoped IP entry matches the real
+// destination. A bare-host entry matches any port; a host:port entry only that
+// port.
+func hostAllowed(host, port string) bool {
+	list := allowedHosts.Load()
+	if list == nil || (len(list.hosts) == 0 && len(list.hostPorts) == 0) {
 		return false
 	}
 	key := normalizeHost(host)
 	if ip := net.ParseIP(key); ip != nil {
 		key = ip.String()
 	}
-	_, ok := (*hosts)[key]
+	if _, ok := list.hosts[key]; ok {
+		return true
+	}
+	if port == "" {
+		return false
+	}
+	_, ok := list.hostPorts[net.JoinHostPort(key, port)]
 	return ok
 }
