@@ -9,6 +9,7 @@
 package filter
 
 import (
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -56,6 +57,48 @@ type Group struct {
 	Combinator string      `json:"combinator"`
 	Conditions []Condition `json:"conditions"`
 	Groups     []Group     `json:"groups,omitempty"`
+}
+
+// knownOperators is the set matchOperator implements; keep in step with the
+// Op constants.
+var knownOperators = map[Operator]bool{
+	OpEqual: true, OpNotEqual: true, OpLarger: true, OpSmaller: true,
+	OpLargerEqual: true, OpSmallerEqual: true, OpIn: true, OpNotIn: true,
+	OpIsDefined: true, OpAllIn: true, OpAnyIn: true, OpBetween: true,
+	OpNotBetween: true, OpLike: true, OpNotLike: true,
+}
+
+// Validate reports the first authoring mistake in filters that would otherwise
+// make a step silently never match: an unknown operator, or an empty On or
+// Field. On is not restricted to known names because a step id is a valid
+// source.
+func Validate(filters []Group) error {
+	for _, g := range filters {
+		if err := validateGroup(g); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateGroup(g Group) error {
+	for _, c := range g.Conditions {
+		if c.On == "" {
+			return fmt.Errorf("condition has an empty on")
+		}
+		if c.Field == "" {
+			return fmt.Errorf("condition has an empty field")
+		}
+		if !knownOperators[c.Operator] {
+			return fmt.Errorf("unknown operator %q", c.Operator)
+		}
+	}
+	for _, child := range g.Groups {
+		if err := validateGroup(child); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // EvalContext holds the named data sources. payload + subscriber are the

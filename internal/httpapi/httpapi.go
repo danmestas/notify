@@ -1221,7 +1221,10 @@ func validateStepFilters(raw json.RawMessage) error {
 		return nil
 	}
 	var groups []filter.Group
-	return json.Unmarshal(raw, &groups)
+	if err := json.Unmarshal(raw, &groups); err != nil {
+		return err
+	}
+	return filter.Validate(groups)
 }
 
 // workflowRequest is the POST /v1/workflows body.

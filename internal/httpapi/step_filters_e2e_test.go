@@ -166,6 +166,10 @@ func TestWorkflow_MalformedStepFiltersReturn400(t *testing.T) {
 		"object not array": `{"combinator":"AND"}`,
 		"string":           `"nope"`,
 		"bad condition":    `[{"combinator":"AND","conditions":"x"}]`,
+		"unknown operator": `[{"combinator":"AND","conditions":[{"on":"subscriber","field":"email","operator":"NOPE","value":""}]}]`,
+		"empty on":         `[{"combinator":"AND","conditions":[{"on":"","field":"email","operator":"EQUAL","value":""}]}]`,
+		"empty field":      `[{"combinator":"AND","conditions":[{"on":"payload","field":"","operator":"EQUAL","value":""}]}]`,
+		"nested bad op":    `[{"combinator":"AND","groups":[{"conditions":[{"on":"payload","field":"x","operator":"eq","value":1}]}]}]`,
 	} {
 		body := `{"name":"Bad","triggerIdentifier":"bad","steps":[{"type":"in_app","controlValues":{"subject":"s","body":"b"},"filters":` + filters + `}]}`
 		if status, resp := doPost(t, srv.URL+"/v1/workflows", apiKey, body); status != http.StatusBadRequest {
