@@ -27,7 +27,7 @@ import (
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Printf("notify %s\n", version.Version)
-		fmt.Fprintln(os.Stderr, "usage: notify <serve|bootstrap|rotate-key|analytics-import> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: notify <serve|bootstrap|rotate-key|sms-consent|analytics-import> [flags]")
 		os.Exit(2)
 	}
 
@@ -38,6 +38,8 @@ func main() {
 		exitOn("bootstrap", runBootstrap(os.Args[2:]), 1)
 	case "rotate-key":
 		exitOn("rotate-key", runRotateKey(os.Args[2:]), 1)
+	case "sms-consent":
+		exitOn("sms-consent", runSMSConsent(os.Args[2:]), 1)
 	case "analytics-import":
 		exitOn("analytics-import", runAnalyticsImport(os.Args[2:], os.Stdout, os.Getenv), 1)
 	case "validate-steps":

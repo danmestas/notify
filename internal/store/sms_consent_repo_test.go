@@ -290,3 +290,45 @@ func TestApiKey_AttestPermission(t *testing.T) {
 		t.Fatalf("key minted with the permission = %+v", k)
 	}
 }
+
+// TestApiKey_SetKeyAttestPermission: the permission is set on one key by its
+// hash, leaving the scope's other keys and the hash itself as they were, and a
+// hash outside the scope is ErrNotFound.
+func TestApiKey_SetKeyAttestPermission(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	other := domain.Scope{OrgID: "o1", EnvID: "e2"}
+	for _, k := range []struct {
+		sc   domain.Scope
+		hash string
+	}{{scope, "h1"}, {scope, "h2"}, {other, "h3"}} {
+		if _, err := s.ApiKeys().Create(ctx, k.sc, domain.APIKey{Hash: k.hash}); err != nil {
+			t.Fatalf("Create %s: %v", k.hash, err)
+		}
+	}
+	if err := s.ApiKeys().SetKeyAttestSMSConsent(ctx, scope, "h1", true); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if k, _, _ := s.ApiKeys().GetByHash(ctx, "h1"); !k.AttestSMSConsent {
+		t.Fatalf("granted key = %+v", k)
+	}
+	if k, _, _ := s.ApiKeys().GetByHash(ctx, "h2"); k.AttestSMSConsent {
+		t.Fatalf("sibling key changed: %+v", k)
+	}
+	if err := s.ApiKeys().SetKeyAttestSMSConsent(ctx, scope, "h1", true); err != nil {
+		t.Fatalf("repeat grant: %v", err)
+	}
+	if err := s.ApiKeys().SetKeyAttestSMSConsent(ctx, scope, "h1", false); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if k, _, _ := s.ApiKeys().GetByHash(ctx, "h1"); k.AttestSMSConsent {
+		t.Fatalf("revoked key = %+v", k)
+	}
+	if err := s.ApiKeys().SetKeyAttestSMSConsent(ctx, scope, "h3", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-env grant: %v, want ErrNotFound", err)
+	}
+	if k, _, _ := s.ApiKeys().GetByHash(ctx, "h3"); k.AttestSMSConsent {
+		t.Fatalf("cross-env key changed: %+v", k)
+	}
+}

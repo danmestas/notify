@@ -24,6 +24,10 @@ type ApiKeyRepo interface {
 	// SetAttestSMSConsent grants or withdraws the scope's keys' permission
 	// to attest SMS consent.
 	SetAttestSMSConsent(ctx context.Context, scope domain.Scope, allowed bool) error
+	// SetKeyAttestSMSConsent grants or withdraws the permission on the one
+	// key with hash in scope, leaving the key itself unchanged. ErrNotFound
+	// when scope has no such key.
+	SetKeyAttestSMSConsent(ctx context.Context, scope domain.Scope, hash string, allowed bool) error
 }
 
 type apiKeyRepo struct {
@@ -101,4 +105,21 @@ func (repo *apiKeyRepo) SetAttestSMSConsent(ctx context.Context, scope domain.Sc
 		allowed, scope.OrgID, scope.EnvID,
 	)
 	return err
+}
+
+func (repo *apiKeyRepo) SetKeyAttestSMSConsent(ctx context.Context, scope domain.Scope, hash string, allowed bool) error {
+	res, err := repo.w.ExecContext(
+		ctx,
+		`UPDATE api_keys SET attest_sms_consent = ? WHERE org_id = ? AND environment_id = ? AND hash = ?`,
+		allowed, scope.OrgID, scope.EnvID, hash,
+	)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
