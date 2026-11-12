@@ -153,3 +153,87 @@ func TestSMTP_SendsMessage(t *testing.T) {
 		t.Fatal("server never saw QUIT")
 	}
 }
+
+// TestSMTP_EnvelopeUsesBareAddresses: a From or To with a display name is
+// valid in the header, but MAIL FROM and RCPT TO take the bare address; a
+// server refuses the display form (501 5.5.4).
+func TestSMTP_EnvelopeUsesBareAddresses(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	envelope := make(chan []string, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		r := bufio.NewReader(c)
+		say := func(s string) { fmt.Fprintf(c, "%s\r\n", s) }
+		say("220 test ready")
+		var cmds []string
+		inData := false
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return
+			}
+			if inData {
+				if line == ".\r\n" {
+					inData = false
+					say("250 queued")
+				}
+				continue
+			}
+			cmd := strings.TrimSpace(line)
+			switch up := strings.ToUpper(cmd); {
+			case strings.HasPrefix(up, "EHLO"):
+				say("250 test")
+			case strings.HasPrefix(up, "MAIL"), strings.HasPrefix(up, "RCPT"):
+				cmds = append(cmds, cmd)
+				say("250 ok")
+			case up == "DATA":
+				inData = true
+				say("354 go")
+			case up == "QUIT":
+				say("221 bye")
+				envelope <- cmds
+				return
+			default:
+				say("500 what")
+			}
+		}
+	}()
+	s := &SMTP{Addr: ln.Addr().String(), Host: "127.0.0.1"}
+	if _, err := s.Send(context.Background(), EmailMessage{
+		From: "Studs Cycles (preview) <preview@studs.test>", To: "Pat Customer <pat@example.test>",
+		Subject: "Ready", Text: "Your bike is ready.",
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	select {
+	case cmds := <-envelope:
+		want := []string{"MAIL FROM:<preview@studs.test>", "RCPT TO:<pat@example.test>"}
+		if len(cmds) != 2 || !strings.HasPrefix(cmds[0], want[0]) || !strings.HasPrefix(cmds[1], want[1]) {
+			t.Fatalf("envelope = %q, want %q", cmds, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server never saw QUIT")
+	}
+}
+
+func TestEnvelopeAddress(t *testing.T) {
+	for in, want := range map[string]string{
+		"a@b.test":               "a@b.test",
+		"Shop <a@b.test>":        "a@b.test",
+		`"Shop, Inc" <a@b.test>`: "a@b.test",
+		"  a@b.test  ":           "a@b.test",
+		"not an address":         "not an address",
+	} {
+		if got := envelopeAddress(in); got != want {
+			t.Errorf("envelopeAddress(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
