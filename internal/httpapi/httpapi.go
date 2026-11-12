@@ -463,7 +463,7 @@ func postSubscriber(aud *audience.Service) http.HandlerFunc {
 			writeInternalError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, sub)
+		writeJSON(w, http.StatusCreated, toSubscriberDTO(sub))
 	}
 }
 
@@ -801,7 +801,7 @@ func postTopic(aud *audience.Service) http.HandlerFunc {
 			writeInternalError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, topic)
+		writeJSON(w, http.StatusCreated, topicDTO{ID: topic.ID, Key: topic.Key, Name: topic.Name})
 	}
 }
 
@@ -2003,12 +2003,16 @@ func getNotifications(st *store.Store) http.HandlerFunc {
 		}
 
 		type response struct {
-			Items      []domain.Notification `json:"items"`
-			Next       string                `json:"next,omitempty"`
-			TotalCount int                   `json:"totalCount"`
+			Items      []notificationDTO `json:"items"`
+			Next       string            `json:"next,omitempty"`
+			TotalCount int               `json:"totalCount"`
+		}
+		items := make([]notificationDTO, 0, len(page.Items))
+		for _, n := range page.Items {
+			items = append(items, toNotificationDTO(n))
 		}
 		writeJSON(w, http.StatusOK, response{
-			Items:      page.Items,
+			Items:      items,
 			Next:       page.Cursor,
 			TotalCount: page.TotalCount,
 		})
@@ -2030,7 +2034,31 @@ func getNotification(st *store.Store) http.HandlerFunc {
 			writeInternalError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, n)
+		writeJSON(w, http.StatusOK, toNotificationDTO(n))
+	}
+}
+
+// notificationDTO is the wire shape of one notification; domain.Notification
+// carries no JSON tags and holds the scope ids, which stay off the wire.
+type notificationDTO struct {
+	ID            string          `json:"id"`
+	WorkflowID    string          `json:"workflowId"`
+	SubscriberID  string          `json:"subscriberId"`
+	TransactionID string          `json:"transactionId"`
+	RunID         string          `json:"runId"`
+	Payload       json.RawMessage `json:"payload"`
+	CreatedAt     string          `json:"createdAt"`
+	DigestKey     string          `json:"digestKey"`
+	Status        string          `json:"status"`
+	RunStartedAt  string          `json:"runStartedAt"`
+}
+
+func toNotificationDTO(n domain.Notification) notificationDTO {
+	return notificationDTO{
+		ID: n.ID, WorkflowID: n.WorkflowID, SubscriberID: n.SubscriberID,
+		TransactionID: n.TransactionID, RunID: n.RunID, Payload: n.Payload,
+		CreatedAt: n.CreatedAt, DigestKey: n.DigestKey, Status: n.Status,
+		RunStartedAt: n.RunStartedAt,
 	}
 }
 
@@ -2045,10 +2073,7 @@ func getNotificationMessages(st *store.Store) http.HandlerFunc {
 			writeInternalError(w, r, err)
 			return
 		}
-		if msgs == nil {
-			msgs = []domain.Message{}
-		}
-		writeJSON(w, http.StatusOK, msgs)
+		writeJSON(w, http.StatusOK, inboxapi.ToMessageDTOs(msgs))
 	}
 }
 

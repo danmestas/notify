@@ -56,7 +56,6 @@ Some older surfaces return a plain-text body instead of the envelope: the inbox 
 
 Request and response bodies are JSON with camelCase fields, with these exceptions:
 
-- **Messages and notifications** serialize with their Go field names (`ID`, `SubscriberID`, `Subject`, …), because those types carry no JSON tags. See [the message object](notifications-and-messages#message-object).
 - Integration `credentials` use snake_case keys on the unified endpoint and camelCase on the legacy channel endpoints.
 
 ### Pagination

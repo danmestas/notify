@@ -113,16 +113,16 @@ curl -s "localhost:3000/v1/messages?subscriberId=user-1" \
 ```json
 {
   "data": [{
-    "ID": "01J…", "SubscriberID": "user-1", "Channel": "in_app", "Status": "sent",
-    "Subject": "Hi Ada", "Content": "Order A-100 has shipped.",
-    "Seen": false, "Read": false, "Archived": false, "…": "…"
+    "id": "01J…", "subscriberId": "user-1", "channel": "in_app", "status": "sent",
+    "subject": "Hi Ada", "content": "Order A-100 has shipped.",
+    "seen": false, "read": false, "archived": false, "…": "…"
   }],
   "unreadCount": 1,
   "unseenCount": 1
 }
 ```
 
-Message objects use Go field names (`ID`, `Subject`, `Content`); see [Messages](../../api/notifications-and-messages#message-object) for the full list.
+Message fields are camelCase (`id`, `subject`, `content`); see [Messages](../../api/notifications-and-messages#message-object) for the full list.
 
 Delivery is asynchronous: the run executes on the dagnats engine, so the message appears a moment after the trigger returns. See [Activity](../../console#pages) in the console, or `GET /v1/notifications`, to follow a run.
 

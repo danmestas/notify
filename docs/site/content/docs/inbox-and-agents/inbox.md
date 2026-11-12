@@ -21,7 +21,7 @@ curl "localhost:3000/v1/messages?subscriberId=user-1&limit=20" -H "Authorization
 | `archived` | `true`, `false` or `all`. Default excludes archived messages. |
 
 ```json
-{ "data": [ { "ID": "…", "Subject": "…", "Content": "…", "Seen": false, "Read": false, "Archived": false, "extras": {} } ],
+{ "data": [ { "id": "…", "subject": "…", "content": "…", "seen": false, "read": false, "archived": false, "extras": {} } ],
   "next": "01J…", "unreadCount": 3, "unseenCount": 3 }
 ```
 

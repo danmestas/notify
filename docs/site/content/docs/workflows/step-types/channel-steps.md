@@ -96,4 +96,4 @@ Over the limit, the step records a message with status `throttled` and sends not
 
 ## What gets recorded
 
-Each channel step writes one message: channel, provider id, integration id, rendered `Subject` and `Content`, a `Status` of `sent`, `error`, `skipped` or `throttled`, `ErrorText` or `SkipReason` where they apply, and the `Seen`, `Read` and `Archived` flags. Terminal statuses are also published as delivery events for analytics, the console's live activity view and outbound webhooks.
+Each channel step writes one message: channel, provider id, integration id, rendered `subject` and `content`, a `status` of `sent`, `error`, `skipped` or `throttled`, `errorText` and `errorClass` or `skipReason` where they apply, and the `seen`, `read` and `archived` flags. Terminal statuses are also published as delivery events for analytics, the console's live activity view and outbound webhooks.
