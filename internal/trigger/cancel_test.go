@@ -200,61 +200,44 @@ func TestCancel_DuringStart(t *testing.T) {
 	}
 }
 
-// TestCancel_RunNotFound: dagnats does not know the run. A fresh row's run is
-// started but not yet recorded (dagnats#1006), so the cancel fails for a retry;
-// an hour-old row's run has been pruned, so it finished.
+// TestCancel_RunNotFound: dagnats does not know the run, so it has pruned it
+// and it finished, whatever the row's age: a just-started run is never not
+// found (dagnats v0.0.65).
 func TestCancel_RunNotFound(t *testing.T) {
 	fx := setupFakeEngine(t)
 	ctx := context.Background()
-	fresh, err := fx.st.Notifications().Create(ctx, fx.scope, domain.Notification{
-		WorkflowID: "wf", SubscriberID: "user_1", TransactionID: "tx-fresh", RunID: "run-unseen",
-	})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if _, err := fx.svc.Cancel(ctx, fx.scope, "tx-fresh"); !errors.Is(err, trigger.ErrRunNotVisible) {
-		t.Fatalf("Cancel fresh = %v, want ErrRunNotVisible", err)
-	}
-	if got, _ := fx.st.Notifications().Get(ctx, fx.scope, fresh.ID); got.Status != domain.NotificationStarted {
-		t.Fatalf("fresh row status = %q, want started", got.Status)
-	}
-
-	old, err := fx.st.Notifications().Create(ctx, fx.scope, domain.Notification{
-		WorkflowID: "wf", SubscriberID: "user_1", TransactionID: "tx-old", RunID: "run-pruned",
-		CreatedAt: timestamp.Format(time.Now().Add(-2 * time.Hour)),
-	})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	res, err := fx.svc.Cancel(ctx, fx.scope, "tx-old")
-	if err != nil || !slices.Equal(res.AlreadyFinished, []string{old.ID}) {
-		t.Fatalf("Cancel old = %+v, %v; want alreadyFinished [%s]", res, err, old.ID)
+	for tx, created := range map[string]string{
+		"tx-fresh": "",
+		"tx-old":   timestamp.Format(time.Now().Add(-2 * time.Hour)),
+	} {
+		row, err := fx.st.Notifications().Create(ctx, fx.scope, domain.Notification{
+			WorkflowID: "wf", SubscriberID: "user_1", TransactionID: tx, RunID: "run-gone-" + tx, CreatedAt: created,
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		res, err := fx.svc.Cancel(ctx, fx.scope, tx)
+		if err != nil || !slices.Equal(res.AlreadyFinished, []string{row.ID}) {
+			t.Fatalf("Cancel %s = %+v, %v; want alreadyFinished [%s]", tx, res, err, row.ID)
+		}
 	}
 }
 
-// TestCancel_RetriedTriggerRunIsYoung: a retried trigger reuses a row written
-// long ago for a fresh run. That run's age, not the row's, decides that a
-// not-found run is not visible yet rather than pruned.
-func TestCancel_RetriedTriggerRunIsYoung(t *testing.T) {
+// TestCancel_PendingRun: a run dagnats has accepted but not yet started is not
+// finished, so it is cancelled.
+func TestCancel_PendingRun(t *testing.T) {
 	fx := setupFakeEngine(t)
-	ctx := context.Background()
-	row, err := fx.st.Notifications().Create(ctx, fx.scope, domain.Notification{
-		WorkflowID: "wf", SubscriberID: "user_1", TransactionID: "tx-retry", Status: domain.NotificationPending,
-		CreatedAt: timestamp.Format(time.Now().Add(-3 * time.Hour)),
-	})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
+	if err := fx.ingest(t); err != nil {
+		t.Fatalf("Ingest: %v", err)
 	}
-	if _, err := fx.st.Notifications().AttachRun(ctx, fx.scope, row.ID, "run-fresh"); err != nil {
-		t.Fatalf("AttachRun: %v", err)
+	row := fx.onlyRow(t)
+	fx.eng.setStatus("run-1", "pending")
+	res := fx.cancel(t)
+	if !slices.Equal(res.Cancelled, []string{row.ID}) || len(res.AlreadyFinished) != 0 {
+		t.Fatalf("cancel = %+v, want cancelled [%s]", res, row.ID)
 	}
-	res, err := fx.svc.Cancel(ctx, fx.scope, "tx-retry")
-	if !errors.Is(err, trigger.ErrRunNotVisible) {
-		t.Fatalf("Cancel = %+v, %v; want ErrRunNotVisible", res, err)
-	}
-	want := []trigger.CancelFailure{{NotificationID: row.ID, Reason: "run_not_visible"}}
-	if !slices.Equal(res.Failed, want) || len(res.AlreadyFinished) != 0 {
-		t.Fatalf("Cancel = %+v, want failed %v", res, want)
+	if got := fx.eng.cancelled(); !slices.Equal(got, []string{"run-1"}) {
+		t.Fatalf("dagnats cancels = %v, want [run-1]", got)
 	}
 }
 

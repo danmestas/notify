@@ -736,7 +736,7 @@ func postTrigger(trg *trigger.Service) http.HandlerFunc {
 // or 404 when the environment has no notification for that transaction.
 // Notifications it could not settle are listed in failed, and the status says
 // whether a retry is worth it: 503 with Retry-After when dagnats was
-// unreachable or has not shown a new run yet, 502 when dagnats refused, 500
+// unreachable, 502 when dagnats refused, 500
 // for anything else.
 func postTriggerCancel(trg *trigger.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

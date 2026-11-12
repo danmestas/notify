@@ -117,13 +117,15 @@ const admissionWait = 5 * time.Second
 
 // startSkipped reports whether the engine refused to run runID because the
 // conversation's singleton lock was held. A run cancelled before it did
-// anything is a skip. If no snapshot appears within admissionWait the run is
-// taken as admitted: it is the only outcome that leaves a turn to execute.
+// anything is a skip. A missing snapshot, or status "pending" (accepted, not
+// yet decided), is polled again; if nothing else appears within admissionWait
+// the run is taken as admitted: it is the only outcome that leaves a turn to
+// execute.
 func (s *Service) startSkipped(ctx context.Context, runID string) bool {
 	deadline := time.Now().Add(admissionWait)
 	for time.Now().Before(deadline) {
 		snap, err := s.eng.GetRun(ctx, runID)
-		if err == nil && snap.Status != "" {
+		if err == nil && snap.Status != "" && snap.Status != "pending" {
 			return snap.Status == "cancelled"
 		}
 		select {

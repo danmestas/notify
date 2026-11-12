@@ -80,7 +80,7 @@ Every notification of that transaction in the key's environment is cancelled, so
 |---|---|
 | Every notification settled | `200`; `cancelled` and `alreadyFinished` are always present and either may be empty |
 | No notification with that `transactionId` in this environment | `404` |
-| Some notifications in `failed`, worth retrying: the engine was unreachable (`engine_unavailable`), or a run started moments ago is not visible yet (`run_not_visible`) | `503` with `Retry-After: 1` |
+| Some notifications in `failed`, worth retrying: the engine was unreachable (`engine_unavailable`) | `503` with `Retry-After: 1` |
 | Some notifications in `failed` because the engine refused (`engine_error`) | `502` |
 | An internal failure | `500` |
 
