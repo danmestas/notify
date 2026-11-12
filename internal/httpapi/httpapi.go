@@ -31,6 +31,7 @@ import (
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/contexts"
+	"github.com/danmestas/notify/internal/delivery/filter"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/emailloop"
 	"github.com/danmestas/notify/internal/envvars"
@@ -1208,6 +1209,22 @@ type workflowStepRequest struct {
 	StepID        string          `json:"stepId"`
 	Type          string          `json:"type"`
 	ControlValues json.RawMessage `json:"controlValues"`
+	// Filters is the step condition: a JSON array of filter groups, the same
+	// shape delivery evaluates. Optional; absent means the step always runs.
+	Filters json.RawMessage `json:"filters,omitempty"`
+}
+
+// validateStepFilters rejects a filters value that delivery could not decode,
+// which would otherwise be stored and then fail closed on every send.
+func validateStepFilters(raw json.RawMessage) error {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil
+	}
+	var groups []filter.Group
+	if err := json.Unmarshal(raw, &groups); err != nil {
+		return err
+	}
+	return filter.Validate(groups)
 }
 
 // workflowRequest is the POST /v1/workflows body.
@@ -1251,10 +1268,16 @@ func postWorkflow(au *authoring.Service) http.HandlerFunc {
 			if id == "" {
 				id = s.Type + "-" + itoa(i)
 			}
+			if err := validateStepFilters(s.Filters); err != nil {
+				msg := "step[" + itoa(i) + "].filters is not a valid condition: " + err.Error()
+				writeJSONError(w, http.StatusBadRequest, "bad_request", msg)
+				return
+			}
 			steps = append(steps, domain.Step{
 				StepID:        id,
 				Type:          s.Type,
 				ControlValues: s.ControlValues,
+				Filters:       s.Filters,
 			})
 		}
 		scope := identity.ScopeFrom(r.Context())
@@ -1438,10 +1461,16 @@ func putWorkflow(au *authoring.Service) http.HandlerFunc {
 			if id == "" {
 				id = s.Type + "-" + itoa(i)
 			}
+			if err := validateStepFilters(s.Filters); err != nil {
+				msg := "step[" + itoa(i) + "].filters is not a valid condition: " + err.Error()
+				writeJSONError(w, http.StatusBadRequest, "bad_request", msg)
+				return
+			}
 			steps = append(steps, domain.Step{
 				StepID:        id,
 				Type:          s.Type,
 				ControlValues: s.ControlValues,
+				Filters:       s.Filters,
 			})
 		}
 		scope := identity.ScopeFrom(r.Context())

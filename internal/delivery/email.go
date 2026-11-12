@@ -211,8 +211,12 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 	// unevaluable) condition SKIPS the send. Absent/empty filters always run. A
 	// malformed condition fails closed (skip) so a broken condition never blasts
 	// a send to every subscriber.
-	if !conditionMet(env.Step.Filters, subMap, payloadMap, stepOutputs) {
-		return h.persistEmailSkipped(ctx, env, t, scope, subject, content)
+	if met, invalid := conditionOutcome(env.Step.Filters, subMap, payloadMap, stepOutputs); !met {
+		reason := SkipReasonCondition
+		if invalid {
+			reason = SkipReasonConditionInvalid
+		}
+		return h.persistEmailSkipped(ctx, env, t, scope, subject, content, reason)
 	}
 
 	// Optional throttle gate. When the step configures a limit and a throttler
@@ -232,7 +236,7 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 	if h.prefs != nil {
 		enabled, perr := h.prefs.ChannelEnabled(ctx, scope, env.SubscriberID, env.WorkflowID, env.Step.Channel, env.WorkflowCritical, true)
 		if perr == nil && !enabled {
-			return h.persistEmailSkipped(ctx, env, t, scope, subject, content)
+			return h.persistEmailSkipped(ctx, env, t, scope, subject, content, SkipReasonPreference)
 		}
 	}
 	provider, from, providerID, integrationID, err := h.resolveEmailProvider(ctx, scope, env.Step.Integration)
@@ -337,10 +341,10 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 }
 
 // persistEmailSkipped records a status:"skipped" email message (the channel is
-// disabled by subscriber preference) and returns its JSON with a nil error.
+// disabled by subscriber preference, or the step condition is false) and returns its JSON with a nil error.
 // No email is sent; this mirrors the existing skipped/failed-message pattern.
 // resolve is attempted best-effort to populate providerID and integrationID.
-func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content string) (json.RawMessage, error) {
+func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content, reason string) (json.RawMessage, error) {
 	metrics.Delivery("email", metrics.OutcomeSkipped)
 	providerID, integrationID := h.resolveEmailIDs(ctx, scope, env.Step.Integration)
 	if providerID == "" {
@@ -361,6 +365,7 @@ func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InApp
 		Content:        content,
 		Subject:        subject,
 		Status:         "skipped",
+		SkipReason:     reason,
 		Seen:           false,
 		Read:           false,
 		Archived:       false,
