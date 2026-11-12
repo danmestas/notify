@@ -55,6 +55,16 @@ On systemd the equivalent is a service with `Restart=always`, `After=` the dagna
 
 Because the supervisor starts jobs independently, notify may start before the sidecar's NATS port is listening, for example after a reboot. notify then exits at start and the supervisor restarts it until dagnats is up. `/readyz` reports `"dagnats": false` whenever notify's connection to dagnats is down.
 
+### One box with the app on loopback
+
+When the application, notify and dagnats run side by side on one machine, the application usually listens on loopback. notify's [SSRF guard](../security#outbound-requests-ssrf) refuses loopback addresses, so an outbound webhook to the co-located app at `127.0.0.1` is refused by default. Allow that host explicitly:
+
+```sh
+NOTIFY_SSRF_ALLOWED_HOSTS=127.0.0.1
+```
+
+The value is a comma-separated list of exact hosts. Add only the hosts you need. See the [configuration reference](../../configuration/#serve-core) for the full entry.
+
 ### Putting it on the internet
 
 notify binds loopback by default. To expose the API, put a TLS-terminating reverse proxy or a tunnel in front of it and set `NOTIFY_PUBLIC_BASE_URL`. `/healthz`, `/readyz` and `/metrics` are unauthenticated; restrict them at the proxy if they should not be public. Do not expose the dagnats HTTP port: its console has no authentication.

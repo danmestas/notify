@@ -25,6 +25,10 @@ A notification serializes with Go field names: `ID`, `OrgID`, `EnvID`, `Workflow
 
 The list returns every status unless `status` is given.
 
+### Status is not delivery
+
+`Status` tracks the run, not the messages. A notification stays `started` after its messages are sent, and it does not change when a message is delivered or fails. To check delivery, read the notification's messages at `GET /v1/notifications/{id}/messages`. Each message has its own `Status`. To be told as delivery happens, subscribe to the delivery events in [Outbound webhooks](../../streams-and-webhooks/#outbound-webhooks).
+
 ## Messages
 
 The inbox routes accept an API key or a [subscriber session](../../inbox-and-agents/subscriber-sessions). Behaviour is described under [Inbox](../../inbox-and-agents/inbox).
