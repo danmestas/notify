@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -80,7 +81,7 @@ func TestManagement_CreateReturnsSecretOnceAndStoresItSealed(t *testing.T) {
 	ctx := context.Background()
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
 
-	created, err := NewManagement(st, box).Create(ctx, scope, "https://example.org/hook", true)
+	created, err := NewManagement(st, box).Create(ctx, scope, "https://example.org/hook", true, "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -108,8 +109,8 @@ func TestManagement_RotateSecret(t *testing.T) {
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
 	mgmt := NewManagement(st, box)
 
-	created, _ := mgmt.Create(ctx, scope, "https://example.org/hook", true)
-	rotated, err := mgmt.RotateSecret(ctx, scope, created.Endpoint.ID)
+	created, _ := mgmt.Create(ctx, scope, "https://example.org/hook", true, "")
+	rotated, err := mgmt.RotateSecret(ctx, scope, created.Endpoint.ID, "")
 	if err != nil {
 		t.Fatalf("RotateSecret: %v", err)
 	}
@@ -120,10 +121,10 @@ func TestManagement_RotateSecret(t *testing.T) {
 	if opened, _ := box.Open(row.Secret); opened != rotated.Secret {
 		t.Fatal("row does not carry the rotated secret")
 	}
-	if _, err := mgmt.RotateSecret(ctx, scope, "nope"); err == nil {
+	if _, err := mgmt.RotateSecret(ctx, scope, "nope", ""); err == nil {
 		t.Fatal("rotating an unknown endpoint succeeded")
 	}
-	if _, err := NewManagement(st, nil).RotateSecret(ctx, scope, created.Endpoint.ID); err != ErrSigningUnavailable {
+	if _, err := NewManagement(st, nil).RotateSecret(ctx, scope, created.Endpoint.ID, ""); err != ErrSigningUnavailable {
 		t.Fatalf("rotate with no box = %v, want ErrSigningUnavailable", err)
 	}
 }
@@ -139,7 +140,7 @@ func TestConsumer_SignsWithEndpointSecret(t *testing.T) {
 	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
 	rcv := newSignedReceiver(t)
 
-	created, err := NewManagement(st, box).Create(ctx, scope, rcv.srv.URL, true)
+	created, err := NewManagement(st, box).Create(ctx, scope, rcv.srv.URL, true, "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -211,7 +212,7 @@ func TestConsumer_UnopenableSecretIsSkippedNotSentUnsigned(t *testing.T) {
 	rcv := newSignedReceiver(t)
 
 	// Sealed under one key, consumed under another.
-	if _, err := NewManagement(st, testBox(t)).Create(ctx, scope, rcv.srv.URL, true); err != nil {
+	if _, err := NewManagement(st, testBox(t)).Create(ctx, scope, rcv.srv.URL, true, ""); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	other, _ := secretbox.New(bytes.Repeat([]byte{0x11}, 32))
@@ -227,5 +228,149 @@ func TestConsumer_UnopenableSecretIsSkippedNotSentUnsigned(t *testing.T) {
 	case got := <-rcv.hits:
 		t.Fatalf("an event was delivered despite an unopenable secret (sig=%q)", got.sig)
 	case <-time.After(1500 * time.Millisecond):
+	}
+}
+
+const pinnedSecret = "pinned-by-the-caller-0123456789abcdef"
+
+// TestManagement_CreateIsIdempotentByURL: a second create for the same URL
+// (modulo case and whitespace) returns the first endpoint, with no secret and
+// no rotation.
+func TestManagement_CreateIsIdempotentByURL(t *testing.T) {
+	st := newStore(t)
+	box := testBox(t)
+	ctx := context.Background()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	mgmt := NewManagement(st, box)
+
+	first, err := mgmt.Create(ctx, scope, "https://Example.org/Hook", true, "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if first.Existed || first.Secret == "" {
+		t.Fatalf("first = %+v; want new with a secret", first)
+	}
+	before, _ := st.WebhookEndpoints().GetByID(ctx, scope, first.Endpoint.ID)
+
+	second, err := mgmt.Create(ctx, scope, "  HTTPS://EXAMPLE.org/Hook ", true, "")
+	if err != nil {
+		t.Fatalf("second Create: %v", err)
+	}
+	if !second.Existed || second.Endpoint.ID != first.Endpoint.ID || second.Secret != "" {
+		t.Fatalf("second = %+v; want the same endpoint, Existed, no secret", second)
+	}
+	after, _ := st.WebhookEndpoints().GetByID(ctx, scope, first.Endpoint.ID)
+	if after.Secret != before.Secret {
+		t.Fatal("a repeat create rotated the secret")
+	}
+	if eps, _ := mgmt.List(ctx, scope); len(eps) != 1 {
+		t.Fatalf("%d endpoints, want 1", len(eps))
+	}
+	// A different path is a different endpoint.
+	if other, _ := mgmt.Create(ctx, scope, "https://example.org/other", true, ""); other.Existed {
+		t.Fatal("a different path matched")
+	}
+}
+
+// TestManagement_CreateScopeIsolation: the same URL in two environments is two
+// endpoints.
+func TestManagement_CreateScopeIsolation(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	mgmt := NewManagement(st, testBox(t))
+	a, err := mgmt.Create(ctx, domain.Scope{OrgID: "o1", EnvID: "e1"}, "https://example.org/hook", true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := mgmt.Create(ctx, domain.Scope{OrgID: "o1", EnvID: "e2"}, "https://example.org/hook", true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Existed || a.Endpoint.ID == b.Endpoint.ID {
+		t.Fatalf("a=%+v b=%+v; want two endpoints", a, b)
+	}
+}
+
+// TestManagement_SuppliedSecretSignsDeliveries: a caller-supplied secret is
+// returned as given, and deliveries verify under the documented scheme with it.
+func TestManagement_SuppliedSecretSignsDeliveries(t *testing.T) {
+	bus := newBus(t)
+	st := newStore(t)
+	box := testBox(t)
+	ctx := context.Background()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	rcv := newSignedReceiver(t)
+	mgmt := NewManagement(st, box)
+
+	created, err := mgmt.Create(ctx, scope, rcv.srv.URL, true, pinnedSecret)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if created.Secret != pinnedSecret {
+		t.Fatalf("secret = %q, want the supplied one", created.Secret)
+	}
+	row, _ := st.WebhookEndpoints().GetByID(ctx, scope, created.Endpoint.ID)
+	if row.Secret == "" || strings.Contains(row.Secret, pinnedSecret) {
+		t.Fatal("supplied secret is not stored sealed")
+	}
+
+	consumer := NewWithClient(bus, st, &http.Client{Timeout: 5 * time.Second}).WithSecrets(box)
+	stop, err := consumer.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = stop() }()
+	_ = bus.PublishDelivery(scope.EnvID, mustJSON(t, domain.Message{OrgID: "o1", EnvID: "e1", Status: "sent"}))
+	got := rcv.next(t)
+	if !verify(pinnedSecret, got.ts, got.body, got.sig) {
+		t.Fatal("delivery does not verify under the supplied secret")
+	}
+}
+
+// TestManagement_CreateExistingWithSecretPins: a supplied secret on an existing
+// URL replaces its secret (the pinning use case); the endpoint is not duplicated.
+func TestManagement_CreateExistingWithSecretPins(t *testing.T) {
+	st := newStore(t)
+	box := testBox(t)
+	ctx := context.Background()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	mgmt := NewManagement(st, box)
+	first, _ := mgmt.Create(ctx, scope, "https://example.org/hook", true, "")
+
+	pinned, err := mgmt.Create(ctx, scope, "https://example.org/hook", true, pinnedSecret)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !pinned.Existed || pinned.Endpoint.ID != first.Endpoint.ID || pinned.Secret != pinnedSecret {
+		t.Fatalf("pinned = %+v", pinned)
+	}
+	row, _ := st.WebhookEndpoints().GetByID(ctx, scope, first.Endpoint.ID)
+	if opened, _ := box.Open(row.Secret); opened != pinnedSecret {
+		t.Fatal("row does not carry the pinned secret")
+	}
+}
+
+// TestManagement_WeakSecretRejected covers create and rotate.
+func TestManagement_WeakSecretRejected(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	mgmt := NewManagement(st, testBox(t))
+	ep, _ := mgmt.Create(ctx, scope, "https://example.org/hook", true, "")
+	for name, s := range map[string]string{
+		"short":    "tooshort",
+		"repeated": strings.Repeat("a", 40),
+		"two-char": strings.Repeat("ab", 20),
+		"long":     strings.Repeat("abcdefgh", 40),
+	} {
+		if _, err := mgmt.Create(ctx, scope, "https://example.org/x", true, s); !errors.Is(err, ErrWeakSecret) {
+			t.Errorf("%s: Create err = %v, want ErrWeakSecret", name, err)
+		}
+		if _, err := mgmt.RotateSecret(ctx, scope, ep.Endpoint.ID, s); !errors.Is(err, ErrWeakSecret) {
+			t.Errorf("%s: RotateSecret err = %v, want ErrWeakSecret", name, err)
+		}
+	}
+	if eps, _ := mgmt.List(ctx, scope); len(eps) != 1 {
+		t.Fatalf("a rejected create left %d endpoints, want 1", len(eps))
 	}
 }

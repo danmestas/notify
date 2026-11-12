@@ -301,7 +301,7 @@ func (c *Console) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	active := r.FormValue("active") == "1"
 
-	created, err := c.deps.Webhooks.Create(r.Context(), scope, rawURL, active)
+	created, err := c.deps.Webhooks.Create(r.Context(), scope, rawURL, active, "")
 	if err != nil {
 		c.deps.Logger.Error("console: create webhook", "err", err)
 		http.Error(w, "create failed", http.StatusInternalServerError)
@@ -336,7 +336,7 @@ func (c *Console) handleWebhookRotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := c.deps.Webhooks.RotateSecret(r.Context(), scope, id)
+	created, err := c.deps.Webhooks.RotateSecret(r.Context(), scope, id, "")
 	if err != nil {
 		if errors.Is(err, webhooksout.ErrSigningUnavailable) {
 			http.Error(w, "signing unavailable: no master key", http.StatusServiceUnavailable)

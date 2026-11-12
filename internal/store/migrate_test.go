@@ -97,8 +97,8 @@ func businessTables(t *testing.T, s *Store) []string {
 func TestMigrate_0005_AppliesDigestKey(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 54 {
-		t.Fatalf("expected 54 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 55 {
+		t.Fatalf("expected 55 recorded migrations, got %d", n)
 	}
 
 	var found bool
@@ -138,8 +138,8 @@ func TestMigrate_0005_AppliesDigestKey(t *testing.T) {
 func TestMigrate_0028_AddsWorkflowVersionSnapshotColumns(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 54 {
-		t.Fatalf("expected 54 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 55 {
+		t.Fatalf("expected 55 recorded migrations, got %d", n)
 	}
 
 	want := map[string]bool{"steps": false, "payload_schema": false, "critical": false}

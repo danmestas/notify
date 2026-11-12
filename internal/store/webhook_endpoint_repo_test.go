@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -10,8 +11,8 @@ import (
 func TestMigrate_0004_AppliesWebhookEndpoints(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 54 {
-		t.Fatalf("expected 54 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 55 {
+		t.Fatalf("expected 55 recorded migrations, got %d", n)
 	}
 
 	var name string
@@ -200,5 +201,57 @@ func TestWebhookEndpointRepo_Delete(t *testing.T) {
 	// Second delete is ErrNotFound.
 	if err := repo.Delete(ctx, scope, ep.ID); err == nil {
 		t.Errorf("second Delete should fail")
+	}
+}
+
+// TestMigrate_0055_DedupesKeepingOldestActive: duplicates written before the
+// unique index are collapsed to the oldest active row per (env, url); other
+// environments and distinct URLs are untouched.
+func TestMigrate_0055_DedupesKeepingOldestActive(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, err := s.writer.ExecContext(ctx, `DROP INDEX webhook_endpoint_env_url`); err != nil {
+		t.Fatalf("drop index: %v", err)
+	}
+	for _, r := range []struct {
+		id, env, url string
+		active       int
+	}{
+		{"01", "e1", "https://a.example/h", 0}, // oldest but inactive
+		{"02", "e1", "https://a.example/h", 1}, // oldest active: kept
+		{"03", "e1", " https://a.example/h", 1},
+		{"04", "e2", "https://a.example/h", 0}, // other env: kept
+		{"05", "e3", "https://b.example/h", 0}, // only inactive: oldest kept
+		{"06", "e3", "https://b.example/h", 0},
+		{"07", "e1", "https://c.example/h", 1}, // distinct url: kept
+	} {
+		if _, err := s.writer.ExecContext(ctx,
+			`INSERT INTO webhook_endpoints (id, org_id, environment_id, url, active) VALUES (?, 'o', ?, ?, ?)`,
+			r.id, r.env, r.url, r.active); err != nil {
+			t.Fatalf("seed %s: %v", r.id, err)
+		}
+	}
+	body, err := migrationsFS.ReadFile("migrations/0055_webhook_endpoint_unique_url.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.writer.ExecContext(ctx, string(body)); err != nil {
+		t.Fatalf("apply 0055: %v", err)
+	}
+	rows, err := s.writer.QueryContext(ctx, `SELECT id FROM webhook_endpoints ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var got []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, id)
+	}
+	if want := "02 04 05 07"; strings.Join(got, " ") != want {
+		t.Fatalf("kept %v, want %s", got, want)
 	}
 }
