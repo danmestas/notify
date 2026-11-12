@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/timestamp"
@@ -20,7 +21,19 @@ const (
 	RevokedPhoneChanged = "phone_changed"
 	// RevokedSubscriberDeleted: the subscriber was deleted.
 	RevokedSubscriberDeleted = "subscriber_deleted"
+	// RevokedSubscriberPurged: the subscriber was hard-purged while the
+	// attestation was still open.
+	RevokedSubscriberPurged = "subscriber_purged"
 )
+
+// SMSConsentRetentionYears is how long an audit row is kept after it stops
+// counting (revoked_at), before PurgeRetired deletes it. TCPA claims run up
+// to four years.
+const SMSConsentRetentionYears = 4
+
+// purgedSubscriberPrefix starts the tombstone subscriber_id a hard-purged
+// subscriber's audit rows are re-keyed to.
+const purgedSubscriberPrefix = "purged:"
 
 // SMSConsentSettings is an environment's operator-attestation setting.
 type SMSConsentSettings struct {
@@ -88,6 +101,10 @@ type SMSConsentRepo interface {
 	// List returns the subscriber's attestations, revoked ones included,
 	// oldest first.
 	List(ctx context.Context, scope domain.Scope, subscriberID string) ([]SMSAttestation, error)
+	// PurgeRetired deletes audit rows that stopped counting more than
+	// SMSConsentRetentionYears before now, in every environment, and reports
+	// how many. Open rows are never deleted.
+	PurgeRetired(ctx context.Context, now time.Time) (int64, error)
 }
 
 type smsConsentRepo struct {
@@ -222,6 +239,40 @@ func (repo *smsConsentRepo) List(ctx context.Context, scope domain.Scope, subscr
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// PurgeRetired compares revoked_at as a string, which is correct because it is
+// written through the fixed-width timestamp layout (see internal/timestamp).
+// The <> ” term keeps open rows, whose revoked_at is empty.
+func (repo *smsConsentRepo) PurgeRetired(ctx context.Context, now time.Time) (int64, error) {
+	res, err := repo.w.ExecContext(
+		ctx,
+		`DELETE FROM sms_consent_attestations WHERE revoked_at <> '' AND revoked_at < ?`,
+		timestamp.Format(now.AddDate(-SMSConsentRetentionYears, 0, 0)),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("store: purge sms_consent_attestations: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// detachAttestations runs when the subscriber is hard-purged, in that
+// transaction. It closes any open audit row as RevokedSubscriberPurged and
+// re-keys all the subscriber's rows to a random "purged:" id, so the audit
+// stays attributable to that one subscriber but never joins to a later
+// subscriber that reuses the external id. The phone is kept until the
+// retention purge.
+func detachAttestations(ctx context.Context, ex execer, scope domain.Scope, subscriberID string) error {
+	if _, err := closeAttestations(ctx, ex, scope, subscriberID, timestamp.Now(), RevokedSubscriberPurged, "", ""); err != nil {
+		return err
+	}
+	_, err := ex.ExecContext(
+		ctx,
+		`UPDATE sms_consent_attestations SET subscriber_id = ?
+		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ?`,
+		purgedSubscriberPrefix+newULID(), scope.OrgID, scope.EnvID, subscriberID,
+	)
+	return err
 }
 
 // closeAttestations marks every open attestation of the subscriber revoked
