@@ -42,6 +42,10 @@ type APIKey struct {
 	OrgID  string `db:"org_id"`
 	EncKey []byte `db:"enc_key"`
 	UserID string `db:"user_id"`
+	// AttestSMSConsent lets the key attest that a subscriber consented to
+	// texts (POST /v1/subscribers/{subscriberId}/phone/consent). Off unless
+	// granted when the key is minted or rotated, or from the console.
+	AttestSMSConsent bool `db:"attest_sms_consent"`
 }
 
 type Subscriber struct {
@@ -63,6 +67,38 @@ type Subscriber struct {
 	// it: every other write ignores it, and a write that changes Phone clears
 	// it.
 	PhoneVerifiedAt string `db:"phone_verified_at"`
+	// PhoneAttestedAt is when an operator, through an API key allowed to,
+	// attested that the subscriber consented to texts at Phone; empty means
+	// no attestation. A write that changes Phone clears it, as does a revoke
+	// or a delete.
+	PhoneAttestedAt string `db:"phone_attested_at"`
+}
+
+// How a subscriber's phone came to count as consented to texts.
+const (
+	// PhoneConsentNone: no consent; sms steps skip the subscriber.
+	PhoneConsentNone = ""
+	// PhoneConsentSelfVerified: the subscriber confirmed a code texted to it.
+	PhoneConsentSelfVerified = "self_verified"
+	// PhoneConsentOperatorAttested: the operator attested the subscriber
+	// consented under its privacy policy.
+	PhoneConsentOperatorAttested = "operator_attested"
+)
+
+// PhoneConsent is how the subscriber's phone is consented: self_verified
+// outranks operator_attested, and "" means neither. An operator attestation
+// only counts while its environment allows attestation; this reports what is
+// recorded, not whether a text would be sent.
+func (s Subscriber) PhoneConsent() string {
+	switch {
+	case s.Phone == "":
+		return PhoneConsentNone
+	case s.PhoneVerifiedAt != "":
+		return PhoneConsentSelfVerified
+	case s.PhoneAttestedAt != "":
+		return PhoneConsentOperatorAttested
+	}
+	return PhoneConsentNone
 }
 
 // SubscriberChannel is a per-subscriber channel address for one provider

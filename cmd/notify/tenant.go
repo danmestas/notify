@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/identity"
@@ -33,11 +34,20 @@ func runRotateKey(args []string) error {
 	dbPath := fs.String("db", envOr("NOTIFY_DB", "notify.db"), "SQLite database path")
 	masterKeyHex := fs.String("master-key-hex", os.Getenv("NOTIFY_MASTER_KEY_HEX"), "32-byte AES master key as hex (required unless -dev)")
 	dev := fs.Bool("dev", envBool("NOTIFY_DEV"), "allow rotating without -master-key-hex/NOTIFY_MASTER_KEY_HEX by deriving a fixed, insecure dev key (development only)")
+	attest := fs.String("attest-sms-consent", "", "true or false: whether the new key may attest SMS consent (default: keep the old key's permission)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *org == "" || *env == "" {
 		return fmt.Errorf("--org and --env are required")
+	}
+	var opts []identity.KeyOption
+	if *attest != "" {
+		allowed, err := strconv.ParseBool(*attest)
+		if err != nil {
+			return fmt.Errorf("--attest-sms-consent: want true or false, got %q", *attest)
+		}
+		opts = append(opts, identity.AllowSMSConsentAttestation(allowed))
 	}
 
 	// The master key must match the one serve uses: identity encrypts the
@@ -60,7 +70,7 @@ func runRotateKey(args []string) error {
 		return err
 	}
 
-	key, err := identity.New(st, mk).RotateKey(ctx, scope)
+	key, err := identity.New(st, mk).RotateKey(ctx, scope, opts...)
 	if err != nil {
 		return fmt.Errorf("rotate: %w", err)
 	}

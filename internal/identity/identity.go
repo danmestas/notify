@@ -168,9 +168,28 @@ func (svc *Service) DecryptForDisplay(ctx context.Context, scope domain.Scope) (
 	return masked, l4, full, nil
 }
 
+// KeyOption sets a permission on a key being rotated in.
+type KeyOption func(*domain.APIKey)
+
+// AllowSMSConsentAttestation grants (or withholds) the permission to attest
+// SMS consent (POST /v1/subscribers/{subscriberId}/phone/consent).
+func AllowSMSConsentAttestation(allowed bool) KeyOption {
+	return func(k *domain.APIKey) { k.AttestSMSConsent = allowed }
+}
+
 // RotateKey revokes all existing API keys for scope and mints a fresh one
-// within a single write transaction. Returns the new raw hex (shown once).
-func (svc *Service) RotateKey(ctx context.Context, scope domain.Scope) (string, error) {
+// within a single write transaction. The new key keeps the old one's
+// permissions unless opts set them. Returns the new raw hex (shown once).
+func (svc *Service) RotateKey(ctx context.Context, scope domain.Scope, opts ...KeyOption) (string, error) {
+	allowed, err := svc.AttestSMSConsentAllowed(ctx, scope)
+	if err != nil {
+		return "", err
+	}
+	key := domain.APIKey{AttestSMSConsent: allowed}
+	for _, opt := range opts {
+		opt(&key)
+	}
+
 	raw := make([]byte, keyLen)
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("identity: mint rotate key: %w", err)
@@ -201,9 +220,9 @@ func (svc *Service) RotateKey(ctx context.Context, scope domain.Scope) (string, 
 
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO api_keys (hash, environment_id, org_id, enc_key, user_id)
-		 VALUES (?, ?, ?, ?, ?)`,
-		hashKey(raw), scope.EnvID, scope.OrgID, enc, "",
+		`INSERT INTO api_keys (hash, environment_id, org_id, enc_key, user_id, attest_sms_consent)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		hashKey(raw), scope.EnvID, scope.OrgID, enc, "", key.AttestSMSConsent,
 	); err != nil {
 		return "", fmt.Errorf("identity: rotate insert new key: %w", err)
 	}
@@ -215,23 +234,69 @@ func (svc *Service) RotateKey(ctx context.Context, scope domain.Scope) (string, 
 	return hex.EncodeToString(raw), nil
 }
 
+// AttestSMSConsentAllowed reports whether the scope's API key may attest SMS
+// consent.
+func (svc *Service) AttestSMSConsentAllowed(ctx context.Context, scope domain.Scope) (bool, error) {
+	keys, err := svc.store.ApiKeys().List(ctx, scope)
+	if err != nil {
+		return false, fmt.Errorf("identity: list api keys: %w", err)
+	}
+	for _, k := range keys {
+		if k.AttestSMSConsent {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// SetAttestSMSConsent grants or withdraws the scope's API key's permission to
+// attest SMS consent.
+func (svc *Service) SetAttestSMSConsent(ctx context.Context, scope domain.Scope, allowed bool) error {
+	if err := svc.store.ApiKeys().SetAttestSMSConsent(ctx, scope, allowed); err != nil {
+		return fmt.Errorf("identity: set attest permission: %w", err)
+	}
+	return nil
+}
+
+// Key is the API key a request authenticated with.
+type Key struct {
+	// ID identifies the key: the hex SHA-256 of its bytes, never the key.
+	ID string
+	// AttestSMSConsent: the key may attest SMS consent.
+	AttestSMSConsent bool
+}
+
+type keyCtxKey struct{}
+
+// KeyFrom returns the API key Middleware authenticated the request with. ok
+// is false outside Middleware.
+func KeyFrom(ctx context.Context) (Key, bool) {
+	k, ok := ctx.Value(keyCtxKey{}).(Key)
+	return k, ok
+}
+
 // Authenticate resolves a presented hex key back to its Scope, hashing it and
 // looking up the stored row. A miss returns the store's not-found error.
 func (svc *Service) Authenticate(ctx context.Context, presentedKey string) (domain.Scope, error) {
+	_, scope, err := svc.authenticate(ctx, presentedKey)
+	return scope, err
+}
+
+func (svc *Service) authenticate(ctx context.Context, presentedKey string) (Key, domain.Scope, error) {
 	raw, err := hex.DecodeString(presentedKey)
 	if err != nil {
-		return domain.Scope{}, fmt.Errorf("identity: decode key: %w", err)
+		return Key{}, domain.Scope{}, fmt.Errorf("identity: decode key: %w", err)
 	}
-	_, scope, err := svc.store.ApiKeys().GetByHash(ctx, hashKey(raw))
+	k, scope, err := svc.store.ApiKeys().GetByHash(ctx, hashKey(raw))
 	if err != nil {
-		return domain.Scope{}, err
+		return Key{}, domain.Scope{}, err
 	}
-	return scope, nil
+	return Key{ID: k.Hash, AttestSMSConsent: k.AttestSMSConsent}, scope, nil
 }
 
 // Middleware authenticates the `Authorization: ApiKey <key>` header, attaching
-// the resolved Scope to the request context on success and answering 401 on a
-// missing, malformed, or unrecognised key.
+// the resolved Scope and Key (KeyFrom) to the request context on success and
+// answering 401 on a missing, malformed, or unrecognised key.
 func (svc *Service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		const prefix = "ApiKey "
@@ -245,12 +310,13 @@ func (svc *Service) Middleware(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		scope, err := svc.Authenticate(r.Context(), key)
+		k, scope, err := svc.authenticate(r.Context(), key)
 		if err != nil {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(domain.ContextWithScope(r.Context(), scope)))
+		ctx := context.WithValue(domain.ContextWithScope(r.Context(), scope), keyCtxKey{}, k)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

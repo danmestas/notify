@@ -74,6 +74,10 @@
           <dd>{{if $page.Sub.Phone}}{{$page.Sub.Phone}}{{else}}<span class="console-muted">—</span>{{end}}</dd>
         </div>
         <div class="wf-meta-row">
+          <dt>SMS consent</dt>
+          <dd>{{with $page.Sub.PhoneConsent}}{{if eq . "self_verified"}}Self-verified{{else if eq . "operator_attested"}}Operator-attested{{end}}{{else}}<span class="console-muted">None</span>{{end}}</dd>
+        </div>
+        <div class="wf-meta-row">
           <dt>Locale</dt>
           <dd>{{if $page.Sub.Locale}}{{$page.Sub.Locale}}{{else}}<span class="console-muted">—</span>{{end}}</dd>
         </div>

@@ -63,6 +63,7 @@ func tenantCases() []tenantCase {
 		{name: "InboundDomains", check: checkInboundDomains},
 		{name: "InboundMessages", check: checkInboundMessages},
 		{name: "SMSOptOuts", check: checkSMSOptOuts},
+		{name: "SMSConsents", check: checkSMSConsents},
 		{name: "StreamSources", check: checkStreamSources},
 		{name: "A2AClientKeys", check: checkA2AClientKeys},
 		{name: "A2AReceiverKeys", check: checkA2AReceiverKeys},
@@ -774,6 +775,25 @@ func checkPhoneVerifications(t *testing.T, ctx context.Context, s *Store, a, b d
 	}
 	if _, err := repo.Latest(ctx, a, "shared-sub"); err != nil {
 		t.Errorf("PhoneVerifications.PruneBefore(b) removed A's row: %v", err)
+	}
+}
+
+func checkSMSConsents(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
+	if _, err := s.Subscribers().Upsert(ctx, a, domain.Subscriber{SubscriberID: "consent-sub"}); err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+	repo := s.SMSConsents()
+	if _, err := repo.Attest(ctx, a, SMSAttestation{SubscriberID: "consent-sub", Phone: "+15550002222", APIKeyID: "k"}); err != nil {
+		t.Fatalf("Attest(a): %v", err)
+	}
+	if _, err := repo.Attest(ctx, b, SMSAttestation{SubscriberID: "consent-sub", Phone: "+15550002222"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SMSConsents.Attest crossed tenants: %v", err)
+	}
+	if _, err := repo.Revoke(ctx, b, "consent-sub"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SMSConsents.Revoke crossed tenants: %v", err)
+	}
+	if rows, _ := repo.List(ctx, b, "consent-sub"); len(rows) != 0 {
+		t.Error("SMSConsents.List crossed tenants")
 	}
 }
 

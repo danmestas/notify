@@ -21,6 +21,9 @@ type ApiKeyRepo interface {
 	// DeleteByScope removes every API key belonging to scope in one statement.
 	// RotateKey calls this and then Create within a single write transaction.
 	DeleteByScope(ctx context.Context, scope domain.Scope) error
+	// SetAttestSMSConsent grants or withdraws the scope's keys' permission
+	// to attest SMS consent.
+	SetAttestSMSConsent(ctx context.Context, scope domain.Scope, allowed bool) error
 }
 
 type apiKeyRepo struct {
@@ -33,9 +36,9 @@ func (repo *apiKeyRepo) Create(ctx context.Context, scope domain.Scope, key doma
 	key.EnvID = scope.EnvID
 	_, err := repo.w.ExecContext(
 		ctx,
-		`INSERT INTO api_keys (hash, environment_id, org_id, enc_key, user_id)
-		 VALUES (?, ?, ?, ?, ?)`,
-		key.Hash, key.EnvID, key.OrgID, key.EncKey, key.UserID,
+		`INSERT INTO api_keys (hash, environment_id, org_id, enc_key, user_id, attest_sms_consent)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		key.Hash, key.EnvID, key.OrgID, key.EncKey, key.UserID, key.AttestSMSConsent,
 	)
 	if err != nil {
 		return domain.APIKey{}, err
@@ -47,9 +50,9 @@ func (repo *apiKeyRepo) GetByHash(ctx context.Context, hash string) (domain.APIK
 	var key domain.APIKey
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT hash, environment_id, org_id, enc_key, user_id FROM api_keys WHERE hash = ?`,
+		`SELECT hash, environment_id, org_id, enc_key, user_id, attest_sms_consent FROM api_keys WHERE hash = ?`,
 		hash,
-	).Scan(&key.Hash, &key.EnvID, &key.OrgID, &key.EncKey, &key.UserID)
+	).Scan(&key.Hash, &key.EnvID, &key.OrgID, &key.EncKey, &key.UserID, &key.AttestSMSConsent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.APIKey{}, domain.Scope{}, ErrNotFound
 	}
@@ -62,7 +65,7 @@ func (repo *apiKeyRepo) GetByHash(ctx context.Context, hash string) (domain.APIK
 func (repo *apiKeyRepo) List(ctx context.Context, scope domain.Scope) ([]domain.APIKey, error) {
 	rows, err := repo.r.QueryContext(
 		ctx,
-		`SELECT hash, environment_id, org_id, enc_key, user_id
+		`SELECT hash, environment_id, org_id, enc_key, user_id, attest_sms_consent
 		 FROM api_keys WHERE org_id = ? AND environment_id = ?`,
 		scope.OrgID, scope.EnvID,
 	)
@@ -74,7 +77,7 @@ func (repo *apiKeyRepo) List(ctx context.Context, scope domain.Scope) ([]domain.
 	var keys []domain.APIKey
 	for rows.Next() {
 		var k domain.APIKey
-		if err := rows.Scan(&k.Hash, &k.EnvID, &k.OrgID, &k.EncKey, &k.UserID); err != nil {
+		if err := rows.Scan(&k.Hash, &k.EnvID, &k.OrgID, &k.EncKey, &k.UserID, &k.AttestSMSConsent); err != nil {
 			return nil, err
 		}
 		keys = append(keys, k)
@@ -87,6 +90,15 @@ func (repo *apiKeyRepo) DeleteByScope(ctx context.Context, scope domain.Scope) e
 		ctx,
 		`DELETE FROM api_keys WHERE org_id = ? AND environment_id = ?`,
 		scope.OrgID, scope.EnvID,
+	)
+	return err
+}
+
+func (repo *apiKeyRepo) SetAttestSMSConsent(ctx context.Context, scope domain.Scope, allowed bool) error {
+	_, err := repo.w.ExecContext(
+		ctx,
+		`UPDATE api_keys SET attest_sms_consent = ? WHERE org_id = ? AND environment_id = ?`,
+		allowed, scope.OrgID, scope.EnvID,
 	)
 	return err
 }

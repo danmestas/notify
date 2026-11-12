@@ -36,6 +36,7 @@ import (
 	"github.com/danmestas/notify/internal/envvars"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inbounddomains"
+	"github.com/danmestas/notify/internal/phoneverify"
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/streamsource"
@@ -184,6 +185,7 @@ func newTestConsole(t *testing.T) *testConsole {
 		Layouts:          st.Layouts(),
 		Translations:     st.Translations(),
 		Environments:     st.Environments(),
+		Phone:            phoneverify.New(st, conn),
 		EnvVars:          ev,
 		InboundDomains:   inbounddomains.New(st, ""),
 		EmailThreads:     st.EmailThreads(),

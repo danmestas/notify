@@ -1,9 +1,10 @@
 // Package phoneverify lets a subscriber prove they hold a phone number (#130).
 // Request texts a short code to the number through the environment's SMS
 // integration; Confirm with that code marks the number verified on the
-// subscriber. SMS steps send only to a verified number, and nothing else can
-// verify one: the sender API stores a phone unverified, and a write that
-// changes it clears the verification (store.SubscriberRepo.Upsert).
+// subscriber. SMS steps send only to a verified number, or to one an operator
+// attested consent for (consent.go), and nothing else can verify one: the
+// sender API stores a phone unverified, and a write that changes it clears
+// the verification (store.SubscriberRepo.Upsert).
 //
 // Only a salted hash of each code is stored. A code expires after CodeTTL and
 // allows MaxAttempts guesses. Sends are limited to MaxSends per SendWindow for

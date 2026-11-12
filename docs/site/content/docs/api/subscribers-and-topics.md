@@ -14,6 +14,8 @@ All routes take an API key.
 | `GET /v1/subscribers/{id}` | One subscriber, by **internal id**. | `200`; `404` |
 | `PATCH /v1/subscribers/{id}` | Update by internal id. Only fields present and non-empty are applied. | `200` |
 | `DELETE /v1/subscribers/{id}` | Soft delete, by internal id. | `204`; `404` |
+| `POST /v1/subscribers/{subscriberId}/phone/consent` | Attest SMS consent for the subscriber's phone. See [operator-attested consent](../../channels/sms#operator-attested-consent). | `201`; `403` when not allowed; `404` |
+| `DELETE /v1/subscribers/{subscriberId}/phone/consent` | Revoke an operator attestation. | `204`; `404` |
 | `POST /v1/subscribers/{subscriberId}/session` | Mint a [session token](../../inbox-and-agents/subscriber-sessions). | `200` `{token, expiresAt}`; `404` if the subscriber does not exist |
 | `PUT /v1/subscribers/{subscriberId}/credentials` | Set the subscriber's address for a provider. | `204` |
 | `DELETE /v1/subscribers/{subscriberId}/credentials/webpush?endpoint=` | Remove one Web Push device. | `204`; `400` without `endpoint`; `404` |
@@ -23,11 +25,11 @@ All routes take an API key.
 The subscriber object:
 
 ```json
-{ "id": "01J…", "subscriberId": "user-1", "email": "", "phone": "", "phoneVerified": false,
+{ "id": "01J…", "subscriberId": "user-1", "email": "", "phone": "+15551112222", "phoneVerified": true, "phoneConsent": "self_verified",
   "firstName": "", "lastName": "", "locale": "", "timezone": "", "data": { } }
 ```
 
-`POST` and `PATCH` bodies take the same fields without `id` and `phoneVerified`. `phoneVerified` is read-only: only the subscriber can [verify a phone](../../inbox-and-agents/subscriber-sessions#verify-a-phone). A `phone` you write is stored unverified, and writing a different number clears the verification; sms steps send only to a verified phone. Validation (a malformed email, an oversized field, too many or invalid custom `data` fields) is `400` with the reason.
+`POST` and `PATCH` bodies take the same fields without `id`, `phoneVerified` and `phoneConsent`. Both are read-only: only the subscriber can [verify a phone](../../inbox-and-agents/subscriber-sessions#verify-a-phone), and only an [attestation](../../channels/sms#operator-attested-consent) makes it `operator_attested`. `phoneConsent` is absent when the phone has neither. A `phone` you write is stored without consent, and writing a different number clears consent of either kind; sms steps send only to a consented phone. Validation (a malformed email, an oversized field, too many or invalid custom `data` fields) is `400` with the reason.
 
 `PUT .../credentials` takes `{"providerId": "ntfy", "channel": "push", "credentials": { … }}`; `providerId` is required. With `providerId: "webpush"`, `credentials` is a browser `PushSubscription` (`endpoint`, `keys.p256dh`, `keys.auth` required). See [push](../../channels/push) and [chat](../../channels/chat) for the fields.
 

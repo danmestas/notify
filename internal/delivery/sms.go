@@ -12,6 +12,7 @@ import (
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/metrics"
+	"github.com/danmestas/notify/internal/phoneverify"
 	"github.com/danmestas/notify/internal/providers"
 	"github.com/danmestas/notify/internal/runenv"
 	"github.com/danmestas/notify/internal/store"
@@ -37,10 +38,11 @@ type SMSResolver interface {
 }
 
 // SMSHandler persists rendered SMS messages through the store, dispatching via a
-// provider resolved per scope. The recipient is the subscriber's verified phone,
-// read from the store at send time: a phone is verified only by the subscriber
-// (internal/phoneverify), so a subscriber with none, or with an unverified one,
-// has the step skipped (SkipReasonNoVerifiedPhone) — not a fault.
+// provider resolved per scope. The recipient is the subscriber's consented
+// phone, read from the store at send time: verified by the subscriber, or
+// attested by the operator where the environment allows it
+// (internal/phoneverify). A subscriber with neither has the step skipped
+// (SkipReasonNoVerifiedPhone) — not a fault.
 type SMSHandler struct {
 	store    *store.Store
 	resolver SMSResolver
@@ -248,10 +250,11 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 		}
 	}
 
-	// SMS goes only to a phone the subscriber verified. It is read from the
-	// store, not the trigger-time snapshot, so a number changed (and so
-	// unverified) since the trigger is never sent to.
-	to, err := h.verifiedPhone(ctx, scope, env.SubscriberID)
+	// SMS goes only to a consented phone: one the subscriber verified, or one
+	// the operator attested while its environment allows that. It is read
+	// from the store, not the trigger-time snapshot, so a number changed (and
+	// so no longer consented) since the trigger is never sent to.
+	to, err := h.consentedPhone(ctx, scope, env.SubscriberID)
 	if err != nil {
 		return h.persistSMSError(ctx, env, t, "", "", err)
 	}
@@ -335,9 +338,10 @@ func (h *SMSHandler) optedOut(ctx context.Context, scope domain.Scope, subscribe
 	return out, nil
 }
 
-// verifiedPhone returns the subscriber's verified phone, or "" when they have
-// none (no phone, an unverified one, or no stored subscriber at all).
-func (h *SMSHandler) verifiedPhone(ctx context.Context, scope domain.Scope, subscriberID string) (string, error) {
+// consentedPhone returns the subscriber's consented phone
+// (phoneverify.SendablePhone), or "" when they have none or no stored
+// subscriber at all.
+func (h *SMSHandler) consentedPhone(ctx context.Context, scope domain.Scope, subscriberID string) (string, error) {
 	sub, err := h.store.Subscribers().GetByExternalID(ctx, scope, subscriberID)
 	if errors.Is(err, store.ErrNotFound) {
 		return "", nil
@@ -345,10 +349,11 @@ func (h *SMSHandler) verifiedPhone(ctx context.Context, scope domain.Scope, subs
 	if err != nil {
 		return "", fmt.Errorf("sms: load subscriber: %w", err)
 	}
-	if sub.Deleted || sub.PhoneVerifiedAt == "" {
-		return "", nil
+	to, err := phoneverify.SendablePhone(ctx, h.store, scope, sub)
+	if err != nil {
+		return "", fmt.Errorf("sms: consent lookup: %w", err)
 	}
-	return sub.Phone, nil
+	return to, nil
 }
 
 // persistSMSSkipped records a status:"skipped" sms message carrying the gate
