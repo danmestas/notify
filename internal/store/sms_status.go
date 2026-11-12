@@ -16,30 +16,43 @@ import (
 const pendingStatusLife = time.Hour
 
 // takePendingStatus moves a buffered final status for m's provider id onto m
-// and removes it. One past pendingStatusLife is removed without being applied.
-func takePendingStatus(ctx context.Context, tx *sql.Tx, scope domain.Scope, m *domain.Message) error {
+// and removes it, reporting whether it applied one. One past pendingStatusLife
+// is removed without being applied.
+func takePendingStatus(ctx context.Context, tx *sql.Tx, scope domain.Scope, m *domain.Message) (bool, error) {
 	var status, class, text, at string
 	err := tx.QueryRowContext(ctx,
 		`SELECT status, error_class, error_text, received_at FROM sms_status_pending
 		 WHERE org_id = ? AND environment_id = ? AND integration_id = ? AND provider_message_id = ?`,
 		scope.OrgID, scope.EnvID, m.IntegrationID, m.ProviderMessageID).Scan(&status, &class, &text, &at)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return fmt.Errorf("store: read pending status: %w", err)
+		return false, fmt.Errorf("store: read pending status: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM sms_status_pending
 		 WHERE org_id = ? AND environment_id = ? AND integration_id = ? AND provider_message_id = ?`,
 		scope.OrgID, scope.EnvID, m.IntegrationID, m.ProviderMessageID); err != nil {
-		return fmt.Errorf("store: take pending status: %w", err)
+		return false, fmt.Errorf("store: take pending status: %w", err)
 	}
 	if at < timestamp.Format(time.Now().Add(-pendingStatusLife)) {
-		return nil
+		return false, nil
 	}
 	m.Status, m.ErrorClass, m.ErrorText = status, class, text
-	return nil
+	return true, nil
+}
+
+// PurgeExpiredPendingStatuses removes buffered statuses past pendingStatusLife
+// and returns how many. Nothing reads an expired one, so this only bounds the
+// table; it is run periodically.
+func (s *Store) PurgeExpiredPendingStatuses(ctx context.Context) (int64, error) {
+	res, err := s.writer.ExecContext(ctx, `DELETE FROM sms_status_pending WHERE received_at < ?`,
+		timestamp.Format(time.Now().Add(-pendingStatusLife)))
+	if err != nil {
+		return 0, fmt.Errorf("store: purge pending statuses: %w", err)
+	}
+	return res.RowsAffected()
 }
 
 // StatusCallbackResult is what a status callback did.
@@ -74,17 +87,12 @@ func (repo *messageRepo) ApplyStatusCallback(ctx context.Context, scope domain.S
 		 ORDER BY id LIMIT 1`,
 		scope.OrgID, scope.EnvID, integrationID, providerMessageID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		now := time.Now()
-		if _, err := tx.ExecContext(ctx, `DELETE FROM sms_status_pending WHERE received_at < ?`,
-			timestamp.Format(now.Add(-pendingStatusLife))); err != nil {
-			return StatusCallbackResult{}, fmt.Errorf("store: purge pending statuses: %w", err)
-		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO sms_status_pending
 			   (org_id, environment_id, integration_id, provider_message_id, status, error_class, error_text, received_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(org_id, environment_id, integration_id, provider_message_id) DO NOTHING`,
-			scope.OrgID, scope.EnvID, integrationID, providerMessageID, status, errorClass, errorText, timestamp.Format(now)); err != nil {
+			scope.OrgID, scope.EnvID, integrationID, providerMessageID, status, errorClass, errorText, timestamp.Format(time.Now())); err != nil {
 			return StatusCallbackResult{}, fmt.Errorf("store: buffer status: %w", err)
 		}
 		if err := tx.Commit(); err != nil {

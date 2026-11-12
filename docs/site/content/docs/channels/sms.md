@@ -92,15 +92,15 @@ A text whose whole body, trimmed and in any case, is a keyword also does this:
 |---|---|---|
 | `STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT` | The number is opted out in the environment. | `sms.opt_out`, when it was not already |
 | `START`, `YES`, `UNSTOP` | The number's opt-out is lifted. From a number that is not opted out, nothing happens: it is just a text. | `sms.opt_in`, when there was an opt-out |
-| `HELP`, `INFO` | notify replies through the same integration with `help_text`, or a default naming the number, at most once per number per integration every 10 minutes. The reply goes to the sender even if their phone is not verified, since it answers them. It is recorded as an `sms` message. | none |
+| `HELP`, `INFO` | notify replies through the same integration with `help_text`, or a default naming the number, at most once per number per integration every 10 minutes (a reply that fails to send does not use up that slot). The reply goes to the sender even if their phone is not verified, since it answers them. It is recorded as an `sms` message. | none |
 
-Keywords never change [preferences](../preferences). The opt-out record alone stops sending, so `STOP` then `START` leaves a subscriber exactly as before: their own `sms` preference, and each workflow's `defaultEnabled`, decide as they did. The text and its opt change are stored together: if either fails, notify answers `500`, keeps neither, and the provider's retry applies both. A provider's retry of a text already handled changes nothing again, so a late retry of an old `STOP` cannot undo a newer `START`.
+Keywords never change [preferences](../preferences). The opt-out record alone stops sending, so `STOP` then `START` leaves a subscriber exactly as before: their own `sms` preference, and each workflow's `defaultEnabled`, decide as they did. The text and its opt change are stored together: if either fails, notify answers `500` and keeps neither. Twilio does not retry inbound message webhooks by default, so a `STOP` that hit such a failure is not re-sent; turn on Twilio's Advanced Opt-Out (SignalWire has an equivalent opt-out handling) as a backstop so the carrier-side opt-out holds either way. A provider's retry, where it does retry, of a text already handled changes nothing again, so a late retry of an old `STOP` cannot undo a newer `START`.
 
 `help_text` cannot itself be a keyword (`422`), so a HELP reply never reads as a command. Set it to an empty string (or `null`) in `PUT /v1/integrations/{id}`, or empty the field in the console, to go back to the default; leaving it out keeps it.
 
 An opted-out number gets no sms step: it is skipped with `skipReason: "opted_out"`, checked before preferences. The opt-out belongs to the number, so it holds for every workflow, including `critical` ones, which bypass preferences but not an opt-out, and for every subscriber with that number, including one added later. No preference can override it. Only `START` lifts it.
 
-Twilio's Advanced Opt-Out (and the carriers) may also handle STOP themselves and stop delivering to the number. The text still reaches notify, which records the opt-out as above, so notify's view stays right and the skipped step says why rather than failing at the provider.
+We recommend turning Twilio's Advanced Opt-Out (or SignalWire's equivalent) on. It (and the carriers) may also handle STOP themselves and stop delivering to the number. The text still reaches notify, which records the opt-out as above, so notify's view stays right and the skipped step says why rather than failing at the provider.
 
 ### Delivery status
 
@@ -112,7 +112,7 @@ A status callback updates the `sms` message notify sent with that `MessageSid` (
 | `delivered` | `delivered`. |
 | `undelivered`, `failed` | `error`, with `ErrorText` naming the status and `ErrorCode`, and an `ErrorClass` from the code: `recipient` for 30003-30006, 21211, 21610, 21612, 21614 (unreachable, blocked, unknown, landline or unsubscribed numbers); `rate_limited` for 30001; `auth` for 30002; `provider_down` for 30008 and 30500; `rejected_message` otherwise. |
 
-`delivered` and `error` are final. A repeated or late callback (a `sent` after `delivered`, a second `failed`) changes nothing, so callbacks may arrive in any order. A move to `error` counts once against the integration's delivery health; `recipient` failures never do, as elsewhere. Each change is sent to your webhook endpoints as an `sms.status` event. A callback can beat the send's own message row: one for a provider id notify has not stored yet is kept for an hour and applied when that message is written (the message is then written with the final status, and delivery health counts it then). After an hour it is dropped, as is one for a message notify never sent.
+`delivered` and `error` are final. A repeated or late callback (a `sent` after `delivered`, a second `failed`) changes nothing, so callbacks may arrive in any order. A move to `error` counts once against the integration's delivery health; `recipient` failures never do, as elsewhere. Each change is sent to your webhook endpoints as an `sms.status` event. A callback can beat the send's own message row: one for a provider id notify has not stored yet is kept for an hour and applied when that message is written (the message is then written with the final status, delivery health counts it then, and the `sms.status` event is sent then too). Expired ones are purged every 15 minutes. After an hour it is dropped, as is one for a message notify never sent.
 
 ## Legacy create
 

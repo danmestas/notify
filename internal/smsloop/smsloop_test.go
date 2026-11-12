@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -82,8 +83,22 @@ func (e *events) ofType(typ string) []map[string]any {
 	return out
 }
 
+// flakySender fails every send while fail is set, else captures it.
+type flakySender struct {
+	*providers.CaptureSMS
+	fail atomic.Bool
+}
+
+func (f *flakySender) Send(ctx context.Context, msg providers.SMSMessage) (providers.Result, error) {
+	if f.fail.Load() {
+		return providers.Result{}, errors.New("provider down")
+	}
+	return f.CaptureSMS.Send(ctx, msg)
+}
+
 type rig struct {
 	t      *testing.T
+	flaky  *flakySender
 	st     *store.Store
 	prefs  *preferences.Service
 	ev     *events
@@ -99,13 +114,14 @@ func newRig(t *testing.T) *rig {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	r := &rig{t: t, st: st, prefs: preferences.New(st), ev: &events{}, sender: providers.NewCaptureSMS()}
+	r.flaky = &flakySender{CaptureSMS: r.sender}
 	cbs := fakeCallbacks{
-		"int-tw": {Scope: envA, IntegrationID: "int-tw", ProviderID: "twilio", SigningKey: token, From: ourNumber, Sender: r.sender},
+		"int-tw": {Scope: envA, IntegrationID: "int-tw", ProviderID: "twilio", SigningKey: token, From: ourNumber, Sender: r.flaky},
 		"int-sw": {
 			Scope: envB, IntegrationID: "int-sw", ProviderID: "signalwire", SigningKey: swKey, From: ourNumber,
-			HelpText: "Acme alerts. Reply STOP to stop.", Sender: r.sender,
+			HelpText: "Acme alerts. Reply STOP to stop.", Sender: r.flaky,
 		},
-		"int-nokey": {Scope: envB, IntegrationID: "int-nokey", ProviderID: "signalwire", From: ourNumber, Sender: r.sender},
+		"int-nokey": {Scope: envB, IntegrationID: "int-nokey", ProviderID: "signalwire", From: ourNumber, Sender: r.flaky},
 	}
 	svc := New(st, cbs, publicURL, slog.New(slog.NewTextHandler(io.Discard, nil))).WithEventPublisher(r.ev)
 	router := chi.NewRouter()
@@ -496,6 +512,54 @@ func TestStatus_BeforeTheMessage(t *testing.T) {
 	m := r.sentMessage(envA, "int-tw", "SMearly")
 	if m.Status != "error" || m.ErrorClass != string(providers.ClassRecipient) || !strings.Contains(m.ErrorText, "30003") {
 		t.Fatalf("message written after its callback = %+v, want the failure applied", m)
+	}
+}
+
+// TestStatus_BufferedStatusSendsWebhookEvent: a status applied at message
+// create reaches the tenant as the same sms.status event a live one does.
+func TestStatus_BufferedStatusSendsWebhookEvent(t *testing.T) {
+	r := newRig(t)
+	r.twilio("/v1/inbound/sms/int-tw/status", status("SMearly2", "failed", "30003"))
+	if n := len(r.ev.ofType(EventStatus)); n != 0 {
+		t.Fatalf("%d status events before the message exists", n)
+	}
+	m := r.sentMessage(envA, "int-tw", "SMearly2")
+	evs := r.ev.ofType(EventStatus)
+	if len(evs) != 1 {
+		t.Fatalf("%d status events after create, want 1", len(evs))
+	}
+	e := evs[0]
+	if e["messageId"] != m.ID || e["status"] != "error" || e["errorClass"] != string(providers.ClassRecipient) ||
+		e["providerMessageId"] != "SMearly2" || e["integrationId"] != "int-tw" || e["subscriberId"] != "ada" ||
+		e["OrgID"] != envA.OrgID || e["EnvID"] != envA.EnvID {
+		t.Fatalf("event = %+v", e)
+	}
+	// A message with no buffered status sends none.
+	r.sentMessage(envA, "int-tw", "SMplain")
+	if n := len(r.ev.ofType(EventStatus)); n != 1 {
+		t.Fatalf("%d status events, want still 1", n)
+	}
+}
+
+// TestKeywords_FailedHelpSendReleasesTheSlot: a HELP whose send failed does
+// not hold the 10-minute slot, so the next HELP is answered.
+func TestKeywords_FailedHelpSendReleasesTheSlot(t *testing.T) {
+	r := newRig(t)
+	r.flaky.fail.Store(true)
+	if got := r.twilio("/v1/inbound/sms/int-tw", text("HF1", "+15553334444", "HELP")); got != http.StatusOK {
+		t.Fatalf("HELP: status %d", got)
+	}
+	if n := len(r.sender.Sent()); n != 0 {
+		t.Fatalf("%d sends while the provider was down", n)
+	}
+	r.flaky.fail.Store(false)
+	r.twilio("/v1/inbound/sms/int-tw", text("HF2", "+15553334444", "HELP"))
+	if n := len(r.sender.Sent()); n != 1 {
+		t.Fatalf("%d replies after recovery, want 1: a failed send used up the slot", n)
+	}
+	r.twilio("/v1/inbound/sms/int-tw", text("HF3", "+15553334444", "HELP"))
+	if n := len(r.sender.Sent()); n != 1 {
+		t.Fatalf("%d replies, want the successful one to still hold the slot", n)
 	}
 }
 
