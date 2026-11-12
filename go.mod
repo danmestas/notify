@@ -7,7 +7,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.53.0
 	github.com/aymerick/raymond v2.0.2+incompatible
 	github.com/coder/websocket v1.8.15
-	github.com/danmestas/dagnats v0.0.65
+	github.com/danmestas/dagnats v0.0.66
 	github.com/danmestas/dagnats/lake v0.4.0
 	github.com/duckdb/duckdb-go/v2 v2.20000.0
 	github.com/emersion/go-smtp v0.25.0
@@ -59,8 +59,8 @@ require (
 	github.com/minio/crc64nvme v1.1.1 // indirect
 	github.com/minio/highwayhash v1.0.4 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
-	github.com/nats-io/jwt/v2 v2.8.2 // indirect
-	github.com/nats-io/nkeys v0.4.16 // indirect
+	github.com/nats-io/jwt/v2 v2.8.3 // indirect
+	github.com/nats-io/nkeys v0.4.17 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/ncruces/go-sqlite3-wasm/v6 v6.3.35304 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
