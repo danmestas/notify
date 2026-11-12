@@ -2761,16 +2761,14 @@ func postWebhookEndpointSecret(wh *webhooksout.ManagementService) http.HandlerFu
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		scope := identity.ScopeFrom(r.Context())
-		c, err := wh.RotateSecret(r.Context(), scope, id)
+		var req webhookEndpointSecretRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+		c, err := wh.RotateSecret(r.Context(), scope, id, req.Secret)
 		if err != nil {
-			switch {
-			case errors.Is(err, store.ErrNotFound):
-				writeJSONError(w, http.StatusNotFound, "not_found", "webhook endpoint not found")
-			case errors.Is(err, webhooksout.ErrSigningUnavailable):
-				writeJSONError(w, http.StatusServiceUnavailable, "unavailable", err.Error())
-			default:
-				writeInternalError(w, r, err)
-			}
+			writeWebhookSecretError(w, r, err)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
@@ -2803,6 +2801,30 @@ func getWebhookEndpoints(wh *webhooksout.ManagementService) http.HandlerFunc {
 type webhookEndpointCreateRequest struct {
 	URL    string `json:"url"`
 	Active bool   `json:"active"`
+	// Secret optionally pins the signing secret; omitted, notify generates one.
+	Secret string `json:"secret"`
+}
+
+// webhookEndpointSecretRequest is the optional body for
+// POST /v1/webhooks/endpoints/{id}/secret.
+type webhookEndpointSecretRequest struct {
+	Secret string `json:"secret"`
+}
+
+// writeWebhookSecretError maps the errors shared by create and rotate.
+func writeWebhookSecretError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, webhooksout.ErrWeakSecret):
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+	case errors.Is(err, store.ErrNotFound):
+		writeJSONError(w, http.StatusNotFound, "not_found", "webhook endpoint not found")
+	case errors.Is(err, webhooksout.ErrSigningUnavailable):
+		writeJSONError(w, http.StatusServiceUnavailable, "unavailable", err.Error())
+	case errors.Is(err, store.ErrConflict):
+		writeJSONError(w, http.StatusConflict, "conflict", "a webhook endpoint with this url already exists")
+	default:
+		writeInternalError(w, r, err)
+	}
 }
 
 // postWebhookEndpoint handles POST /v1/webhooks/endpoints.
@@ -2818,14 +2840,18 @@ func postWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
-		created, err := wh.Create(r.Context(), scope, req.URL, req.Active)
+		created, err := wh.Create(r.Context(), scope, req.URL, req.Active, req.Secret)
 		if err != nil {
-			writeInternalError(w, r, err)
+			writeWebhookSecretError(w, r, err)
 			return
 		}
 		// The secret is in this response and nowhere else.
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusCreated, toWebhookEndpointSecretDTO(created))
+		status := http.StatusCreated
+		if created.Existed {
+			status = http.StatusOK
+		}
+		writeJSON(w, status, toWebhookEndpointSecretDTO(created))
 	}
 }
 
@@ -2838,6 +2864,10 @@ func getWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				writeJSONError(w, http.StatusNotFound, "not_found", "webhook endpoint not found")
+				return
+			}
+			if errors.Is(err, store.ErrConflict) {
+				writeJSONError(w, http.StatusConflict, "conflict", "another active webhook endpoint already has this url")
 				return
 			}
 			writeInternalError(w, r, err)
@@ -2872,6 +2902,10 @@ func putWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				writeJSONError(w, http.StatusNotFound, "not_found", "webhook endpoint not found")
+				return
+			}
+			if errors.Is(err, store.ErrConflict) {
+				writeJSONError(w, http.StatusConflict, "conflict", "another active webhook endpoint already has this url")
 				return
 			}
 			writeInternalError(w, r, err)
