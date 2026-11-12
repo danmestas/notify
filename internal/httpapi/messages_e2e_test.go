@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/danmestas/notify/internal/domain"
@@ -132,11 +134,11 @@ func TestGetMessages_ByIntegrationId(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("expected 1 message, got %d: %s", len(list), body)
 	}
-	if list[0]["IntegrationID"] != "integ-target" {
-		t.Errorf("IntegrationID = %v, want integ-target", list[0]["IntegrationID"])
+	if list[0]["integrationId"] != "integ-target" {
+		t.Errorf("integrationId = %v, want integ-target", list[0]["integrationId"])
 	}
-	if list[0]["Status"] != "sent" {
-		t.Errorf("Status = %v, want sent", list[0]["Status"])
+	if list[0]["status"] != "sent" {
+		t.Errorf("status = %v, want sent", list[0]["status"])
 	}
 }
 
@@ -207,7 +209,95 @@ func TestGetNotificationMessages_ReturnsScopedMessages(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("expected 1 in-scope message, got %d: %s", len(list), body)
 	}
-	if list[0]["SubscriberID"] != "sub1" {
-		t.Errorf("SubscriberID = %v, want sub1", list[0]["SubscriberID"])
+	if list[0]["subscriberId"] != "sub1" {
+		t.Errorf("subscriberId = %v, want sub1", list[0]["subscriberId"])
+	}
+}
+
+// wantMessageKeys is the exact key set of a message on the wire (#157): the
+// camelCase DTO, with no Go field names and no scope ids.
+var wantMessageKeys = []string{
+	"archived", "channel", "content", "createdAt", "errorClass", "errorText",
+	"extras", "id", "integrationId", "notificationId", "providerId",
+	"providerMessageId", "read", "runId", "seen", "skipReason", "status",
+	"stepId", "subject", "subscriberId", "transactionId", "workflowId",
+	"workflowIdentifier",
+}
+
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// TestGetNotificationMessages_CamelCaseShape pins the exact JSON keys, and
+// that a skipped message carries skipReason and a failed one errorClass and
+// errorText; GET /v1/messages emits the same shape.
+func TestGetNotificationMessages_CamelCaseShape(t *testing.T) {
+	ctx := context.Background()
+	srv, authHeader, scope, _, st := startConsoleServer(t)
+
+	for _, m := range []domain.Message{
+		{
+			NotificationID: "ntf-9", TransactionID: "tx-9", WorkflowID: "wf1", RunID: "r1", StepID: "s1",
+			SubscriberID: "sub1", Channel: "sms", ProviderID: "twilio", IntegrationID: "integ-1",
+			Status: "skipped", SkipReason: "no_verified_phone",
+		},
+		{
+			NotificationID: "ntf-9", TransactionID: "tx-9", WorkflowID: "wf1", RunID: "r1", StepID: "s2",
+			SubscriberID: "sub1", Channel: "email", ProviderID: "smtp", IntegrationID: "integ-2",
+			Status: "error", ErrorClass: "auth", ErrorText: "smtp: 535 bad credentials",
+		},
+	} {
+		if _, err := st.Messages().Create(ctx, scope, m); err != nil {
+			t.Fatalf("seed message: %v", err)
+		}
+	}
+
+	status, body := doGet(t, srv.URL+"/v1/notifications/ntf-9/messages", authHeader)
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	var list []map[string]any
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, body)
+	}
+	if len(list) != 2 {
+		t.Fatalf("want 2 messages, got %d: %s", len(list), body)
+	}
+	byStatus := map[string]map[string]any{}
+	for _, m := range list {
+		if got := sortedKeys(m); !reflect.DeepEqual(got, wantMessageKeys) {
+			t.Errorf("keys = %v, want %v", got, wantMessageKeys)
+		}
+		byStatus[m["status"].(string)] = m
+	}
+	if got := byStatus["skipped"]["skipReason"]; got != "no_verified_phone" {
+		t.Errorf("skipReason = %v", got)
+	}
+	if got := byStatus["error"]["errorClass"]; got != "auth" {
+		t.Errorf("errorClass = %v", got)
+	}
+	if got := byStatus["error"]["errorText"]; got != "smtp: 535 bad credentials" {
+		t.Errorf("errorText = %v", got)
+	}
+	if byStatus["error"]["notificationId"] != "ntf-9" || byStatus["error"]["transactionId"] != "tx-9" {
+		t.Errorf("ids not populated: %v", byStatus["error"])
+	}
+
+	// The messages list emits the same shape.
+	status, body = doGet(t, srv.URL+"/v1/messages?format=array&subscriberId=sub1&channel=sms", authHeader)
+	if status != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", status, body)
+	}
+	var feed []map[string]any
+	if err := json.Unmarshal([]byte(body), &feed); err != nil || len(feed) != 1 {
+		t.Fatalf("list decode: %v len=%d body=%s", err, len(feed), body)
+	}
+	if got := sortedKeys(feed[0]); !reflect.DeepEqual(got, wantMessageKeys) {
+		t.Errorf("list keys = %v, want %v", got, wantMessageKeys)
 	}
 }

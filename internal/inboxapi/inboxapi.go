@@ -105,11 +105,8 @@ func (svc *Service) listMessages(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if msgs == nil {
-			msgs = []domain.Message{}
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(msgs)
+		_ = json.NewEncoder(w).Encode(ToMessageDTOs(msgs))
 		return
 	}
 
@@ -138,11 +135,8 @@ func (svc *Service) listMessages(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if out == nil {
-			out = []domain.Message{}
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(out)
+		_ = json.NewEncoder(w).Encode(ToMessageDTOs(out))
 		return
 	}
 
@@ -187,9 +181,6 @@ func (svc *Service) listMessages(w http.ResponseWriter, r *http.Request) {
 		// exclude exactly the rows already shown, not one row further back.
 		next = msgs[limit-1].ID
 	}
-	if msgs == nil {
-		msgs = []domain.Message{}
-	}
 
 	// unreadCount/unseenCount always exclude archived messages ("" here, not
 	// the page's own archived filter): archiving is the "done" action, and
@@ -207,14 +198,14 @@ func (svc *Service) listMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type envelope struct {
-		Data        []domain.Message `json:"data"`
-		Next        string           `json:"next,omitempty"`
-		UnreadCount int              `json:"unreadCount"`
-		UnseenCount int              `json:"unseenCount"`
+		Data        []MessageDTO `json:"data"`
+		Next        string       `json:"next,omitempty"`
+		UnreadCount int          `json:"unreadCount"`
+		UnseenCount int          `json:"unseenCount"`
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(envelope{
-		Data:        msgs,
+		Data:        ToMessageDTOs(msgs),
 		Next:        next,
 		UnreadCount: unreadCount,
 		UnseenCount: unseenCount,

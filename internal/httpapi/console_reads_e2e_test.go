@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -412,6 +414,55 @@ func TestConsole_GetNotification_ReturnsRow(t *testing.T) {
 	}
 	if got.WorkflowID != "wf-99" {
 		t.Errorf("workflowId = %q, want wf-99", got.WorkflowID)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(body), &raw); err != nil {
+		t.Fatalf("decode raw: %v", err)
+	}
+	want := []string{
+		"createdAt", "digestKey", "id", "payload", "runId", "runStartedAt",
+		"status", "subscriberId", "transactionId", "workflowId",
+	}
+	if keys := sortedKeys(raw); !reflect.DeepEqual(keys, want) {
+		t.Errorf("notification keys = %v, want %v", keys, want)
+	}
+}
+
+// TestPostSubscriberAndTopic_CamelCaseKeys pins the keys of the two create
+// responses that used to serialise a domain struct directly (#157).
+func TestPostSubscriberAndTopic_CamelCaseKeys(t *testing.T) {
+	srv, authHeader, _, _, _ := startConsoleServer(t)
+
+	status, body := doPost(t, srv.URL+"/v1/subscribers", authHeader, `{"subscriberId":"u-157","email":"a@example.com"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("subscriber: status=%d body=%s", status, body)
+	}
+	var sub map[string]any
+	if err := json.Unmarshal([]byte(body), &sub); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, k := range []string{"id", "subscriberId", "email", "phoneVerified"} {
+		if _, ok := sub[k]; !ok {
+			t.Errorf("subscriber response missing %q: %s", k, body)
+		}
+	}
+	for _, k := range []string{"ID", "OrgID", "EnvID", "SubscriberID"} {
+		if _, ok := sub[k]; ok {
+			t.Errorf("subscriber response leaks Go field %q: %s", k, body)
+		}
+	}
+
+	status, body = doPost(t, srv.URL+"/v1/topics", authHeader, `{"key":"t-157","name":"T"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("topic: status=%d body=%s", status, body)
+	}
+	var topic map[string]any
+	if err := json.Unmarshal([]byte(body), &topic); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if keys := sortedKeys(topic); !reflect.DeepEqual(keys, []string{"id", "key", "memberCount", "name"}) {
+		t.Errorf("topic keys = %v: %s", keys, body)
 	}
 }
 
