@@ -7,13 +7,14 @@
 // The routes carry no API key. The integration id in the URL names the tenant,
 // and the provider's signature over the public URL, made with that
 // integration's own key, is the only authentication: a request that does not
-// verify is refused with 403 before anything is read or written.
+// verify is refused with 403 before anything is written.
 //
 // An inbound text is kept in the inbound message store and handed to the
 // tenant's webhook endpoints as an sms.inbound event. STOP and its synonyms
-// opt the number out (sms.opt_out); START and its synonyms opt it back in
-// (sms.opt_in); HELP and INFO get a reply. A status callback moves the sent
-// message to delivered or error, once, and never backwards.
+// opt the number out (sms.opt_out); START and its synonyms lift that opt-out
+// (sms.opt_in); HELP and INFO get a reply. Keywords never touch subscriber
+// preferences: the opt-out record alone gates sending. A status callback moves
+// the sent message to delivered or error, once, and never backwards.
 package smsloop
 
 import (
@@ -33,10 +34,10 @@ import (
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/phonenum"
-	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/providers"
 	"github.com/danmestas/notify/internal/providers/signalwire"
 	"github.com/danmestas/notify/internal/providers/twilio"
+	"github.com/danmestas/notify/internal/smskeyword"
 	"github.com/danmestas/notify/internal/store"
 )
 
@@ -48,9 +49,14 @@ const (
 	EventStatus  = "sms.status"
 )
 
-// maxBody bounds a callback body. Provider callbacks are a few hundred bytes;
-// a long text with media URLs stays far below this.
-const maxBody = 64 << 10
+const (
+	// maxBody bounds a callback body. Provider callbacks are a few hundred
+	// bytes; a long text with media URLs stays far below this.
+	maxBody = 64 << 10
+	// helpWindow is how often one number gets a HELP reply through one
+	// integration.
+	helpWindow = 10 * time.Minute
+)
 
 // Callbacks resolves the integration a callback URL names, in any scope.
 // connectivity.Service satisfies it.
@@ -68,7 +74,6 @@ type EventPublisher interface {
 type Service struct {
 	st        *store.Store
 	cbs       Callbacks
-	prefs     *preferences.Service
 	publicURL string
 	events    EventPublisher
 	log       *slog.Logger
@@ -78,11 +83,11 @@ type Service struct {
 // reached at (NOTIFY_PUBLIC_BASE_URL plus any base path): providers sign the
 // URL they call, so it is what every signature is checked against. With it
 // empty no signature can be checked and every callback is refused with 503.
-func New(st *store.Store, cbs Callbacks, prefs *preferences.Service, publicURL string, log *slog.Logger) *Service {
+func New(st *store.Store, cbs Callbacks, publicURL string, log *slog.Logger) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{st: st, cbs: cbs, prefs: prefs, publicURL: strings.TrimRight(publicURL, "/"), log: log}
+	return &Service{st: st, cbs: cbs, publicURL: strings.TrimRight(publicURL, "/"), log: log}
 }
 
 // WithEventPublisher sets where tenant events go. Without one, texts are
@@ -153,6 +158,11 @@ func (s *Service) authenticate(w http.ResponseWriter, r *http.Request) (cb conne
 		return cb, nil, false
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return cb, nil, false
+	}
 	if err != nil {
 		http.Error(w, "could not read the request", http.StatusBadRequest)
 		return cb, nil, false
@@ -200,6 +210,12 @@ func (s *Service) authenticate(w http.ResponseWriter, r *http.Request) (cb conne
 	return cb, form, true
 }
 
+// statusCallback is the integration's status route, which every send asks
+// the provider to report to.
+func (s *Service) statusCallback(integrationID string) string {
+	return s.publicURL + "/v1/inbound/sms/" + integrationID + "/status"
+}
+
 // emptyTwiML is the reply to an inbound text: nothing more to send.
 const emptyTwiML = `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`
 
@@ -237,16 +253,27 @@ func (s *Service) HandleInbound(w http.ResponseWriter, r *http.Request) {
 	}
 	verified := primary.SubscriberID != "" && primary.PhoneVerifiedAt != ""
 
-	rec, created, err := s.st.InboundMessages().RecordSMS(ctx, cb.Scope, store.InboundMessage{
+	kind := smskeyword.Classify(body)
+	change := store.OptNone
+	switch kind {
+	case smskeyword.OptOut:
+		change = store.OptOut
+	case smskeyword.OptIn:
+		change = store.OptIn
+	}
+	// The text and its opt change commit together: if either fails, neither
+	// is kept, and the provider's retry (it retries a 5xx) applies both.
+	rec, created, changed, err := s.st.InboundMessages().RecordSMS(ctx, cb.Scope, store.InboundMessage{
 		IntegrationID: cb.IntegrationID, MessageID: sid, Sender: from, Recipient: to, Body: body,
 		SubscriberID: primary.SubscriberID, PhoneVerified: verified,
-	})
+	}, change)
 	if err != nil {
 		s.fail(w, "record inbound text", err)
 		return
 	}
 	if !created {
-		// A provider retry: everything below already happened once.
+		// A provider retry of a text already handled: its effect committed
+		// with it, and its events and reply went out then.
 		writeTwiML(w)
 		return
 	}
@@ -260,62 +287,45 @@ func (s *Service) HandleInbound(w http.ResponseWriter, r *http.Request) {
 	in.Type, in.SubscriberID, in.PhoneVerified, in.Body = EventInbound, primary.SubscriberID, verified, body
 	s.publish(cb.Scope, in)
 
-	switch kw := keyword(body); kind(kw) {
-	case optOut:
-		err = s.optOut(ctx, cb, from, subs, base, kw)
-	case optIn:
-		err = s.optIn(ctx, cb, from, subs, base, kw)
-	case help:
+	switch {
+	case changed && kind == smskeyword.OptOut:
+		s.publishOpt(cb.Scope, subs, base, EventOptOut, smskeyword.Normalize(body))
+	case changed && kind == smskeyword.OptIn:
+		s.publishOpt(cb.Scope, subs, base, EventOptIn, smskeyword.Normalize(body))
+	case kind == smskeyword.Help:
 		s.reply(ctx, cb, from, to, primary.SubscriberID)
-	}
-	if err != nil {
-		s.fail(w, "apply keyword", err)
-		return
 	}
 	writeTwiML(w)
 }
 
-// optOut records the number as opted out, turns sms off at every matched
-// subscriber's global preference, and tells the tenant once per subscriber
-// (once with no subscriber when none matched).
-func (s *Service) optOut(ctx context.Context, cb connectivity.SMSCallback, from string, subs []domain.Subscriber, base Event, kw string) error {
-	if err := s.st.SMSOptOuts().OptOut(ctx, cb.Scope, from, cb.IntegrationID); err != nil {
-		return err
-	}
-	return s.setSMS(ctx, cb.Scope, subs, false, base, EventOptOut, kw)
-}
-
-// optIn clears the number's opt-out and turns sms back on at every matched
-// subscriber's global preference.
-func (s *Service) optIn(ctx context.Context, cb connectivity.SMSCallback, from string, subs []domain.Subscriber, base Event, kw string) error {
-	if err := s.st.SMSOptOuts().OptIn(ctx, cb.Scope, from); err != nil {
-		return err
-	}
-	return s.setSMS(ctx, cb.Scope, subs, true, base, EventOptIn, kw)
-}
-
-func (s *Service) setSMS(ctx context.Context, scope domain.Scope, subs []domain.Subscriber, on bool, base Event, typ, kw string) error {
+// publishOpt tells the tenant about an opt change, once per subscriber with
+// the number, or once with no subscriber when none has it.
+func (s *Service) publishOpt(scope domain.Scope, subs []domain.Subscriber, base Event, typ, kw string) {
 	base.Type, base.Keyword = typ, kw
 	if len(subs) == 0 {
 		s.publish(scope, base)
-		return nil
+		return
 	}
 	for _, sub := range subs {
-		if err := s.prefs.SetGlobalChannel(ctx, scope, sub.SubscriberID, "sms", on); err != nil {
-			return err
-		}
 		ev := base
 		ev.SubscriberID, ev.PhoneVerified = sub.SubscriberID, sub.PhoneVerifiedAt != ""
 		s.publish(scope, ev)
 	}
-	return nil
 }
 
-// reply answers HELP through the integration that received it. It goes to
-// the sender as a direct answer, so the verified-phone gate does not apply.
-// The send is recorded as an sms message; a failure is recorded, not
-// returned: the inbound text itself was handled.
+// reply answers HELP through the integration that received it, at most once
+// per number per helpWindow. It goes to the sender as a direct answer, so the
+// verified-phone gate does not apply. The send is recorded as an sms message;
+// a failure is recorded, not returned: the inbound text itself was handled.
 func (s *Service) reply(ctx context.Context, cb connectivity.SMSCallback, to, ourNumber, subscriberID string) {
+	allowed, err := s.st.SMSOptOuts().ClaimHelpReply(ctx, cb.Scope, cb.IntegrationID, to, helpWindow)
+	if err != nil {
+		s.log.Error("smsloop: HELP rate limit", "err", err)
+		return
+	}
+	if !allowed {
+		return
+	}
 	text := cb.HelpText
 	if text == "" {
 		sender := cb.From
@@ -332,7 +342,7 @@ func (s *Service) reply(ctx context.Context, cb connectivity.SMSCallback, to, ou
 		SubscriberID: subscriberID, Channel: "sms", ProviderID: cb.ProviderID, IntegrationID: cb.IntegrationID,
 		Content: text, Status: "sent", CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	res, err := cb.Sender.Send(ctx, providers.SMSMessage{To: to, From: from, Body: text})
+	res, err := cb.Sender.Send(ctx, providers.SMSMessage{To: to, From: from, Body: text, StatusCallback: s.statusCallback(cb.IntegrationID)})
 	if err != nil {
 		msg.Status, msg.ErrorText, msg.ErrorClass = "error", err.Error(), string(providers.ClassifyError(err))
 		s.log.Warn("smsloop: HELP reply failed", "integration", cb.IntegrationID, "err", err)
@@ -364,23 +374,16 @@ func (s *Service) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	m, err := s.st.Messages().GetByProviderMessageID(ctx, cb.Scope, cb.IntegrationID, sid)
-	if errors.Is(err, store.ErrNotFound) {
-		// Sent before ids were kept, or not by notify: nothing to update, and
-		// a retry would not change that.
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
+	res, err := s.st.Messages().ApplyStatusCallback(ctx, cb.Scope, cb.IntegrationID, sid, next, class, text)
 	if err != nil {
-		s.fail(w, "find message", err)
+		s.fail(w, "apply status", err)
 		return
 	}
-	changed, err := s.st.Messages().AdvanceStatus(ctx, cb.Scope, m.ID, next, class, text)
-	if err != nil {
-		s.fail(w, "update message", err)
-		return
-	}
-	if changed {
+	// Buffered: the send's message row is not written yet. The status is
+	// applied when it is, and delivery health hears it then, as the message's
+	// own result.
+	if res.Changed {
+		m := res.Message
 		if next == "error" {
 			// A real delivery failure, reported once: the send itself already
 			// counted as a success, and only this transition counts against
@@ -469,29 +472,4 @@ func firstOf(form url.Values, names ...string) string {
 		}
 	}
 	return ""
-}
-
-type keywordKind int
-
-const (
-	notKeyword keywordKind = iota
-	optOut
-	optIn
-	help
-)
-
-// keyword is body as a candidate keyword: trimmed and upper-cased. Only a
-// whole-message match counts, so "please stop by" is just a text.
-func keyword(body string) string { return strings.ToUpper(strings.TrimSpace(body)) }
-
-func kind(kw string) keywordKind {
-	switch kw {
-	case "STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT":
-		return optOut
-	case "START", "YES", "UNSTOP":
-		return optIn
-	case "HELP", "INFO":
-		return help
-	}
-	return notKeyword
 }

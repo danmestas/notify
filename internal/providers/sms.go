@@ -18,6 +18,10 @@ type SMSMessage struct {
 	From string
 	// Body is the rendered message text.
 	Body string
+	// StatusCallback, when set, is the URL the provider reports this
+	// message's delivery status to. Providers without per-message status
+	// callbacks ignore it.
+	StatusCallback string
 }
 
 // SMSProvider sends an SMS and reports the result. Mirrors ChatProvider: a

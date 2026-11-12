@@ -44,20 +44,6 @@ func (svc *Service) SetGlobal(ctx context.Context, scope domain.Scope, subscribe
 	return err
 }
 
-// SetGlobalChannel sets one channel in the subscriber's global prefs, keeping
-// the others as they are.
-func (svc *Service) SetGlobalChannel(ctx context.Context, scope domain.Scope, subscriberID, channel string, enabled bool) error {
-	channels, err := svc.load(svc.store.Preferences().GetGlobal(ctx, scope, subscriberID))
-	if err != nil {
-		return err
-	}
-	if channels == nil {
-		channels = map[string]bool{}
-	}
-	channels[channel] = enabled
-	return svc.SetGlobal(ctx, scope, subscriberID, channels)
-}
-
 // typeWorkflowDigest is the preference row holding a subscriber's per-workflow
 // digest window override. It reuses the preferences table unchanged: the unique
 // key is (env, subscriber, TYPE, workflow), so a digest row coexists with the

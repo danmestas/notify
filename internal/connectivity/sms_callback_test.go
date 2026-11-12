@@ -62,4 +62,71 @@ func TestSMSCallback(t *testing.T) {
 	if _, err := svc.SMSCallback(ctx, mail.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("non-sms integration err = %v, want ErrNotFound", err)
 	}
+
+	// A deactivated integration answers no callback.
+	if err := svc.Store().Integrations().SetActive(ctx, a, tw.ID, false); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+	if _, err := svc.SMSCallback(ctx, tw.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("inactive integration err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestHelpText_KeywordRejected: a HELP reply that is itself a keyword would
+// answer a text with a command, so it is refused on create and on update.
+func TestHelpText_KeywordRejected(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	if _, err := svc.CreateTwilio(ctx, scope, "tw", TwilioConfig{AccountSID: "AC1", AuthToken: "tok", From: "+1555", HelpText: " Stop "}, true); !errors.Is(err, ErrHelpTextIsKeyword) {
+		t.Fatalf("CreateTwilio err = %v, want ErrHelpTextIsKeyword", err)
+	}
+	if _, err := svc.CreateSignalWire(ctx, scope, "sw", SignalWireConfig{ProjectID: "p", Token: "t", SpaceURL: "x", From: "+1", HelpText: "help"}, false); !errors.Is(err, ErrHelpTextIsKeyword) {
+		t.Fatalf("CreateSignalWire err = %v, want ErrHelpTextIsKeyword", err)
+	}
+	in, err := svc.CreateTwilio(ctx, scope, "tw", TwilioConfig{AccountSID: "AC1", AuthToken: "tok", From: "+1555"}, true)
+	if err != nil {
+		t.Fatalf("CreateTwilio: %v", err)
+	}
+	if _, err := svc.Update(ctx, scope, in.ID, UpdateInput{Identifier: "tw", Credentials: map[string]string{"help_text": "yes"}}); !errors.Is(err, ErrHelpTextIsKeyword) {
+		t.Fatalf("Update err = %v, want ErrHelpTextIsKeyword", err)
+	}
+}
+
+// TestHelpText_Cleared: an empty help_text clears it back to the default; an
+// absent or masked one keeps it.
+func TestHelpText_Cleared(t *testing.T) {
+	ctx := context.Background()
+	svc := New(openTemp(t), testKey())
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	in, err := svc.CreateTwilio(ctx, scope, "tw", TwilioConfig{AccountSID: "AC1", AuthToken: "tok", From: "+1555", HelpText: "Acme help"}, true)
+	if err != nil {
+		t.Fatalf("CreateTwilio: %v", err)
+	}
+	help := func() string {
+		t.Helper()
+		cb, err := svc.SMSCallback(ctx, in.ID)
+		if err != nil {
+			t.Fatalf("SMSCallback: %v", err)
+		}
+		return cb.HelpText
+	}
+	for _, keep := range []map[string]string{{"from": "+1555"}, {"help_text": CredentialMaskSentinel}} {
+		if _, err := svc.Update(ctx, scope, in.ID, UpdateInput{Identifier: "tw", Credentials: keep}); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if got := help(); got != "Acme help" {
+			t.Fatalf("after %v help = %q, want it kept", keep, got)
+		}
+	}
+	if _, err := svc.Update(ctx, scope, in.ID, UpdateInput{Identifier: "tw", Credentials: map[string]string{"help_text": ""}}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := help(); got != "" {
+		t.Fatalf("after clearing help = %q, want empty (the default)", got)
+	}
+	// An empty value still keeps every other credential.
+	if cb, _ := svc.SMSCallback(ctx, in.ID); cb.SigningKey != "tok" {
+		t.Fatalf("clearing help_text lost the auth token: %+v", cb)
+	}
 }

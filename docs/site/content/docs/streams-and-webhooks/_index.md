@@ -95,7 +95,7 @@ An `email.reply` event:
   "notificationId": "…", "text": "Thanks!", "from": "ada@example.com", "messageId": "<…>", "receivedAt": "…" }
 ```
 
-An `sms.inbound` event. `subscriberId` is absent when no subscriber has the sender's phone; `phoneVerified` is false when the match has not verified it. `sms.opt_out` and `sms.opt_in` have the same shape plus `keyword` (`STOP`, `START`, …), one per subscriber with the number (or one with no `subscriberId`):
+An `sms.inbound` event. `subscriberId` is absent when no subscriber has the sender's phone; `phoneVerified` is false when the match has not verified it. `sms.opt_out` and `sms.opt_in` have the same shape plus `keyword` (`STOP`, `START`, …), one per subscriber with the number (or one with no `subscriberId`), sent only when the opt-out actually changed:
 
 ```json
 { "type": "sms.inbound", "subscriberId": "user-1", "phoneVerified": true, "from": "+15551112222",

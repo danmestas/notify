@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/danmestas/notify/internal/delivery/template"
@@ -47,6 +48,9 @@ type SMSHandler struct {
 	pub      EventPublisher
 	throttle Throttler
 	digester Digester
+	// statusCallbackBase is notify's public URL (origin plus base path), or
+	// "" when it has none.
+	statusCallbackBase string
 }
 
 // NewSMS constructs an SMSHandler backed by s and resolver r.
@@ -76,6 +80,25 @@ func (h *SMSHandler) WithEventBus(p EventPublisher) *SMSHandler {
 func (h *SMSHandler) WithThrottle(t Throttler) *SMSHandler {
 	h.throttle = t
 	return h
+}
+
+// WithStatusCallbackBase sets notify's public URL (origin plus base path).
+// With it set, every Twilio or SignalWire send asks the provider to report
+// the message's delivery status to that integration's status route
+// (/v1/inbound/sms/{integrationId}/status); a number's own settings are not
+// relied on. Empty asks for none.
+func (h *SMSHandler) WithStatusCallbackBase(base string) *SMSHandler {
+	h.statusCallbackBase = strings.TrimRight(base, "/")
+	return h
+}
+
+// statusCallback is the status route for integrationID, or "" when notify
+// has no public URL or the provider sends no status callbacks there.
+func (h *SMSHandler) statusCallback(providerID, integrationID string) string {
+	if h.statusCallbackBase == "" || integrationID == "" || (providerID != "twilio" && providerID != "signalwire") {
+		return ""
+	}
+	return h.statusCallbackBase + "/v1/inbound/sms/" + integrationID + "/status"
 }
 
 // WithDigester attaches an optional digester and returns the handler for
@@ -242,8 +265,9 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 	}
 
 	res, err := provider.Send(ctx, providers.SMSMessage{
-		To:   to,
-		Body: content,
+		To:             to,
+		Body:           content,
+		StatusCallback: h.statusCallback(providerID, integrationID),
 	})
 	if err != nil {
 		if providers.IsTransient(err) {

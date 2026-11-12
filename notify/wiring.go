@@ -57,7 +57,7 @@ func wireCommon[T common[T]](h T, d deliveryDeps) T {
 // entirely off those events via the durable delivery consumer, so email sends
 // were silently invisible to /v1/analytics/deliveries and
 // /v1/analytics/timeseries).
-func registerDeliveryHandlers(eng taskRegistrar, st *store.Store, conn *connectivity.Service, prefs *preferences.Service, bus *eventbus.Bus, armer delivery.ReplyArmer) {
+func registerDeliveryHandlers(eng taskRegistrar, st *store.Store, conn *connectivity.Service, prefs *preferences.Service, bus *eventbus.Bus, armer delivery.ReplyArmer, smsCallbackBase string) {
 	d := deliveryDeps{prefs: prefs, bus: bus}
 	eng.Handle(names.SendInApp, wireCommon(delivery.New(st), d).HandleInApp)
 	// send.email carries one dependency the other channels do not: the reply
@@ -65,7 +65,9 @@ func registerDeliveryHandlers(eng taskRegistrar, st *store.Store, conn *connecti
 	eng.Handle(names.SendEmail, wireCommon(delivery.NewEmail(st, conn), d).WithReplyArmer(armer).HandleEmail)
 	eng.Handle(names.SendPush, wireCommon(delivery.NewPush(st, conn), d).HandlePush)
 	eng.Handle(names.SendChat, wireCommon(delivery.NewChat(st, conn), d).HandleChat)
-	eng.Handle(names.SendSMS, wireCommon(delivery.NewSMS(st, conn), d).HandleSMS)
+	// send.sms asks the provider to report delivery status to notify's
+	// public status route, when notify has a public URL.
+	eng.Handle(names.SendSMS, wireCommon(delivery.NewSMS(st, conn), d).WithStatusCallbackBase(smsCallbackBase).HandleSMS)
 	// send.stream carries a 5th dependency (the durable-feed publisher) none
 	// of the other channels need, so it goes through wireCommon for the 4
 	// shared ones and then .WithFeed(bus) on top — *eventbus.Bus satisfies
@@ -104,6 +106,9 @@ type stepTaskDeps struct {
 	// runs, with store, puts every step task behind delivery.StopCancelled.
 	// nil leaves the handlers unguarded (wiring tests).
 	runs delivery.RunCanceller
+	// smsCallbackBase is notify's public URL plus base path, for SMS status
+	// callbacks. Empty asks providers for none.
+	smsCallbackBase string
 }
 
 // stopCancelled registers every handler behind delivery.StopCancelled, so no
@@ -129,7 +134,7 @@ func registerStepTaskHandlers(eng taskRegistrar, d stepTaskDeps) {
 	if d.runs != nil && d.store != nil {
 		eng = stopCancelled{eng: eng, store: d.store, runs: d.runs}
 	}
-	registerDeliveryHandlers(eng, d.store, d.conn, d.prefs, d.bus, d.replyArmer)
+	registerDeliveryHandlers(eng, d.store, d.conn, d.prefs, d.bus, d.replyArmer, d.smsCallbackBase)
 
 	// Scheduled (cron) digest window: sleeps until the next tick, then the
 	// downstream channel step self-sources and drains the accumulated events.

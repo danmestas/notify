@@ -1210,6 +1210,9 @@ func (svc *Service) ChatProviderFromIntegration(in domain.Integration) (provider
 // ProviderID="twilio" and Channel="sms". When primary is set the integration
 // becomes the preferred provider for the channel.
 func (svc *Service) CreateTwilio(ctx context.Context, scope domain.Scope, identifier string, cfg TwilioConfig, primary bool) (domain.Integration, error) {
+	if err := checkHelpText(cfg.HelpText); err != nil {
+		return domain.Integration{}, err
+	}
 	plaintext, err := json.Marshal(cfg)
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: marshal twilio config: %w", err)
@@ -1233,6 +1236,9 @@ func (svc *Service) CreateTwilio(ctx context.Context, scope domain.Scope, identi
 // ProviderID="signalwire" and Channel="sms". When primary is set the integration
 // becomes the preferred provider for the channel.
 func (svc *Service) CreateSignalWire(ctx context.Context, scope domain.Scope, identifier string, cfg SignalWireConfig, primary bool) (domain.Integration, error) {
+	if err := checkHelpText(cfg.HelpText); err != nil {
+		return domain.Integration{}, err
+	}
 	plaintext, err := json.Marshal(cfg)
 	if err != nil {
 		return domain.Integration{}, fmt.Errorf("connectivity: marshal signalwire config: %w", err)
@@ -1655,9 +1661,25 @@ func (svc *Service) Update(ctx context.Context, scope domain.Scope, id string, i
 
 		changed := false
 		for k, v := range inp.Credentials {
-			if v == CredentialMaskSentinel || v == "" {
+			if v == CredentialMaskSentinel {
 				// Caller left this field unchanged; keep the stored value.
 				continue
+			}
+			if v == "" {
+				// Empty keeps a field, except one whose empty value means
+				// "the default": that is how it is cleared.
+				if clearableCredentialFields[k] {
+					if _, ok := fields[k]; ok {
+						delete(fields, k)
+						changed = true
+					}
+				}
+				continue
+			}
+			if k == "help_text" {
+				if err := checkHelpText(v); err != nil {
+					return domain.Integration{}, err
+				}
 			}
 			fields[k] = v
 			changed = true

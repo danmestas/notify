@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 )
@@ -778,17 +779,23 @@ func checkPhoneVerifications(t *testing.T, ctx context.Context, s *Store, a, b d
 
 func checkSMSOptOuts(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
 	repo := s.SMSOptOuts()
-	if err := repo.OptOut(ctx, a, "+15550001111", "int-a"); err != nil {
+	if _, err := repo.OptOut(ctx, a, "+15550001111", "int-a"); err != nil {
 		t.Fatalf("seed A: %v", err)
 	}
 	if out, _ := repo.IsOptedOut(ctx, b, "+15550001111"); out {
 		t.Error("SMSOptOuts.IsOptedOut crossed tenants")
 	}
-	if err := repo.OptIn(ctx, b, "+15550001111"); err != nil {
+	if _, err := repo.OptIn(ctx, b, "+15550001111"); err != nil {
 		t.Fatalf("OptIn(b): %v", err)
 	}
 	if out, _ := repo.IsOptedOut(ctx, a, "+15550001111"); !out {
 		t.Error("SMSOptOuts.OptIn(b) cleared A's opt-out")
+	}
+	if ok, _ := repo.ClaimHelpReply(ctx, a, "int-a", "+15550001111", time.Hour); !ok {
+		t.Fatal("A's first HELP claim refused")
+	}
+	if ok, _ := repo.ClaimHelpReply(ctx, b, "int-a", "+15550001111", time.Hour); !ok {
+		t.Error("SMSOptOuts.ClaimHelpReply: A's claim limited B")
 	}
 }
 

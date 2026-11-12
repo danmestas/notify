@@ -107,7 +107,7 @@ func newRig(t *testing.T) *rig {
 		},
 		"int-nokey": {Scope: envB, IntegrationID: "int-nokey", ProviderID: "signalwire", From: ourNumber, Sender: r.sender},
 	}
-	svc := New(st, cbs, r.prefs, publicURL, slog.New(slog.NewTextHandler(io.Discard, nil))).WithEventPublisher(r.ev)
+	svc := New(st, cbs, publicURL, slog.New(slog.NewTextHandler(io.Discard, nil))).WithEventPublisher(r.ev)
 	router := chi.NewRouter()
 	svc.Routes(router)
 	r.srv = httptest.NewServer(router)
@@ -260,13 +260,13 @@ func TestInbound_KnownAndUnknownSender(t *testing.T) {
 // smsStep runs one sms step for subscriber ada in envA through the real
 // delivery handler with the real preference service, the workflow turning
 // sms on by default, and returns the message it recorded.
-func (r *rig) smsStep(capt *providers.CaptureSMS) domain.Message {
+func (r *rig) smsStep(capt *providers.CaptureSMS, defaultOn bool) domain.Message {
 	r.t.Helper()
 	env := runenv.InAppEnvelope{
 		Scope:        runenv.Scope{OrgID: envA.OrgID, EnvID: envA.EnvID},
 		WorkflowID:   "wf1",
 		SubscriberID: "ada",
-		Step:         runenv.Step{StepID: "S1", Channel: "sms", BodyTemplate: "hello", DefaultEnabled: true},
+		Step:         runenv.Step{StepID: "S1", Channel: "sms", BodyTemplate: "hello", DefaultEnabled: defaultOn},
 	}
 	input, _ := json.Marshal(env)
 	h := delivery.NewSMS(r.st, resolver{capt}).WithPreferences(r.prefs)
@@ -295,7 +295,7 @@ func TestKeywords_StopThenStart(t *testing.T) {
 	path := "/v1/inbound/sms/int-tw"
 	capt := providers.NewCaptureSMS()
 
-	if m := r.smsStep(capt); m.Status != "sent" {
+	if m := r.smsStep(capt, true); m.Status != "sent" {
 		t.Fatalf("before STOP: %+v, want sent", m)
 	}
 	if got := r.twilio(path, text("SM1", "+15551112222", "  stop ")); got != http.StatusOK {
@@ -305,11 +305,13 @@ func TestKeywords_StopThenStart(t *testing.T) {
 	if len(out) != 1 || out[0]["subscriberId"] != "ada" || out[0]["from"] != "+15551112222" || out[0]["keyword"] != "STOP" {
 		t.Fatalf("opt-out events = %v", out)
 	}
-	if on, _ := r.prefs.ChannelEnabled(context.Background(), envA, "ada", "wf1", "sms", false, true); on {
-		t.Fatal("STOP left the global sms preference on")
-	}
-	if m := r.smsStep(capt); m.Status != "skipped" || m.SkipReason != delivery.SkipReasonOptedOut {
+	if m := r.smsStep(capt, true); m.Status != "skipped" || m.SkipReason != delivery.SkipReasonOptedOut {
 		t.Fatalf("after STOP: %+v, want skipped opted_out", m)
+	}
+	// A workflow whose sms is off by default is skipped for that, not the
+	// opt-out, once START lifts it; meanwhile the opt-out wins.
+	if m := r.smsStep(capt, false); m.SkipReason != delivery.SkipReasonOptedOut {
+		t.Fatalf("default-off workflow after STOP: %+v, want opted_out", m)
 	}
 
 	if got := r.twilio(path, text("SM2", "+15551112222", "Start")); got != http.StatusOK {
@@ -318,11 +320,93 @@ func TestKeywords_StopThenStart(t *testing.T) {
 	if in := r.ev.ofType(EventOptIn); len(in) != 1 || in[0]["subscriberId"] != "ada" || in[0]["keyword"] != "START" {
 		t.Fatalf("opt-in events = %v", in)
 	}
-	if m := r.smsStep(capt); m.Status != "sent" {
+	if m := r.smsStep(capt, true); m.Status != "sent" {
 		t.Fatalf("after START: %+v, want sent", m)
+	}
+	// START restores exactly the earlier state: it does not turn sms on for
+	// a workflow that has it off by default.
+	if m := r.smsStep(capt, false); m.Status != "skipped" || m.SkipReason != delivery.SkipReasonPreference {
+		t.Fatalf("default-off workflow after START: %+v, want skipped by preference", m)
 	}
 	if len(capt.Sent()) != 2 {
 		t.Fatalf("sent %d, want 2 (before STOP and after START)", len(capt.Sent()))
+	}
+	if rows, _ := r.prefs.GetForSubscriber(context.Background(), envA, "ada"); len(rows) != 0 {
+		t.Fatalf("keywords wrote preferences: %+v", rows)
+	}
+}
+
+// TestKeywords_StartWithoutStopChangesNothing: a YES that answers some other
+// question, from a number that never opted out, is just a text.
+func TestKeywords_StartWithoutStopChangesNothing(t *testing.T) {
+	r := newRig(t)
+	r.subscriber(envA, "ada", "+15551112222", true)
+	capt := providers.NewCaptureSMS()
+	if got := r.twilio("/v1/inbound/sms/int-tw", text("Y1", "+15551112222", "YES")); got != http.StatusOK {
+		t.Fatalf("YES: status %d", got)
+	}
+	if n := len(r.ev.ofType(EventOptIn)); n != 0 {
+		t.Fatalf("%d opt-in events, want none", n)
+	}
+	if n := len(r.ev.ofType(EventInbound)); n != 1 {
+		t.Fatalf("%d inbound events, want the text itself", n)
+	}
+	if rows, _ := r.prefs.GetForSubscriber(context.Background(), envA, "ada"); len(rows) != 0 {
+		t.Fatalf("YES wrote preferences: %+v", rows)
+	}
+	if m := r.smsStep(capt, false); m.SkipReason != delivery.SkipReasonPreference {
+		t.Fatalf("default-off workflow after YES: %+v, want still skipped by preference", m)
+	}
+}
+
+// TestKeywords_OwnPreferenceSurvivesStopStart: a subscriber who turned sms
+// off themselves stays off through STOP and START.
+func TestKeywords_OwnPreferenceSurvivesStopStart(t *testing.T) {
+	r := newRig(t)
+	r.subscriber(envA, "ada", "+15551112222", true)
+	capt := providers.NewCaptureSMS()
+	if err := r.prefs.SetGlobal(context.Background(), envA, "ada", map[string]bool{"sms": false}); err != nil {
+		t.Fatalf("SetGlobal: %v", err)
+	}
+	r.twilio("/v1/inbound/sms/int-tw", text("S1", "+15551112222", "STOP"))
+	r.twilio("/v1/inbound/sms/int-tw", text("S2", "+15551112222", "START"))
+	if on, _ := r.prefs.ChannelEnabled(context.Background(), envA, "ada", "wf1", "sms", false, true); on {
+		t.Fatal("the subscriber's own sms=false did not survive STOP and START")
+	}
+	if m := r.smsStep(capt, true); m.SkipReason != delivery.SkipReasonPreference {
+		t.Fatalf("after STOP and START: %+v, want skipped by preference", m)
+	}
+}
+
+// TestKeywords_FailedOptOutIsAppliedOnRetry: if recording the opt-out fails,
+// the text is not kept either, so the provider's retry applies it.
+func TestKeywords_FailedOptOutIsAppliedOnRetry(t *testing.T) {
+	r := newRig(t)
+	r.subscriber(envA, "ada", "+15551112222", true)
+	writer, _ := r.st.Pools()
+	ctx := context.Background()
+	if _, err := writer.ExecContext(ctx, `CREATE TRIGGER fail_opt_out BEFORE INSERT ON sms_opt_outs
+		BEGIN SELECT RAISE(ABORT, 'injected'); END`); err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+	stop := text("SMstop", "+15551112222", "STOP")
+	if got := r.twilio("/v1/inbound/sms/int-tw", stop); got != http.StatusInternalServerError {
+		t.Fatalf("STOP with a failing opt-out: status %d, want 500 so the provider retries", got)
+	}
+	if n := len(r.ev.ofType(EventInbound)) + len(r.ev.ofType(EventOptOut)); n != 0 {
+		t.Fatalf("%d events for a STOP that was not applied", n)
+	}
+	if _, err := writer.ExecContext(ctx, `DROP TRIGGER fail_opt_out`); err != nil {
+		t.Fatalf("drop trigger: %v", err)
+	}
+	if got := r.twilio("/v1/inbound/sms/int-tw", stop); got != http.StatusOK {
+		t.Fatalf("retry: status %d", got)
+	}
+	if out, _ := r.st.SMSOptOuts().IsOptedOut(ctx, envA, "+15551112222"); !out {
+		t.Fatal("the retried STOP was not applied")
+	}
+	if n := len(r.ev.ofType(EventOptOut)); n != 1 {
+		t.Fatalf("%d opt-out events, want 1", n)
 	}
 }
 
@@ -376,6 +460,51 @@ func TestKeywords_HelpReplies(t *testing.T) {
 	}
 	if sent := r.sender.Sent(); len(sent) != 2 || sent[1].Body != "Acme alerts. Reply STOP to stop." {
 		t.Fatalf("configured HELP reply = %+v", sent)
+	}
+	// The reply asks for its own delivery status, like any send.
+	if cb := r.sender.Sent()[0].StatusCallback; cb != publicURL+"/v1/inbound/sms/int-tw/status" {
+		t.Fatalf("HELP reply StatusCallback = %q", cb)
+	}
+}
+
+// TestKeywords_HelpIsRateLimited: one HELP reply per number per integration
+// per 10 minutes, however often the number asks.
+func TestKeywords_HelpIsRateLimited(t *testing.T) {
+	r := newRig(t)
+	for i, sid := range []string{"H1", "H2", "H3"} {
+		if got := r.twilio("/v1/inbound/sms/int-tw", text(sid, "+15553334444", "HELP")); got != http.StatusOK {
+			t.Fatalf("HELP #%d: status %d", i, got)
+		}
+	}
+	r.twilio("/v1/inbound/sms/int-tw", text("H4", "+15551112222", "HELP")) // another number
+	sent := r.sender.Sent()
+	if len(sent) != 2 || sent[0].To != "+15553334444" || sent[1].To != "+15551112222" {
+		t.Fatalf("replies = %+v, want one per number", sent)
+	}
+	if n := len(r.ev.ofType(EventInbound)); n != 4 {
+		t.Fatalf("%d inbound events, want every text delivered", n)
+	}
+}
+
+// TestStatus_BeforeTheMessage: a failed callback that beats the send's
+// message row is kept and applied when the row is written.
+func TestStatus_BeforeTheMessage(t *testing.T) {
+	r := newRig(t)
+	if got := r.twilio("/v1/inbound/sms/int-tw/status", status("SMearly", "failed", "30003")); got != http.StatusNoContent {
+		t.Fatalf("early callback: status %d", got)
+	}
+	m := r.sentMessage(envA, "int-tw", "SMearly")
+	if m.Status != "error" || m.ErrorClass != string(providers.ClassRecipient) || !strings.Contains(m.ErrorText, "30003") {
+		t.Fatalf("message written after its callback = %+v, want the failure applied", m)
+	}
+}
+
+// TestInbound_OversizedBody: a body past the limit is refused with 413.
+func TestInbound_OversizedBody(t *testing.T) {
+	r := newRig(t)
+	form := text("BIG", "+15551112222", strings.Repeat("x", 70<<10))
+	if got := r.twilio("/v1/inbound/sms/int-tw", form); got != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413", got)
 	}
 }
 
@@ -550,7 +679,7 @@ func TestNoPublicURL_Refuses(t *testing.T) {
 		t.Fatalf("store.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	svc := New(st, fakeCallbacks{}, preferences.New(st), "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc := New(st, fakeCallbacks{}, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	router := chi.NewRouter()
 	svc.Routes(router)
 	rec := httptest.NewRecorder()

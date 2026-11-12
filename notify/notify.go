@@ -234,6 +234,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	registerStepTaskHandlers(reg, stepTaskDeps{
 		store: st, conn: conn, prefs: prefs, bus: bus, secrets: secrets, replyArmer: eml,
 		composer: ing, drafts: ags.Drafts(), runs: eng,
+		smsCallbackBase: publicCallbackBase(cfg.PublicBaseURL, base),
 	})
 
 	// Chat two-way loop: inbound Telegram (getUpdates long-poll) and Discord
@@ -342,7 +343,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// SMS provider callbacks (#143): inbound texts, delivery status and the
 	// STOP/START/HELP keywords. Signatures cover the public URL, base path
 	// included.
-	sms := smsloop.New(st, conn, prefs, publicCallbackBase(cfg.PublicBaseURL, base), log).WithEventPublisher(bus)
+	sms := smsloop.New(st, conn, publicCallbackBase(cfg.PublicBaseURL, base), log).WithEventPublisher(bus)
 	api := httpapi.New(httpapi.Deps{
 		A2AAuth:  a2a,
 		Receiver: receiver,

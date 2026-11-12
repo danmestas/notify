@@ -19,7 +19,6 @@ import (
 	"github.com/danmestas/notify/internal/httpapi"
 	"github.com/danmestas/notify/internal/identity"
 	"github.com/danmestas/notify/internal/inboxapi"
-	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/providers/twilio"
 	"github.com/danmestas/notify/internal/smsloop"
 	"github.com/danmestas/notify/internal/store"
@@ -53,7 +52,7 @@ func TestInboundSMS_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	const public = "https://notify.example.com"
-	sms := smsloop.New(st, conn, preferences.New(st), public, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	sms := smsloop.New(st, conn, public, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv := httptest.NewServer(httpapi.New(httpapi.Deps{
 		Identity: id, Audience: aud, Trigger: trigger.New(aud, st, nil), Inbox: inboxapi.New(st),
 		Store: st, Blobs: blobs, Connectivity: conn, SMSLoop: sms,

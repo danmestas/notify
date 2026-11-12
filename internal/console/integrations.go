@@ -1320,6 +1320,10 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			c.redirectIntegrationsCreateErr(w, r, "Identifier may only contain lowercase letters, numbers, hyphens, and underscores.")
 			return
 		}
+		if errors.Is(createErr, connectivity.ErrHelpTextIsKeyword) {
+			c.redirectIntegrationsCreateErr(w, r, "The HELP reply cannot itself be a keyword such as STOP, START or HELP.")
+			return
+		}
 		c.deps.Logger.Error("console: create integration", "provider", providerID, "err", createErr)
 		c.redirectIntegrationsCreateErr(w, r, "Create failed.")
 		return
@@ -1377,11 +1381,15 @@ func (c *Console) handleIntegrationUpdate(w http.ResponseWriter, r *http.Request
 	creds := map[string]string{}
 	for _, key := range []string{
 		"addr", "host", "username", "password", "from",
-		"account_id", "api_token", "base_url", "token",
+		"account_id", "api_token", "base_url", "token", "signing_key",
 	} {
 		if v := r.FormValue(key); v != "" {
 			creds[key] = v
 		}
+	}
+	// help_text is sent even when emptied: empty clears it to the default.
+	if _, ok := r.PostForm["help_text"]; ok {
+		creds["help_text"] = r.PostForm.Get("help_text")
 	}
 
 	inp := connectivity.UpdateInput{
@@ -1420,6 +1428,10 @@ func (c *Console) handleIntegrationUpdate(w http.ResponseWriter, r *http.Request
 		}
 		if errors.Is(err, store.ErrNotFound) {
 			c.serveNotFound(w, r)
+			return
+		}
+		if errors.Is(err, connectivity.ErrHelpTextIsKeyword) {
+			http.Error(w, "The HELP reply cannot itself be a keyword such as STOP, START or HELP.", http.StatusUnprocessableEntity)
 			return
 		}
 		c.deps.Logger.Error("console: update integration", "id", id, "err", err)

@@ -75,11 +75,13 @@ type MessageRepo interface {
 	// GetByProviderMessageID returns the message integrationID sent under the
 	// provider's message id, or ErrNotFound. Scope-first.
 	GetByProviderMessageID(ctx context.Context, scope domain.Scope, integrationID, providerMessageID string) (domain.Message, error)
-	// AdvanceStatus moves a sent message to status ("delivered" or "error",
-	// with its error class and text). Only a sent message moves: delivered
-	// and error are final, so a late or repeated callback changes nothing and
-	// reports changed=false.
-	AdvanceStatus(ctx context.Context, scope domain.Scope, id, status, errorClass, errorText string) (changed bool, err error)
+	// ApplyStatusCallback applies a provider's final status ("delivered" or
+	// "error", with its error class and text) to the message integrationID
+	// sent under providerMessageID. Only a sent message moves: delivered and
+	// error are final, so a late or repeated callback changes nothing. With no
+	// such message yet the status is buffered, and Create applies it to the
+	// message when it is written (within an hour).
+	ApplyStatusCallback(ctx context.Context, scope domain.Scope, integrationID, providerMessageID, status, errorClass, errorText string) (StatusCallbackResult, error)
 }
 
 // markableFields whitelists the boolean flag columns MarkOne/MarkBulk may
@@ -144,7 +146,20 @@ func (repo *messageRepo) Create(ctx context.Context, scope domain.Scope, m domai
 	if len(m.Extras) == 0 {
 		m.Extras = json.RawMessage("{}")
 	}
-	_, err := repo.w.ExecContext(
+	tx, err := repo.w.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// A sent message whose final status already arrived takes it now, in the
+	// same transaction as the write, so a callback racing the write is never
+	// lost: either it found this row, or it left its status here.
+	if m.ProviderMessageID != "" && m.Status == "sent" {
+		if err := takePendingStatus(ctx, tx, scope, &m); err != nil {
+			return domain.Message{}, err
+		}
+	}
+	_, err = tx.ExecContext(
 		ctx,
 		`INSERT INTO messages
 		   (id, org_id, environment_id, workflow_id, notification_id, run_id, step_id, subscriber_id,
@@ -156,6 +171,9 @@ func (repo *messageRepo) Create(ctx context.Context, scope domain.Scope, m domai
 		m.Archived, m.TransactionID, m.ErrorText, m.ErrorClass, m.SkipReason, m.CreatedAt, []byte(m.Extras), m.ProviderMessageID,
 	)
 	if err != nil {
+		return domain.Message{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return domain.Message{}, err
 	}
 	if repo.obs != nil {
@@ -429,24 +447,4 @@ func (repo *messageRepo) GetByProviderMessageID(ctx context.Context, scope domai
 		scope.OrgID, scope.EnvID, integrationID, providerMessageID,
 	)
 	return scanMessageRow(row)
-}
-
-func (repo *messageRepo) AdvanceStatus(ctx context.Context, scope domain.Scope, id, status, errorClass, errorText string) (bool, error) {
-	if status != "delivered" && status != "error" {
-		return false, fmt.Errorf("store: advance message status: %q is not a final status", status)
-	}
-	res, err := repo.w.ExecContext(
-		ctx,
-		`UPDATE messages SET status = ?, error_class = ?, error_text = ?
-		 WHERE org_id = ? AND environment_id = ? AND id = ? AND status = 'sent'`,
-		status, errorClass, errorText, scope.OrgID, scope.EnvID, id,
-	)
-	if err != nil {
-		return false, fmt.Errorf("store: advance message status: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("store: advance message status: %w", err)
-	}
-	return n == 1, nil
 }

@@ -8,6 +8,22 @@ import (
 	"testing"
 )
 
+// TestSignature_PublishedVector is the worked example from Twilio's
+// "Webhooks security" page (twilio.com/docs/usage/security).
+func TestSignature_PublishedVector(t *testing.T) {
+	params := url.Values{
+		"CallSid": {"CA1234567890ABCDE"},
+		"Caller":  {"+14158675310"},
+		"Digits":  {"1234"},
+		"From":    {"+14158675310"},
+		"To":      {"+18005551212"},
+	}
+	const want = "L/OH5YylLD5NRKLltdqwSvS0BnU="
+	if got := Signature("12345", "https://example.com/myapp.php?foo=1&bar=2", params); got != want {
+		t.Fatalf("Signature = %q, want Twilio's %q", got, want)
+	}
+}
+
 // TestValidSignature: X-Twilio-Signature is base64(HMAC-SHA1(auth token,
 // URL + each POST param's name and value, names sorted)).
 func TestValidSignature(t *testing.T) {

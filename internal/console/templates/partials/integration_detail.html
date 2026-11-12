@@ -229,7 +229,7 @@
   <div class="form-row">
     <span class="form-label">Status callback URL</span>
     <code class="integration-cred-value">{{$.SMSCallbacks.Status}}</code>
-    <span class="form-hint">Paste into the Messaging Service's (or number's) status callback. Both are verified by the provider's signature{{if eq $in.ProviderID "signalwire"}}, which needs this integration's Signing Key{{end}}.</span>
+    <span class="form-hint">Nothing to paste: notify asks for it on every text it sends. Both URLs are verified by the provider's signature{{if eq $in.ProviderID "signalwire"}}, which needs this integration's Signing Key{{end}}.</span>
     {{if not $.SMSCallbacks.PublicBaseURLSet}}<span class="chip chip-danger">NOTIFY_PUBLIC_BASE_URL is not set: replace {base_url}, and set it, or every callback is refused.</span>{{end}}
   </div>
   {{end}}

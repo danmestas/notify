@@ -31,15 +31,16 @@ type SMSCallback struct {
 }
 
 // SMSCallback resolves integrationID, in whatever scope it lives, for a
-// provider callback. It is store.ErrNotFound unless the id names a Twilio or
-// SignalWire SMS integration. The caller must verify the callback's signature
+// provider callback. It is store.ErrNotFound unless the id names an active
+// Twilio or SignalWire SMS integration. The caller must verify the callback's signature
 // with SigningKey before acting in Scope.
 func (svc *Service) SMSCallback(ctx context.Context, integrationID string) (SMSCallback, error) {
 	in, err := svc.store.Integrations().LookupUnscoped(ctx, integrationID)
 	if err != nil {
 		return SMSCallback{}, err
 	}
-	if in.Channel != "sms" || (in.ProviderID != "twilio" && in.ProviderID != "signalwire") {
+	// An inactive integration answers nothing and sends nothing.
+	if !in.Active || in.Channel != "sms" || (in.ProviderID != "twilio" && in.ProviderID != "signalwire") {
 		return SMSCallback{}, store.ErrNotFound
 	}
 	plaintext, err := svc.decrypt(in.EncCredentials)

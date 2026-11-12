@@ -45,8 +45,10 @@ type InboundMessageRepo interface {
 	Record(ctx context.Context, scope domain.Scope, m InboundMessage) (InboundMessage, error)
 	// RecordSMS stores an inbound text (its channel is "sms"). It is kept once
 	// per (IntegrationID, MessageID): a provider's retry returns the row
-	// already recorded with created=false.
-	RecordSMS(ctx context.Context, scope domain.Scope, m InboundMessage) (rec InboundMessage, created bool, err error)
+	// already recorded with created=false. A new text makes change (its
+	// keyword's opt-out or opt-in, for Sender) in the same transaction;
+	// changed reports whether that altered anything.
+	RecordSMS(ctx context.Context, scope domain.Scope, m InboundMessage, change OptChange) (rec InboundMessage, created, changed bool, err error)
 	// List returns messages after afterSeq, oldest first, at most limit (1-200).
 	List(ctx context.Context, scope domain.Scope, afterSeq int64, limit int) ([]InboundMessage, error)
 	// ListSMSByIntegration returns the texts that arrived through
@@ -89,12 +91,17 @@ func (repo *inboundMessageRepo) Record(ctx context.Context, scope domain.Scope, 
 	return scanInboundMessage(row)
 }
 
-func (repo *inboundMessageRepo) RecordSMS(ctx context.Context, scope domain.Scope, m InboundMessage) (InboundMessage, bool, error) {
+func (repo *inboundMessageRepo) RecordSMS(ctx context.Context, scope domain.Scope, m InboundMessage, change OptChange) (rec InboundMessage, created, changed bool, err error) {
 	if m.IntegrationID == "" || m.MessageID == "" {
-		return InboundMessage{}, false, errors.New("store: inbound text needs an integration and a provider message id")
+		return InboundMessage{}, false, false, errors.New("store: inbound text needs an integration and a provider message id")
 	}
+	tx, err := repo.w.BeginTx(ctx, nil)
+	if err != nil {
+		return InboundMessage{}, false, false, fmt.Errorf("store: record inbound text: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	sum := sha256.Sum256([]byte(m.Body))
-	res, err := repo.w.ExecContext(
+	res, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO inbound_messages (id, org_id, environment_id, sha256, size, recipient, sender, subject, message_id, received_at,
 		   channel, body, integration_id, subscriber_id, phone_verified)
@@ -104,18 +111,33 @@ func (repo *inboundMessageRepo) RecordSMS(ctx context.Context, scope domain.Scop
 		m.Body, m.IntegrationID, m.SubscriberID, m.PhoneVerified,
 	)
 	if err != nil {
-		return InboundMessage{}, false, fmt.Errorf("store: record inbound text: %w", err)
+		return InboundMessage{}, false, false, fmt.Errorf("store: record inbound text: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return InboundMessage{}, false, fmt.Errorf("store: record inbound text: %w", err)
+		return InboundMessage{}, false, false, fmt.Errorf("store: record inbound text: %w", err)
 	}
-	row := repo.w.QueryRowContext(ctx,
+	created = n == 1
+	// The keyword's effect commits with the text or not at all: a failure
+	// leaves no text, so the provider's retry is a first delivery and applies
+	// it. A duplicate applies nothing, so a late retry of an old STOP cannot
+	// undo a newer START.
+	if created {
+		if changed, err = applyOptChange(ctx, tx, scope, change, m.Sender, m.IntegrationID); err != nil {
+			return InboundMessage{}, false, false, err
+		}
+	}
+	row := tx.QueryRowContext(ctx,
 		`SELECT `+inboundMessageColumns+` FROM inbound_messages
 		 WHERE org_id = ? AND environment_id = ? AND integration_id = ? AND message_id = ? AND channel = 'sms'`,
 		scope.OrgID, scope.EnvID, m.IntegrationID, m.MessageID)
-	rec, err := scanInboundMessage(row)
-	return rec, n == 1, err
+	if rec, err = scanInboundMessage(row); err != nil {
+		return InboundMessage{}, false, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return InboundMessage{}, false, false, fmt.Errorf("store: record inbound text: %w", err)
+	}
+	return rec, created, changed, nil
 }
 
 func (repo *inboundMessageRepo) List(ctx context.Context, scope domain.Scope, afterSeq int64, limit int) ([]InboundMessage, error) {

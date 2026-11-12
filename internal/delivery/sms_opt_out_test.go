@@ -34,6 +34,30 @@ func TestHandleSMS_StoresTheProviderMessageID(t *testing.T) {
 	}
 }
 
+// TestHandleSMS_StatusCallback: with notify's public URL known, every send
+// asks the provider to report delivery status to the integration's status
+// route; without it, none is asked for.
+func TestHandleSMS_StatusCallback(t *testing.T) {
+	for name, c := range map[string]struct{ base, want string }{
+		"public url":    {"https://notify.example.com/base", "https://notify.example.com/base/v1/inbound/sms/integ-sms-test/status"},
+		"no public url": {"", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newStore(t)
+			capt := providers.NewCaptureSMS()
+			verifySMSSubscriber(t, s, "+15557654321")
+			input, _ := json.Marshal(smsEnvelope())
+			h := NewSMS(s, stubSMSResolver{p: capt, id: "twilio"}).WithStatusCallbackBase(c.base)
+			if _, err := h.HandleSMS(context.Background(), engine.TaskPayload{RunID: "r", StepID: "S1", Input: input}); err != nil {
+				t.Fatalf("HandleSMS: %v", err)
+			}
+			if sent := capt.Sent(); len(sent) != 1 || sent[0].StatusCallback != c.want {
+				t.Fatalf("sent = %+v, want StatusCallback %q", sent, c.want)
+			}
+		})
+	}
+}
+
 // TestHandleSMS_OptedOutIsSkipped: a number that texted STOP gets nothing,
 // skipped as opted_out (not preference), even where the subscriber's own
 // preference or a critical workflow would send.
@@ -51,7 +75,7 @@ func TestHandleSMS_OptedOutIsSkipped(t *testing.T) {
 			s := newStore(t)
 			capt := providers.NewCaptureSMS()
 			verifySMSSubscriber(t, s, "+15557654321")
-			if err := s.SMSOptOuts().OptOut(context.Background(), domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "+15557654321", "integ-sms-test"); err != nil {
+			if _, err := s.SMSOptOuts().OptOut(context.Background(), domain.Scope{OrgID: "org_1", EnvID: "env_1"}, "+15557654321", "integ-sms-test"); err != nil {
 				t.Fatalf("OptOut: %v", err)
 			}
 			h := NewSMS(s, stubSMSResolver{p: capt, id: "twilio"}).WithPreferences(stubChecker{enabled: true})

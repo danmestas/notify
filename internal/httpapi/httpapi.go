@@ -1236,7 +1236,7 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
+			if errors.Is(err, connectivity.ErrInvalidIdentifier) || errors.Is(err, connectivity.ErrHelpTextIsKeyword) {
 				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
@@ -2359,7 +2359,7 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
+			if errors.Is(err, connectivity.ErrInvalidIdentifier) || errors.Is(err, connectivity.ErrHelpTextIsKeyword) {
 				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
@@ -2414,6 +2414,10 @@ func putIntegration(conn *connectivity.Service) http.HandlerFunc {
 			}
 			if errors.Is(err, store.ErrNotFound) {
 				writeJSONError(w, http.StatusNotFound, "not_found", "integration not found")
+				return
+			}
+			if errors.Is(err, connectivity.ErrHelpTextIsKeyword) {
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
 			// Never echo request detail into the error body.
