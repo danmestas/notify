@@ -21,7 +21,7 @@ An endpoint: `{id, url, active, signed}`; the create and rotate responses add `s
 
 ## Idempotent setup
 
-`POST /v1/webhooks/endpoints` is safe to run on every deploy. An environment has at most one endpoint per URL, matched after trimming the URL and lowercasing its scheme and host (the path and query are case-sensitive). When the URL already exists the call returns `200` with that endpoint, creates nothing, and does not rotate or reveal its secret. `active` is ignored for an existing endpoint; change it with `PUT`. The same URL in two environments is two endpoints. A `PUT` that would give an endpoint another endpoint's URL is a `409`.
+`POST /v1/webhooks/endpoints` is safe to run on every deploy. An environment has at most one active endpoint per URL, matched after trimming the URL and lowercasing its scheme and host (the path and query are case-sensitive). When the URL already exists the call returns `200` with that endpoint, creates nothing, and does not rotate or reveal its secret. `active` is ignored for an existing endpoint; change it with `PUT`. The same URL in two environments is two endpoints. A `PUT` that would make an endpoint active under a URL another active endpoint holds is a `409`.
 
 ## Supplying the signing secret
 
@@ -29,4 +29,4 @@ An endpoint: `{id, url, active, signed}`; the create and rotate responses add `s
 
 To pin a secret you already manage, send it on setup. If the URL already exists, a supplied `secret` replaces that endpoint's secret and is echoed back in the `200`; omit `secret` to leave the existing one alone. Verify deliveries with `sha256=` plus the hex HMAC-SHA256, keyed by the secret, over `X-Notify-Timestamp` + `.` + the raw body.
 
-Migration 0055 enforces the one-URL rule with a unique index. Duplicates that predate it were collapsed first: per environment and URL, the oldest active endpoint was kept (the oldest, if none was active) and the others deleted along with their secrets.
+Migration 0055 enforces the one-URL rule with a unique index on active endpoints. Nothing is deleted. Duplicates that predate it were resolved per environment and URL (compared after trimming): the most recently created active endpoint stays live, or the newest if none was active, and every other duplicate was set to `active: false` with its row and secret intact. List them with `GET /v1/webhooks/endpoints` (look for the same `url` with `active: false`) and remove any you no longer need with `DELETE`.

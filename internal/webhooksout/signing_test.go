@@ -374,3 +374,33 @@ func TestManagement_WeakSecretRejected(t *testing.T) {
 		t.Fatalf("a rejected create left %d endpoints, want 1", len(eps))
 	}
 }
+
+// TestManagement_UpsertMatchesTheKeptRowAfterMigration: with a deactivated
+// duplicate beside the live row (the state migration 0055 leaves), setup
+// returns the live row and never the deactivated one.
+func TestManagement_UpsertMatchesTheKeptRowAfterMigration(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	repo := st.WebhookEndpoints()
+	const u = "https://example.org/hook"
+	// Inactive duplicates are allowed by the partial index; activate the newer.
+	for _, id := range []string{"01", "02"} {
+		if _, err := repo.Create(ctx, scope, domain.WebhookEndpoint{ID: id, URL: u}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := repo.SetActive(ctx, scope, "02", true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := NewManagement(st, testBox(t)).Create(ctx, scope, u, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Existed || got.Endpoint.ID != "02" || got.Secret != "" {
+		t.Fatalf("got %+v; want the kept row 02, Existed, no secret", got)
+	}
+	if eps, _ := repo.List(ctx, scope); len(eps) != 2 {
+		t.Fatalf("%d rows, want the deactivated duplicate preserved", len(eps))
+	}
+}

@@ -134,18 +134,26 @@ func (svc *ManagementService) Create(ctx context.Context, scope domain.Scope, ur
 }
 
 // findByURL matches url against the environment's endpoints under
-// NormalizeURL, so rows stored before normalisation still match.
+// NormalizeURL, so rows stored before normalisation still match. It prefers
+// the active row, then the newest.
 func (svc *ManagementService) findByURL(ctx context.Context, scope domain.Scope, url string) (domain.WebhookEndpoint, bool, error) {
 	eps, err := svc.st.WebhookEndpoints().List(ctx, scope)
 	if err != nil {
 		return domain.WebhookEndpoint{}, false, err
 	}
+	var best domain.WebhookEndpoint
+	var found bool
 	for _, ep := range eps {
-		if NormalizeURL(ep.URL) == url {
-			return ep, true, nil
+		if NormalizeURL(ep.URL) != url {
+			continue
+		}
+		// An active row is the live one; among equals the newest (highest
+		// ULID) wins. Deactivated duplicates are left alone.
+		if !found || (ep.Active && !best.Active) || (ep.Active == best.Active && ep.ID > best.ID) {
+			best, found = ep, true
 		}
 	}
-	return domain.WebhookEndpoint{}, false, nil
+	return best, found, nil
 }
 
 // RotateSecret replaces an existing endpoint's signing secret with secret, or

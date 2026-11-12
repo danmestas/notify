@@ -12,7 +12,7 @@ import (
 // environment. Every method is Scope-first.
 type WebhookEndpointRepo interface {
 	// Create inserts the endpoint, minting an id when empty. Returns ErrConflict
-	// when the environment already has an endpoint with this URL.
+	// when the environment already has an active endpoint with this URL.
 	Create(ctx context.Context, scope domain.Scope, e domain.WebhookEndpoint) (domain.WebhookEndpoint, error)
 	// ListActiveByEnv returns the active endpoints for the scope, ordered by id.
 	ListActiveByEnv(ctx context.Context, scope domain.Scope) ([]domain.WebhookEndpoint, error)
@@ -22,11 +22,12 @@ type WebhookEndpointRepo interface {
 	// Returns ErrNotFound when no row matches.
 	GetByID(ctx context.Context, scope domain.Scope, id string) (domain.WebhookEndpoint, error)
 	// UpdateURL replaces the URL of an existing endpoint and returns the updated row.
-	// Returns ErrNotFound when no row matches, ErrConflict when another endpoint
-	// in the environment already has the URL.
+	// Returns ErrNotFound when no row matches, ErrConflict when another active
+	// endpoint in the environment already has the URL.
 	UpdateURL(ctx context.Context, scope domain.Scope, id, url string) (domain.WebhookEndpoint, error)
 	// SetActive enables or disables an endpoint and returns the updated row.
-	// Returns ErrNotFound when no row matches.
+	// Returns ErrNotFound when no row matches, ErrConflict when enabling would
+	// duplicate another active endpoint's URL.
 	SetActive(ctx context.Context, scope domain.Scope, id string, active bool) (domain.WebhookEndpoint, error)
 	// SetSecret stores the SEALED signing secret; "" clears it.
 	SetSecret(ctx context.Context, scope domain.Scope, id, sealed string) (domain.WebhookEndpoint, error)
@@ -184,6 +185,9 @@ func (repo *webhookEndpointRepo) SetActive(ctx context.Context, scope domain.Sco
 		 WHERE org_id = ? AND environment_id = ? AND id = ?`,
 		active, scope.OrgID, scope.EnvID, id,
 	)
+	if isUniqueConstraintError(err) {
+		return domain.WebhookEndpoint{}, ErrConflict
+	}
 	if err != nil {
 		return domain.WebhookEndpoint{}, err
 	}

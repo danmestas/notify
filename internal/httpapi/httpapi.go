@@ -2866,6 +2866,10 @@ func getWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
 				writeJSONError(w, http.StatusNotFound, "not_found", "webhook endpoint not found")
 				return
 			}
+			if errors.Is(err, store.ErrConflict) {
+				writeJSONError(w, http.StatusConflict, "conflict", "another active webhook endpoint already has this url")
+				return
+			}
 			writeInternalError(w, r, err)
 			return
 		}
@@ -2898,6 +2902,10 @@ func putWebhookEndpoint(wh *webhooksout.ManagementService) http.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				writeJSONError(w, http.StatusNotFound, "not_found", "webhook endpoint not found")
+				return
+			}
+			if errors.Is(err, store.ErrConflict) {
+				writeJSONError(w, http.StatusConflict, "conflict", "another active webhook endpoint already has this url")
 				return
 			}
 			writeInternalError(w, r, err)
