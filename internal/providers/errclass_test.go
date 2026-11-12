@@ -137,6 +137,13 @@ func TestClassifyError_ProviderShapes(t *testing.T) {
 
 // TestClassifyText_ProbeDetails covers the credential probes' detail lines
 // (internal/connectivity/verify.go), which is how a check is classified.
+func TestClassifyError_NotConfigured(t *testing.T) {
+	err := fmt.Errorf("wrapped: %w", &providers.NotConfiguredError{Channel: "email", Err: errors.New("store: not found")})
+	if got := providers.ClassifyError(err); got != providers.ClassNotConfigured {
+		t.Fatalf("ClassifyError = %q, want %q", got, providers.ClassNotConfigured)
+	}
+}
+
 func TestClassifyText_ProbeDetails(t *testing.T) {
 	cases := []struct {
 		detail string

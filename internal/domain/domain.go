@@ -273,7 +273,7 @@ type Message struct {
 	TransactionID string `db:"transaction_id"`
 	ErrorText     string `db:"error_text"`
 	// ErrorClass says why a failed message failed: "auth", "rate_limited",
-	// "provider_down", "rejected_message" or "recipient"
+	// "provider_down", "rejected_message", "recipient" or "not_configured"
 	// (providers.ClassifyError). Empty unless Status is "error".
 	ErrorClass string `db:"error_class"`
 	// SkipReason names the gate that skipped this message when Status is

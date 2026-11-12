@@ -727,6 +727,12 @@ func skipReasonLabel(reason string) string {
 		return "Skipped: the subscriber has this channel turned off, or has no preference and the step is off by default."
 	case delivery.SkipReasonNoVerifiedPhone:
 		return "Skipped: the subscriber has no verified phone. Only the subscriber can verify one."
+	case delivery.SkipReasonNoEmail:
+		return "Skipped: the subscriber has no email address."
+	case delivery.SkipReasonNoDevice:
+		return "Skipped: the subscriber has no push device or topic registered."
+	case delivery.SkipReasonNoChannel:
+		return "Skipped: the subscriber has no chat address for this provider."
 	case "":
 		return ""
 	default:

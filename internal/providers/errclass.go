@@ -13,7 +13,7 @@ import (
 
 // ErrorClass names why a delivery failed, in terms an operator can act on.
 // Every failed message records one next to its error text (#100), and the
-// integration health tracker counts every class but ClassRecipient against the
+// integration health tracker counts every class but ClassRecipient and ClassNotConfigured against the
 // integration that sent it.
 type ErrorClass string
 
@@ -32,7 +32,27 @@ const (
 	// ClassRecipient: the address is bad, unknown or gone. It says nothing
 	// about the integration, so it never counts against its health.
 	ClassRecipient ErrorClass = "recipient"
+	// ClassNotConfigured: the scope has no integration for the channel, so
+	// nothing was ever called. It is a setup fault, not a send failure, and
+	// there is no integration to count it against.
+	ClassNotConfigured ErrorClass = "not_configured"
 )
+
+// NotConfiguredError says the scope has no active integration for Channel.
+// ClassifyError reads its class off the type, not its text.
+type NotConfiguredError struct {
+	Channel string
+	Err     error
+}
+
+func (e *NotConfiguredError) Error() string {
+	return "no active " + e.Channel + " integration is configured"
+}
+
+func (e *NotConfiguredError) Unwrap() error { return e.Err }
+
+// ErrorClass implements the typed-error hook classifyTyped reads.
+func (e *NotConfiguredError) ErrorClass() ErrorClass { return ClassNotConfigured }
 
 // ClassifyError maps a send error from any provider to its ErrorClass. It is
 // the one place provider failures are interpreted: every channel's delivery
@@ -53,6 +73,10 @@ const (
 func ClassifyError(err error) ErrorClass {
 	if err == nil {
 		return ""
+	}
+	var nc *NotConfiguredError
+	if errors.As(err, &nc) {
+		return ClassNotConfigured
 	}
 	text := err.Error()
 	if isRecipient(text) {

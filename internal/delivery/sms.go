@@ -227,7 +227,7 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 
 	provider, providerID, integrationID, err := h.resolveSMSProvider(ctx, scope, env.Step.Integration)
 	if err != nil {
-		return h.persistSMSError(ctx, env, t, "", "", err)
+		return h.persistSMSError(ctx, env, t, "", "", resolveFailure("sms", err))
 	}
 
 	if _, err := provider.Send(ctx, providers.SMSMessage{

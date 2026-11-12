@@ -227,6 +227,18 @@ func TestRecipientErrorsChangeNothing(t *testing.T) {
 	}
 }
 
+func TestNotConfiguredErrorsChangeNothing(t *testing.T) {
+	r := newRig(t)
+	r.sent()
+	before := r.health()
+	for range 5 {
+		r.failed(providers.ClassNotConfigured, "no active email integration is configured")
+	}
+	if after := r.health(); after != before {
+		t.Fatalf("not_configured errors changed health:\nbefore %+v\nafter  %+v", before, after)
+	}
+}
+
 func TestRecipientErrorsAloneLeaveUnverified(t *testing.T) {
 	r := newRig(t)
 	for range 5 {

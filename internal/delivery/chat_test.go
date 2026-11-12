@@ -225,10 +225,10 @@ func TestHandleChat_Discord_FallsBackToIntegrationWebhook(t *testing.T) {
 	}
 }
 
-// TestHandleChat_Telegram_MissingChatIDIsError: a telegram subscriber with no
-// chat_id is a permanent fault — an "error" message is recorded and the
+// TestHandleChat_Telegram_MissingChatIDIsSkipped: a telegram subscriber with no
+// chat_id has nowhere to send to — a "skipped" message is recorded and the
 // provider is never invoked.
-func TestHandleChat_Telegram_MissingChatIDIsError(t *testing.T) {
+func TestHandleChat_Telegram_MissingChatIDIsSkipped(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 	capt := providers.NewCaptureChat()
@@ -246,11 +246,8 @@ func TestHandleChat_Telegram_MissingChatIDIsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(msgs) != 1 || msgs[0].Status != "error" {
-		t.Fatalf("expected one error message, got %+v", msgs)
-	}
-	if msgs[0].ErrorText == "" {
-		t.Error("ErrorText empty, want a missing-chat_id explanation")
+	if len(msgs) != 1 || msgs[0].Status != "skipped" || msgs[0].SkipReason != SkipReasonNoChannel {
+		t.Fatalf("expected one skipped/%s message, got %+v", SkipReasonNoChannel, msgs)
 	}
 	if got := len(capt.Sent()); got != 0 {
 		t.Errorf("provider invoked %d times with no chat_id, want 0", got)

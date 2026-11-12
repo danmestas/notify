@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/danmestas/notify/internal/delivery/template"
@@ -239,9 +240,15 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 			return h.persistEmailSkipped(ctx, env, t, scope, subject, content, SkipReasonPreference)
 		}
 	}
+	// No address, no send: checked before the provider is resolved so a
+	// subscriber without an email is skipped, not failed, whether or not an
+	// email integration exists.
+	if strings.TrimSpace(to) == "" {
+		return h.persistEmailSkipped(ctx, env, t, scope, subject, content, SkipReasonNoEmail)
+	}
 	provider, from, providerID, integrationID, err := h.resolveEmailProvider(ctx, scope, env.Step.Integration)
 	if err != nil {
-		return h.persistEmailError(ctx, env, t, "", "", err)
+		return h.persistEmailError(ctx, env, t, "", "", resolveFailure("email", err))
 	}
 
 	// Per-step From override: step-level address wins over the integration default.
@@ -340,8 +347,8 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 	return out, nil
 }
 
-// persistEmailSkipped records a status:"skipped" email message (the channel is
-// disabled by subscriber preference, or the step condition is false) and returns its JSON with a nil error.
+// persistEmailSkipped records a status:"skipped" email message carrying the
+// gate that skipped it (reason) and returns its JSON with a nil error.
 // No email is sent; this mirrors the existing skipped/failed-message pattern.
 // resolve is attempted best-effort to populate providerID and integrationID.
 func (h *EmailHandler) persistEmailSkipped(ctx context.Context, env runenv.InAppEnvelope, t engine.TaskPayload, scope domain.Scope, subject, content, reason string) (json.RawMessage, error) {
