@@ -41,7 +41,7 @@ import (
 // service.
 func (tc *testConsole) seedWebhook(t *testing.T, rawURL string, active bool) domain.WebhookEndpoint {
 	t.Helper()
-	ep, err := tc.deps.Webhooks.Create(testBackground(), tc.scope, rawURL, active)
+	ep, err := tc.deps.Webhooks.Create(testBackground(), tc.scope, rawURL, active, "")
 	if err != nil {
 		t.Fatalf("seed webhook %q: %v", rawURL, err)
 	}
@@ -371,7 +371,7 @@ func TestWebhooks_ScopeIsolation(t *testing.T) {
 	altScope := tc.altScope(t)
 
 	tc.seedWebhook(t, "https://example.com/mine", true)
-	if _, err := tc.deps.Webhooks.Create(testBackground(), altScope, "https://example.com/theirs", true); err != nil {
+	if _, err := tc.deps.Webhooks.Create(testBackground(), altScope, "https://example.com/theirs", true, ""); err != nil {
 		t.Fatalf("seed alt webhook: %v", err)
 	}
 

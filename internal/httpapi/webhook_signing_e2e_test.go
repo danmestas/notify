@@ -122,3 +122,69 @@ func TestWebhookEndpoint_NoSecretboxIsLoud(t *testing.T) {
 		t.Fatalf("rotate without a box = %d, want 503", status)
 	}
 }
+
+const pinnedSecret = "pinned-by-the-caller-0123456789abcdef"
+
+// TestWebhookEndpoint_SetupTwiceIsOneEndpoint: the second POST for a URL is a
+// 200 for the same endpoint, with no secret and no rotation.
+func TestWebhookEndpoint_SetupTwiceIsOneEndpoint(t *testing.T) {
+	srv, auth := signingServer(t, true)
+	status, body := doPost(t, srv.URL+"/v1/webhooks/endpoints", auth, `{"url":"https://Quarry.example/notify","active":true}`)
+	if status != http.StatusCreated {
+		t.Fatalf("first: %d %s", status, body)
+	}
+	first := decodeEndpoint(t, body)
+
+	status, body = doPost(t, srv.URL+"/v1/webhooks/endpoints", auth, `{"url":"https://quarry.example/notify","active":true}`)
+	if status != http.StatusOK {
+		t.Fatalf("second: %d %s", status, body)
+	}
+	second := decodeEndpoint(t, body)
+	if second.ID != first.ID || second.Secret != "" || !second.Signed {
+		t.Fatalf("second = %+v; want same id, no secret, still signed", second)
+	}
+	_, list := doGet(t, srv.URL+"/v1/webhooks/endpoints", auth)
+	if n := bytes.Count([]byte(list), []byte(`"id"`)); n != 1 {
+		t.Fatalf("list has %d endpoints: %s", n, list)
+	}
+}
+
+// TestWebhookEndpoint_SuppliedSecret: create pins the secret, a weak one is a
+// 400, rotate accepts one, and GET never returns it.
+func TestWebhookEndpoint_SuppliedSecret(t *testing.T) {
+	srv, auth := signingServer(t, true)
+	url := srv.URL + "/v1/webhooks/endpoints"
+
+	if status, body := doPost(t, url, auth, `{"url":"https://quarry.example/notify","active":true,"secret":"short"}`); status != http.StatusBadRequest {
+		t.Fatalf("weak secret: %d %s, want 400", status, body)
+	}
+	if _, list := doGet(t, url, auth); bytes.Contains([]byte(list), []byte("quarry")) {
+		t.Fatal("a rejected create left an endpoint behind")
+	}
+
+	status, body := doPost(t, url, auth, `{"url":"https://quarry.example/notify","active":true,"secret":"`+pinnedSecret+`"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("create: %d %s", status, body)
+	}
+	created := decodeEndpoint(t, body)
+	if created.Secret != pinnedSecret {
+		t.Fatalf("secret = %q, want the supplied one", created.Secret)
+	}
+
+	rotated := "rotated-by-the-caller-0123456789abcdef"
+	status, body = doPost(t, url+"/"+created.ID+"/secret", auth, `{"secret":"`+rotated+`"}`)
+	if status != http.StatusOK || decodeEndpoint(t, body).Secret != rotated {
+		t.Fatalf("rotate with secret: %d %s", status, body)
+	}
+	if status, _ := doPost(t, url+"/"+created.ID+"/secret", auth, `{"secret":"weak"}`); status != http.StatusBadRequest {
+		t.Fatalf("rotate weak = %d, want 400", status)
+	}
+
+	_, got := doGet(t, url+"/"+created.ID, auth)
+	_, list := doGet(t, url, auth)
+	for _, s := range []string{pinnedSecret, rotated} {
+		if bytes.Contains([]byte(got+list), []byte(s)) {
+			t.Fatalf("a read leaked %q", s)
+		}
+	}
+}
