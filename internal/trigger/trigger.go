@@ -111,6 +111,11 @@ type TriggerResponse struct {
 	Status        string   `json:"status"`
 	TransactionID string   `json:"transactionId"`
 	Error         []string `json:"error,omitempty"`
+	// NotificationIDs holds the id of the notification row written for each
+	// recipient, in recipient order (a topic's members in member order). Empty
+	// for a refused trigger. A retry of the same transactionId returns the
+	// existing rows' ids. A digest-merged recipient writes no row, so has no id.
+	NotificationIDs []string `json:"notificationIds,omitempty"`
 }
 
 // wireSubscriber is the handlebars context object for {{subscriber.*}} — camelCase
@@ -260,15 +265,21 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 		if err := svc.s.TopicTriggers().Record(ctx, scope, transactionID, req.To.TopicKey); err != nil {
 			return TriggerResponse{}, err
 		}
+		var ids []string
 		for _, subscriberID := range subs {
-			if _, err := svc.ingestForSubscriber(ctx, scope, wf, subscriberID, req); err != nil {
+			id, err := svc.ingestForSubscriber(ctx, scope, wf, subscriberID, req)
+			if err != nil {
 				return TriggerResponse{}, err
+			}
+			if id != "" {
+				ids = append(ids, id)
 			}
 		}
 		return TriggerResponse{
-			Acknowledged:  true,
-			Status:        "processed",
-			TransactionID: transactionID,
+			Acknowledged:    true,
+			Status:          "processed",
+			TransactionID:   transactionID,
+			NotificationIDs: ids,
 		}, nil
 	}
 
@@ -283,13 +294,19 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 	}); err != nil {
 		return TriggerResponse{}, err
 	}
-	if _, err := svc.ingestForSubscriber(ctx, scope, wf, req.To.SubscriberID, req); err != nil {
+	id, err := svc.ingestForSubscriber(ctx, scope, wf, req.To.SubscriberID, req)
+	if err != nil {
 		return TriggerResponse{}, err
 	}
+	var ids []string
+	if id != "" {
+		ids = []string{id}
+	}
 	return TriggerResponse{
-		Acknowledged:  true,
-		Status:        "processed",
-		TransactionID: transactionID,
+		Acknowledged:    true,
+		Status:          "processed",
+		TransactionID:   transactionID,
+		NotificationIDs: ids,
 	}, nil
 }
 
@@ -297,7 +314,8 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 // subscriber profile, honour digest coordination, record the notification,
 // build the envelope from the workflow's first step and start the engine run.
 // It assumes req.TransactionID is already minted and wf has at least one step.
-// A digest-merged event returns an empty runID with no error (no run started).
+// It returns the notification id; a digest-merged event writes no row and
+// starts no run, so it returns an empty id with no error.
 func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope, wf domain.Workflow, subscriberID string, req TriggerRequest) (string, error) {
 	var steps []domain.Step
 	if err := json.Unmarshal(wf.Steps, &steps); err != nil {
@@ -385,7 +403,7 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 	if notif.RunID != "" {
 		// An earlier attempt of this same trigger started the run and recorded
 		// it; a retry starts nothing.
-		return notif.RunID, nil
+		return notif.ID, nil
 	}
 
 	envelope := runenv.InAppEnvelope{
@@ -447,7 +465,10 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 	// subject token; it is proven end-to-end by the engine smoke workflow.
 	// authoring registers under the identical name (authoring.DAGName).
 	dagName := names.Workflow(scope.EnvID, req.Name)
-	return svc.start(ctx, scope, notif.ID, dagName, envelopeJSON)
+	if _, err := svc.start(ctx, scope, notif.ID, dagName, envelopeJSON); err != nil {
+		return "", err
+	}
+	return notif.ID, nil
 }
 
 // notificationFor returns the notification row this trigger delivers under,
