@@ -220,6 +220,20 @@
   </div>
   {{end}}
 
+  {{if $.SMSCallbacks}}
+  <div class="form-row" id="sms-callbacks">
+    <span class="form-label">Inbound message URL</span>
+    <code class="integration-cred-value">{{$.SMSCallbacks.Inbound}}</code>
+    <span class="form-hint">Paste into the number's "A message comes in" webhook (HTTP POST).</span>
+  </div>
+  <div class="form-row">
+    <span class="form-label">Status callback URL</span>
+    <code class="integration-cred-value">{{$.SMSCallbacks.Status}}</code>
+    <span class="form-hint">Nothing to paste: notify asks for it on every text it sends. Both URLs are verified by the provider's signature{{if eq $in.ProviderID "signalwire"}}, which needs this integration's Signing Key{{end}}.</span>
+    {{if not $.SMSCallbacks.PublicBaseURLSet}}<span class="chip chip-danger">NOTIFY_PUBLIC_BASE_URL is not set: replace {base_url}, and set it, or every callback is refused.</span>{{end}}
+  </div>
+  {{end}}
+
   {{/* Edit form or read-only view */}}
   {{if $.ReadOnly}}
   <div class="integration-detail-readonly">
@@ -364,6 +378,37 @@
     </div>
     {{end}}
   </section>
+  {{if $.InboundTexts}}
+  <section class="integration-activity-section" aria-labelledby="integration-inbound-heading">
+    <h2 id="integration-inbound-heading" class="console-card-title">Inbound texts</h2>
+    <div class="console-table-wrap">
+      <table class="console-table" aria-label="Inbound texts">
+        <thead>
+          <tr>
+            <th scope="col">From</th>
+            <th scope="col">Subscriber</th>
+            <th scope="col">Text</th>
+            <th scope="col">Received</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range $.InboundTexts}}
+          <tr>
+            <td><code class="activity-monospace">{{.From}}</code></td>
+            <td>
+              {{if .SubscriberID}}<code class="activity-monospace">{{.SubscriberID}}</code>
+              {{if not .PhoneVerified}}<span class="chip">unverified</span>{{end}}
+              {{else}}<span class="console-muted">unknown sender</span>{{end}}
+            </td>
+            <td>{{.Body}}</td>
+            <td><time datetime="{{.ReceivedAt}}" title="{{.ReceivedAt}}">{{.ReceivedAt}}</time></td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {{end}}
   {{end}}
 
   {{end}}

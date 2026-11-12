@@ -71,6 +71,9 @@ func (c *Client) Send(ctx context.Context, msg providers.SMSMessage) (providers.
 	form.Set("From", from)
 	form.Set("To", msg.To)
 	form.Set("Body", msg.Body)
+	if msg.StatusCallback != "" {
+		form.Set("StatusCallback", msg.StatusCallback)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {

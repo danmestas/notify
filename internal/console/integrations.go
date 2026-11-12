@@ -250,6 +250,44 @@ type integrationDetailView struct {
 	WebPushSubjectDefault bool
 	// WebPushSubjectError echoes a refused subject back to the form.
 	WebPushSubjectError string
+	// SMSCallbacks is set for a Twilio or SignalWire integration: the URLs
+	// to paste into the provider so inbound texts and delivery status reach
+	// notify (#143).
+	SMSCallbacks *smsCallbackURLs
+	// InboundTexts are the newest texts that arrived through an SMS
+	// integration, shown on its Activity tab.
+	InboundTexts []integrationInboundText
+}
+
+// smsCallbackURLs are an SMS integration's two provider callback URLs.
+// PublicBaseURLSet is false when they carry the "{base_url}" placeholder.
+type smsCallbackURLs struct {
+	Inbound          string
+	Status           string
+	PublicBaseURLSet bool
+}
+
+// integrationInboundText is one row of an SMS integration's inbound texts.
+type integrationInboundText struct {
+	From          string
+	Body          string
+	SubscriberID  string
+	PhoneVerified bool
+	ReceivedAt    string
+}
+
+// smsCallbacksFor returns the callback URLs for a provider that sends them,
+// or nil.
+func (c *Console) smsCallbacksFor(in domain.Integration) *smsCallbackURLs {
+	if in.Channel != "sms" || (in.ProviderID != "twilio" && in.ProviderID != "signalwire") {
+		return nil
+	}
+	base, set := "{base_url}", false
+	if origin := strings.TrimRight(c.deps.PublicBaseURL, "/"); origin != "" {
+		base, set = origin+c.deps.BasePath, true
+	}
+	inbound := base + "/v1/inbound/sms/" + in.ID
+	return &smsCallbackURLs{Inbound: inbound, Status: inbound + "/status", PublicBaseURLSet: set}
 }
 
 // integrationActivityRow is one row in the Activity tab of the detail drawer.
@@ -395,6 +433,9 @@ func integrationsEmptyState(filtered bool, readOnly bool) *emptyState {
 	return es
 }
 
+// smsHelpTextHelp explains the HELP reply field on an SMS integration.
+const smsHelpTextHelp = "Optional. Sent back when someone texts HELP or INFO. Empty sends a default naming this number."
+
 // credentialFieldsForProvider returns the masked credential fields for a
 // known provider. All values are set to CredentialMaskSentinel — real
 // secrets are never returned to the browser.
@@ -439,6 +480,7 @@ func credentialFieldsForProvider(providerID string) []integrationCredentialField
 			{Key: "account_sid", Label: "Account SID", Value: connectivity.CredentialMaskSentinel, Required: true},
 			{Key: "auth_token", Label: "Auth Token", Value: connectivity.CredentialMaskSentinel, Required: true},
 			{Key: "from", Label: "From number", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{Key: "help_text", Label: "HELP reply", Value: connectivity.CredentialMaskSentinel, Help: smsHelpTextHelp},
 		}
 	case "signalwire":
 		return []integrationCredentialField{
@@ -446,6 +488,11 @@ func credentialFieldsForProvider(providerID string) []integrationCredentialField
 			{Key: "token", Label: "API Token", Value: connectivity.CredentialMaskSentinel, Required: true},
 			{Key: "space_url", Label: "Space URL", Value: connectivity.CredentialMaskSentinel, Required: true},
 			{Key: "from", Label: "From number", Value: connectivity.CredentialMaskSentinel, Required: true},
+			{
+				Key: "signing_key", Label: "Signing Key", Value: connectivity.CredentialMaskSentinel,
+				Help: "Dashboard, API Credentials. SignalWire signs inbound texts and delivery callbacks with it; without it notify refuses them.",
+			},
+			{Key: "help_text", Label: "HELP reply", Value: connectivity.CredentialMaskSentinel, Help: smsHelpTextHelp},
 		}
 	case "resend":
 		return []integrationCredentialField{
@@ -790,6 +837,7 @@ func (c *Console) serveFragmentIntegrationDetail(w http.ResponseWriter, r *http.
 		WebPushSubject:        webPushSubject,
 		WebPushSubjectDefault: webPushSubjectDefault,
 		WebPushSubjectError:   r.URL.Query().Get("subjectError"),
+		SMSCallbacks:          c.smsCallbacksFor(in),
 	})
 	if err != nil {
 		c.deps.Logger.Error("console: render integration detail", "err", err)
@@ -1004,11 +1052,26 @@ func (c *Console) serveFragmentIntegrationActivity(w http.ResponseWriter, r *htt
 		}
 	}
 
+	var texts []integrationInboundText
+	if c.deps.InboundMessages != nil && c.smsCallbacksFor(in) != nil {
+		got, terr := c.deps.InboundMessages.ListSMSByIntegration(r.Context(), scope, id, 50)
+		if terr != nil {
+			c.deps.Logger.Error("console: list inbound texts", "id", id, "err", terr)
+		}
+		for _, m := range got {
+			texts = append(texts, integrationInboundText{
+				From: m.Sender, Body: m.Body, SubscriberID: m.SubscriberID,
+				PhoneVerified: m.PhoneVerified, ReceivedAt: m.ReceivedAt,
+			})
+		}
+	}
+
 	html, err := renderFragment(c.ts.base, "integration-detail", integrationDetailView{
 		Integration:      integrationToRow(in),
 		ReadOnly:         c.deps.ReadOnly,
 		ActiveTab:        "activity",
 		ActivityMessages: rows,
+		InboundTexts:     texts,
 	})
 	if err != nil {
 		c.deps.Logger.Error("console: render integration activity", "err", err)
@@ -1159,14 +1222,17 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			AccountSID: r.FormValue("account_sid"),
 			AuthToken:  r.FormValue("auth_token"),
 			From:       r.FormValue("from"),
+			HelpText:   r.FormValue("help_text"),
 		}
 		_, createErr = c.deps.Connectivity.CreateTwilio(r.Context(), scope, identifier, cfg, primary)
 	case "signalwire":
 		cfg := connectivity.SignalWireConfig{
-			ProjectID: r.FormValue("project_id"),
-			Token:     r.FormValue("token"),
-			SpaceURL:  r.FormValue("space_url"),
-			From:      r.FormValue("from"),
+			ProjectID:  r.FormValue("project_id"),
+			Token:      r.FormValue("token"),
+			SpaceURL:   r.FormValue("space_url"),
+			From:       r.FormValue("from"),
+			SigningKey: r.FormValue("signing_key"),
+			HelpText:   r.FormValue("help_text"),
 		}
 		_, createErr = c.deps.Connectivity.CreateSignalWire(r.Context(), scope, identifier, cfg, primary)
 	case "sns":
@@ -1254,6 +1320,10 @@ func (c *Console) handleIntegrationCreate(w http.ResponseWriter, r *http.Request
 			c.redirectIntegrationsCreateErr(w, r, "Identifier may only contain lowercase letters, numbers, hyphens, and underscores.")
 			return
 		}
+		if errors.Is(createErr, connectivity.ErrHelpTextIsKeyword) {
+			c.redirectIntegrationsCreateErr(w, r, "The HELP reply cannot itself be a keyword such as STOP, START or HELP.")
+			return
+		}
 		c.deps.Logger.Error("console: create integration", "provider", providerID, "err", createErr)
 		c.redirectIntegrationsCreateErr(w, r, "Create failed.")
 		return
@@ -1311,11 +1381,15 @@ func (c *Console) handleIntegrationUpdate(w http.ResponseWriter, r *http.Request
 	creds := map[string]string{}
 	for _, key := range []string{
 		"addr", "host", "username", "password", "from",
-		"account_id", "api_token", "base_url", "token",
+		"account_id", "api_token", "base_url", "token", "signing_key",
 	} {
 		if v := r.FormValue(key); v != "" {
 			creds[key] = v
 		}
+	}
+	// help_text is sent even when emptied: empty clears it to the default.
+	if _, ok := r.PostForm["help_text"]; ok {
+		creds["help_text"] = r.PostForm.Get("help_text")
 	}
 
 	inp := connectivity.UpdateInput{
@@ -1354,6 +1428,10 @@ func (c *Console) handleIntegrationUpdate(w http.ResponseWriter, r *http.Request
 		}
 		if errors.Is(err, store.ErrNotFound) {
 			c.serveNotFound(w, r)
+			return
+		}
+		if errors.Is(err, connectivity.ErrHelpTextIsKeyword) {
+			http.Error(w, "The HELP reply cannot itself be a keyword such as STOP, START or HELP.", http.StatusUnprocessableEntity)
 			return
 		}
 		c.deps.Logger.Error("console: update integration", "id", id, "err", err)

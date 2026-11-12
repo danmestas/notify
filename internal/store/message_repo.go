@@ -72,6 +72,16 @@ type MessageRepo interface {
 	// message for subscriberID when all is true. Returns the number of rows
 	// actually updated.
 	MarkBulk(ctx context.Context, scope domain.Scope, subscriberID string, ids []string, all bool, field string, value bool) (int64, error)
+	// GetByProviderMessageID returns the message integrationID sent under the
+	// provider's message id, or ErrNotFound. Scope-first.
+	GetByProviderMessageID(ctx context.Context, scope domain.Scope, integrationID, providerMessageID string) (domain.Message, error)
+	// ApplyStatusCallback applies a provider's final status ("delivered" or
+	// "error", with its error class and text) to the message integrationID
+	// sent under providerMessageID. Only a sent message moves: delivered and
+	// error are final, so a late or repeated callback changes nothing. With no
+	// such message yet the status is buffered, and Create applies it to the
+	// message when it is written (within an hour).
+	ApplyStatusCallback(ctx context.Context, scope domain.Scope, integrationID, providerMessageID, status, errorClass, errorText string) (StatusCallbackResult, error)
 }
 
 // markableFields whitelists the boolean flag columns MarkOne/MarkBulk may
@@ -93,7 +103,7 @@ type messageRepo struct {
 // only requires updating this constant and the corresponding Scan call.
 const messageColumns = `m.id, m.org_id, m.environment_id, m.workflow_id, m.notification_id, m.run_id, m.step_id,
 	m.subscriber_id, m.channel, m.provider_id, m.integration_id, m.content, m.subject, m.status, m.seen, m.read,
-	m.archived, m.transaction_id, m.error_text, m.error_class, m.skip_reason, m.created_at, m.extras,
+	m.archived, m.transaction_id, m.error_text, m.error_class, m.skip_reason, m.created_at, m.extras, m.provider_message_id,
 	COALESCE(w.trigger_identifier, '') AS workflow_identifier`
 
 // messageWorkflowJoin resolves each message's workflow_identifier at read
@@ -113,7 +123,7 @@ func scanMessage(rows *sql.Rows) (domain.Message, error) {
 		&m.ID, &m.OrgID, &m.EnvID, &m.WorkflowID, &m.NotificationID, &m.RunID, &m.StepID,
 		&m.SubscriberID, &m.Channel, &m.ProviderID, &m.IntegrationID, &m.Content, &m.Subject,
 		&m.Status, &m.Seen, &m.Read, &m.Archived, &m.TransactionID, &m.ErrorText, &m.ErrorClass, &m.SkipReason, &m.CreatedAt,
-		&extras, &m.WorkflowIdentifier,
+		&extras, &m.ProviderMessageID, &m.WorkflowIdentifier,
 	)
 	m.Extras = json.RawMessage(extras)
 	return m, err
@@ -136,18 +146,34 @@ func (repo *messageRepo) Create(ctx context.Context, scope domain.Scope, m domai
 	if len(m.Extras) == 0 {
 		m.Extras = json.RawMessage("{}")
 	}
-	_, err := repo.w.ExecContext(
+	tx, err := repo.w.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// A sent message whose final status already arrived takes it now, in the
+	// same transaction as the write, so a callback racing the write is never
+	// lost: either it found this row, or it left its status here.
+	if m.ProviderMessageID != "" && m.Status == "sent" {
+		if err := takePendingStatus(ctx, tx, scope, &m); err != nil {
+			return domain.Message{}, err
+		}
+	}
+	_, err = tx.ExecContext(
 		ctx,
 		`INSERT INTO messages
 		   (id, org_id, environment_id, workflow_id, notification_id, run_id, step_id, subscriber_id,
 		    channel, provider_id, integration_id, content, subject, status, seen, read, archived,
-		    transaction_id, error_text, error_class, skip_reason, created_at, extras)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    transaction_id, error_text, error_class, skip_reason, created_at, extras, provider_message_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.OrgID, m.EnvID, m.WorkflowID, m.NotificationID, m.RunID, m.StepID, m.SubscriberID,
 		m.Channel, m.ProviderID, m.IntegrationID, m.Content, m.Subject, m.Status, m.Seen, m.Read,
-		m.Archived, m.TransactionID, m.ErrorText, m.ErrorClass, m.SkipReason, m.CreatedAt, []byte(m.Extras),
+		m.Archived, m.TransactionID, m.ErrorText, m.ErrorClass, m.SkipReason, m.CreatedAt, []byte(m.Extras), m.ProviderMessageID,
 	)
 	if err != nil {
+		return domain.Message{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return domain.Message{}, err
 	}
 	if repo.obs != nil {
@@ -167,7 +193,7 @@ func scanMessageRow(row *sql.Row) (domain.Message, error) {
 		&m.ID, &m.OrgID, &m.EnvID, &m.WorkflowID, &m.NotificationID, &m.RunID, &m.StepID,
 		&m.SubscriberID, &m.Channel, &m.ProviderID, &m.IntegrationID, &m.Content, &m.Subject,
 		&m.Status, &m.Seen, &m.Read, &m.Archived, &m.TransactionID, &m.ErrorText, &m.ErrorClass, &m.SkipReason, &m.CreatedAt,
-		&extras, &m.WorkflowIdentifier,
+		&extras, &m.ProviderMessageID, &m.WorkflowIdentifier,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Message{}, ErrNotFound
@@ -406,4 +432,19 @@ func (repo *messageRepo) ListByNotificationID(ctx context.Context, scope domain.
 		msgs = append(msgs, m)
 	}
 	return msgs, rows.Err()
+}
+
+func (repo *messageRepo) GetByProviderMessageID(ctx context.Context, scope domain.Scope, integrationID, providerMessageID string) (domain.Message, error) {
+	if providerMessageID == "" {
+		return domain.Message{}, ErrNotFound
+	}
+	row := repo.r.QueryRowContext(
+		ctx,
+		`SELECT `+messageColumns+`
+		 FROM `+messageWorkflowJoin+`
+		 WHERE m.org_id = ? AND m.environment_id = ? AND m.integration_id = ? AND m.provider_message_id = ?
+		 ORDER BY m.id LIMIT 1`,
+		scope.OrgID, scope.EnvID, integrationID, providerMessageID,
+	)
+	return scanMessageRow(row)
 }

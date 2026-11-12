@@ -56,6 +56,7 @@ import (
 	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/replyhook"
 	"github.com/danmestas/notify/internal/secretbox"
+	"github.com/danmestas/notify/internal/smsloop"
 	"github.com/danmestas/notify/internal/smtpin"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/streamsource"
@@ -233,6 +234,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	registerStepTaskHandlers(reg, stepTaskDeps{
 		store: st, conn: conn, prefs: prefs, bus: bus, secrets: secrets, replyArmer: eml,
 		composer: ing, drafts: ags.Drafts(), runs: eng,
+		smsCallbackBase: publicCallbackBase(cfg.PublicBaseURL, base),
 	})
 
 	// Chat two-way loop: inbound Telegram (getUpdates long-poll) and Discord
@@ -338,6 +340,10 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	if n.cards != nil {
 		a2aSvc = a2aSvc.WithCards(n.cards)
 	}
+	// SMS provider callbacks (#143): inbound texts, delivery status and the
+	// STOP/START/HELP keywords. Signatures cover the public URL, base path
+	// included.
+	sms := smsloop.New(st, conn, publicCallbackBase(cfg.PublicBaseURL, base), log).WithEventPublisher(bus)
 	api := httpapi.New(httpapi.Deps{
 		A2AAuth:  a2a,
 		Receiver: receiver,
@@ -345,7 +351,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 		Identity: id, Audience: aud, Trigger: trg, Inbox: inboxapi.New(st).WithPhoneVerification(phoneverify.New(st, conn)),
 		Realtime: realtime.New(bus), Feed: feedapi.New(bus), Inbound: inbound.New(trg),
 		Analytics: an, Agents: ag, Ingress: ing, Connectivity: conn, CredChecker: n.credVerify, Store: st, EnvVars: ev,
-		EmailLoop: eml, SourceIngest: feedingest.New(srcSvc, bus), Authoring: n.au,
+		EmailLoop: eml, SMSLoop: sms, SourceIngest: feedingest.New(srcSvc, bus), Authoring: n.au,
 		Preferences: prefs, InboundMXHost: cfg.InboundMXHost, Secrets: secrets, Blobs: blobs,
 	})
 
@@ -381,6 +387,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 		// Inbound email console page: read-only thread log + endpoint status.
 		EmailThreads:            st.EmailThreads(),
 		InboundSecretConfigured: cfg.InboundSecret != "",
+		InboundMessages:         st.InboundMessages(),
 		Trigger:                 trg,
 		CredVerifier:            n.credVerify,
 		CredChecker:             n.credVerify,
@@ -486,6 +493,16 @@ func cleanBasePath(p string) (string, error) {
 		}
 	}
 	return p, nil
+}
+
+// publicCallbackBase is the URL prefix providers call notify's routes at:
+// the public origin plus the base path. Empty when no public origin is set.
+func publicCallbackBase(publicBaseURL, base string) string {
+	origin := strings.TrimRight(publicBaseURL, "/")
+	if origin == "" {
+		return ""
+	}
+	return origin + base
 }
 
 // mount serves h under base, so a request outside base is a 404.

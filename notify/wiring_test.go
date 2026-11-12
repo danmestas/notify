@@ -62,7 +62,7 @@ func TestRegisterDeliveryHandlers_EmailPublishesDeliveryEvent(t *testing.T) {
 	conn := connectivity.New(st, mk)
 	prefs := preferences.New(st)
 
-	registerDeliveryHandlers(eng, st, conn, prefs, bus, nil)
+	registerDeliveryHandlers(eng, st, conn, prefs, bus, nil, "")
 	if err := eng.StartWorkers(ctx); err != nil {
 		t.Fatalf("StartWorkers: %v", err)
 	}

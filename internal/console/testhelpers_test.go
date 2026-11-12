@@ -187,6 +187,7 @@ func newTestConsole(t *testing.T) *testConsole {
 		EnvVars:          ev,
 		InboundDomains:   inbounddomains.New(st, ""),
 		EmailThreads:     st.EmailThreads(),
+		InboundMessages:  st.InboundMessages(),
 		Trigger:          newStubTrigger(""),
 		Agents:           ags,
 		Composer:         composer,

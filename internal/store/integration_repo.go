@@ -24,6 +24,10 @@ type IntegrationRepo interface {
 	// ErrNotFound when the id does not exist or belongs to a different scope
 	// (both cases produce the same response to avoid information leakage).
 	GetByID(ctx context.Context, scope domain.Scope, id string) (domain.Integration, error)
+	// LookupUnscoped fetches an integration by ID in any scope. Only for a
+	// provider callback that then authenticates with the integration's own
+	// credentials; every other caller uses GetByID.
+	LookupUnscoped(ctx context.Context, id string) (domain.Integration, error)
 	// GetByProviderID fetches the scope's integration for providerID
 	// regardless of the active flag or channel priority ordering. Unlike
 	// GetActiveByChannel (which resolves the one provider a channel actually
@@ -217,6 +221,35 @@ func (repo *integrationRepo) GetByID(ctx context.Context, scope domain.Scope, id
 		 FROM integrations
 		 WHERE id = ? AND org_id = ? AND environment_id = ?`,
 		id, scope.OrgID, scope.EnvID,
+	).Scan(&in.ID, &in.OrgID, &in.EnvID, &in.ProviderID, &in.Channel, &in.EncCredentials,
+		&cfg, &in.Active, &in.Primary, &in.Priority, &in.Identifier)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Integration{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Integration{}, err
+	}
+	in.Configurations = cfg
+	return in, nil
+}
+
+// LookupUnscoped fetches an integration by ID alone, carrying the org and
+// environment it belongs to. It exists for a provider's callback, which
+// arrives with no API key and names the integration in its URL: the caller
+// must authenticate the request with this integration's own credentials
+// before acting in its scope.
+func (repo *integrationRepo) LookupUnscoped(ctx context.Context, id string) (domain.Integration, error) {
+	var (
+		in  domain.Integration
+		cfg []byte
+	)
+	err := repo.r.QueryRowContext(
+		ctx,
+		`SELECT id, org_id, environment_id, provider_id, channel, enc_credentials,
+		        configurations, active, primary_provider, priority, identifier
+		 FROM integrations
+		 WHERE id = ?`,
+		id,
 	).Scan(&in.ID, &in.OrgID, &in.EnvID, &in.ProviderID, &in.Channel, &in.EncCredentials,
 		&cfg, &in.Active, &in.Primary, &in.Priority, &in.Identifier)
 	if errors.Is(err, sql.ErrNoRows) {

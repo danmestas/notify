@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/danmestas/notify/internal/delivery/template"
@@ -47,6 +48,9 @@ type SMSHandler struct {
 	pub      EventPublisher
 	throttle Throttler
 	digester Digester
+	// statusCallbackBase is notify's public URL (origin plus base path), or
+	// "" when it has none.
+	statusCallbackBase string
 }
 
 // NewSMS constructs an SMSHandler backed by s and resolver r.
@@ -76,6 +80,25 @@ func (h *SMSHandler) WithEventBus(p EventPublisher) *SMSHandler {
 func (h *SMSHandler) WithThrottle(t Throttler) *SMSHandler {
 	h.throttle = t
 	return h
+}
+
+// WithStatusCallbackBase sets notify's public URL (origin plus base path).
+// With it set, every Twilio or SignalWire send asks the provider to report
+// the message's delivery status to that integration's status route
+// (/v1/inbound/sms/{integrationId}/status); a number's own settings are not
+// relied on. Empty asks for none.
+func (h *SMSHandler) WithStatusCallbackBase(base string) *SMSHandler {
+	h.statusCallbackBase = strings.TrimRight(base, "/")
+	return h
+}
+
+// statusCallback is the status route for integrationID, or "" when notify
+// has no public URL or the provider sends no status callbacks there.
+func (h *SMSHandler) statusCallback(providerID, integrationID string) string {
+	if h.statusCallbackBase == "" || integrationID == "" || (providerID != "twilio" && providerID != "signalwire") {
+		return ""
+	}
+	return h.statusCallbackBase + "/v1/inbound/sms/" + integrationID + "/status"
 }
 
 // WithDigester attaches an optional digester and returns the handler for
@@ -201,6 +224,17 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 		}
 	}
 
+	// A number that texted STOP gets nothing, whatever the preferences or the
+	// workflow's criticality say: the opt-out is the sender's legal duty, not
+	// a preference. It is checked first so the skip says why.
+	optedOut, err := h.optedOut(ctx, scope, env.SubscriberID)
+	if err != nil {
+		return h.persistSMSError(ctx, env, t, "", "", err)
+	}
+	if optedOut {
+		return h.persistSMSSkipped(ctx, env, t, scope, subject, content, SkipReasonOptedOut)
+	}
+
 	// Optional preference filtering. A nil checker always sends. With no
 	// subscriber preference the step's own default decides, and SMS is off
 	// unless the workflow turns it on (env.Step.DefaultEnabled). On a checker
@@ -230,10 +264,12 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 		return h.persistSMSError(ctx, env, t, "", "", resolveFailure("sms", err))
 	}
 
-	if _, err := provider.Send(ctx, providers.SMSMessage{
-		To:   to,
-		Body: content,
-	}); err != nil {
+	res, err := provider.Send(ctx, providers.SMSMessage{
+		To:             to,
+		Body:           content,
+		StatusCallback: h.statusCallback(providerID, integrationID),
+	})
+	if err != nil {
 		if providers.IsTransient(err) {
 			// Transient (5xx/timeout): let the engine retry the task per its
 			// policy instead of recording a terminal failed message.
@@ -262,6 +298,8 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 		Archived:       false,
 		TransactionID:  env.TransactionID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+		// A delivery-status callback finds the message by this id.
+		ProviderMessageID: res.ProviderMessageID,
 	}
 
 	saved, err := h.store.Messages().Create(ctx, scope, msg)
@@ -274,6 +312,26 @@ func (h *SMSHandler) HandleSMS(ctx context.Context, t engine.TaskPayload) (json.
 		return out, merr
 	}
 	h.publishDelivery(env.Scope.EnvID, out)
+	return out, nil
+}
+
+// optedOut reports whether the subscriber's phone, verified or not, texted
+// STOP. A subscriber with no phone, or none stored, is not opted out.
+func (h *SMSHandler) optedOut(ctx context.Context, scope domain.Scope, subscriberID string) (bool, error) {
+	sub, err := h.store.Subscribers().GetByExternalID(ctx, scope, subscriberID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("sms: load subscriber: %w", err)
+	}
+	if sub.Phone == "" {
+		return false, nil
+	}
+	out, err := h.store.SMSOptOuts().IsOptedOut(ctx, scope, sub.Phone)
+	if err != nil {
+		return false, fmt.Errorf("sms: opt-out lookup: %w", err)
+	}
 	return out, nil
 }
 

@@ -13,8 +13,8 @@ import (
 func TestMigrate_0004_AppliesWebhookEndpoints(t *testing.T) {
 	s := openTemp(t)
 
-	if n := migrationCount(t, s); n != 56 {
-		t.Fatalf("expected 56 recorded migrations, got %d", n)
+	if n := migrationCount(t, s); n != 57 {
+		t.Fatalf("expected 57 recorded migrations, got %d", n)
 	}
 
 	var name string

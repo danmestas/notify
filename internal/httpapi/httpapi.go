@@ -44,6 +44,7 @@ import (
 	"github.com/danmestas/notify/internal/preferences"
 	"github.com/danmestas/notify/internal/realtime"
 	"github.com/danmestas/notify/internal/secretbox"
+	"github.com/danmestas/notify/internal/smsloop"
 	"github.com/danmestas/notify/internal/steptype"
 	"github.com/danmestas/notify/internal/store"
 	"github.com/danmestas/notify/internal/trigger"
@@ -101,6 +102,11 @@ type Deps struct {
 	// mounted OUTSIDE the API-key group with its own X-Inbound-Secret auth. Nil
 	// leaves the route unmounted.
 	EmailLoop *emailloop.Service
+	// SMSLoop handles SMS provider callbacks (POST /v1/inbound/sms/{id} and
+	// /v1/inbound/sms/{id}/status), mounted OUTSIDE the API-key group: each
+	// is authenticated by the provider's signature with the named
+	// integration's key. Nil leaves the routes unmounted.
+	SMSLoop *smsloop.Service
 	// SourceIngest enables the inbound webhook-push ingest route
 	// (POST /v1/sources/{sourceID}/events), mounted OUTSIDE the identity
 	// Middleware group with its own per-source SourceKey auth. Nil leaves the
@@ -195,6 +201,11 @@ func New(d Deps) http.Handler {
 	// unmounted.
 	if eml != nil {
 		r.Post("/v1/inbound/email", eml.HandleInbound)
+	}
+	// SMS provider callbacks: no API key, the provider's signature is the
+	// credential and the integration in the URL names the tenant.
+	if d.SMSLoop != nil {
+		d.SMSLoop.Routes(r)
 	}
 	// WebSocket receiver: a live harness answers an agent's turns. A receiver key
 	// (not an API key) authenticates the upgrade, so it is mounted outside the
@@ -1225,7 +1236,7 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
+			if errors.Is(err, connectivity.ErrInvalidIdentifier) || errors.Is(err, connectivity.ErrHelpTextIsKeyword) {
 				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
@@ -1664,9 +1675,11 @@ type duplicateRequest struct {
 // inherits the source steps and payload schema, and publishes the new DAG.
 // Returns 404 when the source workflow does not exist in this scope.
 // Returns 409 when the desired TriggerIdentifier is already taken.
-// inboundMessageDTO is one accepted inbound email.
+// inboundMessageDTO is one accepted inbound email or text. Channel says
+// which; the text-only fields are omitted for mail.
 type inboundMessageDTO struct {
 	ID         string `json:"id"`
+	Channel    string `json:"channel"`
 	SHA256     string `json:"sha256"`
 	Size       int64  `json:"size"`
 	Recipient  string `json:"recipient"`
@@ -1674,6 +1687,21 @@ type inboundMessageDTO struct {
 	Subject    string `json:"subject"`
 	MessageID  string `json:"messageId"`
 	ReceivedAt string `json:"receivedAt"`
+	// Body is a text's body (mail's bytes are at /raw).
+	Body          string `json:"body,omitempty"`
+	IntegrationID string `json:"integrationId,omitempty"`
+	// SubscriberID is the subscriber whose phone sent a text, when one
+	// matched; PhoneVerified says whether they had verified it.
+	SubscriberID  string `json:"subscriberId,omitempty"`
+	PhoneVerified bool   `json:"phoneVerified,omitempty"`
+}
+
+func toInboundMessageDTO(m store.InboundMessage) inboundMessageDTO {
+	return inboundMessageDTO{
+		ID: m.ID, Channel: m.Channel, SHA256: m.SHA256, Size: m.Size, Recipient: m.Recipient,
+		From: m.Sender, Subject: m.Subject, MessageID: m.MessageID, ReceivedAt: m.ReceivedAt,
+		Body: m.Body, IntegrationID: m.IntegrationID, SubscriberID: m.SubscriberID, PhoneVerified: m.PhoneVerified,
+	}
 }
 
 // getInboundMessages lists accepted inbound mail oldest first:
@@ -1703,10 +1731,7 @@ func getInboundMessages(st *store.Store) http.HandlerFunc {
 		out := make([]inboundMessageDTO, 0, len(msgs))
 		cursor := after
 		for _, m := range msgs {
-			out = append(out, inboundMessageDTO{
-				ID: m.ID, SHA256: m.SHA256, Size: m.Size, Recipient: m.Recipient,
-				From: m.Sender, Subject: m.Subject, MessageID: m.MessageID, ReceivedAt: m.ReceivedAt,
-			})
+			out = append(out, toInboundMessageDTO(m))
 			cursor = strconv.FormatInt(m.Seq, 10)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"messages": out, "cursor": cursor})
@@ -1758,10 +1783,7 @@ func postInboundMessage(st *store.Store, blobs blobstore.Store) http.HandlerFunc
 			writeInternalError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, inboundMessageDTO{
-			ID: m.ID, SHA256: m.SHA256, Size: m.Size, Recipient: m.Recipient,
-			From: m.Sender, Subject: m.Subject, MessageID: m.MessageID, ReceivedAt: m.ReceivedAt,
-		})
+		writeJSON(w, http.StatusOK, toInboundMessageDTO(m))
 	}
 }
 
@@ -1794,6 +1816,13 @@ func getInboundMessageRaw(st *store.Store, blobs blobstore.Store) http.HandlerFu
 		}
 		if err != nil {
 			writeInternalError(w, r, err)
+			return
+		}
+		if m.Channel == "sms" {
+			// A text has no blob: its body is the whole message.
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Header().Set("X-Content-SHA256", m.SHA256)
+			_, _ = io.WriteString(w, m.Body)
 			return
 		}
 		rc, err := blobs.Get(r.Context(), m.SHA256)
@@ -2042,7 +2071,7 @@ var integrationSecretFields = map[string]map[string]bool{
 	"discord":          {"webhook_url": true},
 	"telegram":         {"bot_token": true},
 	"twilio":           {"auth_token": true},
-	"signalwire":       {"token": true},
+	"signalwire":       {"token": true, "signing_key": true},
 	"resend":           {"api_key": true},
 	"ses":              {"secret_access_key": true},
 	"slack":            {"bot_token": true},
@@ -2255,13 +2284,16 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 				AccountSID: req.Credentials["account_sid"],
 				AuthToken:  req.Credentials["auth_token"],
 				From:       req.Credentials["from"],
+				HelpText:   req.Credentials["help_text"],
 			}, req.Primary)
 		case "signalwire":
 			in, err = conn.CreateSignalWire(r.Context(), scope, req.Identifier, connectivity.SignalWireConfig{
-				ProjectID: req.Credentials["project_id"],
-				Token:     req.Credentials["token"],
-				SpaceURL:  req.Credentials["space_url"],
-				From:      req.Credentials["from"],
+				ProjectID:  req.Credentials["project_id"],
+				Token:      req.Credentials["token"],
+				SpaceURL:   req.Credentials["space_url"],
+				From:       req.Credentials["from"],
+				SigningKey: req.Credentials["signing_key"],
+				HelpText:   req.Credentials["help_text"],
 			}, req.Primary)
 		case "sns":
 			in, err = conn.CreateSNS(r.Context(), scope, req.Identifier, connectivity.SNSConfig{
@@ -2327,7 +2359,7 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			if errors.Is(err, connectivity.ErrInvalidIdentifier) {
+			if errors.Is(err, connectivity.ErrInvalidIdentifier) || errors.Is(err, connectivity.ErrHelpTextIsKeyword) {
 				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
@@ -2382,6 +2414,10 @@ func putIntegration(conn *connectivity.Service) http.HandlerFunc {
 			}
 			if errors.Is(err, store.ErrNotFound) {
 				writeJSONError(w, http.StatusNotFound, "not_found", "integration not found")
+				return
+			}
+			if errors.Is(err, connectivity.ErrHelpTextIsKeyword) {
+				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
 			// Never echo request detail into the error body.

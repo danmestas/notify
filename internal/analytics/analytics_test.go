@@ -157,6 +157,26 @@ func TestIngest_MalformedAndUnscopedAreAcked(t *testing.T) {
 	}
 }
 
+// TestIngest_TypedEventsAreNotDeliveries: an event with a "type" (an
+// email.reply, an inbound text, an opt-out, an SMS status change) is not a
+// delivery result, so it adds no delivery row.
+func TestIngest_TypedEventsAreNotDeliveries(t *testing.T) {
+	svc := New(newStore(t), nil)
+	ctx := context.Background()
+	for _, ev := range []string{
+		`{"OrgID":"o1","EnvID":"e1","type":"email.reply","text":"hi"}`,
+		`{"OrgID":"o1","EnvID":"e1","type":"sms.inbound","body":"hi"}`,
+		`{"OrgID":"o1","EnvID":"e1","type":"sms.status","status":"delivered"}`,
+	} {
+		if err := svc.ingest(ctx, []byte(ev)); err != nil {
+			t.Fatalf("ingest %s: %v", ev, err)
+		}
+	}
+	if got := total(t, svc); got != 0 {
+		t.Fatalf("total = %d, want 0", got)
+	}
+}
+
 func TestIngest_StoreErrorIsRetried(t *testing.T) {
 	st := newStore(t)
 	svc := New(st, nil)

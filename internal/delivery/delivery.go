@@ -239,6 +239,10 @@ const (
 	// SkipReasonNoVerifiedPhone: an sms step for a subscriber with no phone
 	// they verified. Not a fault; the subscriber has not opted a number in.
 	SkipReasonNoVerifiedPhone = "no_verified_phone"
+	// SkipReasonOptedOut: an sms step for a subscriber whose number texted
+	// STOP (or a synonym). Unlike a preference it holds for every workflow,
+	// critical ones included, until the number texts START.
+	SkipReasonOptedOut = "opted_out"
 	// SkipReasonNoEmail: an email step for a subscriber with no email address.
 	SkipReasonNoEmail = "no_email"
 	// SkipReasonNoDevice: a push step for a subscriber with no push address
