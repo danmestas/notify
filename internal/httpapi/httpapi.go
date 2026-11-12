@@ -731,6 +731,12 @@ func postTriggerCancel(trg *trigger.Service) http.HandlerFunc {
 			writeJSONError(w, http.StatusNotFound, "not_found", "transaction not found")
 			return
 		}
+		if errors.Is(err, trigger.ErrRunNotVisible) {
+			w.Header().Set("Retry-After", "1")
+			writeJSONError(w, http.StatusServiceUnavailable, "run_not_visible",
+				"a run of this transaction has just started; retry the cancel")
+			return
+		}
 		if err != nil {
 			writeInternalError(w, r, err)
 			return

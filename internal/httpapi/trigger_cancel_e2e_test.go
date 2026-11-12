@@ -130,10 +130,16 @@ func (h cancelHarness) trigger(t *testing.T, workflow, to, tx string) []string {
 }
 
 // cancel posts the cancel route and returns the status and the decoded body,
-// keyed by its literal wire keys.
+// keyed by its literal wire keys. Like a client, it retries a 503: a run
+// started moments ago is not visible in dagnats yet (dagnats#1006).
 func (h cancelHarness) cancel(t *testing.T, auth, tx string) (int, map[string][]string) {
 	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
 	status, rb := doPost(t, h.srv.URL+"/v1/events/trigger/"+tx+"/cancel", auth, "")
+	for status == http.StatusServiceUnavailable && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		status, rb = doPost(t, h.srv.URL+"/v1/events/trigger/"+tx+"/cancel", auth, "")
+	}
 	if status != http.StatusOK {
 		return status, nil
 	}

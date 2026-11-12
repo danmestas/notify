@@ -4,15 +4,33 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/timestamp"
 )
 
 // ErrTransactionNotFound is Cancel's error for a transaction with no
 // notification in the caller's environment.
 var ErrTransactionNotFound = errors.New("trigger: transaction not found")
+
+// ErrRunNotVisible is Cancel's error for a run dagnats started but does not
+// show yet, so it can be neither read nor cancelled. A retry shortly after
+// succeeds.
+var ErrRunNotVisible = errors.New("trigger: run not visible in the engine yet")
+
+// prunedAfter is how old a notification must be before a run dagnats does not
+// know is taken as pruned, and so finished, rather than not yet recorded.
+const prunedAfter = time.Hour
+
+// createdBefore reports whether n was created before t. An unparsable
+// timestamp counts as old.
+func createdBefore(n domain.Notification, t time.Time) bool {
+	created, err := timestamp.Parse(n.CreatedAt)
+	return err != nil || created.Before(t)
+}
 
 // errNoCanceller is Cancel's error when the Service's engine cannot cancel runs.
 var errNoCanceller = errors.New("trigger: cancel needs an engine that can cancel runs")
@@ -106,7 +124,12 @@ func (svc *Service) cancelOne(ctx context.Context, scope domain.Scope, n domain.
 	snap, err := svc.runs.GetRun(ctx, n.RunID)
 	switch {
 	case errors.Is(err, engine.ErrRunNotFound):
-		// dagnats has pruned the run, so it ended long ago.
+		// dagnats answers not found both for a run it has pruned and for one
+		// it started moments ago but has not yet recorded (dagnats#1006).
+		// Only the first has certainly finished.
+		if !createdBefore(n, time.Now().Add(-prunedAfter)) {
+			return false, fmt.Errorf("%w: run %s of notification %s", ErrRunNotVisible, n.RunID, n.ID)
+		}
 		return n.Status != domain.NotificationCancelled, nil
 	case err != nil:
 		return false, fmt.Errorf("trigger: read run %s: %w", n.RunID, err)

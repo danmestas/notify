@@ -10,6 +10,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
+	"github.com/danmestas/notify/internal/timestamp"
 	"github.com/danmestas/notify/internal/trigger"
 )
 
@@ -193,6 +194,38 @@ func TestCancel_DuringStart(t *testing.T) {
 	}
 	if row := fx.onlyRow(t); row.Status != domain.NotificationCancelled || row.RunID != "run-1" {
 		t.Fatalf("row = %+v, want cancelled on run-1", row)
+	}
+}
+
+// TestCancel_RunNotFound: dagnats does not know the run. A fresh row's run is
+// started but not yet recorded (dagnats#1006), so the cancel fails for a retry;
+// an hour-old row's run has been pruned, so it finished.
+func TestCancel_RunNotFound(t *testing.T) {
+	fx := setupFakeEngine(t)
+	ctx := context.Background()
+	fresh, err := fx.st.Notifications().Create(ctx, fx.scope, domain.Notification{
+		WorkflowID: "wf", SubscriberID: "user_1", TransactionID: "tx-fresh", RunID: "run-unseen",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := fx.svc.Cancel(ctx, fx.scope, "tx-fresh"); !errors.Is(err, trigger.ErrRunNotVisible) {
+		t.Fatalf("Cancel fresh = %v, want ErrRunNotVisible", err)
+	}
+	if got, _ := fx.st.Notifications().Get(ctx, fx.scope, fresh.ID); got.Status != domain.NotificationStarted {
+		t.Fatalf("fresh row status = %q, want started", got.Status)
+	}
+
+	old, err := fx.st.Notifications().Create(ctx, fx.scope, domain.Notification{
+		WorkflowID: "wf", SubscriberID: "user_1", TransactionID: "tx-old", RunID: "run-pruned",
+		CreatedAt: timestamp.Format(time.Now().Add(-2 * time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	res, err := fx.svc.Cancel(ctx, fx.scope, "tx-old")
+	if err != nil || !slices.Equal(res.AlreadyFinished, []string{old.ID}) {
+		t.Fatalf("Cancel old = %+v, %v; want alreadyFinished [%s]", res, err, old.ID)
 	}
 }
 

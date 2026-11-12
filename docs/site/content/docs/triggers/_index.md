@@ -79,6 +79,7 @@ Every notification of that transaction in the key's environment is cancelled, so
 |---|---|
 | Cancelled, or already finished | `200` with both lists, either of which may be empty |
 | No notification with that `transactionId` in this environment | `404` |
+| A run started moments ago that the engine does not show yet | `503` with `Retry-After: 1`; retry the cancel |
 
 Cancelling is idempotent: a second call answers `200` with the same notifications under `cancelled`.
 
