@@ -380,17 +380,25 @@ func (repo *subscriberRepo) SoftDelete(ctx context.Context, scope domain.Scope, 
 // given external subscriberID within scope. The AND deleted=1 predicate is
 // required: a concurrently-inserted live row with the same external id must
 // never be removed by this call. Returns the count of rows deleted (0 or 1).
+// Its consent audit rows are closed and detached from the id in the same
+// transaction (see detachAttestations).
 func (repo *subscriberRepo) PurgeDeletedByExternalID(ctx context.Context, scope domain.Scope, subscriberID string) (int64, error) {
-	res, err := repo.w.ExecContext(
-		ctx,
-		`DELETE FROM subscribers
-		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND deleted = 1`,
-		scope.OrgID, scope.EnvID, subscriberID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	n, err := res.RowsAffected()
+	var n int64
+	err := inTx(ctx, repo.w, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(
+			ctx,
+			`DELETE FROM subscribers
+			 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND deleted = 1`,
+			scope.OrgID, scope.EnvID, subscriberID,
+		)
+		if err != nil {
+			return err
+		}
+		if n, err = res.RowsAffected(); err != nil || n == 0 {
+			return err
+		}
+		return detachAttestations(ctx, tx, scope, subscriberID)
+	})
 	if err != nil {
 		return 0, err
 	}

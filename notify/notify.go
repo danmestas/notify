@@ -550,6 +550,9 @@ func (n *Notify) start(ctx context.Context) error {
 	// agent_drafts would otherwise keep every draft no one fetched.
 	n.goLoop(func() { runDraftPurge(ctx, n.log, n.ags) })
 
+	// SMS consent audit rows go 4 years after they stop counting (#164).
+	n.goLoop(func() { runSMSConsentPurge(ctx, n.log, n.st) })
+
 	// Agent cards: watch chat_cards for mesh agents' published A2A cards.
 	if n.cards != nil {
 		n.goLoop(func() { n.cards.Run(ctx) })

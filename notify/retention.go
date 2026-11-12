@@ -149,6 +149,34 @@ func runChatInboundPurge(ctx context.Context, log *slog.Logger, st *store.Store)
 	}
 }
 
+// runSMSConsentPurge deletes SMS consent audit rows that stopped counting more
+// than store.SMSConsentRetentionYears ago, once at boot and then daily, in the
+// same shape as the purges above. Open rows are never deleted.
+func runSMSConsentPurge(ctx context.Context, log *slog.Logger, st *store.Store) {
+	purge := func() {
+		n, err := st.SMSConsents().PurgeRetired(ctx, time.Now())
+		switch {
+		case err != nil:
+			log.Error("retention: sms_consent_attestations purge failed", "err", err)
+		case n > 0:
+			log.Info("retention: purged sms_consent_attestations",
+				"rows", n, "olderThanYears", store.SMSConsentRetentionYears)
+		}
+	}
+
+	purge()
+	t := time.NewTicker(delayDeadlinePurgeInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			purge()
+		}
+	}
+}
+
 // draftPurgeInterval is how often expired agent drafts are deleted. Hourly is
 // ample against a 30-day retention.
 const draftPurgeInterval = time.Hour
