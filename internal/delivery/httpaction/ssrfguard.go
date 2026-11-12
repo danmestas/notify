@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"syscall"
 	"time"
 )
@@ -127,7 +128,7 @@ func NewSSRFSafeClient() *http.Client {
 		// resolution -- so this compares the name the operator listed, which is
 		// what they can actually vouch for. The resolved-IP check still runs for
 		// every host that is not listed.
-		if host, _, err := net.SplitHostPort(addr); err == nil && hostAllowed(host) {
+		if host, port, err := net.SplitHostPort(addr); err == nil && hostAllowed(host, port) {
 			return allowed.DialContext(ctx, network, addr)
 		}
 		return guarded.DialContext(ctx, network, addr)
@@ -149,7 +150,7 @@ func NewSSRFSafeClient() *http.Client {
 			// Hostname-based redirects to private ranges are caught by the
 			// dial-time Control hook, which remains the definitive enforcement point.
 			host := req.URL.Hostname()
-			if hostAllowed(host) {
+			if hostAllowed(host, redirectPort(req.URL)) {
 				return nil
 			}
 			if ip := net.ParseIP(host); ip != nil && IsBlockedIP(ip) {
@@ -158,4 +159,16 @@ func NewSSRFSafeClient() *http.Client {
 			return nil
 		},
 	}
+}
+
+// redirectPort is the port a request to u will dial: the explicit one, else the
+// scheme's default.
+func redirectPort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if u.Scheme == "https" {
+		return "443"
+	}
+	return "80"
 }

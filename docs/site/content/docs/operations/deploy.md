@@ -60,10 +60,10 @@ Because the supervisor starts jobs independently, notify may start before the si
 When the application, notify and dagnats run side by side on one machine, the application usually listens on loopback. notify's [SSRF guard](../security#outbound-requests-ssrf) refuses loopback addresses, so an outbound webhook to the co-located app at `127.0.0.1` is refused by default. Allow that host explicitly:
 
 ```sh
-NOTIFY_SSRF_ALLOWED_HOSTS=127.0.0.1
+NOTIFY_SSRF_ALLOWED_HOSTS=127.0.0.1:3738
 ```
 
-The value is a comma-separated list of exact hosts. Add only the hosts you need. See the [configuration reference](../../configuration/#serve-core) for the full entry.
+The value is a comma-separated list of exact hosts, each `host` (any port) or `host:port`. Use the port form: a bare `127.0.0.1` would open every loopback port, including services such as the dagnats control plane, to every tenant. Add only the entries you need. See the [configuration reference](../../configuration/#serve-core) for the full entry.
 
 ### Putting it on the internet
 

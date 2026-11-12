@@ -2,6 +2,7 @@ package httpaction
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -80,13 +81,13 @@ func TestAllowlist_OtherInternalHostsStillBlocked(t *testing.T) {
 func TestAllowlist_NoSuffixMatching(t *testing.T) {
 	withAllowlist(t, "corp.example")
 
-	if hostAllowed("evil.corp.example") {
+	if hostAllowed("evil.corp.example", "") {
 		t.Error("evil.corp.example matched the entry corp.example: suffix matching is a subdomain-takeover hole")
 	}
-	if hostAllowed("corp.example.evil.com") {
+	if hostAllowed("corp.example.evil.com", "") {
 		t.Error("corp.example.evil.com matched the entry corp.example: prefix matching")
 	}
-	if !hostAllowed("corp.example") {
+	if !hostAllowed("corp.example", "") {
 		t.Error("the exact listed host did not match")
 	}
 }
@@ -97,14 +98,14 @@ func TestAllowlist_HostNormalisation(t *testing.T) {
 	withAllowlist(t, " Corp.Example. , ::1 , 10.0.0.5 ")
 
 	for _, host := range []string{"corp.example", "CORP.EXAMPLE", "corp.example.", "Corp.Example"} {
-		if !hostAllowed(host) {
+		if !hostAllowed(host, "") {
 			t.Errorf("hostAllowed(%q) = false, want true (case and root dot must not matter)", host)
 		}
 	}
-	if !hostAllowed("0:0:0:0:0:0:0:1") {
+	if !hostAllowed("0:0:0:0:0:0:0:1", "") {
 		t.Error("the expanded form of ::1 did not match: IP entries must be compared canonically")
 	}
-	if !hostAllowed("10.0.0.5") {
+	if !hostAllowed("10.0.0.5", "") {
 		t.Error("a listed IPv4 literal did not match")
 	}
 }
@@ -115,7 +116,7 @@ func TestAllowlist_HostNormalisation(t *testing.T) {
 func TestAllowlist_UnicodeCannotFoldOntoASCII(t *testing.T) {
 	withAllowlist(t, "bank.example")
 
-	if hostAllowed("banK.example") {
+	if hostAllowed("banK.example", "") {
 		t.Error("a host containing U+212A matched the ASCII entry bank.example: case folding must be ASCII-only")
 	}
 
@@ -130,11 +131,11 @@ func TestAllowlist_EmptyAndBlankEntries(t *testing.T) {
 	withAllowlist(t, " , a.example ,, b.example , ")
 
 	for _, host := range []string{"a.example", "b.example"} {
-		if !hostAllowed(host) {
+		if !hostAllowed(host, "") {
 			t.Errorf("hostAllowed(%q) = false, want true", host)
 		}
 	}
-	if hostAllowed("") {
+	if hostAllowed("", "") {
 		t.Error("the empty host matched: blank entries must not become an allowlist entry")
 	}
 }
@@ -150,7 +151,12 @@ func TestAllowlist_RejectsMisleadingEntries(t *testing.T) {
 		"cidr":           "10.0.0.0/8",
 		"url":            "https://corp.example",
 		"path":           "corp.example/api",
-		"host with port": "corp.example:8080",
+		"port zero":      "corp.example:0",
+		"port too big":   "corp.example:65536",
+		"port not num":   "corp.example:http",
+		"empty port":     "corp.example:",
+		"ipv6 no brkt":   "::1:3738x",
+		"url with port":  "http://corp.example:8080",
 		"embedded space": "corp example",
 	}
 	for name, entry := range cases {
@@ -171,17 +177,17 @@ func TestAllowlist_RejectsMisleadingEntries(t *testing.T) {
 // the previous allowlist -- an allowlist that only ever grows would be a hazard.
 func TestAllowlist_ReconfigureReplaces(t *testing.T) {
 	withAllowlist(t, "first.example")
-	if !hostAllowed("first.example") {
+	if !hostAllowed("first.example", "") {
 		t.Fatal("first.example was not installed")
 	}
 
 	if err := ConfigureAllowlist("second.example"); err != nil {
 		t.Fatalf("reconfigure: %v", err)
 	}
-	if hostAllowed("first.example") {
+	if hostAllowed("first.example", "") {
 		t.Error("first.example survived a reconfigure: entries must be replaced, not accumulated")
 	}
-	if !hostAllowed("second.example") {
+	if !hostAllowed("second.example", "") {
 		t.Error("second.example was not installed")
 	}
 }
@@ -194,10 +200,93 @@ func TestAllowlist_RejectedEntryLeavesPreviousIntact(t *testing.T) {
 	if err := ConfigureAllowlist("also-good.example,*.bad.example"); err == nil {
 		t.Fatal("a list containing a wildcard was accepted")
 	}
-	if hostAllowed("also-good.example") {
+	if hostAllowed("also-good.example", "") {
 		t.Error("a valid entry from a rejected list was installed: the update must be all-or-nothing")
 	}
-	if !hostAllowed("good.example") {
+	if !hostAllowed("good.example", "") {
 		t.Error("the previously installed allowlist was clobbered by a rejected update")
+	}
+}
+
+// loopbackServer listens on a kernel-chosen loopback port so the tests can
+// build an entry from its real port.
+func loopbackServer(t *testing.T, network, addr string) (*httptest.Server, string) {
+	t.Helper()
+	l, err := net.Listen(network, addr)
+	if err != nil {
+		t.Skipf("cannot listen on %s: %v", addr, err)
+	}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	srv.Listener = l
+	srv.Start()
+	t.Cleanup(srv.Close)
+	_, port, _ := net.SplitHostPort(l.Addr().String())
+	return srv, port
+}
+
+func reaches(t *testing.T, url string) bool {
+	t.Helper()
+	resp, err := NewSSRFSafeClient().Get(url)
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return true
+}
+
+func TestAllowlist_HostPortAllowsOnlyThatPort(t *testing.T) {
+	srv, port := loopbackServer(t, "tcp4", "127.0.0.1:0")
+	_, other := loopbackServer(t, "tcp4", "127.0.0.1:0")
+
+	withAllowlist(t, "127.0.0.1:"+port)
+	if !reaches(t, srv.URL) {
+		t.Fatal("127.0.0.1:<port> entry refused the listener on that port")
+	}
+	if reaches(t, "http://127.0.0.1:"+other) {
+		t.Fatal("127.0.0.1:<port> entry admitted a different loopback port")
+	}
+}
+
+func TestAllowlist_BareHostStillAllowsAnyPort(t *testing.T) {
+	srvA, _ := loopbackServer(t, "tcp4", "127.0.0.1:0")
+	srvB, _ := loopbackServer(t, "tcp4", "127.0.0.1:0")
+	withAllowlist(t, "127.0.0.1")
+	if !reaches(t, srvA.URL) || !reaches(t, srvB.URL) {
+		t.Fatal("bare host entry must allow every port")
+	}
+}
+
+func TestAllowlist_IPv6HostPort(t *testing.T) {
+	srv, port := loopbackServer(t, "tcp6", "[::1]:0")
+	_, other := loopbackServer(t, "tcp6", "[::1]:0")
+	withAllowlist(t, "[::1]:"+port)
+	if !reaches(t, srv.URL) {
+		t.Fatal("[::1]:<port> entry refused the listener on that port")
+	}
+	if reaches(t, "http://[::1]:"+other) {
+		t.Fatal("[::1]:<port> entry admitted a different port")
+	}
+}
+
+func TestAllowlist_HostnameWithPort(t *testing.T) {
+	withAllowlist(t, "Corp.Example:8080")
+	if !hostAllowed("corp.example", "8080") {
+		t.Error("hostname:port entry should match that host and port")
+	}
+	if hostAllowed("corp.example", "9090") || hostAllowed("corp.example", "") {
+		t.Error("hostname:port entry matched another port")
+	}
+	if hostAllowed("evil.corp.example", "8080") {
+		t.Error("hostname:port entry matched a different host")
+	}
+}
+
+func TestAllowlist_PortErrorIsHelpful(t *testing.T) {
+	err := ConfigureAllowlist("127.0.0.1:99999")
+	t.Cleanup(func() { _ = ConfigureAllowlist("") })
+	if err == nil || !strings.Contains(err.Error(), "1 to 65535") {
+		t.Fatalf("want a port-range error, got %v", err)
 	}
 }

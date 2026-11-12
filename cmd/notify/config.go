@@ -110,7 +110,7 @@ func loadConfig(args []string) (config, error) {
 	dev := fs.Bool("dev", envBool("NOTIFY_DEV"), "allow booting without -master-key-hex/NOTIFY_MASTER_KEY_HEX by deriving a fixed, insecure dev key (development only)")
 	meshAllow := fs.String("mesh-allow", envOr("NOTIFY_MESH_ALLOW", mesh.DefaultAllowedSubjects), "allowlist pattern for mesh agent dispatch subjects")
 	meshNATSURL := fs.String("mesh-nats-url", envOr("NOTIFY_MESH_NATS_URL", ""), "NATS URL of a mesh hub that is not a dagnats, for mesh agent dispatch; empty dispatches over the dagnats program connection")
-	ssrfAllow := fs.String("ssrf-allow", envOr("NOTIFY_SSRF_ALLOWED_HOSTS", ""), "comma-separated exact hosts (no wildcards) that outbound HTTP steps may reach despite resolving to an internal address; empty blocks all internal ranges")
+	ssrfAllow := fs.String("ssrf-allow", envOr("NOTIFY_SSRF_ALLOWED_HOSTS", ""), "comma-separated exact hosts (no wildcards) that outbound HTTP steps may reach despite resolving to an internal address; an entry is host (any port) or host:port (that port only, IPv6 as [::1]:3738), prefer host:port; empty blocks all internal ranges")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
