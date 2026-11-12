@@ -81,13 +81,18 @@ type NotificationRepo interface {
 	// (workflow, subscriber, transaction), or ErrNotFound. A retried trigger
 	// reuses that row rather than writing a second one.
 	GetByTrigger(ctx context.Context, scope domain.Scope, workflowID, subscriberID, transactionID string) (domain.Notification, error)
-	// AttachRun records runID on a row that has none yet and marks it started.
-	// It reports whether it changed the row: false when the row already names
-	// a run (or does not exist), which it leaves as it is.
+	// AttachRun records runID on a row that has none yet and marks it started,
+	// unless it is cancelled, which it stays. It reports whether it changed the
+	// row: false when the row already names a run (or does not exist), which it
+	// leaves as it is.
 	AttachRun(ctx context.Context, scope domain.Scope, id, runID string) (bool, error)
 	// MarkFailed marks a row whose run never started as failed. A row that
-	// already names a run is left alone.
+	// already names a run, or is cancelled, is left alone.
 	MarkFailed(ctx context.Context, scope domain.Scope, id string) error
+	// MarkCancelled marks the row cancelled if it still names runID ("" for a
+	// row with no run), and reports whether it matched. False means the row is
+	// gone or a run was recorded on it after the caller read it.
+	MarkCancelled(ctx context.Context, scope domain.Scope, id, runID string) (bool, error)
 	// FailStalePending marks failed every pending row with no run id created
 	// before cutoff, across all scopes, and reports how many. Such a row is a
 	// trigger whose start timed out and was never retried, and whose run (if
@@ -213,9 +218,10 @@ func (repo *notificationRepo) AttachRun(ctx context.Context, scope domain.Scope,
 	}
 	res, err := repo.w.ExecContext(
 		ctx,
-		`UPDATE notifications SET run_id = ?, status = ?
+		`UPDATE notifications
+		 SET run_id = ?, status = CASE WHEN status = ? THEN status ELSE ? END
 		 WHERE org_id = ? AND environment_id = ? AND id = ? AND run_id = ''`,
-		runID, domain.NotificationStarted, scope.OrgID, scope.EnvID, id,
+		runID, domain.NotificationCancelled, domain.NotificationStarted, scope.OrgID, scope.EnvID, id,
 	)
 	if err != nil {
 		return false, err
@@ -231,10 +237,27 @@ func (repo *notificationRepo) MarkFailed(ctx context.Context, scope domain.Scope
 	_, err := repo.w.ExecContext(
 		ctx,
 		`UPDATE notifications SET status = ?
-		 WHERE org_id = ? AND environment_id = ? AND id = ? AND run_id = ''`,
-		domain.NotificationFailed, scope.OrgID, scope.EnvID, id,
+		 WHERE org_id = ? AND environment_id = ? AND id = ? AND run_id = '' AND status <> ?`,
+		domain.NotificationFailed, scope.OrgID, scope.EnvID, id, domain.NotificationCancelled,
 	)
 	return err
+}
+
+func (repo *notificationRepo) MarkCancelled(ctx context.Context, scope domain.Scope, id, runID string) (bool, error) {
+	res, err := repo.w.ExecContext(
+		ctx,
+		`UPDATE notifications SET status = ?
+		 WHERE org_id = ? AND environment_id = ? AND id = ? AND run_id = ?`,
+		domain.NotificationCancelled, scope.OrgID, scope.EnvID, id, runID,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 // FailStalePending compares created_at as a string, which is correct because

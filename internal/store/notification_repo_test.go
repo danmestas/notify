@@ -190,3 +190,71 @@ func TestNotificationRepo_FailStalePendingAndStatusFilter(t *testing.T) {
 		t.Fatalf("List pending = %d rows (total %d), %v; want 2", len(pending.Items), pending.TotalCount, err)
 	}
 }
+
+// TestNotificationRepo_MarkCancelled covers #144's store side: a cancelled row
+// stays cancelled through every later write a trigger or a step could make
+// (recording a run, failing a refused start, the stale-pending sweep), and
+// MarkCancelled only touches a row still naming the run it was read with.
+func TestNotificationRepo_MarkCancelled(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	repo := s.Notifications()
+	scope := domain.Scope{OrgID: "o1", EnvID: "e1"}
+	old := time.Now().Add(-time.Hour)
+
+	pending, err := repo.Create(ctx, scope, domain.Notification{
+		WorkflowID: "wf1", SubscriberID: "sub1", TransactionID: "tx1",
+		Status: domain.NotificationPending, CreatedAt: timestamp.Format(old),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// A run recorded after the row was read makes the no-run cancel miss.
+	if ok, err := repo.MarkCancelled(ctx, scope, pending.ID, "r-other"); err != nil || ok {
+		t.Fatalf("MarkCancelled with the wrong run = %v, %v; want false", ok, err)
+	}
+	if ok, err := repo.MarkCancelled(ctx, scope, pending.ID, ""); err != nil || !ok {
+		t.Fatalf("MarkCancelled = %v, %v; want true", ok, err)
+	}
+	if ok, err := repo.MarkCancelled(ctx, scope, pending.ID, ""); err != nil || !ok {
+		t.Fatalf("second MarkCancelled = %v, %v; want true (idempotent)", ok, err)
+	}
+	if ok, err := repo.MarkCancelled(ctx, domain.Scope{OrgID: "o1", EnvID: "e2"}, pending.ID, ""); err != nil || ok {
+		t.Fatalf("MarkCancelled from another env = %v, %v; want false", ok, err)
+	}
+
+	if _, err := repo.FailStalePending(ctx, time.Now()); err != nil {
+		t.Fatalf("FailStalePending: %v", err)
+	}
+	if err := repo.MarkFailed(ctx, scope, pending.ID); err != nil {
+		t.Fatalf("MarkFailed: %v", err)
+	}
+	if _, err := repo.AttachRun(ctx, scope, pending.ID, "r1"); err != nil {
+		t.Fatalf("AttachRun: %v", err)
+	}
+	got, err := repo.Get(ctx, scope, pending.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Status != domain.NotificationCancelled || got.RunID != "r1" {
+		t.Fatalf("row = status %q run %q, want cancelled with run r1 recorded", got.Status, got.RunID)
+	}
+
+	started, err := repo.Create(ctx, scope, domain.Notification{
+		WorkflowID: "wf1", SubscriberID: "sub2", TransactionID: "tx1", RunID: "r2",
+	})
+	if err != nil {
+		t.Fatalf("create started: %v", err)
+	}
+	if ok, err := repo.MarkCancelled(ctx, scope, started.ID, "r2"); err != nil || !ok {
+		t.Fatalf("MarkCancelled started = %v, %v; want true", ok, err)
+	}
+	page, err := repo.List(ctx, scope, NotificationFilter{Status: domain.NotificationCancelled}, "", 0)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if page.TotalCount != 2 {
+		t.Fatalf("cancelled rows = %d, want 2", page.TotalCount)
+	}
+}

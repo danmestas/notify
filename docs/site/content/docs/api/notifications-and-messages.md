@@ -9,7 +9,7 @@ A notification is one trigger for one recipient. All routes take an API key.
 
 | Method and path | Purpose |
 |---|---|
-| `GET /v1/notifications` | List. Query: `workflowId`, `subscriberId`, `transactionId`, `status` (`pending`, `started` or `failed`), `since` (RFC 3339 lower bound on creation), `limit` (1 to 200, default 50), `cursor`. Returns `{"items": […], "next": "…", "totalCount": n}`; `next` is absent on the last page. |
+| `GET /v1/notifications` | List. Query: `workflowId`, `subscriberId`, `transactionId`, `status` (`pending`, `started`, `failed` or `cancelled`), `since` (RFC 3339 lower bound on creation), `limit` (1 to 200, default 50), `cursor`. Returns `{"items": […], "next": "…", "totalCount": n}`; `next` is absent on the last page. |
 | `GET /v1/notifications/{id}` | One notification; `404` if absent. |
 | `GET /v1/notifications/{id}/messages` | The messages the notification produced, newest first. |
 
@@ -22,6 +22,7 @@ A notification serializes with Go field names: `ID`, `OrgID`, `EnvID`, `Workflow
 | `pending` | Recorded; the run has not been confirmed yet. `RunID` is empty. A trigger whose start timed out leaves this, and retrying it with the same `transactionId` reuses the notification. One still pending with no run after 15 minutes is marked `failed`. |
 | `started` | The run started; `RunID` names it. Notifications recorded before this field existed read `started`. |
 | `failed` | The engine refused the run, or the notification stayed `pending` for 15 minutes with no run. `RunID` is empty. Retrying the trigger with the same `transactionId` tries again on the same notification, and a run that does turn up late records itself and moves the notification to `started`. |
+| `cancelled` | The trigger was [cancelled](../../triggers#cancelling-a-trigger) before its run finished. `RunID` names the run if one started. Nothing moves a notification out of `cancelled`. |
 
 The list returns every status unless `status` is given.
 

@@ -76,3 +76,5 @@ Because `http_request` saves its response, a condition can use it:
 ```json
 { "on": "check", "field": "statusCode", "operator": "EQUAL", "value": 200 }
 ```
+
+This is how a delayed send re-checks that it still applies: put an `http_request` step that asks your service just before the send, and a condition like the one above on the send. When your service already knows the send is moot, [cancelling the trigger](../../triggers#cancelling-a-trigger) stops the run outright instead.

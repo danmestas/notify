@@ -252,6 +252,7 @@ func New(d Deps) http.Handler {
 		// devices (and every other provider's credentials) untouched.
 		pr.Delete("/v1/subscribers/{subscriberId}/credentials/webpush", deleteSubscriberWebPushCredentials(aud))
 		pr.Post("/v1/events/trigger", postTrigger(trg))
+		pr.Post("/v1/events/trigger/{transactionId}/cancel", postTriggerCancel(trg))
 		pr.Post("/v1/topics", postTopic(aud))
 		pr.Post("/v1/topics/{key}/subscribers", postTopicSubscriber(aud))
 		// Wave-2 subscriber management (#34).
@@ -715,6 +716,26 @@ func postTrigger(trg *trigger.Service) http.HandlerFunc {
 			}
 		}
 		writeJSON(w, status, resp)
+	}
+}
+
+// postTriggerCancel handles POST /v1/events/trigger/{transactionId}/cancel
+// (#144): it cancels the transaction's runs in the caller's environment and
+// answers 200 with trigger.CancelResult, or 404 when the environment has no
+// notification for that transaction.
+func postTriggerCancel(trg *trigger.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scope := identity.ScopeFrom(r.Context())
+		res, err := trg.Cancel(r.Context(), scope, chi.URLParam(r, "transactionId"))
+		if errors.Is(err, trigger.ErrTransactionNotFound) {
+			writeJSONError(w, http.StatusNotFound, "not_found", "transaction not found")
+			return
+		}
+		if err != nil {
+			writeInternalError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, res)
 	}
 }
 
@@ -1865,7 +1886,7 @@ func postWorkflowDuplicate(au *authoring.Service) http.HandlerFunc {
 //   - workflowId    – filter to a specific workflow (optional)
 //   - subscriberId  – filter to a specific subscriber (optional)
 //   - transactionId – filter to a specific transaction (optional)
-//   - status        – pending, started or failed (optional; default all)
+//   - status        – pending, started, failed or cancelled (optional; default all)
 //   - since         – RFC3339 lower-bound on created_at (optional)
 //   - limit         – page size, 1–200, default 50 (optional)
 //   - cursor        – opaque keyset cursor from a prior response (optional)
@@ -1902,9 +1923,9 @@ func getNotifications(st *store.Store) http.HandlerFunc {
 			Status:        q.Get("status"),
 		}
 		switch f.Status {
-		case "", domain.NotificationPending, domain.NotificationStarted, domain.NotificationFailed:
+		case "", domain.NotificationPending, domain.NotificationStarted, domain.NotificationFailed, domain.NotificationCancelled:
 		default:
-			writeJSONError(w, http.StatusBadRequest, "bad_request", "status must be pending, started or failed")
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "status must be pending, started, failed or cancelled")
 			return
 		}
 		if sinceStr := q.Get("since"); sinceStr != "" {
