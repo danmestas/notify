@@ -229,6 +229,10 @@ type Notification struct {
 	// NotificationStarted, the meaning every row had before the trigger began
 	// writing rows ahead of their runs.
 	Status string `db:"status"`
+	// RunStartedAt is when RunID was recorded, in the timestamp layout. Empty
+	// while the row has no run. A retried trigger reuses its row for a fresh
+	// run, so this, not CreatedAt, dates the run.
+	RunStartedAt string `db:"run_started_at"`
 }
 
 // Notification statuses. The trigger writes a row as pending before it starts

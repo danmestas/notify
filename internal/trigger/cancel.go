@@ -16,50 +16,71 @@ import (
 // notification in the caller's environment.
 var ErrTransactionNotFound = errors.New("trigger: transaction not found")
 
-// ErrRunNotVisible is Cancel's error for a run dagnats started but does not
-// show yet, so it can be neither read nor cancelled. A retry shortly after
-// succeeds.
+// ErrRunNotVisible marks a failure for a run dagnats started but does not show
+// yet (dagnats#1006), so it can be neither read nor cancelled. A retry shortly
+// after succeeds.
 var ErrRunNotVisible = errors.New("trigger: run not visible in the engine yet")
 
-// prunedAfter is how old a notification must be before a run dagnats does not
-// know is taken as pruned, and so finished, rather than not yet recorded.
+// ErrEngine marks a failure dagnats answered or never answered while Cancel read
+// or cancelled a run. engine.IsTransient tells a timeout from a refusal.
+var ErrEngine = errors.New("trigger: engine request failed")
+
+// prunedAfter is how long ago a run must have started before a run dagnats does
+// not know is taken as pruned, and so finished, rather than not yet recorded.
 const prunedAfter = time.Hour
 
-// createdBefore reports whether n was created before t. An unparsable
-// timestamp counts as old.
-func createdBefore(n domain.Notification, t time.Time) bool {
-	created, err := timestamp.Parse(n.CreatedAt)
-	return err != nil || created.Before(t)
+// runStartedBefore reports whether n's run was recorded before t. A missing or
+// unparsable time counts as recent, so an unknown run is never taken as done.
+func runStartedBefore(n domain.Notification, t time.Time) bool {
+	started, err := timestamp.Parse(n.RunStartedAt)
+	return err == nil && started.Before(t)
 }
 
 // errNoCanceller is Cancel's error when the Service's engine cannot cancel runs.
 var errNoCanceller = errors.New("trigger: cancel needs an engine that can cancel runs")
 
 // CancelResult is the POST /v1/events/trigger/{transactionId}/cancel response:
-// the ids of the transaction's notifications, split by outcome. Both lists are
-// always present, empty rather than null.
+// the ids of the transaction's notifications, split by outcome. Cancelled and
+// AlreadyFinished are always present, empty rather than null.
 type CancelResult struct {
 	// Cancelled holds every notification that is now cancelled, including any
 	// an earlier cancel already stopped.
 	Cancelled []string `json:"cancelled"`
-	// AlreadyFinished holds every notification whose run had already ended
-	// (completed or failed) before the cancel; those keep their status.
+	// AlreadyFinished holds every notification whose run had completed or
+	// failed in dagnats before a cancel took effect.
 	AlreadyFinished []string `json:"alreadyFinished"`
+	// Failed holds the notifications this call could not settle; retry the
+	// cancel for them. Absent when every notification was settled.
+	Failed []CancelFailure `json:"failed,omitempty"`
+}
+
+// CancelFailure is one notification Cancel could not settle.
+type CancelFailure struct {
+	NotificationID string `json:"notificationId"`
+	// Reason is run_not_visible, engine_unavailable, engine_error or internal.
+	Reason string `json:"reason"`
 }
 
 // Cancel stops every run the trigger with transactionID started in scope and
-// marks their notifications cancelled.
+// marks their notifications cancelled. It settles every notification it can:
+// one that fails is listed in Failed and the rest go on, and the returned error
+// joins the failures' errors. The result is meaningful whenever the error is
+// not ErrTransactionNotFound.
 //
 // A notification with no run (its start is in flight, timed out or was
-// refused) is marked cancelled without asking the engine; a retried trigger
-// then starts nothing, and a start still in flight cancels its own run when it
-// finds the row cancelled. A running run is cancelled in the engine before its
-// row is marked, so a failed engine call leaves the row as it was for a retry.
+// refused) is marked cancelled without asking the engine, and a retried
+// trigger then starts nothing. If dagnats did start a run for it, that run is
+// stopped later: by the trigger when its start returns, or by the run's first
+// step, which finds the row cancelled (delivery.StopCancelled). A running run
+// is cancelled in the engine before its row is marked, so a failed engine call
+// leaves the row as it was for a retry.
 //
-// dagnats' cancel ends the run: its pending sleeps (a delay, a digest window)
-// no longer advance it and no further step is dispatched. A step a worker has
-// already claimed sees its context end but may finish what it was doing; a
-// send already under way can still go out.
+// dagnats' cancel ends the run: a pending sleep (a delay, a digest window)
+// that fires afterwards no longer advances it, and no further step is
+// dispatched. A step a worker has already claimed sees its context end but may
+// finish what it was doing, so a send already under way can still go out; a
+// run that finishes before dagnats handles the cancel is reported cancelled by
+// this call and alreadyFinished by the next.
 func (svc *Service) Cancel(ctx context.Context, scope domain.Scope, transactionID string) (CancelResult, error) {
 	if svc.runs == nil {
 		return CancelResult{}, errNoCanceller
@@ -72,18 +93,34 @@ func (svc *Service) Cancel(ctx context.Context, scope domain.Scope, transactionI
 		return CancelResult{}, ErrTransactionNotFound
 	}
 	res := CancelResult{Cancelled: []string{}, AlreadyFinished: []string{}}
+	var errs []error
 	for _, n := range rows {
 		finished, err := svc.cancelOne(ctx, scope, n)
-		if err != nil {
-			return CancelResult{}, err
-		}
-		if finished {
+		switch {
+		case err != nil:
+			res.Failed = append(res.Failed, CancelFailure{NotificationID: n.ID, Reason: failureReason(err)})
+			errs = append(errs, err)
+		case finished:
 			res.AlreadyFinished = append(res.AlreadyFinished, n.ID)
-		} else {
+		default:
 			res.Cancelled = append(res.Cancelled, n.ID)
 		}
 	}
-	return res, nil
+	return res, errors.Join(errs...)
+}
+
+// failureReason names err's class for CancelFailure.Reason.
+func failureReason(err error) string {
+	switch {
+	case errors.Is(err, ErrRunNotVisible):
+		return "run_not_visible"
+	case errors.Is(err, ErrEngine) && engine.IsTransient(err):
+		return "engine_unavailable"
+	case errors.Is(err, ErrEngine):
+		return "engine_error"
+	default:
+		return "internal"
+	}
 }
 
 // transactionRows lists every notification of transactionID in scope, oldest
@@ -127,19 +164,19 @@ func (svc *Service) cancelOne(ctx context.Context, scope domain.Scope, n domain.
 		// dagnats answers not found both for a run it has pruned and for one
 		// it started moments ago but has not yet recorded (dagnats#1006).
 		// Only the first has certainly finished.
-		if !createdBefore(n, time.Now().Add(-prunedAfter)) {
+		if !runStartedBefore(n, time.Now().Add(-prunedAfter)) {
 			return false, fmt.Errorf("%w: run %s of notification %s", ErrRunNotVisible, n.RunID, n.ID)
 		}
 		return n.Status != domain.NotificationCancelled, nil
 	case err != nil:
-		return false, fmt.Errorf("trigger: read run %s: %w", n.RunID, err)
+		return false, fmt.Errorf("%w: read run %s: %w", ErrEngine, n.RunID, err)
 	}
-	if snap.IsTerminal() && snap.Status != "cancelled" && n.Status != domain.NotificationCancelled {
+	if snap.IsTerminal() && snap.Status != "cancelled" {
 		return true, nil
 	}
 	if !snap.IsTerminal() {
 		if err := svc.runs.CancelRun(ctx, n.RunID); err != nil {
-			return false, fmt.Errorf("trigger: cancel run %s: %w", n.RunID, err)
+			return false, fmt.Errorf("%w: cancel run %s: %w", ErrEngine, n.RunID, err)
 		}
 	}
 	if _, err := svc.s.Notifications().MarkCancelled(ctx, scope, n.ID, n.RunID); err != nil {

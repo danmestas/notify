@@ -31,6 +31,8 @@ type fakeEngine struct {
 	// status is a run's dagnats status; a run absent here is running.
 	status  map[string]string
 	cancels []string
+	// cancelErr, when set, is every CancelRun's answer.
+	cancelErr error
 }
 
 func newFakeEngine() *fakeEngine {

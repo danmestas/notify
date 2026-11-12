@@ -13,7 +13,7 @@ A notification is one trigger for one recipient. All routes take an API key.
 | `GET /v1/notifications/{id}` | One notification; `404` if absent. |
 | `GET /v1/notifications/{id}/messages` | The messages the notification produced, newest first. |
 
-A notification serializes with Go field names: `ID`, `OrgID`, `EnvID`, `WorkflowID`, `SubscriberID`, `TransactionID`, `RunID`, `Payload`, `CreatedAt`, `DigestKey`, `Status`.
+A notification serializes with Go field names: `ID`, `OrgID`, `EnvID`, `WorkflowID`, `SubscriberID`, `TransactionID`, `RunID`, `Payload`, `CreatedAt`, `DigestKey`, `Status`, `RunStartedAt` (when `RunID` was recorded; empty while there is no run).
 
 `Status` is where the notification's run stands. A trigger records the notification before it starts the run, so the notification can exist before the run does:
 

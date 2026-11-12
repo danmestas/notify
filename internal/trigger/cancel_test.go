@@ -33,6 +33,9 @@ func (f *fakeEngine) CancelRun(_ context.Context, runID string) error {
 	if _, ok := f.runs[runID]; !ok {
 		return fmt.Errorf("%w: engine: workflow run not found", engine.ErrRunNotFound)
 	}
+	if f.cancelErr != nil {
+		return f.cancelErr
+	}
 	f.cancels = append(f.cancels, runID)
 	f.status[runID] = "cancelled"
 	return nil
@@ -226,6 +229,79 @@ func TestCancel_RunNotFound(t *testing.T) {
 	res, err := fx.svc.Cancel(ctx, fx.scope, "tx-old")
 	if err != nil || !slices.Equal(res.AlreadyFinished, []string{old.ID}) {
 		t.Fatalf("Cancel old = %+v, %v; want alreadyFinished [%s]", res, err, old.ID)
+	}
+}
+
+// TestCancel_RetriedTriggerRunIsYoung: a retried trigger reuses a row written
+// long ago for a fresh run. That run's age, not the row's, decides that a
+// not-found run is not visible yet rather than pruned.
+func TestCancel_RetriedTriggerRunIsYoung(t *testing.T) {
+	fx := setupFakeEngine(t)
+	ctx := context.Background()
+	row, err := fx.st.Notifications().Create(ctx, fx.scope, domain.Notification{
+		WorkflowID: "wf", SubscriberID: "user_1", TransactionID: "tx-retry", Status: domain.NotificationPending,
+		CreatedAt: timestamp.Format(time.Now().Add(-3 * time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := fx.st.Notifications().AttachRun(ctx, fx.scope, row.ID, "run-fresh"); err != nil {
+		t.Fatalf("AttachRun: %v", err)
+	}
+	res, err := fx.svc.Cancel(ctx, fx.scope, "tx-retry")
+	if !errors.Is(err, trigger.ErrRunNotVisible) {
+		t.Fatalf("Cancel = %+v, %v; want ErrRunNotVisible", res, err)
+	}
+	want := []trigger.CancelFailure{{NotificationID: row.ID, Reason: "run_not_visible"}}
+	if !slices.Equal(res.Failed, want) || len(res.AlreadyFinished) != 0 {
+		t.Fatalf("Cancel = %+v, want failed %v", res, want)
+	}
+}
+
+// TestCancel_CompletedAfterCancel: a run that completed before dagnats handled
+// an earlier cancel is reported alreadyFinished by the next cancel.
+func TestCancel_CompletedAfterCancel(t *testing.T) {
+	fx := setupFakeEngine(t)
+	if err := fx.ingest(t); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	row := fx.onlyRow(t)
+	fx.cancel(t)
+	fx.eng.setStatus("run-1", "completed")
+	if res := fx.cancel(t); len(res.Cancelled) != 0 || !slices.Equal(res.AlreadyFinished, []string{row.ID}) {
+		t.Fatalf("Cancel = %+v, want alreadyFinished [%s]", res, row.ID)
+	}
+}
+
+// TestCancel_PartialFailure settles every notification it can: one whose run
+// dagnats refuses to cancel is listed as failed, the rest are still cancelled.
+func TestCancel_PartialFailure(t *testing.T) {
+	fx := setupFakeEngine(t)
+	ctx := context.Background()
+	if err := fx.ingest(t); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	running := fx.onlyRow(t)
+	pending, err := fx.st.Notifications().Create(ctx, fx.scope, domain.Notification{
+		WorkflowID: "wf", SubscriberID: "user_2", TransactionID: "tx-1", Status: domain.NotificationPending,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fx.eng.mu.Lock()
+	fx.eng.cancelErr = errors.New("engine: refused")
+	fx.eng.mu.Unlock()
+
+	res, err := fx.svc.Cancel(ctx, fx.scope, "tx-1")
+	if !errors.Is(err, trigger.ErrEngine) {
+		t.Fatalf("Cancel err = %v, want ErrEngine", err)
+	}
+	want := []trigger.CancelFailure{{NotificationID: running.ID, Reason: "engine_error"}}
+	if !slices.Equal(res.Cancelled, []string{pending.ID}) || !slices.Equal(res.Failed, want) {
+		t.Fatalf("Cancel = %+v, want cancelled [%s] and failed %v", res, pending.ID, want)
+	}
+	if got, _ := fx.st.Notifications().Get(ctx, fx.scope, running.ID); got.Status != domain.NotificationStarted {
+		t.Fatalf("failed row status = %q, want started (left for a retry)", got.Status)
 	}
 }
 

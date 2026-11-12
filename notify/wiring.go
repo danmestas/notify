@@ -101,6 +101,21 @@ type stepTaskDeps struct {
 	composer agentstep.Composer
 	// drafts records review-mode draft requests for agent_message steps.
 	drafts agentstep.DraftRequester
+	// runs, with store, puts every step task behind delivery.StopCancelled.
+	// nil leaves the handlers unguarded (wiring tests).
+	runs delivery.RunCanceller
+}
+
+// stopCancelled registers every handler behind delivery.StopCancelled, so no
+// step of a cancelled notification runs.
+type stopCancelled struct {
+	eng   taskRegistrar
+	store *store.Store
+	runs  delivery.RunCanceller
+}
+
+func (r stopCancelled) Handle(taskType string, fn engine.HandlerFunc, opts ...engine.HandleOption) {
+	r.eng.Handle(taskType, delivery.StopCancelled(r.store, r.runs, fn), opts...)
 }
 
 // registerStepTaskHandlers registers a handler for every engine task type a
@@ -111,6 +126,9 @@ type stepTaskDeps struct {
 // Previously the send.* handlers lived here and the rest were registered inline
 // during boot, each with a comment asking the reader to remember the invariant.
 func registerStepTaskHandlers(eng taskRegistrar, d stepTaskDeps) {
+	if d.runs != nil && d.store != nil {
+		eng = stopCancelled{eng: eng, store: d.store, runs: d.runs}
+	}
 	registerDeliveryHandlers(eng, d.store, d.conn, d.prefs, d.bus, d.replyArmer)
 
 	// Scheduled (cron) digest window: sleeps until the next tick, then the

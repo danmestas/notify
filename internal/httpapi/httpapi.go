@@ -721,28 +721,48 @@ func postTrigger(trg *trigger.Service) http.HandlerFunc {
 
 // postTriggerCancel handles POST /v1/events/trigger/{transactionId}/cancel
 // (#144): it cancels the transaction's runs in the caller's environment and
-// answers 200 with trigger.CancelResult, or 404 when the environment has no
-// notification for that transaction.
+// answers with trigger.CancelResult: 200 when every notification was settled,
+// or 404 when the environment has no notification for that transaction.
+// Notifications it could not settle are listed in failed, and the status says
+// whether a retry is worth it: 503 with Retry-After when dagnats was
+// unreachable or has not shown a new run yet, 502 when dagnats refused, 500
+// for anything else.
 func postTriggerCancel(trg *trigger.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		scope := identity.ScopeFrom(r.Context())
 		res, err := trg.Cancel(r.Context(), scope, chi.URLParam(r, "transactionId"))
-		if errors.Is(err, trigger.ErrTransactionNotFound) {
+		switch {
+		case errors.Is(err, trigger.ErrTransactionNotFound):
 			writeJSONError(w, http.StatusNotFound, "not_found", "transaction not found")
-			return
-		}
-		if errors.Is(err, trigger.ErrRunNotVisible) {
-			w.Header().Set("Retry-After", "1")
-			writeJSONError(w, http.StatusServiceUnavailable, "run_not_visible",
-				"a run of this transaction has just started; retry the cancel")
-			return
-		}
-		if err != nil {
+		case err != nil && len(res.Failed) == 0:
 			writeInternalError(w, r, err)
-			return
+		case err != nil:
+			slog.ErrorContext(r.Context(), "httpapi: cancel left notifications unsettled",
+				"path", r.URL.Path, "failed", len(res.Failed), "err", err)
+			status := cancelFailureStatus(res.Failed)
+			if status == http.StatusServiceUnavailable {
+				w.Header().Set("Retry-After", "1")
+			}
+			writeJSON(w, status, res)
+		default:
+			writeJSON(w, http.StatusOK, res)
 		}
-		writeJSON(w, http.StatusOK, res)
 	}
+}
+
+// cancelFailureStatus is the status of a cancel that left failed unsettled:
+// the least retryable failure decides.
+func cancelFailureStatus(failed []trigger.CancelFailure) int {
+	status := http.StatusServiceUnavailable
+	for _, f := range failed {
+		switch f.Reason {
+		case "internal":
+			return http.StatusInternalServerError
+		case "engine_error":
+			status = http.StatusBadGateway
+		}
+	}
+	return status
 }
 
 // topicRequest is the POST /v1/topics body.

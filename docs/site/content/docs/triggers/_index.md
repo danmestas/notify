@@ -72,14 +72,19 @@ Every notification of that transaction in the key's environment is cancelled, so
 
 | List | Meaning |
 |---|---|
-| `cancelled` | The run is cancelled and the notification's `Status` is now `cancelled`. Its pending delay or digest window no longer advances it, and none of its remaining steps run. A notification whose run never started is cancelled too, and retrying the trigger afterwards starts nothing. |
-| `alreadyFinished` | The run had already completed or failed. Its notification and messages are left as they were. |
+| `cancelled` | The run is cancelled and the notification's `Status` is now `cancelled`. Its pending delay or digest window no longer advances it, and none of its remaining steps run. A notification whose run never started is cancelled too, and retrying the trigger afterwards starts nothing. If a timed-out start did leave a run behind, that run's first step finds the notification cancelled, cancels the run and sends nothing. |
+| `alreadyFinished` | The run had already completed or failed. Its messages are left as they were. |
+| `failed` | Present only when some notifications could not be settled, as `{"notificationId", "reason"}`. Retry the cancel for them. |
 
 | Outcome | HTTP |
 |---|---|
-| Cancelled, or already finished | `200` with both lists, either of which may be empty |
+| Every notification settled | `200`; `cancelled` and `alreadyFinished` are always present and either may be empty |
 | No notification with that `transactionId` in this environment | `404` |
-| A run started moments ago that the engine does not show yet | `503` with `Retry-After: 1`; retry the cancel |
+| Some notifications in `failed`, worth retrying: the engine was unreachable (`engine_unavailable`), or a run started moments ago is not visible yet (`run_not_visible`) | `503` with `Retry-After: 1` |
+| Some notifications in `failed` because the engine refused (`engine_error`) | `502` |
+| An internal failure | `500` |
+
+A partial failure still settles every notification it can, so the body lists what was cancelled alongside what failed.
 
 Cancelling is idempotent: a second call answers `200` with the same notifications under `cancelled`.
 

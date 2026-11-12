@@ -232,7 +232,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// it as its reply armer.
 	registerStepTaskHandlers(reg, stepTaskDeps{
 		store: st, conn: conn, prefs: prefs, bus: bus, secrets: secrets, replyArmer: eml,
-		composer: ing, drafts: ags.Drafts(),
+		composer: ing, drafts: ags.Drafts(), runs: eng,
 	})
 
 	// Chat two-way loop: inbound Telegram (getUpdates long-poll) and Discord

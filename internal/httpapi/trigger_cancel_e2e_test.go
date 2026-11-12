@@ -36,11 +36,37 @@ type cancelHarness struct {
 	scope      domain.Scope
 	authHeader string
 	otherAuth  string
+	// startWorkers starts the task workers when the harness deferred them.
+	startWorkers func()
 }
 
 const cancelDelay = 3 * time.Second
 
+// timedOutStart is #66's start: dagnats starts the run, but notify stops
+// waiting for the reply first.
+type timedOutStart struct{ *engine.Engine }
+
+func (s timedOutStart) StartRun(ctx context.Context, workflow string, input json.RawMessage) (string, error) {
+	if _, err := s.Engine.StartRun(ctx, workflow, input); err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("nats request %q: %w", "api.p.notify.runs.start", context.DeadlineExceeded)
+}
+
+// cancelHarnessOpts varies newCancelHarness: timeoutStarts makes every start
+// time out after starting its run, and deferWorkers leaves the task workers
+// stopped until the test calls startWorkers.
+type cancelHarnessOpts struct {
+	timeoutStarts bool
+	deferWorkers  bool
+}
+
 func newCancelHarness(t *testing.T) cancelHarness {
+	t.Helper()
+	return newCancelHarnessWith(t, cancelHarnessOpts{})
+}
+
+func newCancelHarnessWith(t *testing.T, opts cancelHarnessOpts) cancelHarness {
 	t.Helper()
 	natsURL := dagtest.StartSidecar(t)
 	eng, err := engine.New(natsURL)
@@ -57,9 +83,16 @@ func newCancelHarness(t *testing.T) cancelHarness {
 	t.Cleanup(func() { _ = st.Close() })
 
 	cap := providers.NewCapture()
-	eng.Handle("notify.send.email", delivery.NewEmail(st, capResolver{c: cap, from: "noreply@acme.io"}).HandleEmail)
-	if err := eng.StartWorkers(ctx); err != nil {
-		t.Fatalf("StartWorkers: %v", err)
+	// The production wiring puts every step behind StopCancelled.
+	eng.Handle("notify.send.email", delivery.StopCancelled(st, eng,
+		delivery.NewEmail(st, capResolver{c: cap, from: "noreply@acme.io"}).HandleEmail))
+	startWorkers := func() {
+		if err := eng.StartWorkers(ctx); err != nil {
+			t.Fatalf("StartWorkers: %v", err)
+		}
+	}
+	if !opts.deferWorkers {
+		startWorkers()
 	}
 
 	id := identity.New(st, bytesRepeat(0x2a, 32))
@@ -96,13 +129,18 @@ func newCancelHarness(t *testing.T) cancelHarness {
 		}
 	}
 
+	var starter trigger.RunStarter = eng
+	if opts.timeoutStarts {
+		starter = timedOutStart{eng}
+	}
 	srv := httptest.NewServer(httpapi.New(httpapi.Deps{
-		Identity: id, Audience: aud, Trigger: trigger.New(aud, st, eng), Inbox: inboxapi.New(st), Store: st,
+		Identity: id, Audience: aud, Trigger: trigger.New(aud, st, starter), Inbox: inboxapi.New(st), Store: st,
 	}))
 	t.Cleanup(srv.Close)
 	h := cancelHarness{
 		srv: srv, eng: eng, st: st, cap: cap, scope: scope,
 		authHeader: "ApiKey " + key, otherAuth: "ApiKey " + otherKey,
+		startWorkers: startWorkers,
 	}
 	for _, sub := range []string{"s1", "s2", "s3"} {
 		body := fmt.Sprintf(`{"subscriberId":%q,"email":"%s@acme.io"}`, sub, sub)
@@ -283,5 +321,53 @@ func TestTriggerCancel_E2E(t *testing.T) {
 	}
 	if n := len(h.cap.Sent()); n != 1 {
 		t.Fatalf("emails sent = %d, want 1 (the finished run's)", n)
+	}
+}
+
+// TestTriggerCancel_TimedOutStart is the start that timed out after dagnats
+// started the run: the cancel finds the notification with no run and marks it
+// cancelled without a dagnats call. When the orphaned run's first step is
+// dispatched, it records its run on the cancelled notification, cancels the
+// run and sends nothing.
+func TestTriggerCancel_TimedOutStart(t *testing.T) {
+	h := newCancelHarnessWith(t, cancelHarnessOpts{timeoutStarts: true, deferWorkers: true})
+	ctx := context.Background()
+
+	body := `{"name":"now","to":{"subscriberId":"s1"},"payload":{},"transactionId":"tx-orphan"}`
+	if status, rb := doPost(t, h.srv.URL+"/v1/events/trigger", h.authHeader, body); status != http.StatusInternalServerError {
+		t.Fatalf("trigger = %d %s, want the start's timeout as 500", status, rb)
+	}
+	page, err := h.st.Notifications().List(ctx, h.scope, store.NotificationFilter{TransactionID: "tx-orphan"}, "", 0)
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("List = %d rows, %v; want one", len(page.Items), err)
+	}
+	row := page.Items[0]
+	if row.Status != domain.NotificationPending || row.RunID != "" {
+		t.Fatalf("row = %+v, want pending with no run", row)
+	}
+
+	status, wire := h.cancel(t, h.authHeader, "tx-orphan")
+	if status != http.StatusOK || !slices.Equal(wire["cancelled"], []string{row.ID}) {
+		t.Fatalf("cancel = %d %v, want 200 cancelled [%s]", status, wire, row.ID)
+	}
+
+	h.startWorkers()
+	deadline := time.Now().Add(15 * time.Second)
+	for h.row(t, row.ID).RunID == "" {
+		if time.Now().After(deadline) {
+			t.Fatal("the orphaned run's step never recorded its run on the notification")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	got := h.row(t, row.ID)
+	if got.Status != domain.NotificationCancelled {
+		t.Fatalf("row status = %q, want cancelled", got.Status)
+	}
+	h.waitRun(t, got.RunID, "cancelled")
+	if n := len(h.cap.Sent()); n != 0 {
+		t.Fatalf("emails sent = %d, want 0", n)
+	}
+	if msgs := h.messages(t, row.ID); len(msgs) != 0 {
+		t.Fatalf("messages = %+v, want none", msgs)
 	}
 }

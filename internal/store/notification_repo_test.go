@@ -240,6 +240,10 @@ func TestNotificationRepo_MarkCancelled(t *testing.T) {
 	if got.Status != domain.NotificationCancelled || got.RunID != "r1" {
 		t.Fatalf("row = status %q run %q, want cancelled with run r1 recorded", got.Status, got.RunID)
 	}
+	// The run is dated when it was recorded, not when the row was written.
+	if at, err := timestamp.Parse(got.RunStartedAt); err != nil || at.Before(old.Add(30*time.Minute)) {
+		t.Fatalf("RunStartedAt = %q (%v), want about now", got.RunStartedAt, err)
+	}
 
 	started, err := repo.Create(ctx, scope, domain.Notification{
 		WorkflowID: "wf1", SubscriberID: "sub2", TransactionID: "tx1", RunID: "r2",
