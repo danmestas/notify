@@ -13,6 +13,33 @@
   <p class="console-form-error" role="alert" id="integration-create-error-page">{{$page.CreateError}}</p>
   {{end}}
 
+  {{/* One switch for texting customers who opted in at the shop: sets the
+       environment setting and the key permission together. */}}
+  {{with $page.SMSConsent}}
+  <div class="console-card" id="sms-consent">
+    <h2 class="console-card-title">Text customers who opted in at your shop</h2>
+    <p class="console-card-subtitle">When this is on, your shop's app can mark customers who agreed to texts in person, so notify can text them. Customers can always reply STOP.</p>
+    {{if .Error}}<div class="console-alert console-alert-danger" role="alert">{{.Error}}</div>{{end}}
+    {{if .Saved}}<div class="console-alert console-alert-success" role="status">Saved.</div>{{end}}
+    <form method="POST" action="{{base}}/console/integrations/sms-consent">
+      <input type="hidden" name="csrf_token" value="{{$page.CSRF}}">
+      <div class="form-row">
+        <label class="form-label" for="sms-consent-policy-url">Link to your privacy policy</label>
+        <input class="console-input" type="url" id="sms-consent-policy-url" name="policy_url"
+               value="{{.PolicyURL}}" placeholder="https://example.com/privacy"{{if $page.ReadOnly}} disabled{{end}}>
+        <span class="form-hint">It must start with https://</span>
+      </div>
+      <div class="form-row">
+        <label class="form-label">
+          <input type="checkbox" id="sms-consent-on" name="enabled" value="on"{{if .On}} checked{{end}}{{if $page.ReadOnly}} disabled{{end}}> Turn this on
+        </label>
+      </div>
+      <p class="form-hint" id="sms-consent-status">{{if .On}}On, using your privacy policy at {{.PolicyURL}}{{else}}Off{{end}}</p>
+      {{if not $page.ReadOnly}}<button type="submit" class="btn btn-outline btn-sm">Save</button>{{end}}
+    </form>
+  </div>
+  {{end}}
+
   <div class="integration-toolbar">
     {{/* Channel filter — segmented button group */}}
     <nav class="integration-channel-tabs" role="group" id="integration-channel-tabs" aria-label="Filter by channel">

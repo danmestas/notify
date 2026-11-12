@@ -654,8 +654,7 @@ func (c *Console) Routes() http.Handler {
 		pr.Get("/console/settings/api-keys", c.serveAPIKeysPage)
 		pr.Post("/console/settings/api-keys/regenerate", c.handleAPIKeyRegenerate)
 		if c.deps.Phone != nil {
-			pr.Post("/console/settings/api-keys/sms-consent", c.handleSMSConsentSettings)
-			pr.Post("/console/settings/api-keys/attest-permission", c.handleAttestPermission)
+			pr.Post("/console/integrations/sms-consent", c.handleSMSConsentSwitch)
 		}
 		// W4-D1/D2: inbound domain management (#53).
 		if c.deps.InboundDomains != nil {

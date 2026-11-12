@@ -178,6 +178,9 @@ type integrationsListView struct {
 	// /console/integrations?createError=<msg> instead of returning a raw 4xx/5xx
 	// plaintext dead-end (H4).
 	CreateError string
+	CSRF        string
+	// SMSConsent is the texting-consent card; nil hides it.
+	SMSConsent *smsConsentView
 }
 
 // integrationsGridView is what the integrations-grid fragment binds.
@@ -671,6 +674,18 @@ func (c *Console) serveIntegrationsPage(w http.ResponseWriter, r *http.Request) 
 		CreateError:   r.URL.Query().Get("createError"),
 	}
 
+	if sess, ok := sessionFromContext(r.Context()); ok {
+		view.CSRF = sess.CSRF
+	}
+	if c.deps.Phone != nil {
+		consent, err := c.smsConsentFor(r, scope)
+		if err != nil {
+			c.deps.Logger.Error("console: integrations page: sms consent", "err", err)
+			c.serveError(w, r)
+			return
+		}
+		view.SMSConsent = consent
+	}
 	c.renderPage(w, r, http.StatusOK, "integrations", "Integration Store", view)
 }
 

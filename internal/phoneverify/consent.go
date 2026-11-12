@@ -102,6 +102,29 @@ func (s *Service) SetConsentSettings(ctx context.Context, scope domain.Scope, en
 	return s.store.SMSConsents().SetSettings(ctx, scope, ConsentSettings{Enabled: enabled, PolicyURL: policyURL})
 }
 
+// EnableOperatorConsent turns on operator-attested consent for the
+// environment in one step: the setting (with policyURL, which must be https,
+// else ErrPolicyURLRequired and nothing changes) and the environment's key
+// permission, in one transaction.
+func (s *Service) EnableOperatorConsent(ctx context.Context, scope domain.Scope, policyURL string) error {
+	policyURL = strings.TrimSpace(policyURL)
+	if !validPolicyURL(policyURL) {
+		return ErrPolicyURLRequired
+	}
+	return s.store.SMSConsents().SetOperatorConsent(ctx, scope, ConsentSettings{Enabled: true, PolicyURL: policyURL})
+}
+
+// DisableOperatorConsent turns it off in one step: the setting (the stored
+// policy URL is kept for next time) and the key permission, in one
+// transaction. Existing attestations are suspended, not cleared.
+func (s *Service) DisableOperatorConsent(ctx context.Context, scope domain.Scope) error {
+	cur, err := s.ConsentSettings(ctx, scope)
+	if err != nil {
+		return err
+	}
+	return s.store.SMSConsents().SetOperatorConsent(ctx, scope, ConsentSettings{Enabled: false, PolicyURL: cur.PolicyURL})
+}
+
 // Attest records that the subscriber consented to texts at in.Phone. The
 // subscriber's phone becomes that number, and the attestation replaces any
 // earlier one. ErrPhoneSelfVerified when the subscriber verified a different

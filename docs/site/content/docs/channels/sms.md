@@ -22,21 +22,20 @@ A business whose customers agreed to texts through their dealings with it (in a 
 
 **You are responsible for having that consent.** notify does not check it. Attesting says you hold consent that meets the law that applies to you (in the US the TCPA, and carrier rules) and your own privacy policy, and notify records that you said so. A STOP from the number always wins over an attestation.
 
-It takes two switches, both off by default:
+In the console it is one switch. Open Integrations and find the card *Text customers who opted in at your shop*: give the link to your privacy policy (it must start with `https://`), turn the switch on and Save. Turning it on does both things the API needs, in one step: it allows operator-attested consent for the environment, with that policy link, and lets the environment's key attest. Turning it off clears both; existing attestations are suspended (sms steps skip them), not deleted, and turning it back on restores them. A link that is missing or not `https` is refused and nothing changes.
 
-1. **The environment setting.** In the console, Settings, API keys, SMS consent: check *Allow operator-attested SMS consent* and give your privacy policy URL, which must be `https`. The setting cannot be turned on without it. Turning the setting off suspends every attestation in the environment (sms steps skip them) without clearing them; turning it back on restores them.
-2. **The key permission.** On the same card: *This API key may attest SMS consent*. A key without it gets `403`. The permission stays with the environment's key when you rotate it, in the console or with `notify rotate-key`; `notify rotate-key -attest-sms-consent=true|false` sets it on the new key.
+**Whoever can log in to the console decides this for the shop.** The switch is not in the HTTP API on purpose: a key must not be able to turn it on for itself. The permission stays with the environment's key when you rotate it, in the console or with `notify rotate-key`; `notify rotate-key -attest-sms-consent=true|false` sets it on the new key.
 
-Without the console, an operator with access to the database switches both with [`notify sms-consent`](../../configuration#commands), run on the host like `notify bootstrap`:
+For a headless setup with no console, an operator with access to the database sets the same two things separately with [`notify sms-consent`](../../configuration#commands), run on the host like `notify bootstrap`:
 
 ```sh
-notify sms-consent -org Acme -env production -enable -policy-url https://shop.example/privacy
-notify sms-consent -org Acme -env production -grant-key 9f86d081   # the key's id, never the key
+notify sms-consent -org Acme -env production -enable -policy-url https://shop.example/privacy   # the setting
+notify sms-consent -org Acme -env production -grant-key 9f86d081   # the key's permission; the key's id, never the key
 notify sms-consent -org Acme -env production -revoke-key 9f86d081
 notify sms-consent -org Acme -env production -disable
 ```
 
-Run with no action, it prints the setting and each key's id and permission. Granting or revoking changes only the permission, so the key keeps working as before. There is deliberately no HTTP route for either switch: a key must not be able to grant itself the permission. Each change is logged to stderr with the organization, environment and, for a key, its id.
+Run with no action, it prints the setting and each key's id and permission. Granting or revoking changes only the permission, so the key keeps working as before. Each change is logged to stderr with the organization, environment and, for a key, its id.
 
 | Method and path | Purpose | Success |
 |---|---|---|

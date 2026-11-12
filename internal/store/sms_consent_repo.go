@@ -87,6 +87,11 @@ type SMSConsentRepo interface {
 	Settings(ctx context.Context, scope domain.Scope) (SMSConsentSettings, error)
 	// SetSettings writes it. ErrNotFound when the scope names no environment.
 	SetSettings(ctx context.Context, scope domain.Scope, s SMSConsentSettings) error
+	// SetOperatorConsent sets the environment's setting and, in the same
+	// transaction, grants (s.Enabled) or withdraws the scope's keys'
+	// permission to attest. ErrNotFound for an unknown environment, with
+	// nothing changed.
+	SetOperatorConsent(ctx context.Context, scope domain.Scope, s SMSConsentSettings) error
 	// Attest records a for the live subscriber a.SubscriberID: their phone
 	// becomes a.Phone and is marked attested, and any earlier open
 	// attestation is superseded by a.APIKeyID. It fills in ID and CreatedAt.
@@ -145,6 +150,30 @@ func (repo *smsConsentRepo) SetSettings(ctx context.Context, scope domain.Scope,
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (repo *smsConsentRepo) SetOperatorConsent(ctx context.Context, scope domain.Scope, s SMSConsentSettings) error {
+	return inTx(ctx, repo.w, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(
+			ctx,
+			`UPDATE environments SET sms_consent_attestation = ?, sms_consent_policy_url = ? WHERE org_id = ? AND id = ?`,
+			s.Enabled, s.PolicyURL, scope.OrgID, scope.EnvID,
+		)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return ErrNotFound
+		}
+		_, err = tx.ExecContext(
+			ctx,
+			`UPDATE api_keys SET attest_sms_consent = ? WHERE org_id = ? AND environment_id = ?`,
+			s.Enabled, scope.OrgID, scope.EnvID,
+		)
+		return err
+	})
 }
 
 func (repo *smsConsentRepo) Attest(ctx context.Context, scope domain.Scope, a SMSAttestation) (SMSAttestation, error) {
