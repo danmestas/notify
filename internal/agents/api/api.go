@@ -657,17 +657,32 @@ func (svc *Service) listDrafts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	cursor := after
-	if n := len(drafts); n > 0 {
-		cursor = encodeDraftCursor(drafts[n-1])
-	}
+	now := time.Now()
 	writeJSON(w, http.StatusOK, wire.DraftList{
 		Drafts: wire.Drafts(drafts),
-		Cursor: cursor,
+		Cursor: nextDraftCursor(drafts, afterSeq, limit, now),
 		// A cursor older than the retention window means drafts created
 		// after it may have been purged before this caller fetched them.
-		Gap: after != "" && afterAt.Before(time.Now().Add(-agentstore.DraftRetention)),
+		Gap: after != "" && afterAt.Before(now.Add(-agentstore.DraftRetention)),
 	})
+}
+
+// nextDraftCursor is the cursor a caller resumes from. Its time says how
+// far the caller has caught up, which is what the gap check measures. A
+// page shorter than limit has read everything after afterSeq that exists
+// now, so the cursor carries now: a reader that keeps polling an empty
+// mailbox never ages into a false gap, and a first read with nothing yet
+// still returns a cursor rather than "". A full page may stop short of
+// newer drafts, so its cursor keeps the last draft's own time.
+func nextDraftCursor(drafts []agentdomain.Draft, afterSeq int64, limit int, now time.Time) string {
+	seq := afterSeq
+	if n := len(drafts); n > 0 {
+		if n >= limit {
+			return encodeDraftCursor(drafts[n-1])
+		}
+		seq = drafts[n-1].Seq
+	}
+	return strconv.FormatInt(seq, 10) + "." + strconv.FormatInt(now.UnixMilli(), 10)
 }
 
 // encodeDraftCursor names a draft's position: its sequence and its creation

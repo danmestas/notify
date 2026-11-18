@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,8 +102,9 @@ func TestDrafts_PagesByMailbox(t *testing.T) {
 		t.Fatalf("page 2 = %v, want [a5]", draftIDs(page2))
 	}
 	_, page3 := getDrafts(t, srv, auth, q+"&after="+page2.Cursor)
-	if len(page3.Drafts) != 0 || page3.Cursor != page2.Cursor {
-		t.Fatalf("page 3 = %v cursor %q, want empty with the cursor unchanged (%q)", draftIDs(page3), page3.Cursor, page2.Cursor)
+	seqOf := func(c string) string { s, _, _ := strings.Cut(c, "."); return s }
+	if len(page3.Drafts) != 0 || seqOf(page3.Cursor) != seqOf(page2.Cursor) {
+		t.Fatalf("page 3 = %v cursor %q, want empty with the cursor's position unchanged (%q)", draftIDs(page3), page3.Cursor, page2.Cursor)
 	}
 
 	// A draft produced after the caller caught up arrives on the next poll.
@@ -126,6 +128,34 @@ func TestDrafts_GapWhenTheCursorPredatesRetention(t *testing.T) {
 	recent := time.Now().Add(-time.Hour).UnixMilli()
 	if _, list := getDrafts(t, srv, auth, "subscriberId=owner&mailbox=personal&after=0."+strconv.FormatInt(recent, 10)); list.Gap {
 		t.Fatal("gap for a cursor inside the retention window")
+	}
+}
+
+// TestDrafts_GapClearsAfterOneReport (#174): a reader whose cursor predates
+// the retention window hears gap once. The cursor it gets back records that it
+// has caught up, so polling an empty mailbox afterwards reports no gap, and a
+// first read of an empty mailbox still returns a usable cursor.
+func TestDrafts_GapClearsAfterOneReport(t *testing.T) {
+	srv, auth, _, _ := startDraftServer(t)
+	q := "subscriberId=owner&mailbox=personal"
+	_, first := getDrafts(t, srv, auth, q)
+	if first.Cursor == "" || first.Gap {
+		t.Fatalf("first read of an empty mailbox: cursor %q gap=%v, want a cursor and no gap", first.Cursor, first.Gap)
+	}
+	old := time.Now().Add(-agentstore.DraftRetention - time.Hour).UnixMilli()
+	_, stale := getDrafts(t, srv, auth, q+"&after=42."+strconv.FormatInt(old, 10))
+	if !stale.Gap {
+		t.Fatal("no gap for a cursor older than retention")
+	}
+	if !strings.HasPrefix(stale.Cursor, "42.") {
+		t.Fatalf("cursor %q, want the position (42) kept", stale.Cursor)
+	}
+	for i := 0; i < 3; i++ {
+		_, next := getDrafts(t, srv, auth, q+"&after="+stale.Cursor)
+		if next.Gap {
+			t.Fatalf("poll %d after the gap was reported: gap again (cursor %q)", i+1, stale.Cursor)
+		}
+		stale = next
 	}
 }
 
