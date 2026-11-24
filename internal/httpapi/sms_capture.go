@@ -79,8 +79,8 @@ func postSimulatedInboundSMS(conn *connectivity.Service, sms *smsloop.Service) h
 			return
 		}
 		scope := identity.ScopeFrom(r.Context())
-		// An environment flipped to production after the integration was made
-		// still refuses: the capture sink must not take part in a live one.
+		// Checked before the lookup, so a production environment answers 422
+		// whatever the id.
 		if err := conn.CheckCaptureAllowed(r.Context(), scope); err != nil {
 			if errors.Is(err, connectivity.ErrCaptureInProduction) {
 				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())

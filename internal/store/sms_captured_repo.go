@@ -59,9 +59,10 @@ func (repo *smsCapturedRepo) Add(ctx context.Context, scope domain.Scope, integr
 		return "", fmt.Errorf("store: capture sms: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM sms_captured WHERE integration_id = ? AND rowid NOT IN
-		   (SELECT rowid FROM sms_captured WHERE integration_id = ? ORDER BY rowid DESC LIMIT ?)`,
-		integrationID, integrationID, CapturedSMSKeep); err != nil {
+		`DELETE FROM sms_captured WHERE org_id = ? AND environment_id = ? AND integration_id = ? AND seq NOT IN
+		   (SELECT seq FROM sms_captured WHERE org_id = ? AND environment_id = ? AND integration_id = ?
+		    ORDER BY seq DESC LIMIT ?)`,
+		scope.OrgID, scope.EnvID, integrationID, scope.OrgID, scope.EnvID, integrationID, CapturedSMSKeep); err != nil {
 		return "", fmt.Errorf("store: prune captured sms: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -74,7 +75,7 @@ func (repo *smsCapturedRepo) List(ctx context.Context, scope domain.Scope, integ
 	rows, err := repo.r.QueryContext(ctx,
 		`SELECT id, provider_message_id, to_phone, from_phone, body, created_at FROM sms_captured
 		 WHERE org_id = ? AND environment_id = ? AND integration_id = ?
-		 ORDER BY rowid DESC LIMIT ?`,
+		 ORDER BY seq DESC LIMIT ?`,
 		scope.OrgID, scope.EnvID, integrationID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: list captured sms: %w", err)

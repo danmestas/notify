@@ -143,6 +143,8 @@ POST /v1/integrations/sms
 | `GET /v1/integrations/sms/{integrationId}/captured?limit=N` | The texts sent through the integration, newest first, `limit` default 50, at most 200: `{"data": [{"id", "providerMessageId", "to", "from", "body", "sentAt"}]}`. `404` for an integration that is not a capture one in your environment. The newest 1000 are kept, and an integration's texts are deleted with it. |
 | `POST /v1/integrations/sms/{integrationId}/inbound` | Simulate a text from a phone: `{"from": "+15125550123", "body": "STOP", "to": optional}`. It is handled exactly as a carrier's callback is: stored as an inbound message, STOP and START applied, `sms.inbound`, `sms.opt_out` and `sms.opt_in` events sent, and a HELP reply sent through the integration, which then shows in `/captured`. `200` `{"inboundMessageId", "keyword": "opt_out"\|"opt_in"\|"help"\|"none", "optChanged"}`; `404` for an integration that is not a capture one; `422` in production. |
 
+Captured texts hold the recipient's phone and the body; they are kept up to 1000 per integration and removed with the integration, not by a subscriber purge. A simulated `START` lifts only an opt-out that a capture integration recorded: a carrier's `STOP` stays in place, and the call reports `optChanged: false` and sends no `sms.opt_in`.
+
 Both take an API key. The public carrier route `/v1/inbound/sms/{integrationId}` still answers `403` for a capture integration: it has no signature to check.
 
 ## Legacy create

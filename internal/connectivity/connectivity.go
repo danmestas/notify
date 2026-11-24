@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"time"
@@ -1286,8 +1287,10 @@ func (c *captureSMS) Send(ctx context.Context, msg providers.SMSMessage) (provid
 	if err != nil {
 		return providers.Result{}, err
 	}
+	// Best effort: the text is already captured, and failing the send here
+	// would make a retry capture it twice.
 	if _, err := c.store.Messages().ApplyStatusCallback(ctx, c.scope, c.integrationID, pmid, "delivered", "", ""); err != nil {
-		return providers.Result{}, err
+		slog.Warn("connectivity: capture sms: mark delivered", "integration", c.integrationID, "err", err)
 	}
 	return providers.Result{ProviderMessageID: pmid}, nil
 }

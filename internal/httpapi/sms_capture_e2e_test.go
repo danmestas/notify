@@ -445,3 +445,97 @@ func TestSMSCapture_VerifyAndDelete(t *testing.T) {
 		t.Fatalf("rows after delete = %+v, %v", rows, err)
 	}
 }
+
+// TestSMSCapture_SimulatedStartNeverLiftsACarriersOptOut: a simulated START
+// lifts only an opt-out a capture integration recorded. A carrier's STOP
+// survives it, reports no change and sends no sms.opt_in, and a carrier STOP
+// that follows a simulated one replaces it.
+func TestSMSCapture_SimulatedStartNeverLiftsACarriersOptOut(t *testing.T) {
+	f := newCaptureFixture(t, "dev", false)
+	ctx := context.Background()
+	_, _, capID := f.createCapture(t)
+	status, body := doPost(t, f.srv.URL+"/v1/integrations/sms", f.auth,
+		`{"identifier":"real","provider":"twilio","accountSid":"AC1","authToken":"tok","from":"+15559990000"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("create twilio: %d %s", status, body)
+	}
+	var tw struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal([]byte(body), &tw)
+	const phone = "+15125550123"
+	opted := func() bool {
+		o, err := f.st.SMSOptOuts().IsOptedOut(ctx, f.scope, phone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o
+	}
+	start := func() map[string]any {
+		status, resp := f.simulate(t, f.auth, capID, `{"from":"`+phone+`","body":"START"}`)
+		if status != http.StatusOK {
+			t.Fatalf("simulate START: %d %s", status, resp)
+		}
+		var out map[string]any
+		_ = json.Unmarshal([]byte(resp), &out)
+		return out
+	}
+
+	// A carrier recorded the opt-out.
+	if _, err := f.st.SMSOptOuts().OptOut(ctx, f.scope, phone, tw.ID); err != nil {
+		t.Fatal(err)
+	}
+	if out := start(); out["keyword"] != "opt_in" || out["optChanged"] != false {
+		t.Errorf("START over a carrier opt-out = %v", out)
+	}
+	if !opted() {
+		t.Fatal("a simulated START lifted a carrier's opt-out")
+	}
+	if evs := f.events.ofType(smsloop.EventOptIn); len(evs) != 0 {
+		t.Errorf("sms.opt_in events = %v, want none", evs)
+	}
+
+	// A capture-recorded one is lifted.
+	if _, err := f.st.SMSOptOuts().OptIn(ctx, f.scope, phone); err != nil {
+		t.Fatal(err)
+	}
+	if status, resp := f.simulate(t, f.auth, capID, `{"from":"`+phone+`","body":"STOP"}`); status != http.StatusOK {
+		t.Fatalf("simulate STOP: %d %s", status, resp)
+	}
+	// A real STOP arriving now takes the opt-out over from the simulated one.
+	if changed, err := f.st.SMSOptOuts().OptOut(ctx, f.scope, phone, tw.ID); err != nil || !changed {
+		t.Fatalf("carrier STOP over a simulated one: changed=%v err=%v", changed, err)
+	}
+	if out := start(); out["optChanged"] != false || !opted() {
+		t.Errorf("START after a carrier took over = %v, opted out %v", out, opted())
+	}
+	if _, err := f.st.SMSOptOuts().OptIn(ctx, f.scope, phone); err != nil {
+		t.Fatal(err)
+	}
+	if status, resp := f.simulate(t, f.auth, capID, `{"from":"`+phone+`","body":"STOP"}`); status != http.StatusOK {
+		t.Fatalf("simulate STOP: %d %s", status, resp)
+	}
+	if out := start(); out["optChanged"] != true || opted() {
+		t.Errorf("START over a capture opt-out = %v, opted out %v", out, opted())
+	}
+}
+
+// TestSMSCapture_RefusedInProductionByType: an environment whose type is
+// production is refused even when its identifier is not "production".
+func TestSMSCapture_RefusedInProductionByType(t *testing.T) {
+	f := newCaptureFixture(t, "dev", false)
+	key, env, _, err := f.id.CreateEnvironment(context.Background(), f.scope.OrgID, "Live", "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Identifier == "production" {
+		t.Fatalf("identifier = %q, the test needs one that is not production", env.Identifier)
+	}
+	auth := "ApiKey " + key
+	if status, body := doPost(t, f.srv.URL+"/v1/integrations/sms", auth, `{"identifier":"c","provider":"capture"}`); status != http.StatusUnprocessableEntity {
+		t.Fatalf("create in a production-type env: %d %s, want 422", status, body)
+	}
+	if status, body := f.simulate(t, auth, "any-id", `{"from":"+15125550123","body":"hi"}`); status != http.StatusUnprocessableEntity {
+		t.Fatalf("simulate in a production-type env: %d %s, want 422", status, body)
+	}
+}

@@ -237,7 +237,7 @@ func (s *Service) HandleInbound(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "MessageSid is required", http.StatusBadRequest)
 		return
 	}
-	if _, err := s.handleText(ctx, cb, sid, form.Get("From"), form.Get("To"), form.Get("Body")); err != nil {
+	if _, err := s.handleText(ctx, cb, sid, form.Get("From"), form.Get("To"), form.Get("Body"), false); err != nil {
 		s.fail(w, "handle inbound text", err)
 		return
 	}
@@ -266,12 +266,12 @@ func (s *Service) Simulate(ctx context.Context, scope domain.Scope, integrationI
 	if to == "" {
 		to = cb.From
 	}
-	return s.handleText(ctx, cb, "capture-in-"+store.NewULID(), from, to, body)
+	return s.handleText(ctx, cb, "capture-in-"+store.NewULID(), from, to, body, true)
 }
 
 // handleText is the part of an inbound text that does not depend on how it
 // arrived: store it, apply a STOP/START, tell the tenant, answer HELP.
-func (s *Service) handleText(ctx context.Context, cb connectivity.SMSCallback, sid, from, to, body string) (InboundResult, error) {
+func (s *Service) handleText(ctx context.Context, cb connectivity.SMSCallback, sid, from, to, body string, simulated bool) (InboundResult, error) {
 	if n, ok := phonenum.Normalize(from); ok {
 		from = n
 	}
@@ -297,6 +297,10 @@ func (s *Service) handleText(ctx context.Context, cb connectivity.SMSCallback, s
 		change, keyword = store.OptOut, "opt_out"
 	case smskeyword.OptIn:
 		change, keyword = store.OptIn, "opt_in"
+		if simulated {
+			// A simulated START must not lift a real carrier's STOP.
+			change = store.OptInSimulated
+		}
 	case smskeyword.Help:
 		keyword = "help"
 	}
