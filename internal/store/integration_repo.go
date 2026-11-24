@@ -291,7 +291,12 @@ func (repo *integrationRepo) Update(ctx context.Context, scope domain.Scope, in 
 // Delete removes the integration row. Returns ErrNotFound when the row is
 // absent or belongs to a different scope.
 func (repo *integrationRepo) Delete(ctx context.Context, scope domain.Scope, id string) error {
-	res, err := repo.w.ExecContext(
+	tx, err := repo.w.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(
 		ctx,
 		`DELETE FROM integrations WHERE id = ? AND org_id = ? AND environment_id = ?`,
 		id, scope.OrgID, scope.EnvID,
@@ -306,7 +311,13 @@ func (repo *integrationRepo) Delete(ctx context.Context, scope domain.Scope, id 
 	if n == 0 {
 		return ErrNotFound
 	}
-	return nil
+	// A capture integration's texts go with it.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM sms_captured WHERE org_id = ? AND environment_id = ? AND integration_id = ?`,
+		scope.OrgID, scope.EnvID, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetActive atomically flips the active flag. Returns ErrNotFound when the row

@@ -67,6 +67,11 @@ var providerCatalog = []providerMeta{
 // providerLabel returns the human label for providerID from the catalog.
 // Falls back to the raw providerID when not found.
 func providerLabel(providerID string) string {
+	// Not in the catalog: it cannot be connected from the console, only listed
+	// when created through the API.
+	if providerID == "capture" {
+		return "Capture (test only)"
+	}
 	for _, p := range providerCatalog {
 		if p.ID == providerID {
 			return p.Label

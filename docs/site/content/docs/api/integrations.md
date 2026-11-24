@@ -17,7 +17,9 @@ All routes take an API key. Concepts and per-provider credentials are in [Channe
 | `POST /v1/integrations/email` | Legacy email create. | `201` |
 | `POST /v1/integrations/push` | Legacy push create. | `201` |
 | `POST /v1/integrations/chat` | Legacy chat create. | `201` |
-| `POST /v1/integrations/sms` | Legacy SMS create. | `201` |
+| `POST /v1/integrations/sms` | Legacy SMS create. `provider: "capture"` makes a test-only integration that stores texts instead of sending them; `422` in production. | `201` |
+| `GET /v1/integrations/sms/{integrationId}/captured` | The texts a capture integration holds, newest first. See [testing without a carrier](../../channels/sms#testing-without-a-carrier). | `200` `{data}`; `404` |
+| `POST /v1/integrations/sms/{integrationId}/inbound` | Simulate an inbound text to a capture integration: `{from, body, to}`. | `200` `{inboundMessageId, keyword, optChanged}`; `404`; `422` |
 | `GET /v1/integrations/webpush/key` | The environment's VAPID public key; mints the pair on first use. | `200` `{publicKey, subject, subjectDefault}` |
 | `PUT /v1/integrations/webpush/subject` | Set the VAPID contact: `{"subject"}`. | `200` as above; `400` for an unusable subject |
 

@@ -64,6 +64,7 @@ func tenantCases() []tenantCase {
 		{name: "InboundMessages", check: checkInboundMessages},
 		{name: "SMSOptOuts", check: checkSMSOptOuts},
 		{name: "SMSConsents", check: checkSMSConsents},
+		{name: "SMSCaptured", check: checkSMSCaptured},
 		{name: "StreamSources", check: checkStreamSources},
 		{name: "A2AClientKeys", check: checkA2AClientKeys},
 		{name: "A2AReceiverKeys", check: checkA2AReceiverKeys},
@@ -794,6 +795,16 @@ func checkSMSConsents(t *testing.T, ctx context.Context, s *Store, a, b domain.S
 	}
 	if rows, _ := repo.List(ctx, b, "consent-sub"); len(rows) != 0 {
 		t.Error("SMSConsents.List crossed tenants")
+	}
+}
+
+func checkSMSCaptured(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
+	repo := s.SMSCaptured()
+	if _, err := repo.Add(ctx, a, "int-a", "+15550001111", "+15550100000", "hi"); err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+	if rows, _ := repo.List(ctx, b, "int-a", 10); len(rows) != 0 {
+		t.Error("SMSCaptured.List crossed tenants")
 	}
 }
 

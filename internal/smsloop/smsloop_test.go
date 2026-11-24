@@ -52,6 +52,10 @@ func (f fakeCallbacks) SMSCallback(_ context.Context, id string) (connectivity.S
 	return cb, nil
 }
 
+func (f fakeCallbacks) SMSCaptureCallback(_ context.Context, _ domain.Scope, _ string) (connectivity.SMSCallback, error) {
+	return connectivity.SMSCallback{}, store.ErrNotFound
+}
+
 type events struct {
 	mu  sync.Mutex
 	got []map[string]any

@@ -1205,6 +1205,93 @@ func (svc *Service) ChatProviderFromIntegration(in domain.Integration) (provider
 	}
 }
 
+// CaptureConfig is the payload for a capture SMS integration: texts are
+// stored for the tenant to read back, never sent. From is the sender number
+// shown on them; empty uses DefaultCaptureFrom.
+type CaptureConfig struct {
+	From     string `json:"from,omitempty"`
+	HelpText string `json:"help_text,omitempty"`
+}
+
+// DefaultCaptureFrom is the sender number of a capture integration created
+// without one.
+const DefaultCaptureFrom = "+15550100000"
+
+// ErrCaptureInProduction is returned when a capture integration is asked for
+// in a production environment: it must not stand in for a real sender.
+var ErrCaptureInProduction = errors.New("connectivity: capture sms integrations are not allowed in a production environment")
+
+// CheckCaptureAllowed returns ErrCaptureInProduction when scope's environment
+// is production.
+func (svc *Service) CheckCaptureAllowed(ctx context.Context, scope domain.Scope) error {
+	env, err := svc.store.Environments().Get(ctx, scope)
+	if err != nil {
+		return fmt.Errorf("connectivity: load environment: %w", err)
+	}
+	if env.IsProduction() {
+		return ErrCaptureInProduction
+	}
+	return nil
+}
+
+// CreateCapture stores a capture SMS integration for the Scope, with
+// ProviderID="capture" and Channel="sms". It is refused in a production
+// environment. When primary is set the integration becomes the preferred
+// provider for the channel.
+func (svc *Service) CreateCapture(ctx context.Context, scope domain.Scope, identifier string, cfg CaptureConfig, primary bool) (domain.Integration, error) {
+	if err := svc.CheckCaptureAllowed(ctx, scope); err != nil {
+		return domain.Integration{}, err
+	}
+	if err := checkHelpText(cfg.HelpText); err != nil {
+		return domain.Integration{}, err
+	}
+	if cfg.From == "" {
+		cfg.From = DefaultCaptureFrom
+	}
+	plaintext, err := json.Marshal(cfg)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: marshal capture config: %w", err)
+	}
+	enc, err := svc.encrypt(plaintext)
+	if err != nil {
+		return domain.Integration{}, fmt.Errorf("connectivity: encrypt capture config: %w", err)
+	}
+	return svc.createIntegration(ctx, scope, domain.Integration{
+		ProviderID:     "capture",
+		Channel:        "sms",
+		EncCredentials: enc,
+		Active:         true,
+		Primary:        primary,
+		Identifier:     identifier,
+	})
+}
+
+// captureSMS is the SMSProvider of a capture integration: it stores each text
+// for GET .../captured and marks it delivered. Because the status goes through
+// the same store path as a carrier's callback, it is applied when the send's
+// message row is written. No sms.status webhook is fired by the send itself.
+type captureSMS struct {
+	store         *store.Store
+	scope         domain.Scope
+	integrationID string
+	from          string
+}
+
+func (c *captureSMS) Send(ctx context.Context, msg providers.SMSMessage) (providers.Result, error) {
+	from := msg.From
+	if from == "" {
+		from = c.from
+	}
+	pmid, err := c.store.SMSCaptured().Add(ctx, c.scope, c.integrationID, msg.To, from, msg.Body)
+	if err != nil {
+		return providers.Result{}, err
+	}
+	if _, err := c.store.Messages().ApplyStatusCallback(ctx, c.scope, c.integrationID, pmid, "delivered", "", ""); err != nil {
+		return providers.Result{}, err
+	}
+	return providers.Result{ProviderMessageID: pmid}, nil
+}
+
 // CreateTwilio stores a Twilio SMS integration for the Scope: it
 // AES-GCM-encrypts the JSON-encoded cfg into EncCredentials, with
 // ProviderID="twilio" and Channel="sms". When primary is set the integration
@@ -1333,6 +1420,17 @@ func (svc *Service) SMSProviderFromIntegration(in domain.Integration) (providers
 			SpaceURL:   cfg.SpaceURL,
 			From:       cfg.From,
 			HTTPClient: svc.deliveryClient(),
+		}, nil
+	case "capture":
+		var cfg CaptureConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return nil, fmt.Errorf("connectivity: unmarshal capture config: %w", err)
+		}
+		return &captureSMS{
+			store:         svc.store,
+			scope:         domain.Scope{OrgID: in.OrgID, EnvID: in.EnvID},
+			integrationID: in.ID,
+			from:          cfg.From,
 		}, nil
 	case "sns":
 		var cfg SNSConfig
@@ -1803,6 +1901,9 @@ func (svc *Service) VerifyByID(ctx context.Context, scope domain.Scope, id strin
 		}
 		ok, detail := probeTwilio(ctx, svc.probeClient(), cfg)
 		res.OK, res.Detail = ok, detail
+		return res, nil
+	case "capture":
+		res.OK, res.Detail = true, "capture: nothing to reach; texts are stored, not sent"
 		return res, nil
 	case "ntfy":
 		var cfg NtfyConfig
