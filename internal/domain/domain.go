@@ -24,6 +24,12 @@ type Environment struct {
 	ParentID   string `db:"parent_id"`
 }
 
+// IsProduction reports whether e is a production environment. Many real
+// production environments have an empty Type, so the identifier counts too.
+func (e Environment) IsProduction() bool {
+	return e.Type == "production" || e.Identifier == "production"
+}
+
 type WebhookEndpoint struct {
 	ID     string `db:"id"`
 	OrgID  string `db:"org_id"`

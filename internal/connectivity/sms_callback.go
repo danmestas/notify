@@ -17,7 +17,8 @@ type SMSCallback struct {
 	// and nowhere else.
 	Scope         domain.Scope
 	IntegrationID string
-	// ProviderID is "twilio" or "signalwire"; it picks the signature scheme.
+	// ProviderID is "twilio" or "signalwire", which pick the signature scheme,
+	// or "capture" (only from SMSCaptureCallback), which has none.
 	ProviderID string
 	// SigningKey signs the provider's callbacks: Twilio's auth token, or
 	// SignalWire's Signing Key. Empty means no callback can be verified.
@@ -32,8 +33,9 @@ type SMSCallback struct {
 
 // SMSCallback resolves integrationID, in whatever scope it lives, for a
 // provider callback. It is store.ErrNotFound unless the id names an active
-// Twilio or SignalWire SMS integration. The caller must verify the callback's signature
-// with SigningKey before acting in Scope.
+// Twilio or SignalWire SMS integration; a capture integration has no
+// signature to check, so it is never resolved here. The caller must verify the
+// callback's signature with SigningKey before acting in Scope.
 func (svc *Service) SMSCallback(ctx context.Context, integrationID string) (SMSCallback, error) {
 	in, err := svc.store.Integrations().LookupUnscoped(ctx, integrationID)
 	if err != nil {
@@ -43,6 +45,24 @@ func (svc *Service) SMSCallback(ctx context.Context, integrationID string) (SMSC
 	if !in.Active || in.Channel != "sms" || (in.ProviderID != "twilio" && in.ProviderID != "signalwire") {
 		return SMSCallback{}, store.ErrNotFound
 	}
+	return svc.smsCallback(in)
+}
+
+// SMSCaptureCallback resolves integrationID in scope for a simulated inbound
+// text from an operator. It is store.ErrNotFound unless the id names an active
+// capture integration in scope. The caller has authenticated the operator.
+func (svc *Service) SMSCaptureCallback(ctx context.Context, scope domain.Scope, integrationID string) (SMSCallback, error) {
+	in, err := svc.store.Integrations().GetByID(ctx, scope, integrationID)
+	if err != nil {
+		return SMSCallback{}, err
+	}
+	if !in.Active || in.Channel != "sms" || in.ProviderID != "capture" {
+		return SMSCallback{}, store.ErrNotFound
+	}
+	return svc.smsCallback(in)
+}
+
+func (svc *Service) smsCallback(in domain.Integration) (SMSCallback, error) {
 	plaintext, err := svc.decrypt(in.EncCredentials)
 	if err != nil {
 		return SMSCallback{}, fmt.Errorf("connectivity: decrypt sms config: %w", err)
@@ -65,6 +85,12 @@ func (svc *Service) SMSCallback(ctx context.Context, integrationID string) (SMSC
 			return SMSCallback{}, fmt.Errorf("connectivity: unmarshal signalwire config: %w", err)
 		}
 		cb.SigningKey, cb.From, cb.HelpText = cfg.SigningKey, cfg.From, cfg.HelpText
+	case "capture":
+		var cfg CaptureConfig
+		if err := json.Unmarshal(plaintext, &cfg); err != nil {
+			return SMSCallback{}, fmt.Errorf("connectivity: unmarshal capture config: %w", err)
+		}
+		cb.From, cb.HelpText = cfg.From, cfg.HelpText
 	}
 	cb.Sender, err = svc.SMSProviderFromIntegration(in)
 	if err != nil {

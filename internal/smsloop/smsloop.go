@@ -62,6 +62,9 @@ const (
 // connectivity.Service satisfies it.
 type Callbacks interface {
 	SMSCallback(ctx context.Context, integrationID string) (connectivity.SMSCallback, error)
+	// SMSCaptureCallback resolves a capture integration in scope, for a
+	// simulated inbound text.
+	SMSCaptureCallback(ctx context.Context, scope domain.Scope, integrationID string) (connectivity.SMSCallback, error)
 }
 
 // EventPublisher hands an event to the delivery stream the outbound webhooks
@@ -234,20 +237,51 @@ func (s *Service) HandleInbound(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "MessageSid is required", http.StatusBadRequest)
 		return
 	}
-	from := form.Get("From")
+	if _, err := s.handleText(ctx, cb, sid, form.Get("From"), form.Get("To"), form.Get("Body"), false); err != nil {
+		s.fail(w, "handle inbound text", err)
+		return
+	}
+	writeTwiML(w)
+}
+
+// InboundResult is what handling one inbound text did.
+type InboundResult struct {
+	// InboundMessageID is the stored text; empty when it was a retry of one
+	// already handled.
+	InboundMessageID string
+	// Keyword is "opt_out", "opt_in", "help" or "none".
+	Keyword string
+	// OptChanged: the text changed a number's opt-out state.
+	OptChanged bool
+}
+
+// Simulate handles a text an operator says arrived at the capture integration
+// integrationID in scope, exactly as a carrier's callback would be handled. A
+// missing or non-capture integration is store.ErrNotFound.
+func (s *Service) Simulate(ctx context.Context, scope domain.Scope, integrationID, from, to, body string) (InboundResult, error) {
+	cb, err := s.cbs.SMSCaptureCallback(ctx, scope, integrationID)
+	if err != nil {
+		return InboundResult{}, err
+	}
+	if to == "" {
+		to = cb.From
+	}
+	return s.handleText(ctx, cb, "capture-in-"+store.NewULID(), from, to, body, true)
+}
+
+// handleText is the part of an inbound text that does not depend on how it
+// arrived: store it, apply a STOP/START, tell the tenant, answer HELP.
+func (s *Service) handleText(ctx context.Context, cb connectivity.SMSCallback, sid, from, to, body string, simulated bool) (InboundResult, error) {
 	if n, ok := phonenum.Normalize(from); ok {
 		from = n
 	}
-	to := form.Get("To")
 	if n, ok := phonenum.Normalize(to); ok {
 		to = n
 	}
-	body := form.Get("Body")
 
 	subs, err := s.st.Subscribers().ListByPhone(ctx, cb.Scope, from)
 	if err != nil {
-		s.fail(w, "match sender", err)
-		return
+		return InboundResult{}, fmt.Errorf("match sender: %w", err)
 	}
 	var primary domain.Subscriber
 	if len(subs) > 0 {
@@ -257,11 +291,18 @@ func (s *Service) HandleInbound(w http.ResponseWriter, r *http.Request) {
 
 	kind := smskeyword.Classify(body)
 	change := store.OptNone
+	keyword := "none"
 	switch kind {
 	case smskeyword.OptOut:
-		change = store.OptOut
+		change, keyword = store.OptOut, "opt_out"
 	case smskeyword.OptIn:
-		change = store.OptIn
+		change, keyword = store.OptIn, "opt_in"
+		if simulated {
+			// A simulated START must not lift a real carrier's STOP.
+			change = store.OptInSimulated
+		}
+	case smskeyword.Help:
+		keyword = "help"
 	}
 	// The text and its opt change commit together: if either fails, neither
 	// is kept and we answer 500. Twilio does not retry inbound message
@@ -275,14 +316,12 @@ func (s *Service) HandleInbound(w http.ResponseWriter, r *http.Request) {
 		SubscriberID: primary.SubscriberID, PhoneVerified: verified,
 	}, change)
 	if err != nil {
-		s.fail(w, "record inbound text", err)
-		return
+		return InboundResult{}, fmt.Errorf("record inbound text: %w", err)
 	}
 	if !created {
 		// A provider retry of a text already handled: its effect committed
 		// with it, and its events and reply went out then.
-		writeTwiML(w)
-		return
+		return InboundResult{Keyword: keyword}, nil
 	}
 
 	base := Event{
@@ -302,7 +341,7 @@ func (s *Service) HandleInbound(w http.ResponseWriter, r *http.Request) {
 	case kind == smskeyword.Help:
 		s.reply(ctx, cb, from, to, primary.SubscriberID)
 	}
-	writeTwiML(w)
+	return InboundResult{InboundMessageID: rec.ID, Keyword: keyword, OptChanged: changed}, nil
 }
 
 // publishOpt tells the tenant about an opt change, once per subscriber with

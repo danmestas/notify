@@ -71,6 +71,7 @@ Twilio integrations are covered by the credential check (on credential change, o
 | `twilio` | `account_sid`, `auth_token` (**secret**), `from`, `help_text` |
 | `signalwire` | `project_id`, `token` (**secret**), `space_url`, `from`, `signing_key` (**secret**), `help_text` |
 | `sns` | `access_key_id`, `secret_access_key` (**secret**), `region` |
+| `capture` | `from` (optional), `help_text`. Test only: see [testing without a carrier](#testing-without-a-carrier). |
 
 `from` is the sender number. Amazon SNS publishes straight to the recipient number and has no `from`. `help_text` is the reply to HELP (see [keywords](#keywords)). `signing_key` is the SignalWire project's Signing Key, which signs its callbacks; see [callbacks](#inbound-texts-and-delivery-status).
 
@@ -126,9 +127,29 @@ A status callback updates the `sms` message notify sent with that `MessageSid` (
 
 `delivered` and `error` are final. A repeated or late callback (a `sent` after `delivered`, a second `failed`) changes nothing, so callbacks may arrive in any order. A move to `error` counts once against the integration's delivery health; `recipient` failures never do, as elsewhere. Each change is sent to your webhook endpoints as an `sms.status` event. A callback can beat the send's own message row: one for a provider id notify has not stored yet is kept for an hour and applied when that message is written (the message is then written with the final status, delivery health counts it then, and the `sms.status` event is sent then too). Expired ones are purged every 15 minutes. After an hour it is dropped, as is one for a message notify never sent.
 
+## Testing without a carrier
+
+A `capture` integration lets a workflow with an `sms` step run end to end before any carrier account, or 10DLC registration, exists. It sends nothing: each text is stored, marked `delivered`, and readable through the API. It is refused (`422`) in a production environment, one whose type or identifier is `production`, both when created and when simulating a text.
+
+```
+POST /v1/integrations/sms
+{"identifier": "local-capture", "provider": "capture", "primary": true}
+```
+
+`from` is optional and defaults to `+15550100000`. The same [consent rules](#operator-attested-consent) apply as for a real provider: a phone that is neither verified nor attested gets no text, so nothing is captured for it.
+
+| Request | Purpose |
+|---|---|
+| `GET /v1/integrations/sms/{integrationId}/captured?limit=N` | The texts sent through the integration, newest first, `limit` default 50, at most 200: `{"data": [{"id", "providerMessageId", "to", "from", "body", "sentAt"}]}`. `404` for an integration that is not a capture one in your environment. The newest 1000 are kept, and an integration's texts are deleted with it. |
+| `POST /v1/integrations/sms/{integrationId}/inbound` | Simulate a text from a phone: `{"from": "+15125550123", "body": "STOP", "to": optional}`. It is handled exactly as a carrier's callback is: stored as an inbound message, STOP and START applied, `sms.inbound`, `sms.opt_out` and `sms.opt_in` events sent, and a HELP reply sent through the integration, which then shows in `/captured`. `200` `{"inboundMessageId", "keyword": "opt_out"\|"opt_in"\|"help"\|"none", "optChanged"}`; `404` for an integration that is not a capture one; `422` in production. |
+
+Captured texts hold the recipient's phone and the body; they are kept up to 1000 per integration and removed with the integration, not by a subscriber purge. A simulated `START` lifts only an opt-out that a capture integration recorded: a carrier's `STOP` stays in place, and the call reports `optChanged: false` and sends no `sms.opt_in`.
+
+Both take an API key. The public carrier route `/v1/inbound/sms/{integrationId}` still answers `403` for a capture integration: it has no signature to check.
+
 ## Legacy create
 
-`POST /v1/integrations/sms` takes `provider` (`twilio`, `signalwire`, `sns`), `identifier`, `primary`, `from`, and `accountSid`, `authToken`; `projectId`, `token`, `spaceUrl`; or `accessKeyId`, `secretAccessKey`, `region`.
+`POST /v1/integrations/sms` takes `provider` (`twilio`, `signalwire`, `sns`, `capture`), `identifier`, `primary`, `from`, and `accountSid`, `authToken`; `projectId`, `token`, `spaceUrl`; or `accessKeyId`, `secretAccessKey`, `region`.
 
 ## Step options
 

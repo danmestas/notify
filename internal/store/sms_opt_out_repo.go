@@ -55,7 +55,15 @@ const (
 	OptOut
 	// OptIn: START and its synonyms.
 	OptIn
+	// OptInSimulated: START from an operator's simulated text. It lifts only
+	// an opt-out a capture integration recorded, never a carrier's.
+	OptInSimulated
 )
+
+// captureIntegrations selects the ids of capture integrations: an opt-out
+// recorded through one came from a simulated text, and a real carrier's STOP
+// replaces it rather than being swallowed by it.
+const captureIntegrations = `(SELECT id FROM integrations WHERE provider_id = 'capture')`
 
 // applyOptChange makes change for phone through ex, reporting whether it
 // changed anything.
@@ -69,8 +77,15 @@ func applyOptChange(ctx context.Context, ex execer, scope domain.Scope, change O
 		res, err = ex.ExecContext(ctx,
 			`INSERT INTO sms_opt_outs (org_id, environment_id, phone, integration_id, created_at)
 			 VALUES (?, ?, ?, ?, ?)
-			 ON CONFLICT(org_id, environment_id, phone) DO NOTHING`,
+			 ON CONFLICT(org_id, environment_id, phone) DO UPDATE SET integration_id = excluded.integration_id
+			 WHERE sms_opt_outs.integration_id IN `+captureIntegrations+`
+			   AND excluded.integration_id NOT IN `+captureIntegrations,
 			scope.OrgID, scope.EnvID, phone, integrationID, timestamp.Now())
+	case OptInSimulated:
+		res, err = ex.ExecContext(ctx,
+			`DELETE FROM sms_opt_outs WHERE org_id = ? AND environment_id = ? AND phone = ?
+			 AND integration_id IN `+captureIntegrations,
+			scope.OrgID, scope.EnvID, phone)
 	case OptIn:
 		res, err = ex.ExecContext(ctx,
 			`DELETE FROM sms_opt_outs WHERE org_id = ? AND environment_id = ? AND phone = ?`,

@@ -301,6 +301,10 @@ func New(d Deps) http.Handler {
 			pr.Post("/v1/integrations/email", postEmailIntegration(conn))
 			pr.Post("/v1/integrations/chat", postChatIntegration(conn))
 			pr.Post("/v1/integrations/sms", postSMSIntegration(conn))
+			pr.Get("/v1/integrations/sms/{integrationId}/captured", getCapturedSMS(conn))
+			if d.SMSLoop != nil {
+				pr.Post("/v1/integrations/sms/{integrationId}/inbound", postSimulatedInboundSMS(conn, d.SMSLoop))
+			}
 			// GET /v1/integrations/webpush/key mints the org's VAPID keypair on
 			// first use and returns the public half; rotation is delete-the-row.
 			pr.Get("/v1/integrations/webpush/key", getWebPushKey(conn))
@@ -1150,7 +1154,7 @@ func postChatIntegration(conn *connectivity.Service) http.HandlerFunc {
 // authToken and token are secrets and are never echoed back.
 type smsIntegrationRequest struct {
 	Identifier string `json:"identifier"`
-	Provider   string `json:"provider"` // "twilio" or "signalwire"
+	Provider   string `json:"provider"` // "twilio", "signalwire", "sns" or "capture"
 	From       string `json:"from"`
 	Primary    bool   `json:"primary"`
 	// Twilio fields.
@@ -1180,7 +1184,7 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 		}
 		// SNS publishes directly to the recipient number and carries no sender,
 		// so it is exempt from the "from" requirement the LaML providers need.
-		if req.From == "" && req.Provider != "sns" {
+		if req.From == "" && req.Provider != "sns" && req.Provider != "capture" {
 			writeJSONError(w, http.StatusBadRequest, "bad_request", "from is required")
 			return
 		}
@@ -1224,6 +1228,9 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 				SpaceURL:  req.SpaceURL,
 				From:      req.From,
 			}, req.Primary)
+		case "capture":
+			// Test-only: texts are stored for GET .../captured, never sent.
+			in, err = conn.CreateCapture(r.Context(), scope, req.Identifier, connectivity.CaptureConfig{From: req.From}, req.Primary)
 		case "sns":
 			if req.AccessKeyID == "" {
 				writeJSONError(w, http.StatusBadRequest, "bad_request", "accessKeyId is required for sns")
@@ -1243,11 +1250,11 @@ func postSMSIntegration(conn *connectivity.Service) http.HandlerFunc {
 				Region:          req.Region,
 			}, req.Primary)
 		default:
-			writeJSONError(w, http.StatusBadRequest, "bad_request", "unknown provider "+req.Provider+"; allowed: twilio, signalwire, sns")
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "unknown provider "+req.Provider+"; allowed: twilio, signalwire, sns, capture")
 			return
 		}
 		if err != nil {
-			if errors.Is(err, connectivity.ErrInvalidIdentifier) || errors.Is(err, connectivity.ErrHelpTextIsKeyword) {
+			if errors.Is(err, connectivity.ErrInvalidIdentifier) || errors.Is(err, connectivity.ErrHelpTextIsKeyword) || errors.Is(err, connectivity.ErrCaptureInProduction) {
 				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
@@ -2113,6 +2120,7 @@ var integrationSecretFields = map[string]map[string]bool{
 	"slack":            {"bot_token": true},
 	"whatsapp":         {"access_token": true},
 	"sns":              {"secret_access_key": true},
+	"capture":          {}, // nothing secret is stored
 	"email-webhook":    {"hmac_secret": true},
 	"push-webhook":     {"hmac_secret": true},
 	"chat-webhook":     {"hmac_secret": true},
@@ -2331,6 +2339,11 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 				SigningKey: req.Credentials["signing_key"],
 				HelpText:   req.Credentials["help_text"],
 			}, req.Primary)
+		case "capture":
+			in, err = conn.CreateCapture(r.Context(), scope, req.Identifier, connectivity.CaptureConfig{
+				From:     req.Credentials["from"],
+				HelpText: req.Credentials["help_text"],
+			}, req.Primary)
 		case "sns":
 			in, err = conn.CreateSNS(r.Context(), scope, req.Identifier, connectivity.SNSConfig{
 				AccessKeyID:     req.Credentials["access_key_id"],
@@ -2395,7 +2408,7 @@ func postIntegration(conn *connectivity.Service) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			if errors.Is(err, connectivity.ErrInvalidIdentifier) || errors.Is(err, connectivity.ErrHelpTextIsKeyword) {
+			if errors.Is(err, connectivity.ErrInvalidIdentifier) || errors.Is(err, connectivity.ErrHelpTextIsKeyword) || errors.Is(err, connectivity.ErrCaptureInProduction) {
 				writeJSONError(w, http.StatusUnprocessableEntity, "unprocessable_entity", err.Error())
 				return
 			}
