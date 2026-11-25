@@ -297,7 +297,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 
 	id := identity.New(st, mk)
 	n.identity = id
-	aud := audience.New(st)
+	aud := audience.New(st).WithEventPublisher(bus) // webpush.subscription_removed (#172)
 	n.au = authoring.New(st, eng, authoring.WithSecretBox(secrets))
 	trg := trigger.New(aud, st, eng).WithDigester(bus).WithDigestWindows(prefs)
 	// Inbound webhook-push: the source service (per-source secret lifecycle,

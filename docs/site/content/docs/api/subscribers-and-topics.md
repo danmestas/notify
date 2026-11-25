@@ -18,7 +18,9 @@ All routes take an API key.
 | `DELETE /v1/subscribers/{subscriberId}/phone/consent` | Revoke an operator attestation. | `204`; `404` |
 | `POST /v1/subscribers/{subscriberId}/session` | Mint a [session token](../../inbox-and-agents/subscriber-sessions). | `200` `{token, expiresAt}`; `404` if the subscriber does not exist |
 | `PUT /v1/subscribers/{subscriberId}/credentials` | Set the subscriber's address for a provider. | `204` |
-| `DELETE /v1/subscribers/{subscriberId}/credentials/webpush?endpoint=` | Remove one Web Push device. | `204`; `400` without `endpoint`; `404` |
+| `GET /v1/subscribers/{subscriberId}/credentials/webpush` | List the subscriber's Web Push devices. The endpoint and keys are never returned. | `200` `{data: [{id, endpointHash, createdAt, lastSuccessAt, lastErrorClass}]}`; `data` is empty when there are no devices, including for a subscriber that does not exist |
+| `DELETE /v1/subscribers/{subscriberId}/credentials/webpush/{id}` | Remove one Web Push device by its `id` or its `endpointHash`. | `204`; `404` |
+| `DELETE /v1/subscribers/{subscriberId}/credentials/webpush?endpoint=` | Remove one Web Push device by its endpoint. | `204`; `400` without `endpoint`; `404` |
 | `GET /v1/subscribers/{id}/preferences` | [Preferences](../../channels/preferences). `{id}` is your `subscriberId`. | `200` |
 | `PUT /v1/subscribers/{id}/preferences` | Partially update them. | `200`; `404`; `422` |
 

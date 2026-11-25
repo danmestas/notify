@@ -2,8 +2,6 @@ package delivery
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/url"
@@ -12,6 +10,7 @@ import (
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/providers"
 	webpushprovider "github.com/danmestas/notify/internal/providers/webpush"
+	"github.com/danmestas/notify/internal/webpushevent"
 )
 
 const (
@@ -59,17 +58,18 @@ func (h *PushHandler) fanOutWebPush(ctx context.Context, scope domain.Scope, sub
 	}
 	settle := func(i int, err error) {
 		sub := subs[i]
-		sum := sha256.Sum256([]byte(sub.Endpoint))
-		d := webPushDevice{SubscriptionID: sub.ID, EndpointSHA256: hex.EncodeToString(sum[:]), Host: endpointHost(sub.Endpoint)}
+		d := webPushDevice{SubscriptionID: sub.ID, EndpointSHA256: webpushevent.EndpointHash(sub.Endpoint), Host: endpointHost(sub.Endpoint)}
 		switch {
 		case err == nil:
 			d.Outcome = "delivered"
 			sent++
 			// Best-effort: a store error must not fail a delivered push.
-			_ = h.store.WebPushSubscriptions().ResetFailures(ctx, scope, subscriberID, sub.Endpoint)
+			_ = h.store.WebPushSubscriptions().RecordDelivered(ctx, scope, subscriberID, sub.Endpoint)
 		case errors.Is(err, webpushprovider.ErrSubscriptionGone):
 			d.Outcome = "gone"
-			_ = h.store.WebPushSubscriptions().DeleteByEndpoint(ctx, scope, subscriberID, sub.Endpoint)
+			if h.store.WebPushSubscriptions().DeleteByEndpoint(ctx, scope, subscriberID, sub.Endpoint) == nil {
+				webpushevent.PublishRemoved(h.pub, sub, webpushevent.ReasonGone)
+			}
 		default:
 			d.Outcome = "failed"
 			failed++
@@ -80,8 +80,14 @@ func (h *PushHandler) fanOutWebPush(ctx context.Context, scope domain.Scope, sub
 			} else {
 				d.Reason = err.Error()
 			}
-			if countsAgainstDevice(err) && h.retire(ctx, scope, subscriberID, sub.Endpoint) {
-				d.Outcome = "retired"
+			errClass := string(providers.ClassifyError(err))
+			if countsAgainstDevice(err) {
+				if h.retire(ctx, scope, sub, errClass) {
+					d.Outcome = "retired"
+				}
+			} else {
+				// Best-effort: the class is a status for the device list.
+				_ = h.store.WebPushSubscriptions().RecordErrorClass(ctx, scope, subscriberID, sub.Endpoint, errClass)
 			}
 		}
 		outcomes[i] = d
@@ -110,12 +116,16 @@ func (h *PushHandler) fanOutWebPush(ctx context.Context, scope domain.Scope, sub
 // retire counts a permanent refusal against the subscription and deletes it
 // once it has been refused webPushRetireAfter times in a row. It reports
 // whether the subscription was retired.
-func (h *PushHandler) retire(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) bool {
-	n, err := h.store.WebPushSubscriptions().RecordFailure(ctx, scope, subscriberID, endpoint)
+func (h *PushHandler) retire(ctx context.Context, scope domain.Scope, sub domain.WebPushSubscription, errClass string) bool {
+	n, err := h.store.WebPushSubscriptions().RecordFailure(ctx, scope, sub.SubscriberID, sub.Endpoint, errClass)
 	if err != nil || n < webPushRetireAfter {
 		return false
 	}
-	return h.store.WebPushSubscriptions().DeleteByEndpoint(ctx, scope, subscriberID, endpoint) == nil
+	if h.store.WebPushSubscriptions().DeleteByEndpoint(ctx, scope, sub.SubscriberID, sub.Endpoint) != nil {
+		return false
+	}
+	webpushevent.PublishRemoved(h.pub, sub, webpushevent.ReasonRetired)
+	return true
 }
 
 // countsAgainstDevice reports whether a failure says the subscription itself

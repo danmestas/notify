@@ -51,6 +51,7 @@ import (
 	"github.com/danmestas/notify/internal/trigger"
 	"github.com/danmestas/notify/internal/version"
 	"github.com/danmestas/notify/internal/webhooksout"
+	"github.com/danmestas/notify/internal/webpushevent"
 )
 
 // Deps carries everything New needs to assemble the notify HTTP handler,
@@ -273,6 +274,11 @@ func New(d Deps) http.Handler {
 		// removes just that endpoint's row, leaving the subscriber's other
 		// devices (and every other provider's credentials) untouched.
 		pr.Delete("/v1/subscribers/{subscriberId}/credentials/webpush", deleteSubscriberWebPushCredentials(aud))
+		// Device list and per-device delete by id or endpoint hash (#172): a
+		// client that never held the endpoint can still show and remove its
+		// devices.
+		pr.Get("/v1/subscribers/{subscriberId}/credentials/webpush", getSubscriberWebPushDevices(aud))
+		pr.Delete("/v1/subscribers/{subscriberId}/credentials/webpush/{id}", deleteSubscriberWebPushDevice(aud))
 		pr.Post("/v1/events/trigger", postTrigger(trg))
 		pr.Post("/v1/events/trigger/{transactionId}/cancel", postTriggerCancel(trg))
 		pr.Post("/v1/topics", postTopic(aud))
@@ -546,6 +552,57 @@ func deleteSubscriberWebPushCredentials(aud *audience.Service) http.HandlerFunc 
 		}
 		scope := identity.ScopeFrom(r.Context())
 		if err := aud.DeleteWebPushCredentials(r.Context(), scope, subscriberID, endpoint); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeJSONError(w, http.StatusNotFound, "not_found", "webpush subscription not found")
+				return
+			}
+			writeInternalError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// webPushDeviceDTO is one device in GET .../credentials/webpush. The endpoint
+// is a capability URL and the keys are secret, so neither is returned: the
+// endpoint hash lets a client match its own browser.
+type webPushDeviceDTO struct {
+	ID             string `json:"id"`
+	EndpointHash   string `json:"endpointHash"`
+	CreatedAt      string `json:"createdAt"`
+	LastSuccessAt  string `json:"lastSuccessAt"`
+	LastErrorClass string `json:"lastErrorClass"`
+}
+
+// getSubscriberWebPushDevices lists the subscriber's Web Push devices. It is
+// 200 with an empty list when there are none, whether or not the subscriber
+// has a record.
+func getSubscriberWebPushDevices(aud *audience.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scope := identity.ScopeFrom(r.Context())
+		subs, err := aud.ListWebPushDevices(r.Context(), scope, chi.URLParam(r, "subscriberId"))
+		if err != nil {
+			writeInternalError(w, r, err)
+			return
+		}
+		out := make([]webPushDeviceDTO, 0, len(subs))
+		for _, sub := range subs {
+			out = append(out, webPushDeviceDTO{
+				ID: sub.ID, EndpointHash: webpushevent.EndpointHash(sub.Endpoint),
+				CreatedAt: sub.CreatedAt, LastSuccessAt: sub.LastSuccessAt, LastErrorClass: sub.LastErrorClass,
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": out})
+	}
+}
+
+// deleteSubscriberWebPushDevice removes one device named by its id or its
+// endpoint hash and returns 204; 404 when no such device exists in scope.
+func deleteSubscriberWebPushDevice(aud *audience.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scope := identity.ScopeFrom(r.Context())
+		err := aud.DeleteWebPushDevice(r.Context(), scope, chi.URLParam(r, "subscriberId"), chi.URLParam(r, "id"))
+		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				writeJSONError(w, http.StatusNotFound, "not_found", "webpush subscription not found")
 				return
