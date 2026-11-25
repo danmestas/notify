@@ -6,6 +6,8 @@ import (
 	"time"
 
 	agentstore "github.com/danmestas/notify/internal/agents/store"
+	"github.com/danmestas/notify/internal/blobstore"
+	"github.com/danmestas/notify/internal/blobsweep"
 
 	"github.com/danmestas/notify/internal/store"
 )
@@ -173,6 +175,37 @@ func runSMSConsentPurge(ctx context.Context, log *slog.Logger, st *store.Store) 
 			return
 		case <-t.C:
 			purge()
+		}
+	}
+}
+
+// blobSweepInterval is how often queued blobs are checked. The grace period is
+// an hour, so a quarter of it keeps a deleted subscriber's files from outliving
+// the grace by much.
+const blobSweepInterval = 15 * time.Minute
+
+// runBlobSweep deletes the blobs a subscriber purge queued, once at boot and
+// then on an interval, in the same shape as the purges above.
+func runBlobSweep(ctx context.Context, log *slog.Logger, st *store.Store, blobs blobstore.Store) {
+	sweep := func() {
+		n, err := blobsweep.Sweep(ctx, st, blobs, time.Now(), blobsweep.Grace)
+		switch {
+		case err != nil:
+			log.Error("retention: blob sweep failed", "deleted", n, "err", err)
+		case n > 0:
+			log.Info("retention: deleted unreferenced attachment blobs", "blobs", n)
+		}
+	}
+
+	sweep()
+	t := time.NewTicker(blobSweepInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			sweep()
 		}
 	}
 }

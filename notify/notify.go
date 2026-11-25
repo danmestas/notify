@@ -71,7 +71,9 @@ type Notify struct {
 	st  *store.Store
 	eng *engine.Engine
 	ags *agentstore.Store
-	au  *authoring.Service
+	// blobs is the blob store, nil when off.
+	blobs blobstore.Store
+	au    *authoring.Service
 	// identity mints and authenticates API keys; it is the same service the
 	// HTTP layer and console are wired with.
 	identity *identity.Service
@@ -220,6 +222,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	if err != nil {
 		return nil, err
 	}
+	n.blobs = blobs
 	eml := emailloop.New(
 		st, ags, emailloop.NewMinter(mk), conn,
 		emailloop.NewAgentResponder(compose),
@@ -552,6 +555,12 @@ func (n *Notify) start(ctx context.Context) error {
 	n.goLoop(func() { runPendingNotificationSweep(ctx, n.log, n.st) })
 	// agent_drafts would otherwise keep every draft no one fetched.
 	n.goLoop(func() { runDraftPurge(ctx, n.log, n.ags) })
+
+	// Blobs a subscriber purge left unreferenced are deleted after a grace
+	// period (#177).
+	if n.blobs != nil {
+		n.goLoop(func() { runBlobSweep(ctx, n.log, n.st, n.blobs) })
+	}
 
 	// SMS consent audit rows go 4 years after they stop counting (#164).
 	n.goLoop(func() { runSMSConsentPurge(ctx, n.log, n.st) })

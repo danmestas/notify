@@ -754,6 +754,9 @@ func (c *Console) handleNotificationResend(w http.ResponseWriter, r *http.Reques
 		Name:    wf.TriggerIdentifier,
 		To:      trigger.ToField{SubscriberID: n.SubscriberID},
 		Payload: payload,
+		// The same stored files go out again; a file gone from the blob store
+		// refuses the resend rather than sending the email without it.
+		ReuseAttachmentsOf: n.ID,
 	})
 	if err != nil {
 		c.deps.Logger.Error("console: resend ingest", "id", notifID, "err", err)

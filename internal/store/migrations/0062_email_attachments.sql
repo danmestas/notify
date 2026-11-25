@@ -21,3 +21,11 @@ CREATE TABLE email_attachments (
 CREATE UNIQUE INDEX email_attachments_once ON email_attachments (notification_id, position);
 CREATE INDEX email_attachments_subscriber ON email_attachments (org_id, environment_id, subscriber_id);
 CREATE INDEX email_attachments_sha256 ON email_attachments (sha256);
+
+-- Blobs a purge left unreferenced, to be deleted once a grace period has
+-- passed (see the blob sweeper). A trigger that reuses the same bytes inside
+-- the grace period keeps the blob; the sweeper re-checks references first.
+CREATE TABLE blob_deletions (
+  sha256    TEXT PRIMARY KEY,
+  queued_at TEXT NOT NULL
+);

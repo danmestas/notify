@@ -16,12 +16,14 @@ import (
 	"github.com/danmestas/notify/internal/audience"
 	"github.com/danmestas/notify/internal/authoring"
 	"github.com/danmestas/notify/internal/blobstore"
+	"github.com/danmestas/notify/internal/blobsweep"
 	"github.com/danmestas/notify/internal/dagtest"
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/httpapi"
 	"github.com/danmestas/notify/internal/identity"
+	"github.com/danmestas/notify/internal/inbound"
 	"github.com/danmestas/notify/internal/inboxapi"
 	"github.com/danmestas/notify/internal/providers"
 	"github.com/danmestas/notify/internal/store"
@@ -39,6 +41,7 @@ type attachmentEnv struct {
 	scope domain.Scope
 	cap   *providers.Capture
 	svc   *authoring.Service
+	trg   *trigger.Service
 }
 
 func newAttachmentEnv(t *testing.T, withEngine, withBlobs bool) *attachmentEnv {
@@ -69,7 +72,7 @@ func newAttachmentEnv(t *testing.T, withEngine, withBlobs bool) *attachmentEnv {
 	}
 
 	id := identity.New(st, bytesRepeat(0x2a, 32))
-	e.aud = audience.New(st).WithBlobStore(blobs)
+	e.aud = audience.New(st)
 	trg := trigger.New(e.aud, st, nil)
 	if withEngine {
 		trg = trigger.New(e.aud, st, eng)
@@ -78,12 +81,13 @@ func newAttachmentEnv(t *testing.T, withEngine, withBlobs bool) *attachmentEnv {
 	if withBlobs {
 		trg = trg.WithBlobStore(blobs)
 	}
+	e.trg = trg
 	key, scope, err := id.Bootstrap(ctx, "Acme", "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.scope, e.auth = scope, "ApiKey "+key
-	e.srv = httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: e.aud, Trigger: trg, Inbox: inboxapi.New(st), Store: st}))
+	e.srv = httptest.NewServer(httpapi.New(httpapi.Deps{Identity: id, Audience: e.aud, Trigger: trg, Inbox: inboxapi.New(st), Store: st, Inbound: inbound.New(trg)}))
 	t.Cleanup(e.srv.Close)
 	if status, body := doPost(t, e.srv.URL+"/v1/subscribers", e.auth, `{"subscriberId":"user_9","firstName":"Ada","email":"ada@acme.io"}`); status != http.StatusCreated {
 		t.Fatalf("create subscriber: %d %s", status, body)
@@ -234,15 +238,16 @@ func TestEmailAttachments_RejectedAtTheEdge(t *testing.T) {
 		"total too big": {"[" + strings.Join([]string{
 			attJSON("1.pdf", "application/pdf", four), attJSON("2.pdf", "application/pdf", four), attJSON("3.pdf", "application/pdf", four),
 		}, ",") + "]", "together are larger than 10 MB"},
-		"empty filename":  {"[" + attJSON("", "application/pdf", small) + "]", "filename is required"},
-		"path separator":  {"[" + attJSON("../etc/passwd", "application/pdf", small) + "]", "path separators"},
-		"backslash":       {"[" + attJSON(`a\b.pdf`, "application/pdf", small) + "]", "path separators"},
-		"quote":           {"[" + attJSON(`a".pdf`, "application/pdf", small) + "]", "quotes"},
-		"header break":    {"[" + attJSON("a.pdf\r\nBcc: x@y.z", "application/pdf", small) + "]", "control characters"},
-		"long filename":   {"[" + attJSON(strings.Repeat("a", 201), "application/pdf", small) + "]", "longer than 200"},
-		"empty content":   {`[{"filename":"a.pdf","contentType":"application/pdf","content":""}]`, "content is empty"},
-		"dot filename":    {"[" + attJSON("..", "application/pdf", small) + "]", "not a file name"},
-		"missing content": {`[{"filename":"a.pdf","contentType":"application/pdf"}]`, "content is empty"},
+		"empty filename":          {"[" + attJSON("", "application/pdf", small) + "]", "filename is required"},
+		"path separator":          {"[" + attJSON("../etc/passwd", "application/pdf", small) + "]", "path separators"},
+		"backslash":               {"[" + attJSON(`a\b.pdf`, "application/pdf", small) + "]", "path separators"},
+		"quote":                   {"[" + attJSON(`a".pdf`, "application/pdf", small) + "]", "quotes"},
+		"header break":            {"[" + attJSON("a.pdf\r\nBcc: x@y.z", "application/pdf", small) + "]", "control characters"},
+		"long filename":           {"[" + attJSON(strings.Repeat("a", 201), "application/pdf", small) + "]", "longer than 200 bytes"},
+		"long multibyte filename": {"[" + attJSON(strings.Repeat("\u00e9", 101), "application/pdf", small) + "]", "longer than 200 bytes"},
+		"empty content":           {`[{"filename":"a.pdf","contentType":"application/pdf","content":""}]`, "content is empty"},
+		"dot filename":            {"[" + attJSON("..", "application/pdf", small) + "]", "not a file name"},
+		"missing content":         {`[{"filename":"a.pdf","contentType":"application/pdf"}]`, "content is empty"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			status, body := doPost(t, e.srv.URL+"/v1/events/trigger", e.auth, triggerBody(c.atts))
@@ -327,6 +332,19 @@ func TestEmailAttachments_PurgeRemovesRowsAndOnlyUnreferencedBlobs(t *testing.T)
 	if rows, _ := atts.ListByNotification(ctx, e.scope, "n2"); len(rows) != 1 {
 		t.Fatalf("the other subscriber's row is gone: %+v", rows)
 	}
+	// The purge only queues the blob nothing else uses; the sweeper deletes it
+	// once the grace period is over.
+	sweep := func(after time.Duration) {
+		t.Helper()
+		if _, err := blobsweep.Sweep(ctx, e.st, e.blobs, time.Now().Add(after), blobsweep.Grace); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sweep(time.Minute)
+	if _, err := e.blobs.Head(ctx, own.SHA256); err != nil {
+		t.Fatalf("a blob was deleted inside the grace period: %v", err)
+	}
+	sweep(2 * time.Hour)
 	for _, c := range []struct {
 		name string
 		ref  blobstore.Ref
@@ -346,10 +364,60 @@ func TestEmailAttachments_PurgeRemovesRowsAndOnlyUnreferencedBlobs(t *testing.T)
 	if _, err := e.aud.PurgeDeleted(ctx, e.scope, "user_10"); err != nil {
 		t.Fatal(err)
 	}
+	sweep(2 * time.Hour)
 	if _, err := e.blobs.Head(ctx, shared.SHA256); err == nil {
 		t.Error("the shared blob outlived its last reference")
 	}
 	if _, err := e.blobs.Head(ctx, mail.SHA256); err != nil {
 		t.Errorf("the inbound mail's blob was deleted: %v", err)
+	}
+}
+
+// TestEmailAttachments_ResendReusesTheStoredFiles: a trigger that names an
+// earlier notification (the console's resend) sends the same stored files,
+// and is refused, not sent bare, once a file is gone.
+func TestEmailAttachments_ResendReusesTheStoredFiles(t *testing.T) {
+	ctx := context.Background()
+	e := newAttachmentEnv(t, true, true)
+	e.publishEmailWorkflow(t, 1)
+	pdf := []byte("%PDF-1.4 resend me")
+	status, body := doPost(t, e.srv.URL+"/v1/events/trigger", e.auth,
+		triggerBody("["+attJSON("invoice.pdf", "application/pdf", pdf)+"]"))
+	if status != http.StatusCreated {
+		t.Fatalf("trigger: %d %s", status, body)
+	}
+	var first trigger.TriggerResponse
+	_ = json.Unmarshal([]byte(body), &first)
+
+	resend := func() trigger.TriggerResponse {
+		resp, err := e.trg.Ingest(ctx, e.scope, trigger.TriggerRequest{
+			Name: "invoice", To: trigger.ToField{SubscriberID: "user_9"}, Payload: json.RawMessage(`{}`),
+			ReuseAttachmentsOf: first.NotificationIDs[0],
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	resp := resend()
+	if !resp.Acknowledged || len(resp.NotificationIDs) != 1 || resp.NotificationIDs[0] == first.NotificationIDs[0] {
+		t.Fatalf("resend = %+v", resp)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for len(e.cap.Sent()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(200 * time.Millisecond)
+	}
+	sent := e.cap.Sent()
+	if len(sent) != 2 || len(sent[1].Attachments) != 1 || !bytes.Equal(sent[1].Attachments[0].Content, pdf) {
+		t.Fatalf("resent email = %+v", sent)
+	}
+
+	rows, _ := e.st.EmailAttachments().ListByNotification(ctx, e.scope, first.NotificationIDs[0])
+	if err := e.blobs.Delete(ctx, rows[0].SHA256); err != nil {
+		t.Fatal(err)
+	}
+	refused := resend()
+	if refused.Acknowledged || !strings.Contains(strings.Join(refused.Error, " "), "no longer stored") {
+		t.Fatalf("resend with the blob gone = %+v", refused)
 	}
 }

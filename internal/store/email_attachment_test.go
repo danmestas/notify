@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 )
@@ -49,7 +50,12 @@ func TestEmailAttachments_PurgeDeletesRowsAndKeepsSharedBlobs(t *testing.T) {
 		}
 	}
 	// sub-1 and sub-2 share blob "shared"; sub-1 alone has "own".
-	if err := repo.Add(ctx, sc, "n1", "sub-1", []domain.EmailAttachment{attach("a.pdf", "shared"), attach("b.pdf", "own")}); err != nil {
+	if err := repo.Add(ctx, sc, "n1", "sub-1", []domain.EmailAttachment{attach("a.pdf", "shared"), attach("b.pdf", "own"), attach("c.pdf", "elsewhere")}); err != nil {
+		t.Fatal(err)
+	}
+	// Another environment's row points at "elsewhere": references count in
+	// every scope, because the blob store is shared.
+	if err := repo.Add(ctx, domain.Scope{OrgID: "o2", EnvID: "e9"}, "n3", "sub-9", []domain.EmailAttachment{attach("c.pdf", "elsewhere")}); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.Add(ctx, sc, "n2", "sub-2", []domain.EmailAttachment{attach("a.pdf", "shared")}); err != nil {
@@ -62,7 +68,7 @@ func TestEmailAttachments_PurgeDeletesRowsAndKeepsSharedBlobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	shas, err := repo.SHA256sBySubscriber(ctx, sc, "sub-1")
-	if err != nil || len(shas) != 2 {
+	if err != nil || len(shas) != 3 {
 		t.Fatalf("shas = %v, %v", shas, err)
 	}
 
@@ -82,7 +88,14 @@ func TestEmailAttachments_PurgeDeletesRowsAndKeepsSharedBlobs(t *testing.T) {
 	if got, _ := repo.ListByNotification(ctx, sc, "n2"); len(got) != 1 {
 		t.Fatalf("the other subscriber lost its row: %+v", got)
 	}
-	for sha, want := range map[string]bool{"own": false, "shared": true, "mail": true, "nothing": false} {
+	// Only the blob nothing else points at is queued, and not yet due.
+	if due, err := repo.DueBlobDeletions(ctx, time.Now().Add(-time.Hour)); err != nil || len(due) != 0 {
+		t.Fatalf("due inside the grace period = %v, %v", due, err)
+	}
+	if due, err := repo.DueBlobDeletions(ctx, time.Now().Add(time.Hour)); err != nil || len(due) != 1 || due[0] != "own" {
+		t.Fatalf("queued = %v, %v; want [own]", due, err)
+	}
+	for sha, want := range map[string]bool{"own": false, "shared": true, "mail": true, "elsewhere": true, "nothing": false} {
 		if got, err := repo.BlobReferenced(ctx, sha); err != nil || got != want {
 			t.Errorf("BlobReferenced(%q) = %v, %v; want %v", sha, got, err, want)
 		}

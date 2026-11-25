@@ -27,6 +27,10 @@ var attachmentTypes = map[string]bool{
 	"image/jpeg":      true,
 }
 
+// MaxRequestBytes caps a trigger request body: the largest attachment set
+// base64-encoded (10 MB is about 13.4 MB) plus room for the payload.
+const MaxRequestBytes = 15 << 20
+
 // AttachmentInput is one file on a trigger request: base64 content with the
 // name and type the recipient sees.
 type AttachmentInput struct {
@@ -100,8 +104,8 @@ func checkFilename(name string) string {
 	switch {
 	case strings.TrimSpace(name) == "":
 		return "is required"
-	case utf8.RuneCountInString(name) > maxAttachmentFilename:
-		return fmt.Sprintf("is longer than %d characters", maxAttachmentFilename)
+	case len(name) > maxAttachmentFilename:
+		return fmt.Sprintf("is longer than %d bytes", maxAttachmentFilename)
 	case name == "." || name == "..":
 		return "is not a file name"
 	case !utf8.ValidString(name):
@@ -113,6 +117,38 @@ func checkFilename(name string) string {
 		}
 	}
 	return ""
+}
+
+// refusal is the response to a trigger the caller must change: not acknowledged,
+// answered 422.
+func refusal(msg string) TriggerResponse {
+	return TriggerResponse{Acknowledged: false, Status: "error", Error: []string{msg}, AttachmentsRefused: true}
+}
+
+// attachmentSet is a trigger's files: uploaded ones, stored on first use, or
+// the references of an earlier notification being sent again.
+type attachmentSet struct {
+	decoded []decodedAttachment
+	reuse   []domain.EmailAttachment
+	refs    []domain.EmailAttachment
+	stored  bool
+}
+
+// resolve returns the references to record for a notification, storing the
+// uploaded bytes the first time it is asked (one trigger, one store).
+func (a *attachmentSet) resolve(ctx context.Context, blobs blobstore.Store) ([]domain.EmailAttachment, error) {
+	if len(a.reuse) > 0 {
+		return a.reuse, nil
+	}
+	if len(a.decoded) == 0 || a.stored {
+		return a.refs, nil
+	}
+	refs, err := storeAttachments(ctx, blobs, a.decoded)
+	if err != nil {
+		return nil, err
+	}
+	a.refs, a.stored = refs, true
+	return refs, nil
 }
 
 // storeAttachments puts each file in the blob store and returns the

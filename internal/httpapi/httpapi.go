@@ -773,7 +773,7 @@ func postPushIntegration(conn *connectivity.Service) http.HandlerFunc {
 }
 
 // maxTriggerBodyBytes caps POST /v1/events/trigger.
-const maxTriggerBodyBytes = 15 << 20
+const maxTriggerBodyBytes = trigger.MaxRequestBytes
 
 // postTrigger ingests a trigger within the request Scope and returns the
 // TriggerResponse as JSON with 201.

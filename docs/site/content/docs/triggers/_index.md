@@ -63,10 +63,10 @@ Acceptance means the run was started, not that delivery succeeded; delivery is a
 | Files | at most 10 |
 | Size | 5 MB per file and 10 MB in all, measured after decoding |
 | `contentType` | `application/pdf`, `image/png` or `image/jpeg` |
-| `filename` | 1 to 200 characters; no control characters, `/`, `\` or `"` |
+| `filename` | 1 to 200 bytes of UTF-8; no control characters, `/`, `\` or `"` |
 | `content` | standard base64, not empty |
 
-The whole trigger is refused with `422` and `acknowledged: false` when any file breaks a rule, and nothing is stored. The request body is capped at 15 MB on this route. Attachments need a blob store (`NOTIFY_BLOB_DRIVER`); without one a trigger that carries them is refused with `422`. A workflow whose first step is a [digest](../workflows/step-types/digest) refuses attachments too, since a merged event has no notification to hold them.
+The whole trigger is refused with `422` and `acknowledged: false` when any file breaks a rule, and nothing is stored. The request body is capped at 15 MB on this route. Attachments need a blob store (`NOTIFY_BLOB_DRIVER`); without one a trigger that carries them is refused with `422`. A workflow whose first step is a [digest](../workflows/step-types/digest) refuses attachments too, since a merged event has no notification to hold them, and so does a workflow with no email step. Files are stored only after every such refusal has passed. `POST /v1/inbound/{trigger}` takes the same `attachments` and the same 15 MB cap, and answers a refused file with `422` where its other refusals answer `201`.
 
 The bytes go into the blob store once, and the run carries only references, so a retried step re-reads the same file. A topic trigger gives each member their own reference to the same stored file.
 

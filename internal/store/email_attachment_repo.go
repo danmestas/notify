@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/timestamp"
@@ -25,6 +26,11 @@ type EmailAttachmentRepo interface {
 	// SHA256sBySubscriber returns the distinct blob addresses the subscriber's
 	// attachments point at.
 	SHA256sBySubscriber(ctx context.Context, scope domain.Scope, subscriberID string) ([]string, error)
+	// DueBlobDeletions returns the queued blob addresses whose grace period
+	// ended before cutoff: blobs a purge left unreferenced.
+	DueBlobDeletions(ctx context.Context, cutoff time.Time) ([]string, error)
+	// DropBlobDeletion removes sha256 from the deletion queue.
+	DropBlobDeletion(ctx context.Context, sha256 string) error
 	// BlobReferenced reports whether anything in any scope still points at the
 	// blob sha256: an attachment row or an inbound mail's raw bytes. The blob
 	// store is shared by every scope, so a blob is deleted only when this is false.
@@ -142,13 +148,73 @@ func (repo *emailAttachmentRepo) BlobReferenced(ctx context.Context, sha256 stri
 	return found == 1, nil
 }
 
-// deleteEmailAttachments drops the subscriber's attachment rows, in the
-// transaction that purges the subscriber. The blobs are the caller's to remove
-// afterwards (audience.Service.PurgeDeleted), since a transaction cannot span
-// the blob store.
-func deleteEmailAttachments(ctx context.Context, ex execer, scope domain.Scope, subscriberID string) error {
-	_, err := ex.ExecContext(ctx,
-		`DELETE FROM email_attachments WHERE org_id = ? AND environment_id = ? AND subscriber_id = ?`,
-		scope.OrgID, scope.EnvID, subscriberID)
+func (repo *emailAttachmentRepo) DueBlobDeletions(ctx context.Context, cutoff time.Time) ([]string, error) {
+	rows, err := repo.r.QueryContext(ctx,
+		`SELECT sha256 FROM blob_deletions WHERE queued_at < ? ORDER BY queued_at`, timestamp.Format(cutoff))
+	if err != nil {
+		return nil, fmt.Errorf("store: list queued blob deletions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+func (repo *emailAttachmentRepo) DropBlobDeletion(ctx context.Context, sha256 string) error {
+	_, err := repo.w.ExecContext(ctx, `DELETE FROM blob_deletions WHERE sha256 = ?`, sha256)
 	return err
+}
+
+// deleteEmailAttachments drops the subscriber's attachment rows, in the
+// transaction that purges the subscriber, and queues each blob they pointed at
+// that nothing else points at for deletion after a grace period. The blob
+// itself is not touched here: a transaction cannot span the blob store, and a
+// trigger may be about to reuse the same bytes (the sweeper re-checks).
+func deleteEmailAttachments(ctx context.Context, tx *sql.Tx, scope domain.Scope, subscriberID string) error {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT DISTINCT sha256 FROM email_attachments WHERE org_id = ? AND environment_id = ? AND subscriber_id = ?`,
+		scope.OrgID, scope.EnvID, subscriberID)
+	if err != nil {
+		return err
+	}
+	var shas []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		shas = append(shas, s)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM email_attachments WHERE org_id = ? AND environment_id = ? AND subscriber_id = ?`,
+		scope.OrgID, scope.EnvID, subscriberID); err != nil {
+		return err
+	}
+	now := timestamp.Now()
+	for _, sha := range shas {
+		// References in every scope count: the blob store is shared.
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO blob_deletions (sha256, queued_at)
+			 SELECT ?, ?
+			 WHERE NOT EXISTS (SELECT 1 FROM email_attachments WHERE sha256 = ?)
+			   AND NOT EXISTS (SELECT 1 FROM inbound_messages WHERE sha256 = ?)
+			 ON CONFLICT (sha256) DO UPDATE SET queued_at = excluded.queued_at`,
+			sha, now, sha, sha); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -40,7 +40,7 @@ A [trigger](../../triggers#attachments) can carry up to 10 files (PDF, PNG or JP
 
 `GET /v1/notifications/{id}/messages` and `GET /v1/messages` list an email's files as `attachments: [{filename, contentType, size}]`, never the content; the console's activity detail shows the same.
 
-A file lives as long as its message record. Purging a deleted subscriber removes their attachment records, and removes the stored file unless another subscriber's attachment or an archived inbound mail still uses the same bytes.
+A file lives as long as its message record. Purging a deleted subscriber removes their attachment records at once. A stored file nothing else uses is queued and deleted an hour later, once a check finds that no attachment (in any environment) and no archived inbound mail still points at it; a trigger that attaches the same bytes inside that hour keeps it. The console's resend sends the original notification's files again, and refuses if one is gone.
 
 ## Replies
 
