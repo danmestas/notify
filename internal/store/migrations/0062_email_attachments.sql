@@ -1,4 +1,4 @@
--- 0061_email_attachments: files a trigger hands to its email steps (#177).
+-- 0062_email_attachments: files a trigger hands to its email steps (#177).
 -- The bytes live in the blob store under sha256; a row is the reference a
 -- delivery reads them back by, so a retry resends the same file. One row per
 -- recipient's notification, so a purge of a subscriber finds exactly that
