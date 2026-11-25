@@ -382,7 +382,8 @@ func (repo *subscriberRepo) SoftDelete(ctx context.Context, scope domain.Scope, 
 // never be removed by this call. Returns the count of rows deleted (0 or 1).
 // Its consent audit rows are closed and detached from the id in the same
 // transaction (see detachAttestations), and its email attachment rows are
-// deleted there too; their blobs are removed by the caller.
+// deleted there too. Each blob no other row references is queued in
+// blob_deletions and removed later by the blobsweep sweeper.
 func (repo *subscriberRepo) PurgeDeletedByExternalID(ctx context.Context, scope domain.Scope, subscriberID string) (int64, error) {
 	var n int64
 	err := inTx(ctx, repo.w, func(tx *sql.Tx) error {
