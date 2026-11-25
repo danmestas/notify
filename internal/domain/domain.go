@@ -135,6 +135,11 @@ type WebPushSubscription struct {
 	Auth         string `db:"auth"`
 	CreatedAt    string `db:"created_at"`
 	LastUsedAt   string `db:"last_used_at"`
+	// LastSuccessAt is when a push last reached the device, empty until one
+	// has. LastErrorClass is the error class of the last failed push, empty
+	// when the last push was delivered or none has been sent.
+	LastSuccessAt  string `db:"last_success_at"`
+	LastErrorClass string `db:"last_error_class"`
 }
 
 type Integration struct {

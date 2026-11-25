@@ -30,6 +30,10 @@ type WebPushSubscriptionRepo interface {
 	RecordFailure(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) (int, error)
 	// ResetFailures clears the refusal count after a successful delivery.
 	ResetFailures(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) error
+	// RecordDelivered stamps last_success_at and clears last_error_class.
+	RecordDelivered(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) error
+	// RecordErrorClass stores the error class of a failed push.
+	RecordErrorClass(ctx context.Context, scope domain.Scope, subscriberID, endpoint, errClass string) error
 }
 
 type webPushSubscriptionRepo struct {
@@ -63,11 +67,11 @@ func (repo *webPushSubscriptionRepo) getByEndpoint(ctx context.Context, scope do
 	var sub domain.WebPushSubscription
 	err := repo.r.QueryRowContext(
 		ctx,
-		`SELECT id, org_id, environment_id, subscriber_id, endpoint, p256dh, auth, created_at, last_used_at
+		`SELECT id, org_id, environment_id, subscriber_id, endpoint, p256dh, auth, created_at, last_used_at, last_success_at, last_error_class
 		 FROM webpush_subscriptions
 		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND endpoint = ?`,
 		scope.OrgID, scope.EnvID, subscriberID, endpoint,
-	).Scan(&sub.ID, &sub.OrgID, &sub.EnvID, &sub.SubscriberID, &sub.Endpoint, &sub.P256dh, &sub.Auth, &sub.CreatedAt, &sub.LastUsedAt)
+	).Scan(&sub.ID, &sub.OrgID, &sub.EnvID, &sub.SubscriberID, &sub.Endpoint, &sub.P256dh, &sub.Auth, &sub.CreatedAt, &sub.LastUsedAt, &sub.LastSuccessAt, &sub.LastErrorClass)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.WebPushSubscription{}, ErrNotFound
 	}
@@ -80,7 +84,7 @@ func (repo *webPushSubscriptionRepo) getByEndpoint(ctx context.Context, scope do
 func (repo *webPushSubscriptionRepo) ListBySubscriber(ctx context.Context, scope domain.Scope, subscriberID string) ([]domain.WebPushSubscription, error) {
 	rows, err := repo.r.QueryContext(
 		ctx,
-		`SELECT id, org_id, environment_id, subscriber_id, endpoint, p256dh, auth, created_at, last_used_at
+		`SELECT id, org_id, environment_id, subscriber_id, endpoint, p256dh, auth, created_at, last_used_at, last_success_at, last_error_class
 		 FROM webpush_subscriptions
 		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ?
 		 ORDER BY created_at ASC, id ASC`,
@@ -94,7 +98,7 @@ func (repo *webPushSubscriptionRepo) ListBySubscriber(ctx context.Context, scope
 	var out []domain.WebPushSubscription
 	for rows.Next() {
 		var sub domain.WebPushSubscription
-		if err := rows.Scan(&sub.ID, &sub.OrgID, &sub.EnvID, &sub.SubscriberID, &sub.Endpoint, &sub.P256dh, &sub.Auth, &sub.CreatedAt, &sub.LastUsedAt); err != nil {
+		if err := rows.Scan(&sub.ID, &sub.OrgID, &sub.EnvID, &sub.SubscriberID, &sub.Endpoint, &sub.P256dh, &sub.Auth, &sub.CreatedAt, &sub.LastUsedAt, &sub.LastSuccessAt, &sub.LastErrorClass); err != nil {
 			return nil, err
 		}
 		out = append(out, sub)
@@ -149,5 +153,21 @@ func (repo *webPushSubscriptionRepo) ResetFailures(ctx context.Context, scope do
 		`UPDATE webpush_subscriptions SET failures = 0
 		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND endpoint = ? AND failures > 0`,
 		scope.OrgID, scope.EnvID, subscriberID, endpoint)
+	return err
+}
+
+func (repo *webPushSubscriptionRepo) RecordDelivered(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) error {
+	_, err := repo.w.ExecContext(ctx,
+		`UPDATE webpush_subscriptions SET last_success_at = ?, last_error_class = ''
+		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND endpoint = ?`,
+		time.Now().UTC().Format(time.RFC3339), scope.OrgID, scope.EnvID, subscriberID, endpoint)
+	return err
+}
+
+func (repo *webPushSubscriptionRepo) RecordErrorClass(ctx context.Context, scope domain.Scope, subscriberID, endpoint, errClass string) error {
+	_, err := repo.w.ExecContext(ctx,
+		`UPDATE webpush_subscriptions SET last_error_class = ?
+		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND endpoint = ?`,
+		errClass, scope.OrgID, scope.EnvID, subscriberID, endpoint)
 	return err
 }

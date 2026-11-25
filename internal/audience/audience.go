@@ -14,6 +14,7 @@ import (
 
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/store"
+	"github.com/danmestas/notify/internal/webpushevent"
 )
 
 // topicKeyPattern is the URL-safe slug allowlist for topic keys: lowercase
@@ -31,7 +32,16 @@ var ErrInvalidTopicKey = fmt.Errorf("audience: topic key may only contain lowerc
 
 // Service owns subscriber persistence.
 type Service struct {
-	store *store.Store
+	store  *store.Store
+	events webpushevent.Publisher
+}
+
+// WithEventPublisher sets where webpush.subscription_removed events go when a
+// device is deleted through the service. Without one the delete still happens
+// and the tenant is not told.
+func (svc *Service) WithEventPublisher(p webpushevent.Publisher) *Service {
+	svc.events = p
+	return svc
 }
 
 // MaxSubscriberFieldLen bounds subscriber profile free-text fields (email,
@@ -246,7 +256,61 @@ func (svc *Service) SetWebPushCredentials(ctx context.Context, scope domain.Scop
 // caller (a browser unsubscribe) needs that distinct from a 204 to know
 // whether anything was actually removed.
 func (svc *Service) DeleteWebPushCredentials(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) error {
-	return svc.store.WebPushSubscriptions().DeleteByEndpoint(ctx, scope, subscriberID, endpoint)
+	subs, err := svc.store.WebPushSubscriptions().ListBySubscriber(ctx, scope, subscriberID)
+	if err != nil {
+		return err
+	}
+	for _, sub := range subs {
+		if sub.Endpoint == endpoint {
+			return svc.removeWebPush(ctx, scope, sub)
+		}
+	}
+	return store.ErrNotFound
+}
+
+// DeleteWebPushDevice removes one device named by its id or by its endpoint
+// hash (webpushevent.EndpointHash), so a client that never held the endpoint
+// can still remove it. store.ErrNotFound when no device in this scope matches.
+func (svc *Service) DeleteWebPushDevice(ctx context.Context, scope domain.Scope, subscriberID, ref string) error {
+	subs, err := svc.store.WebPushSubscriptions().ListBySubscriber(ctx, scope, subscriberID)
+	if err != nil {
+		return err
+	}
+	for _, sub := range subs {
+		if sub.ID == ref || webpushevent.EndpointHash(sub.Endpoint) == ref {
+			return svc.removeWebPush(ctx, scope, sub)
+		}
+	}
+	return store.ErrNotFound
+}
+
+// removeWebPush deletes sub and, only when a row was actually removed, tells
+// the tenant's webhooks. A concurrent delete surfaces as ErrNotFound with no
+// event.
+func (svc *Service) removeWebPush(ctx context.Context, scope domain.Scope, sub domain.WebPushSubscription) error {
+	if err := svc.store.WebPushSubscriptions().DeleteByEndpoint(ctx, scope, sub.SubscriberID, sub.Endpoint); err != nil {
+		return err
+	}
+	webpushevent.PublishRemoved(svc.events, sub, webpushevent.ReasonDeleted)
+	return nil
+}
+
+// ListWebPushDevices returns the subscriber's Web Push devices within scope.
+// store.ErrNotFound when the subscriber has no devices and no subscriber
+// record exists: a device may be registered before its subscriber is created,
+// so the devices alone also prove the subscriber.
+func (svc *Service) ListWebPushDevices(ctx context.Context, scope domain.Scope, subscriberID string) ([]domain.WebPushSubscription, error) {
+	subs, err := svc.store.WebPushSubscriptions().ListBySubscriber(ctx, scope, subscriberID)
+	if err != nil {
+		return nil, err
+	}
+	if len(subs) > 0 {
+		return subs, nil
+	}
+	if _, err := svc.Get(ctx, scope, subscriberID); err != nil {
+		return nil, err
+	}
+	return subs, nil
 }
 
 // ListChannels returns the per-provider channel addressing rows recorded for

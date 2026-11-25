@@ -68,7 +68,7 @@ Every rejection happens before anything is published.
 
 ## Outbound webhooks
 
-Outbound webhook endpoints receive **delivery events**: the message JSON of every terminal channel result (`sent`, `error`, `skipped`, `throttled`), `email.reply` events from the [reply loop](../inbound-email/reply-loop), and the [SMS](../channels/sms#inbound-texts-and-delivery-status) events `sms.inbound`, `sms.opt_out`, `sms.opt_in` and `sms.status`. Events other than message JSON carry a `type`.
+Outbound webhook endpoints receive **delivery events**: the message JSON of every terminal channel result (`sent`, `error`, `skipped`, `throttled`), `email.reply` events from the [reply loop](../inbound-email/reply-loop), and the [SMS](../channels/sms#inbound-texts-and-delivery-status) events `sms.inbound`, `sms.opt_out`, `sms.opt_in` and `sms.status`, and [`webpush.subscription_removed`](../channels/push#web-push) when a Web Push device is deleted. Events other than message JSON carry a `type`.
 
 ```bash
 curl -X POST localhost:3000/v1/webhooks/endpoints \
@@ -101,6 +101,13 @@ An `sms.inbound` event. `subscriberId` is absent when no subscriber has the send
 { "type": "sms.inbound", "subscriberId": "user-1", "phoneVerified": true, "from": "+15551112222",
   "to": "+15559990000", "body": "Running late", "integrationId": "…", "providerId": "twilio",
   "providerMessageId": "SM…", "inboundMessageId": "…", "receivedAt": "…" }
+```
+
+A `webpush.subscription_removed` event, sent after a Web Push device is deleted. `reason` is `gone` (the push service reported it dead), `retired` (it refused the device three times in a row) or `deleted` (a `DELETE` route removed it). `deviceId` and `endpointHash` match the device list; nothing is sent when the device was already gone:
+
+```json
+{ "type": "webpush.subscription_removed", "orgId": "…", "envId": "…", "subscriberId": "user-1",
+  "deviceId": "01J…", "endpointHash": "9f86d0…", "reason": "gone" }
 ```
 
 An `sms.status` event, sent when a delivery-status callback moves a message to `delivered` or `error`:

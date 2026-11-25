@@ -71,7 +71,8 @@ func (svc *Service) Start(ctx context.Context) (stop func() error, err error) {
 func (svc *Service) ingest(ctx context.Context, data []byte) error {
 	var ev struct {
 		// Type is set on events that are not a delivery result (email.reply,
-		// sms.inbound, sms.opt_out, sms.opt_in, sms.status); a message event
+		// sms.inbound, sms.opt_out, sms.opt_in, sms.status,
+		// webpush.subscription_removed); a message event
 		// has none.
 		Type          string `json:"type"`
 		OrgID         string
