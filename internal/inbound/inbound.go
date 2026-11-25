@@ -7,6 +7,7 @@ package inbound
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -36,7 +37,13 @@ func (s *Service) Routes(r chi.Router) {
 // request Scope, and returns the TriggerResponse as JSON with 201.
 func (s *Service) postInbound(w http.ResponseWriter, r *http.Request) {
 	var req trigger.TriggerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	body := http.MaxBytesReader(w, r.Body, trigger.MaxRequestBytes)
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			http.Error(w, "request body is larger than 15 MB", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -47,7 +54,13 @@ func (s *Service) postInbound(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	status := http.StatusCreated
+	if resp.AttachmentsRefused {
+		// The other refusals answer 201 on this route (read acknowledged), but
+		// a refused file is the sender's to fix.
+		status = http.StatusUnprocessableEntity
+	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(resp)
 }

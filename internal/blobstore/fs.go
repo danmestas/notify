@@ -108,3 +108,17 @@ func (s *FS) Head(ctx context.Context, addr string) (Ref, error) {
 	}
 	return Ref{SHA256: addr, Size: fi.Size()}, nil
 }
+
+// Delete removes the object at addr; an absent object is not an error.
+func (s *FS) Delete(ctx context.Context, addr string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !validAddr(addr) {
+		return fmt.Errorf("blobstore: invalid address %q", addr)
+	}
+	if err := os.Remove(s.path(addr)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("blobstore: delete %s: %w", addr, err)
+	}
+	return nil
+}

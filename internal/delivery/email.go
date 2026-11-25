@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/danmestas/notify/internal/blobstore"
 	"github.com/danmestas/notify/internal/delivery/template"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
@@ -48,6 +50,48 @@ type EmailHandler struct {
 	throttle Throttler
 	digester Digester
 	armer    ReplyArmer
+	blobs    blobstore.Store
+}
+
+// WithBlobStore attaches the store a notification's email attachments are read
+// from (#177). Without it a notification that has attachments fails its send
+// rather than going out without them.
+func (h *EmailHandler) WithBlobStore(b blobstore.Store) *EmailHandler {
+	h.blobs = b
+	return h
+}
+
+// loadAttachments reads the files the notification's trigger attached. Every
+// email step of the run sends them, and a retry reads the same
+// content-addressed bytes again.
+func (h *EmailHandler) loadAttachments(ctx context.Context, scope domain.Scope, notificationID string) ([]providers.Attachment, error) {
+	if notificationID == "" {
+		return nil, nil
+	}
+	rows, err := h.store.EmailAttachments().ListByNotification(ctx, scope, notificationID)
+	if err != nil {
+		return nil, fmt.Errorf("load attachments: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	if h.blobs == nil {
+		return nil, fmt.Errorf("attachments cannot be sent: no blob store is configured")
+	}
+	out := make([]providers.Attachment, 0, len(rows))
+	for _, a := range rows {
+		rc, err := h.blobs.Get(ctx, a.SHA256)
+		if err != nil {
+			return nil, fmt.Errorf("read attachment %q: %w", a.Filename, err)
+		}
+		content, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read attachment %q: %w", a.Filename, err)
+		}
+		out = append(out, providers.Attachment{Filename: a.Filename, ContentType: a.ContentType, Content: content})
+	}
+	return out, nil
 }
 
 // ReplyArmer arms a reply-to-notification thread for one recipient before an
@@ -251,6 +295,11 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 		return h.persistEmailError(ctx, env, t, "", "", resolveFailure("email", err))
 	}
 
+	attachments, err := h.loadAttachments(ctx, scope, env.NotificationID)
+	if err != nil {
+		return h.persistEmailError(ctx, env, t, providerID, integrationID, err)
+	}
+
 	// Per-step From override: step-level address wins over the integration default.
 	effectiveFrom := from
 	if env.Step.From != "" {
@@ -302,6 +351,8 @@ func (h *EmailHandler) HandleEmail(ctx context.Context, t engine.TaskPayload) (j
 		Text:    msgText,
 		HTML:    msgHTML,
 		ReplyTo: replyTo,
+
+		Attachments: attachments,
 	}); err != nil {
 		if armed {
 			if derr := h.armer.DisarmReply(ctx, scope, env.NotificationID); derr != nil {

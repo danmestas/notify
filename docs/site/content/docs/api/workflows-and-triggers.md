@@ -47,7 +47,10 @@ The detailed workflow (`GET`, `PUT`, `PATCH activate`, template apply) is:
 ```json
 { "name": "order-shipped",
   "to": { "subscriberId": "user-1", "email": "", "firstName": "", "lastName": "", "phone": "", "topicKey": "" },
-  "payload": { }, "transactionId": "" }
+  "payload": { }, "transactionId": "",
+  "attachments": [ { "filename": "", "contentType": "", "content": "<base64>" } ] }
 ```
+
+`attachments` is optional and only email steps use it; its limits are on the Triggers page.
 
 Details and the response table are on the [Triggers](../../triggers) page.

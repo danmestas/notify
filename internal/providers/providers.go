@@ -6,8 +6,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	mimepkg "mime"
 	"mime/quotedprintable"
 	"net"
 	"net/mail"
@@ -30,6 +32,17 @@ type EmailMessage struct {
 	// (reply+<token>@<inbound-domain>) so a recipient's reply routes back to
 	// the originating conversation.
 	ReplyTo string
+	// Attachments are files sent with the message. Empty for an email that
+	// carries none, which is built exactly as before attachments existed.
+	Attachments []Attachment
+}
+
+// Attachment is a file sent with an email. Content is the raw bytes; each
+// provider encodes them for its own wire.
+type Attachment struct {
+	Filename    string
+	ContentType string
+	Content     []byte
 }
 
 // Result is the provider's send outcome (provider message id, etc.).
@@ -189,6 +202,37 @@ func BuildMIME(msg EmailMessage) (mime []byte, messageID string) {
 	writeHeader("Message-ID", "<"+messageID+">")
 	writeHeader("MIME-Version", "1.0")
 
+	if len(msg.Attachments) == 0 {
+		writeBodyPart(&b, msg, writeHeader)
+		return []byte(b.String()), messageID
+	}
+
+	// With attachments the message is multipart/mixed: the body (one part, or
+	// a multipart/alternative) first, then one base64 part per file.
+	boundary := newBoundary()
+	writeHeader("Content-Type", "multipart/mixed; boundary=\""+boundary+"\"")
+	b.WriteString("\r\n--" + boundary + "\r\n")
+	writeBodyPart(&b, msg, writeHeader)
+	for _, a := range msg.Attachments {
+		b.WriteString("\r\n--" + boundary + "\r\n")
+		ctype := a.ContentType
+		if ctype == "" {
+			ctype = "application/octet-stream"
+		}
+		writeHeader("Content-Type", mimepkg.FormatMediaType(ctype, map[string]string{"name": a.Filename}))
+		writeHeader("Content-Transfer-Encoding", "base64")
+		writeHeader("Content-Disposition", mimepkg.FormatMediaType("attachment", map[string]string{"filename": a.Filename}))
+		b.WriteString("\r\n")
+		writeBase64(&b, a.Content)
+	}
+	b.WriteString("\r\n--" + boundary + "--\r\n")
+	return []byte(b.String()), messageID
+}
+
+// writeBodyPart writes the message's content headers, a blank line and the
+// body: a multipart/alternative when both bodies are set, else one
+// quoted-printable part.
+func writeBodyPart(b *strings.Builder, msg EmailMessage, writeHeader func(k, v string)) {
 	if msg.Text != "" && msg.HTML != "" {
 		// Both bodies: multipart/alternative, text first and HTML last, since
 		// RFC 2046 section 5.1.4 has the last part as the preferred one
@@ -204,11 +248,11 @@ func BuildMIME(msg EmailMessage) (mime []byte, messageID string) {
 			writeHeader("Content-Type", part.ctype)
 			writeHeader("Content-Transfer-Encoding", "quoted-printable")
 			b.WriteString("\r\n")
-			writeQuotedPrintable(&b, part.body)
+			writeQuotedPrintable(b, part.body)
 			b.WriteString("\r\n")
 		}
 		b.WriteString("--" + boundary + "--\r\n")
-		return []byte(b.String()), messageID
+		return
 	}
 
 	contentType := "text/plain; charset=\"utf-8\""
@@ -220,8 +264,18 @@ func BuildMIME(msg EmailMessage) (mime []byte, messageID string) {
 	writeHeader("Content-Type", contentType)
 	writeHeader("Content-Transfer-Encoding", "quoted-printable")
 	b.WriteString("\r\n")
-	writeQuotedPrintable(&b, body)
-	return []byte(b.String()), messageID
+	writeQuotedPrintable(b, body)
+}
+
+// writeBase64 writes content base64-encoded in 76-character lines, CRLF
+// separated, with no trailing line break.
+func writeBase64(b *strings.Builder, content []byte) {
+	enc := base64.StdEncoding.EncodeToString(content)
+	for len(enc) > 76 {
+		b.WriteString(enc[:76] + "\r\n")
+		enc = enc[76:]
+	}
+	b.WriteString(enc)
 }
 
 // writeQuotedPrintable encodes body onto b. quotedprintable.Writer emits CRLF

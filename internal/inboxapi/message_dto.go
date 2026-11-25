@@ -35,6 +35,16 @@ type MessageDTO struct {
 	Archived           bool            `json:"archived"`
 	CreatedAt          string          `json:"createdAt"`
 	Extras             json.RawMessage `json:"extras"`
+	// Attachments names the files an email carried, never their content.
+	// Absent when the message carried none.
+	Attachments []AttachmentDTO `json:"attachments,omitempty"`
+}
+
+// AttachmentDTO is the wire shape of one email attachment's metadata.
+type AttachmentDTO struct {
+	Filename    string `json:"filename"`
+	ContentType string `json:"contentType"`
+	Size        int64  `json:"size"`
 }
 
 // ToMessageDTO converts one stored message to its wire shape.
@@ -43,7 +53,12 @@ func ToMessageDTO(m domain.Message) MessageDTO {
 	if len(extras) == 0 {
 		extras = json.RawMessage("{}")
 	}
+	var atts []AttachmentDTO
+	for _, a := range m.Attachments {
+		atts = append(atts, AttachmentDTO{Filename: a.Filename, ContentType: a.ContentType, Size: a.Size})
+	}
 	return MessageDTO{
+		Attachments:        atts,
 		ID:                 m.ID,
 		NotificationID:     m.NotificationID,
 		TransactionID:      m.TransactionID,

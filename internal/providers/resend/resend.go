@@ -9,6 +9,7 @@ package resend
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,6 +47,14 @@ type emailPayload struct {
 	HTML    string   `json:"html"`
 	Text    string   `json:"text"`
 	ReplyTo []string `json:"reply_to,omitempty"`
+	// Attachments carry base64 content.
+	Attachments []attachmentPayload `json:"attachments,omitempty"`
+}
+
+type attachmentPayload struct {
+	Filename    string `json:"filename"`
+	Content     string `json:"content"`
+	ContentType string `json:"content_type"`
 }
 
 // Send POSTs a JSON body to {BaseURL}/emails with Bearer auth (APIKey),
@@ -83,6 +92,13 @@ func (c *Client) Send(ctx context.Context, msg providers.EmailMessage) (provider
 	}
 	if msg.ReplyTo != "" {
 		p.ReplyTo = []string{msg.ReplyTo}
+	}
+	for _, a := range msg.Attachments {
+		p.Attachments = append(p.Attachments, attachmentPayload{
+			Filename:    a.Filename,
+			Content:     base64.StdEncoding.EncodeToString(a.Content),
+			ContentType: a.ContentType,
+		})
 	}
 	body, err := json.Marshal(p)
 	if err != nil {

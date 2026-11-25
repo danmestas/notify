@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -19,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/danmestas/notify/internal/audience"
+	"github.com/danmestas/notify/internal/blobstore"
 	"github.com/danmestas/notify/internal/domain"
 	"github.com/danmestas/notify/internal/engine"
 	"github.com/danmestas/notify/internal/keypath"
@@ -40,6 +42,15 @@ type Service struct {
 	windows  DigestWindowResolver
 	// runs is eng when it can also read and cancel runs, else nil.
 	runs RunCanceller
+	// blobs holds email attachment bytes; nil refuses a trigger that has any.
+	blobs blobstore.Store
+}
+
+// WithBlobStore attaches the store a trigger's email attachments are kept in
+// (#177). Without it a trigger carrying attachments is refused.
+func (svc *Service) WithBlobStore(b blobstore.Store) *Service {
+	svc.blobs = b
+	return svc
 }
 
 // DigestWindowResolver reports a subscriber's per-workflow digest window
@@ -111,6 +122,14 @@ type TriggerRequest struct {
 	To            ToField         `json:"to"`
 	Payload       json.RawMessage `json:"payload"`
 	TransactionID string          `json:"transactionId"`
+	// Attachments are files for the workflow's email steps (#177). They sit
+	// beside Payload, not in it: the bytes are stored once and never travel
+	// through the run.
+	Attachments []AttachmentInput `json:"attachments,omitempty"`
+	// ReuseAttachmentsOf names a notification whose attachments this trigger
+	// sends again: the same stored files are referenced, not copied. Set by
+	// the console's resend; never read from a request body.
+	ReuseAttachmentsOf string `json:"-"`
 }
 
 // TriggerResponse is the trigger-event response DTO:
@@ -126,6 +145,10 @@ type TriggerResponse struct {
 	// for a refused trigger. A retry of the same transactionId returns the
 	// existing rows' ids. A digest-merged recipient writes no row, so has no id.
 	NotificationIDs []string `json:"notificationIds,omitempty"`
+	// AttachmentsRefused is set when the trigger was refused over its
+	// attachments, so a route that answers 201 for other refusals can still
+	// answer 422 for this one. Not on the wire.
+	AttachmentsRefused bool `json:"-"`
 }
 
 // wireSubscriber is the handlebars context object for {{subscriber.*}} — camelCase
@@ -205,6 +228,14 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 		span.End()
 	}()
 
+	decoded, err := decodeAttachments(req.Attachments)
+	if ae := (*AttachmentError)(nil); errors.As(err, &ae) {
+		return refusal(ae.Msg), nil
+	}
+	if len(decoded) > 0 && svc.blobs == nil {
+		return refusal("attachments are unavailable: this server has no blob store configured"), nil
+	}
+
 	wf, err := svc.s.Workflows().GetByTriggerIdentifier(ctx, scope, req.Name)
 	if errors.Is(err, store.ErrNotFound) {
 		return TriggerResponse{
@@ -243,6 +274,42 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 		}, nil
 	}
 
+	// The files are stored only when a recipient's notification is about to
+	// reference them (attachmentSet.resolve), so a trigger refused further on
+	// leaves no blob behind.
+	attachments := &attachmentSet{decoded: decoded}
+	if req.ReuseAttachmentsOf != "" {
+		rows, err := svc.s.EmailAttachments().ListByNotification(ctx, scope, req.ReuseAttachmentsOf)
+		if err != nil {
+			return TriggerResponse{}, err
+		}
+		if len(rows) > 0 && svc.blobs == nil {
+			return refusal("attachments are unavailable: this server has no blob store configured"), nil
+		}
+		for _, r := range rows {
+			if _, err := svc.blobs.Head(ctx, r.SHA256); errors.Is(err, blobstore.ErrNotFound) {
+				return refusal("attachment " + strconv.Quote(r.Filename) + " is no longer stored"), nil
+			} else if err != nil {
+				return TriggerResponse{}, err
+			}
+		}
+		attachments.reuse = rows
+	}
+	if len(decoded) > 0 || len(attachments.reuse) > 0 {
+		if steps[0].Type == "digest" {
+			// A digest-merged event writes no notification, so its files
+			// would be dropped without a word.
+			return refusal("attachments are not supported on a workflow that starts with a digest step"), nil
+		}
+		hasEmail := false
+		for _, s := range steps {
+			hasEmail = hasEmail || s.Type == "email"
+		}
+		if !hasEmail {
+			return refusal("attachments are only sent by email steps, and this workflow has none"), nil
+		}
+	}
+
 	// transactionID is minted once and shared by every fan-out run so a
 	// multicast emits a single logical transaction across all recipients.
 	transactionID := req.TransactionID
@@ -277,7 +344,7 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 		}
 		var ids []string
 		for _, subscriberID := range subs {
-			id, err := svc.ingestForSubscriber(ctx, scope, wf, subscriberID, req)
+			id, err := svc.ingestForSubscriber(ctx, scope, wf, subscriberID, req, attachments)
 			if err != nil {
 				return TriggerResponse{}, err
 			}
@@ -304,7 +371,7 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 	}); err != nil {
 		return TriggerResponse{}, err
 	}
-	id, err := svc.ingestForSubscriber(ctx, scope, wf, req.To.SubscriberID, req)
+	id, err := svc.ingestForSubscriber(ctx, scope, wf, req.To.SubscriberID, req, attachments)
 	if err != nil {
 		return TriggerResponse{}, err
 	}
@@ -326,7 +393,7 @@ func (svc *Service) Ingest(ctx context.Context, scope domain.Scope, req TriggerR
 // It assumes req.TransactionID is already minted and wf has at least one step.
 // It returns the notification id; a digest-merged event writes no row and
 // starts no run, so it returns an empty id with no error.
-func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope, wf domain.Workflow, subscriberID string, req TriggerRequest) (string, error) {
+func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope, wf domain.Workflow, subscriberID string, req TriggerRequest, attachments *attachmentSet) (string, error) {
 	var steps []domain.Step
 	if err := json.Unmarshal(wf.Steps, &steps); err != nil {
 		return "", err
@@ -414,6 +481,16 @@ func (svc *Service) ingestForSubscriber(ctx context.Context, scope domain.Scope,
 		// An earlier attempt of this same trigger started the run and recorded
 		// it, or the transaction was cancelled; a retry starts nothing.
 		return notif.ID, nil
+	}
+	// Recorded before the run starts, so the email step always finds them.
+	refs, err := attachments.resolve(ctx, svc.blobs)
+	if err != nil {
+		return "", err
+	}
+	if len(refs) > 0 {
+		if err := svc.s.EmailAttachments().Add(ctx, scope, notif.ID, subscriberID, refs); err != nil {
+			return "", err
+		}
 	}
 
 	envelope := runenv.InAppEnvelope{

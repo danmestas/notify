@@ -26,6 +26,7 @@ package cloudflareemail
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,6 +68,16 @@ type cfSendRequest struct {
 	HTML    string `json:"html,omitempty"`
 	Text    string `json:"text,omitempty"`
 	ReplyTo string `json:"reply_to,omitempty"`
+	// Attachments carry base64 content, per the Email Sending API.
+	Attachments []cfAttachment `json:"attachments,omitempty"`
+}
+
+// cfAttachment is one entry of the request's attachments array.
+type cfAttachment struct {
+	Content     string `json:"content"`
+	Filename    string `json:"filename"`
+	Type        string `json:"type"`
+	Disposition string `json:"disposition"`
 }
 
 // cfSendResult is the result sub-object of the Cloudflare send response.
@@ -124,6 +135,15 @@ func (c *Client) Send(ctx context.Context, msg providers.EmailMessage) (provider
 		// email two-way loop sets this to reply+<token>@<inbound-domain> so a
 		// recipient reply routes back into the originating conversation.
 		body.ReplyTo = msg.ReplyTo
+	}
+
+	for _, a := range msg.Attachments {
+		body.Attachments = append(body.Attachments, cfAttachment{
+			Content:     base64.StdEncoding.EncodeToString(a.Content),
+			Filename:    a.Filename,
+			Type:        a.ContentType,
+			Disposition: "attachment",
+		})
 	}
 
 	payload, err := json.Marshal(body)

@@ -71,6 +71,9 @@ func TestResend_Redirects303AndReFiresWorkflow(t *testing.T) {
 	if string(st.last.Payload) != `{"itemCount":3}` {
 		t.Errorf("re-fired payload = %s, want original payload", st.last.Payload)
 	}
+	if st.last.ReuseAttachmentsOf != n.ID {
+		t.Errorf("re-fired trigger reuses attachments of %q, want %q", st.last.ReuseAttachmentsOf, n.ID)
+	}
 }
 
 func TestResend_ReadOnlyBlocked(t *testing.T) {

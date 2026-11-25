@@ -210,6 +210,34 @@ func scanMessageRow(row *sql.Row) (domain.Message, error) {
 	return m, nil
 }
 
+// withAttachments fills Attachments on the email messages of msgs, so the
+// outbox shows what each email carried. It passes err through, so a list
+// function can end `return repo.withAttachments(ctx, scope, msgs, rows.Err())`.
+func (repo *messageRepo) withAttachments(ctx context.Context, scope domain.Scope, msgs []domain.Message, err error) ([]domain.Message, error) {
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, m := range msgs {
+		if m.Channel == "email" && m.NotificationID != "" {
+			ids = append(ids, m.NotificationID)
+		}
+	}
+	if len(ids) == 0 {
+		return msgs, nil
+	}
+	byNotification, err := (&emailAttachmentRepo{w: repo.w, r: repo.r}).ListByNotifications(ctx, scope, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range msgs {
+		if msgs[i].Channel == "email" {
+			msgs[i].Attachments = byNotification[msgs[i].NotificationID]
+		}
+	}
+	return msgs, nil
+}
+
 func (repo *messageRepo) Get(ctx context.Context, scope domain.Scope, id string) (domain.Message, error) {
 	row := repo.r.QueryRowContext(
 		ctx,
@@ -243,7 +271,7 @@ func (repo *messageRepo) List(ctx context.Context, scope domain.Scope, subscribe
 		}
 		msgs = append(msgs, m)
 	}
-	return msgs, rows.Err()
+	return repo.withAttachments(ctx, scope, msgs, rows.Err())
 }
 
 // ListByIntegrationID returns up to limit messages for the given integration,
@@ -276,7 +304,7 @@ func (repo *messageRepo) ListByIntegrationID(ctx context.Context, scope domain.S
 		}
 		msgs = append(msgs, m)
 	}
-	return msgs, rows.Err()
+	return repo.withAttachments(ctx, scope, msgs, rows.Err())
 }
 
 // archivedCond appends the SQL condition (if any) for the tri-state
@@ -338,7 +366,7 @@ func (repo *messageRepo) ListPage(ctx context.Context, scope domain.Scope, subsc
 		}
 		msgs = append(msgs, m)
 	}
-	return msgs, rows.Err()
+	return repo.withAttachments(ctx, scope, msgs, rows.Err())
 }
 
 // Count returns the number of messages matching subscriberID/channel/flag
@@ -436,7 +464,7 @@ func (repo *messageRepo) ListByNotificationID(ctx context.Context, scope domain.
 		}
 		msgs = append(msgs, m)
 	}
-	return msgs, rows.Err()
+	return repo.withAttachments(ctx, scope, msgs, rows.Err())
 }
 
 func (repo *messageRepo) GetByProviderMessageID(ctx context.Context, scope domain.Scope, integrationID, providerMessageID string) (domain.Message, error) {

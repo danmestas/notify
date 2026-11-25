@@ -32,6 +32,16 @@ The `sendmail` provider pipes each message to a local MTA command. The command i
 
 `subject`, `body`, `htmlBody`, `editorType`, `layoutKey`, `from`, `replyTo`, `reply`, `integration`. See the [email step](../../workflows/step-types/channel-steps#email).
 
+## Attachments
+
+A [trigger](../../triggers#attachments) can carry up to 10 files (PDF, PNG or JPEG, 5 MB each, 10 MB in all), and every email step of that run sends them. Providers map them to their own API: `smtp` and `sendmail` build a `multipart/mixed` message, and `resend`, `ses` and `cloudflare-email` use their `attachments` fields.
+
+`email-webhook` cannot carry files, so a send with attachments through it fails with error class `rejected_message` instead of going out without them. The same happens when a stored file can no longer be read.
+
+`GET /v1/notifications/{id}/messages` and `GET /v1/messages` list an email's files as `attachments: [{filename, contentType, size}]`, never the content; the console's activity detail shows the same.
+
+A file lives as long as its message record. Purging a deleted subscriber removes their attachment records at once. A stored file nothing else uses is queued and deleted an hour later, once a check finds that no attachment (in any environment) and no archived inbound mail still points at it; a trigger that attaches the same bytes inside that hour keeps it. The console's resend sends the original notification's files again, and refuses if one is gone.
+
 ## Replies
 
 Setting `reply: true` on an email step makes the message carry a tokenized Reply-To at one of your [inbound domains](../../inbound-email), and delivers a reply to your [outbound webhooks](../../streams-and-webhooks#outbound-webhooks). Agent conversations started with `POST /v1/agents/{identifier}/conversations/email` use the same mechanism to put the subscriber's reply back in the conversation.

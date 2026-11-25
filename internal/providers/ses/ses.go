@@ -10,6 +10,7 @@ package ses
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,9 +54,20 @@ type sesBody struct {
 	HTML sesData `json:"Html"`
 }
 
+// sesAttachment is one SESv2 Simple.Attachments entry; RawContent is base64
+// of the file's bytes.
+type sesAttachment struct {
+	FileName                string `json:"FileName"`
+	RawContent              string `json:"RawContent"`
+	ContentType             string `json:"ContentType"`
+	ContentDisposition      string `json:"ContentDisposition"`
+	ContentTransferEncoding string `json:"ContentTransferEncoding"`
+}
+
 type sesSimple struct {
-	Subject sesData `json:"Subject"`
-	Body    sesBody `json:"Body"`
+	Subject     sesData         `json:"Subject"`
+	Body        sesBody         `json:"Body"`
+	Attachments []sesAttachment `json:"Attachments,omitempty"`
 }
 
 type sesContent struct {
@@ -111,6 +123,15 @@ func (c *Client) Send(ctx context.Context, msg providers.EmailMessage) (provider
 				HTML: sesData{Data: msg.HTML},
 			},
 		}},
+	}
+	for _, a := range msg.Attachments {
+		sp.Content.Simple.Attachments = append(sp.Content.Simple.Attachments, sesAttachment{
+			FileName:                a.Filename,
+			RawContent:              base64.StdEncoding.EncodeToString(a.Content),
+			ContentType:             a.ContentType,
+			ContentDisposition:      "ATTACHMENT",
+			ContentTransferEncoding: "BASE64",
+		})
 	}
 	if msg.ReplyTo != "" {
 		sp.ReplyToAddresses = []string{msg.ReplyTo}
