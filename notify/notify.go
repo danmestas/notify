@@ -232,7 +232,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	// test. Registered after the email loop exists, because send.email takes
 	// it as its reply armer.
 	registerStepTaskHandlers(reg, stepTaskDeps{
-		store: st, conn: conn, prefs: prefs, bus: bus, secrets: secrets, replyArmer: eml,
+		store: st, conn: conn, prefs: prefs, bus: bus, secrets: secrets, replyArmer: eml, blobs: blobs,
 		composer: ing, drafts: ags.Drafts(), runs: eng,
 		smsCallbackBase: publicCallbackBase(cfg.PublicBaseURL, base),
 	})
@@ -299,7 +299,7 @@ func New(ctx context.Context, h Host, cfg Config) (_ *Notify, err error) {
 	n.identity = id
 	aud := audience.New(st).WithEventPublisher(bus) // webpush.subscription_removed (#172)
 	n.au = authoring.New(st, eng, authoring.WithSecretBox(secrets))
-	trg := trigger.New(aud, st, eng).WithDigester(bus).WithDigestWindows(prefs)
+	trg := trigger.New(aud, st, eng).WithDigester(bus).WithDigestWindows(prefs).WithBlobStore(blobs)
 	// Inbound webhook-push: the source service (per-source secret lifecycle,
 	// under the same master key as identity/connectivity) plus the ingest
 	// gateway that authenticates SourceKeys, limits, normalizes, and publishes

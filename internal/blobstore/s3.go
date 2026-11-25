@@ -126,3 +126,22 @@ func (s *S3) Head(ctx context.Context, addr string) (Ref, error) {
 	}
 	return Ref{SHA256: addr, Size: info.Size}, nil
 }
+
+// Delete removes the object at addr. S3 answers a delete of a missing key with
+// success, so an absent object is not an error. The empty object is never
+// stored, so there is nothing to remove.
+func (s *S3) Delete(ctx context.Context, addr string) error {
+	if !validAddr(addr) {
+		return fmt.Errorf("blobstore: invalid address %q", addr)
+	}
+	if addr == emptySHA256 {
+		return nil
+	}
+	if err := s.c.RemoveObject(ctx, s.bucket, s.key(addr), minio.RemoveObjectOptions{}); err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return nil
+		}
+		return fmt.Errorf("blobstore: delete %s: %w", addr, err)
+	}
+	return nil
+}

@@ -381,7 +381,8 @@ func (repo *subscriberRepo) SoftDelete(ctx context.Context, scope domain.Scope, 
 // required: a concurrently-inserted live row with the same external id must
 // never be removed by this call. Returns the count of rows deleted (0 or 1).
 // Its consent audit rows are closed and detached from the id in the same
-// transaction (see detachAttestations).
+// transaction (see detachAttestations), and its email attachment rows are
+// deleted there too; their blobs are removed by the caller.
 func (repo *subscriberRepo) PurgeDeletedByExternalID(ctx context.Context, scope domain.Scope, subscriberID string) (int64, error) {
 	var n int64
 	err := inTx(ctx, repo.w, func(tx *sql.Tx) error {
@@ -395,6 +396,9 @@ func (repo *subscriberRepo) PurgeDeletedByExternalID(ctx context.Context, scope 
 			return err
 		}
 		if n, err = res.RowsAffected(); err != nil || n == 0 {
+			return err
+		}
+		if err := deleteEmailAttachments(ctx, tx, scope, subscriberID); err != nil {
 			return err
 		}
 		return detachAttestations(ctx, tx, scope, subscriberID)

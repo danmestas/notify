@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -771,12 +772,24 @@ func postPushIntegration(conn *connectivity.Service) http.HandlerFunc {
 	}
 }
 
+// maxTriggerBodyBytes caps POST /v1/events/trigger.
+const maxTriggerBodyBytes = 15 << 20
+
 // postTrigger ingests a trigger within the request Scope and returns the
 // TriggerResponse as JSON with 201.
 func postTrigger(trg *trigger.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req trigger.TriggerRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// Room for the largest attachment set base64-encoded (10 MB is about
+		// 13.4 MB), plus the payload; this route only.
+		body := http.MaxBytesReader(w, r.Body, maxTriggerBodyBytes)
+		if err := json.NewDecoder(body).Decode(&req); err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				writeJSONError(w, http.StatusRequestEntityTooLarge, "payload_too_large",
+					fmt.Sprintf("request body is larger than %d MB", maxTriggerBodyBytes>>20))
+				return
+			}
 			writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}

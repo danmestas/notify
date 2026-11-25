@@ -34,6 +34,10 @@ type Store interface {
 	Get(ctx context.Context, sha256 string) (io.ReadCloser, error)
 	// Head reports whether the object exists, and its size.
 	Head(ctx context.Context, sha256 string) (Ref, error)
+	// Delete removes the object at sha256. Deleting an address with no object
+	// succeeds. Content addressing means other holders of the same bytes share
+	// the object: the caller must know nothing else references it.
+	Delete(ctx context.Context, sha256 string) error
 }
 
 var addrPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)

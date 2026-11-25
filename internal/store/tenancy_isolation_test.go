@@ -65,6 +65,7 @@ func tenantCases() []tenantCase {
 		{name: "SMSOptOuts", check: checkSMSOptOuts},
 		{name: "SMSConsents", check: checkSMSConsents},
 		{name: "SMSCaptured", check: checkSMSCaptured},
+		{name: "EmailAttachments", check: checkEmailAttachments},
 		{name: "StreamSources", check: checkStreamSources},
 		{name: "A2AClientKeys", check: checkA2AClientKeys},
 		{name: "A2AReceiverKeys", check: checkA2AReceiverKeys},
@@ -805,6 +806,22 @@ func checkSMSCaptured(t *testing.T, ctx context.Context, s *Store, a, b domain.S
 	}
 	if rows, _ := repo.List(ctx, b, "int-a", 10); len(rows) != 0 {
 		t.Error("SMSCaptured.List crossed tenants")
+	}
+}
+
+func checkEmailAttachments(t *testing.T, ctx context.Context, s *Store, a, b domain.Scope) {
+	repo := s.EmailAttachments()
+	if err := repo.Add(ctx, a, "n-a", "sub-a", []domain.EmailAttachment{attach("a.pdf", "aa")}); err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+	if rows, _ := repo.ListByNotification(ctx, b, "n-a"); len(rows) != 0 {
+		t.Error("EmailAttachments.ListByNotification crossed tenants")
+	}
+	if m, _ := repo.ListByNotifications(ctx, b, []string{"n-a"}); len(m) != 0 {
+		t.Error("EmailAttachments.ListByNotifications crossed tenants")
+	}
+	if shas, _ := repo.SHA256sBySubscriber(ctx, b, "sub-a"); len(shas) != 0 {
+		t.Error("EmailAttachments.SHA256sBySubscriber crossed tenants")
 	}
 }
 

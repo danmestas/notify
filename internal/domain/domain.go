@@ -346,6 +346,24 @@ type Message struct {
 	// migration 0022 carry "{}". The column is NOT NULL; messageRepo.Create
 	// coerces a nil value to "{}" so the constraint-less callers stay nil-safe.
 	Extras json.RawMessage `db:"extras" json:"extras"`
+	// Attachments describes the files an email message carried: name, type and
+	// size, never the bytes. Filled on read for email messages whose
+	// notification had attachments; not a column of the messages table.
+	Attachments []EmailAttachment `db:"-" json:"-"`
+}
+
+// EmailAttachment is a file a trigger handed to a notification's email steps.
+// The bytes are in the blob store under SHA256.
+type EmailAttachment struct {
+	ID             string
+	NotificationID string
+	SubscriberID   string
+	Position       int
+	Filename       string
+	ContentType    string
+	SHA256         string
+	Size           int64
+	CreatedAt      string
 }
 
 type Preference struct {

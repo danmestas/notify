@@ -5,6 +5,7 @@ import (
 
 	"github.com/danmestas/notify/internal/agents/agentstep"
 	"github.com/danmestas/notify/internal/aibuilder"
+	"github.com/danmestas/notify/internal/blobstore"
 	"github.com/danmestas/notify/internal/connectivity"
 	"github.com/danmestas/notify/internal/delivery"
 	"github.com/danmestas/notify/internal/delivery/httpaction"
@@ -57,12 +58,13 @@ func wireCommon[T common[T]](h T, d deliveryDeps) T {
 // entirely off those events via the durable delivery consumer, so email sends
 // were silently invisible to /v1/analytics/deliveries and
 // /v1/analytics/timeseries).
-func registerDeliveryHandlers(eng taskRegistrar, st *store.Store, conn *connectivity.Service, prefs *preferences.Service, bus *eventbus.Bus, armer delivery.ReplyArmer, smsCallbackBase string) {
+func registerDeliveryHandlers(eng taskRegistrar, st *store.Store, conn *connectivity.Service, prefs *preferences.Service, bus *eventbus.Bus, armer delivery.ReplyArmer, smsCallbackBase string, blobs blobstore.Store) {
 	d := deliveryDeps{prefs: prefs, bus: bus}
 	eng.Handle(names.SendInApp, wireCommon(delivery.New(st), d).HandleInApp)
-	// send.email carries one dependency the other channels do not: the reply
-	// loop, so an email step can opt into reply-to-notification.
-	eng.Handle(names.SendEmail, wireCommon(delivery.NewEmail(st, conn), d).WithReplyArmer(armer).HandleEmail)
+	// send.email carries two dependencies the other channels do not: the reply
+	// loop, so an email step can opt into reply-to-notification, and the blob
+	// store its attachments are read from.
+	eng.Handle(names.SendEmail, wireCommon(delivery.NewEmail(st, conn), d).WithReplyArmer(armer).WithBlobStore(blobs).HandleEmail)
 	eng.Handle(names.SendPush, wireCommon(delivery.NewPush(st, conn), d).HandlePush)
 	eng.Handle(names.SendChat, wireCommon(delivery.NewChat(st, conn), d).HandleChat)
 	// send.sms asks the provider to report delivery status to notify's
@@ -109,6 +111,8 @@ type stepTaskDeps struct {
 	// smsCallbackBase is notify's public URL plus base path, for SMS status
 	// callbacks. Empty asks providers for none.
 	smsCallbackBase string
+	// blobs holds email attachment bytes. nil means attachments cannot be sent.
+	blobs blobstore.Store
 }
 
 // stopCancelled registers every handler behind delivery.StopCancelled, so no
@@ -134,7 +138,7 @@ func registerStepTaskHandlers(eng taskRegistrar, d stepTaskDeps) {
 	if d.runs != nil && d.store != nil {
 		eng = stopCancelled{eng: eng, store: d.store, runs: d.runs}
 	}
-	registerDeliveryHandlers(eng, d.store, d.conn, d.prefs, d.bus, d.replyArmer, d.smsCallbackBase)
+	registerDeliveryHandlers(eng, d.store, d.conn, d.prefs, d.bus, d.replyArmer, d.smsCallbackBase, d.blobs)
 
 	// Scheduled (cron) digest window: sleeps until the next tick, then the
 	// downstream channel step self-sources and drains the accumulated events.

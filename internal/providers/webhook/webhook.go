@@ -67,7 +67,13 @@ type emailPayload struct {
 }
 
 // Send POSTs msg as JSON to the configured URL.
+//
+// The webhook body has no field for files, so a message with attachments is
+// refused rather than sent without them.
 func (c *EmailClient) Send(ctx context.Context, msg providers.EmailMessage) (providers.Result, error) {
+	if len(msg.Attachments) > 0 {
+		return providers.Result{}, errors.New("email-webhook: attachments are not supported by this provider")
+	}
 	return post(ctx, c.HTTPClient, c.URL, c.HMACSecret, emailPayload{
 		From:    msg.From,
 		To:      msg.To,

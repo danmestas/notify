@@ -115,6 +115,9 @@
           {{if .ErrorText}}
           <p class="activity-detail-message-error">{{.ErrorText}}</p>
           {{end}}
+          {{range .Attachments}}
+          <p class="activity-detail-message-content">Attachment: {{.Filename}} ({{.ContentType}}, {{.Size}} bytes)</p>
+          {{end}}
         </li>
         {{end}}
       </ul>

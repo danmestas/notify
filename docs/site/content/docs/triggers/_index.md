@@ -25,6 +25,7 @@ curl -X POST localhost:3000/v1/events/trigger \
 | `to.topicKey` | Send to every member of a [topic](../concepts#topics) instead. Subscriber profiles are not touched; each member's stored profile is used. |
 | `payload` | Any JSON. Available to templates as `payload` and to conditions as `payload`. |
 | `transactionId` | Optional idempotency key for the send. Minted (a ULID) if absent. |
+| `attachments` | Optional files for the workflow's email steps. See [Attachments](#attachments). |
 
 The response:
 
@@ -41,9 +42,33 @@ The response:
 | No workflow with that name | `404` | `acknowledged: false`, `status: "error"`, `error: ["workflow not found"]` |
 | Workflow inactive | `422` | `error: ["workflow is inactive"]` |
 | Workflow has no steps | `422` | `error: ["workflow has no steps"]` |
+| Attachment refused | `422` | `error: ["attachments[0]: contentType \"image/gif\" is not allowed (…)"]` |
+| Body over 15 MB | `413` | `error.code: "payload_too_large"` |
 | Unknown topic | `404` | `error: ["topic not found"]` (an `error` entry ending in `not found` maps to 404) |
 
 Acceptance means the run was started, not that delivery succeeded; delivery is asynchronous. Follow it with `GET /v1/notifications/{id}/messages` using an id from `notificationIds`; `GET /v1/notifications?transactionId=…` finds the same rows.
+
+### Attachments
+
+`attachments` sits beside `payload`, not inside it, and every [email step](../channels/email#attachments) of the run sends the files:
+
+```json
+"attachments": [
+  {"filename": "invoice-1042.pdf", "contentType": "application/pdf", "content": "<base64>"}
+]
+```
+
+| Limit | Value |
+|---|---|
+| Files | at most 10 |
+| Size | 5 MB per file and 10 MB in all, measured after decoding |
+| `contentType` | `application/pdf`, `image/png` or `image/jpeg` |
+| `filename` | 1 to 200 characters; no control characters, `/`, `\` or `"` |
+| `content` | standard base64, not empty |
+
+The whole trigger is refused with `422` and `acknowledged: false` when any file breaks a rule, and nothing is stored. The request body is capped at 15 MB on this route. Attachments need a blob store (`NOTIFY_BLOB_DRIVER`); without one a trigger that carries them is refused with `422`. A workflow whose first step is a [digest](../workflows/step-types/digest) refuses attachments too, since a merged event has no notification to hold them.
+
+The bytes go into the blob store once, and the run carries only references, so a retried step re-reads the same file. A topic trigger gives each member their own reference to the same stored file.
 
 ### Idempotency
 

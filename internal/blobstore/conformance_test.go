@@ -88,6 +88,35 @@ func conformance(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
+	t.Run("delete removes the object and is idempotent", func(t *testing.T) {
+		s := newStore(t)
+		ref, err := s.Put(ctx, strings.NewReader("to be deleted"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, err := s.Put(ctx, strings.NewReader("kept"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 2; i++ { // the second call finds nothing and still succeeds
+			if err := s.Delete(ctx, ref.SHA256); err != nil {
+				t.Fatalf("delete #%d: %v", i+1, err)
+			}
+		}
+		if _, err := s.Head(ctx, ref.SHA256); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("head after delete: %v, want ErrNotFound", err)
+		}
+		if _, err := s.Head(ctx, other.SHA256); err != nil {
+			t.Fatalf("delete touched another object: %v", err)
+		}
+		if err := s.Delete(ctx, strings.Repeat("cd", 32)); err != nil {
+			t.Fatalf("delete of a missing object: %v", err)
+		}
+		if err := s.Delete(ctx, "../../etc/passwd"); err == nil || errors.Is(err, ErrNotFound) {
+			t.Fatalf("delete of a malformed address: %v, want an invalid-address error", err)
+		}
+	})
+
 	t.Run("malformed address is refused", func(t *testing.T) {
 		s := newStore(t)
 		for _, addr := range []string{"", "../../etc/passwd", strings.Repeat("AB", 32), strings.Repeat("ab", 31)} {
