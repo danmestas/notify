@@ -295,22 +295,11 @@ func (svc *Service) removeWebPush(ctx context.Context, scope domain.Scope, sub d
 	return nil
 }
 
-// ListWebPushDevices returns the subscriber's Web Push devices within scope.
-// store.ErrNotFound when the subscriber has no devices and no subscriber
-// record exists: a device may be registered before its subscriber is created,
-// so the devices alone also prove the subscriber.
+// ListWebPushDevices returns the subscriber's Web Push devices within scope;
+// empty, not an error, when there are none or the subscriber has no record (a
+// device may be registered before its subscriber is created).
 func (svc *Service) ListWebPushDevices(ctx context.Context, scope domain.Scope, subscriberID string) ([]domain.WebPushSubscription, error) {
-	subs, err := svc.store.WebPushSubscriptions().ListBySubscriber(ctx, scope, subscriberID)
-	if err != nil {
-		return nil, err
-	}
-	if len(subs) > 0 {
-		return subs, nil
-	}
-	if _, err := svc.Get(ctx, scope, subscriberID); err != nil {
-		return nil, err
-	}
-	return subs, nil
+	return svc.store.WebPushSubscriptions().ListBySubscriber(ctx, scope, subscriberID)
 }
 
 // ListChannels returns the per-provider channel addressing rows recorded for

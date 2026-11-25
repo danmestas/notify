@@ -106,7 +106,7 @@ An `sms.inbound` event. `subscriberId` is absent when no subscriber has the send
 A `webpush.subscription_removed` event, sent after a Web Push device is deleted. `reason` is `gone` (the push service reported it dead), `retired` (it refused the device three times in a row) or `deleted` (a `DELETE` route removed it). `deviceId` and `endpointHash` match the device list; nothing is sent when the device was already gone:
 
 ```json
-{ "type": "webpush.subscription_removed", "orgId": "…", "envId": "…", "subscriberId": "user-1",
+{ "type": "webpush.subscription_removed", "OrgID": "…", "EnvID": "…", "subscriberId": "user-1",
   "deviceId": "01J…", "endpointHash": "9f86d0…", "reason": "gone" }
 ```
 

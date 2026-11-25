@@ -184,17 +184,17 @@ func TestWebPushSubscriptionRepo_FailureCountIsScoped(t *testing.T) {
 		t.Fatalf("upsert: %v", err)
 	}
 	for want := 1; want <= 2; want++ {
-		if n, err := repo.RecordFailure(ctx, a, "u", "https://push/x"); err != nil || n != want {
+		if n, err := repo.RecordFailure(ctx, a, "u", "https://push/x", "permanent"); err != nil || n != want {
 			t.Fatalf("RecordFailure = %d, %v; want %d", n, err, want)
 		}
 	}
-	if _, err := repo.RecordFailure(ctx, b, "u", "https://push/x"); err != ErrNotFound {
+	if _, err := repo.RecordFailure(ctx, b, "u", "https://push/x", "permanent"); err != ErrNotFound {
 		t.Fatalf("cross-tenant RecordFailure = %v, want ErrNotFound", err)
 	}
-	if err := repo.ResetFailures(ctx, a, "u", "https://push/x"); err != nil {
-		t.Fatalf("ResetFailures: %v", err)
+	if err := repo.RecordDelivered(ctx, a, "u", "https://push/x"); err != nil {
+		t.Fatalf("RecordDelivered: %v", err)
 	}
-	if n, _ := repo.RecordFailure(ctx, a, "u", "https://push/x"); n != 1 {
+	if n, _ := repo.RecordFailure(ctx, a, "u", "https://push/x", "permanent"); n != 1 {
 		t.Fatalf("after reset count = %d, want 1", n)
 	}
 }

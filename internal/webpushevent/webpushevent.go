@@ -35,8 +35,8 @@ type Publisher interface {
 // Event is the webhook body. OrgID and EnvID route it, like every event on
 // the delivery stream.
 type Event struct {
-	OrgID        string `json:"orgId"`
-	EnvID        string `json:"envId"`
+	OrgID        string `json:"OrgID"`
+	EnvID        string `json:"EnvID"`
 	Type         string `json:"type"`
 	SubscriberID string `json:"subscriberId"`
 	DeviceID     string `json:"deviceId"`

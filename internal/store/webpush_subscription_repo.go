@@ -26,13 +26,14 @@ type WebPushSubscriptionRepo interface {
 	// when the row does not exist in this scope.
 	DeleteByEndpoint(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) error
 	// RecordFailure counts one more consecutive permanent refusal for the
-	// subscription and returns the new count. ErrNotFound when it is gone.
-	RecordFailure(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) (int, error)
-	// ResetFailures clears the refusal count after a successful delivery.
-	ResetFailures(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) error
-	// RecordDelivered stamps last_success_at and clears last_error_class.
+	// subscription, records its error class, and returns the new count.
+	// ErrNotFound when it is gone.
+	RecordFailure(ctx context.Context, scope domain.Scope, subscriberID, endpoint, errClass string) (int, error)
+	// RecordDelivered, after a successful delivery, clears the refusal count
+	// and error class and stamps last_success_at.
 	RecordDelivered(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) error
-	// RecordErrorClass stores the error class of a failed push.
+	// RecordErrorClass stores the error class of a failed push that does not
+	// count against the device.
 	RecordErrorClass(ctx context.Context, scope domain.Scope, subscriberID, endpoint, errClass string) error
 }
 
@@ -129,11 +130,11 @@ func (repo *webPushSubscriptionRepo) DeleteByEndpoint(ctx context.Context, scope
 	return nil
 }
 
-func (repo *webPushSubscriptionRepo) RecordFailure(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) (int, error) {
+func (repo *webPushSubscriptionRepo) RecordFailure(ctx context.Context, scope domain.Scope, subscriberID, endpoint, errClass string) (int, error) {
 	res, err := repo.w.ExecContext(ctx,
-		`UPDATE webpush_subscriptions SET failures = failures + 1
+		`UPDATE webpush_subscriptions SET failures = failures + 1, last_error_class = ?
 		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND endpoint = ?`,
-		scope.OrgID, scope.EnvID, subscriberID, endpoint)
+		errClass, scope.OrgID, scope.EnvID, subscriberID, endpoint)
 	if err != nil {
 		return 0, err
 	}
@@ -148,17 +149,9 @@ func (repo *webPushSubscriptionRepo) RecordFailure(ctx context.Context, scope do
 	return failures, err
 }
 
-func (repo *webPushSubscriptionRepo) ResetFailures(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) error {
-	_, err := repo.w.ExecContext(ctx,
-		`UPDATE webpush_subscriptions SET failures = 0
-		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND endpoint = ? AND failures > 0`,
-		scope.OrgID, scope.EnvID, subscriberID, endpoint)
-	return err
-}
-
 func (repo *webPushSubscriptionRepo) RecordDelivered(ctx context.Context, scope domain.Scope, subscriberID, endpoint string) error {
 	_, err := repo.w.ExecContext(ctx,
-		`UPDATE webpush_subscriptions SET last_success_at = ?, last_error_class = ''
+		`UPDATE webpush_subscriptions SET failures = 0, last_success_at = ?, last_error_class = ''
 		 WHERE org_id = ? AND environment_id = ? AND subscriber_id = ? AND endpoint = ?`,
 		time.Now().UTC().Format(time.RFC3339), scope.OrgID, scope.EnvID, subscriberID, endpoint)
 	return err

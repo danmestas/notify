@@ -574,17 +574,14 @@ type webPushDeviceDTO struct {
 	LastErrorClass string `json:"lastErrorClass"`
 }
 
-// getSubscriberWebPushDevices lists the subscriber's Web Push devices; 404
-// for a subscriber that does not exist.
+// getSubscriberWebPushDevices lists the subscriber's Web Push devices. It is
+// 200 with an empty list when there are none, whether or not the subscriber
+// has a record.
 func getSubscriberWebPushDevices(aud *audience.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		scope := identity.ScopeFrom(r.Context())
 		subs, err := aud.ListWebPushDevices(r.Context(), scope, chi.URLParam(r, "subscriberId"))
 		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				writeJSONError(w, http.StatusNotFound, "not_found", "subscriber not found")
-				return
-			}
 			writeInternalError(w, r, err)
 			return
 		}

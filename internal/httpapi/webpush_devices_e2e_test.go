@@ -140,7 +140,7 @@ func TestWebPushDevices_ListAndDeleteByID(t *testing.T) {
 		t.Fatalf("events = %v, want 1", evs)
 	}
 	want := map[string]any{
-		"orgId": scope.OrgID, "envId": scope.EnvID, "type": "webpush.subscription_removed",
+		"OrgID": scope.OrgID, "EnvID": scope.EnvID, "type": "webpush.subscription_removed",
 		"subscriberId": "u1", "deviceId": devs[0].ID, "endpointHash": hashOf(epA), "reason": "deleted",
 	}
 	for k, v := range want {
@@ -185,9 +185,9 @@ func TestWebPushDevices_DeleteByHashAndEndpoint(t *testing.T) {
 	}
 }
 
-// TestWebPushDevices_ScopeAndUnknownSubscriber: another environment's key sees
-// 404 for list and delete, as does a subscriber that does not exist.
-func TestWebPushDevices_ScopeAndUnknownSubscriber(t *testing.T) {
+// TestWebPushDevices_ScopeIsolation: another environment's key sees no
+// devices and cannot delete one, and the device and its event are untouched.
+func TestWebPushDevices_ScopeIsolation(t *testing.T) {
 	srv, authA, _, id, pub := startWebPushDevicesServer(t)
 	keyB, _, err := id.Bootstrap(context.Background(), "Other", "dev")
 	if err != nil {
@@ -197,29 +197,49 @@ func TestWebPushDevices_ScopeAndUnknownSubscriber(t *testing.T) {
 	registerDevice(t, srv.URL, "u3", authA, "https://fcm.googleapis.com/fcm/send/dev-a")
 	devs := listDevices(t, srv.URL, "u3", authA)
 
-	if status, _ := doGet(t, srv.URL+"/v1/subscribers/u3/credentials/webpush", authB); status != http.StatusNotFound {
-		t.Fatalf("cross-scope GET status = %d, want 404", status)
+	if got := listDevices(t, srv.URL, "u3", authB); len(got) != 0 {
+		t.Fatalf("cross-scope GET = %+v, want none", got)
 	}
-	if status, _ := doDelete(t, srv.URL+"/v1/subscribers/u3/credentials/webpush/"+devs[0].ID, authB); status != http.StatusNotFound {
-		t.Fatalf("cross-scope DELETE status = %d, want 404", status)
-	}
-	if status, _ := doGet(t, srv.URL+"/v1/subscribers/nobody/credentials/webpush", authA); status != http.StatusNotFound {
-		t.Fatalf("unknown subscriber GET status = %d, want 404", status)
+	for _, ref := range []string{devs[0].ID, devs[0].EndpointHash} {
+		if status, _ := doDelete(t, srv.URL+"/v1/subscribers/u3/credentials/webpush/"+ref, authB); status != http.StatusNotFound {
+			t.Fatalf("cross-scope DELETE %s status = %d, want 404", ref, status)
+		}
 	}
 	if len(listDevices(t, srv.URL, "u3", authA)) != 1 || len(pub.all()) != 0 {
 		t.Fatalf("cross-scope delete must not remove the device or fire an event")
 	}
 }
 
-// TestWebPushDevices_KnownSubscriberWithNoDevices is an empty list, not 404.
-func TestWebPushDevices_KnownSubscriberWithNoDevices(t *testing.T) {
+// TestWebPushDevices_OtherSubscriberCannotDelete: within one environment,
+// subscriber B cannot delete subscriber A's device by A's id or hash.
+func TestWebPushDevices_OtherSubscriberCannotDelete(t *testing.T) {
+	srv, auth, _, _, pub := startWebPushDevicesServer(t)
+	registerDevice(t, srv.URL, "alice", auth, "https://fcm.googleapis.com/fcm/send/alice")
+	registerDevice(t, srv.URL, "bob", auth, "https://fcm.googleapis.com/fcm/send/bob")
+	devs := listDevices(t, srv.URL, "alice", auth)
+
+	for _, ref := range []string{devs[0].ID, devs[0].EndpointHash} {
+		if status, _ := doDelete(t, srv.URL+"/v1/subscribers/bob/credentials/webpush/"+ref, auth); status != http.StatusNotFound {
+			t.Fatalf("bob deleting alice's device by %s: status = %d, want 404", ref, status)
+		}
+	}
+	if len(listDevices(t, srv.URL, "alice", auth)) != 1 || len(listDevices(t, srv.URL, "bob", auth)) != 1 || len(pub.all()) != 0 {
+		t.Fatalf("a refused delete must leave both devices and fire no event")
+	}
+}
+
+// TestWebPushDevices_NoDevicesIsEmptyList: with no devices the list is 200
+// {"data":[]}, whether or not the subscriber has a record.
+func TestWebPushDevices_NoDevicesIsEmptyList(t *testing.T) {
 	srv, auth, _, _, _ := startWebPushDevicesServer(t)
 	status, body := doPost(t, srv.URL+"/v1/subscribers", auth, `{"subscriberId":"known","email":"k@example.com"}`)
 	if status >= 300 {
 		t.Fatalf("create subscriber: status=%d body=%s", status, body)
 	}
-	status, body = doGet(t, srv.URL+"/v1/subscribers/known/credentials/webpush", auth)
-	if status != http.StatusOK || strings.TrimSpace(body) != `{"data":[]}` {
-		t.Fatalf("status=%d body=%s, want 200 {\"data\":[]}", status, body)
+	for _, sub := range []string{"known", "nobody"} {
+		status, body = doGet(t, srv.URL+"/v1/subscribers/"+sub+"/credentials/webpush", auth)
+		if status != http.StatusOK || strings.TrimSpace(body) != `{"data":[]}` {
+			t.Fatalf("%s: status=%d body=%s, want 200 {\"data\":[]}", sub, status, body)
+		}
 	}
 }
